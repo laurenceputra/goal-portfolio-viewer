@@ -39,10 +39,10 @@ async def take_screenshots():
     print(f"\n4. Take the following screenshots:")
     print(f"   a) Summary view (default view showing both buckets)")
     print(f"      Save as: {os.path.join(assets_dir, 'screenshot-summary.png')}")
-    print(f"   b) Select 'Personal' from dropdown, take screenshot")
-    print(f"      Save as: {os.path.join(assets_dir, 'screenshot-personal-detail.png')}")
-    print(f"   c) Select 'Holiday' from dropdown, take screenshot")
-    print(f"      Save as: {os.path.join(assets_dir, 'screenshot-holiday-detail.png')}")
+    print(f"   b) Select 'House Purchase' from dropdown, take screenshot")
+    print(f"      Save as: {os.path.join(assets_dir, 'screenshot-house-purchase-detail.png')}")
+    print(f"   c) Select 'Retirement' from dropdown, take screenshot")
+    print(f"      Save as: {os.path.join(assets_dir, 'screenshot-retirement-detail.png')}")
     print("\n" + "="*60)
     
     return demo_url

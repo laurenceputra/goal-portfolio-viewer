@@ -45,18 +45,37 @@
         fetch('mock-data.json')
             .then(response => response.json())
             .then(mockData => {
+                // Validate mock data structure
+                if (!mockData.performance || !mockData.investible || !mockData.summary) {
+                    throw new Error('Invalid mock data structure');
+                }
+                
                 GM_setValue('api_performance', JSON.stringify(mockData.performance));
                 GM_setValue('api_investible', JSON.stringify(mockData.investible));
                 GM_setValue('api_summary', JSON.stringify(mockData.summary));
-                console.log('[Demo] Mock data loaded - Personal and Holiday buckets with core-satellite strategy');
+                
+                // Verify data was stored
+                if (!GM_getValue('api_performance') || !GM_getValue('api_investible') || !GM_getValue('api_summary')) {
+                    throw new Error('Failed to store mock data');
+                }
+                
+                console.log('[Demo] Mock data loaded - House Purchase and Retirement buckets with core-satellite strategy');
                 console.log('[Demo] Goals loaded:', mockData.performance.length);
+                
+                // Load userscript after data is ready
+                const script = document.createElement('script');
+                script.src = 'goal_portfolio_viewer_demo.user.js';
+                script.onerror = function() {
+                    console.error('[Demo] Failed to load userscript');
+                    document.body.innerHTML = '<div style="padding: 20px; color: red; font-family: sans-serif;">Error loading userscript. Please refresh the page.</div>';
+                };
+                document.body.appendChild(script);
             })
             .catch(error => {
                 console.error('[Demo] Failed to load mock data:', error);
+                document.body.innerHTML = '<div style="padding: 20px; color: red;">Error loading demo: ' + error.message + '</div>';
             });
     </script>
-    
-    <!-- Load modified userscript with demo mode enabled -->
-    <script src="goal_portfolio_viewer_demo.user.js"></script>
+
 </body>
 </html>

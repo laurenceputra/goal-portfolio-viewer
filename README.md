@@ -1,13 +1,13 @@
 # Goal Portfolio Viewer
 
 ![Goal Portfolio Viewer - Summary View](docs/screenshot-summary.png)
-*Summary view showing Personal and Holiday buckets with ending balance, returns, and growth*
+*Summary view showing House Purchase and Retirement buckets with ending balance, returns, and growth*
 
-![Goal Portfolio Viewer - Personal Bucket Detail](docs/screenshot-personal-detail.png)
-*Personal bucket detail view with core-satellite goals: Core, Tech, China, Megatrends, Real Estate*
+![Goal Portfolio Viewer - House Purchase Bucket Detail](docs/screenshot-house-purchase-detail.png)
+*House Purchase bucket detail view with core-satellite goals: Core - Balanced, Megatrends, Tech, China*
 
-![Goal Portfolio Viewer - Holiday Bucket Detail](docs/screenshot-holiday-detail.png)
-*Holiday bucket detail view with core-satellite goals and individual performance metrics*
+![Goal Portfolio Viewer - Retirement Bucket Detail](docs/screenshot-retirement-detail.png)
+*Retirement bucket detail view with core-satellite goals and individual performance metrics*
 
 **Track core-satellite portfolios the way they were meant to be seen — clean, goal-aware, and entirely private.**
 

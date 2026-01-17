@@ -1,227 +1,183 @@
 {
   "performance": [
     {
-      "goalId": "mock-goal-personal-1",
+      "goalId": "mock-goal-house-purchase-1",
       "totalCumulativeReturn": {
-        "amount": 4071.9
+        "amount": 12816.53
       },
-      "simpleRateOfReturnPercent": 0.08686512450262522
+      "simpleRateOfReturnPercent": 0.09541077232109191
     },
     {
-      "goalId": "mock-goal-personal-2",
+      "goalId": "mock-goal-house-purchase-2",
       "totalCumulativeReturn": {
-        "amount": 1694.98
+        "amount": 2298.48
       },
-      "simpleRateOfReturnPercent": 0.12319511574662936
+      "simpleRateOfReturnPercent": 0.10764998299878885
     },
     {
-      "goalId": "mock-goal-personal-3",
+      "goalId": "mock-goal-house-purchase-3",
       "totalCumulativeReturn": {
-        "amount": -719.62
+        "amount": 2905.47
       },
-      "simpleRateOfReturnPercent": -0.05236486732322255
+      "simpleRateOfReturnPercent": 0.14969319147839974
     },
     {
-      "goalId": "mock-goal-personal-4",
+      "goalId": "mock-goal-house-purchase-4",
       "totalCumulativeReturn": {
-        "amount": 916.28
+        "amount": 578.08
       },
-      "simpleRateOfReturnPercent": 0.08988063065935155
+      "simpleRateOfReturnPercent": 0.031127047006644006
     },
     {
-      "goalId": "mock-goal-personal-5",
+      "goalId": "mock-goal-retirement-1",
       "totalCumulativeReturn": {
-        "amount": 206.29
+        "amount": 4432.71
       },
-      "simpleRateOfReturnPercent": 0.027631961401783908
+      "simpleRateOfReturnPercent": 0.13984097529766656
     },
     {
-      "goalId": "mock-goal-holiday-1",
+      "goalId": "mock-goal-retirement-2",
       "totalCumulativeReturn": {
-        "amount": 1427.95
+        "amount": 505.67
       },
-      "simpleRateOfReturnPercent": 0.0746820931383163
+      "simpleRateOfReturnPercent": 0.05265832539298229
     },
     {
-      "goalId": "mock-goal-holiday-2",
+      "goalId": "mock-goal-retirement-3",
       "totalCumulativeReturn": {
-        "amount": 202.85
+        "amount": 921.42
       },
-      "simpleRateOfReturnPercent": 0.03666310608894937
+      "simpleRateOfReturnPercent": 0.10720518631936073
     },
     {
-      "goalId": "mock-goal-holiday-3",
+      "goalId": "mock-goal-retirement-4",
       "totalCumulativeReturn": {
-        "amount": -81.02
+        "amount": -396.17
       },
-      "simpleRateOfReturnPercent": -0.018515429143404306
-    },
-    {
-      "goalId": "mock-goal-holiday-4",
-      "totalCumulativeReturn": {
-        "amount": 312.81
-      },
-      "simpleRateOfReturnPercent": 0.10962365384143628
-    },
-    {
-      "goalId": "mock-goal-holiday-5",
-      "totalCumulativeReturn": {
-        "amount": 136.94
-      },
-      "simpleRateOfReturnPercent": 0.04402422714880922
+      "simpleRateOfReturnPercent": -0.041281339775738446
     }
   ],
   "investible": [
     {
-      "goalId": "mock-goal-personal-1",
-      "goalName": "Personal - Core",
+      "goalId": "mock-goal-house-purchase-1",
+      "goalName": "House Purchase - Core - Balanced",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION",
       "totalInvestmentAmount": {
         "display": {
-          "amount": 46876.12
+          "amount": 134330.01
         }
       }
     },
     {
-      "goalId": "mock-goal-personal-2",
-      "goalName": "Personal - Tech",
+      "goalId": "mock-goal-house-purchase-2",
+      "goalName": "House Purchase - Megatrends",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION",
       "totalInvestmentAmount": {
         "display": {
-          "amount": 13758.5
+          "amount": 21351.42
         }
       }
     },
     {
-      "goalId": "mock-goal-personal-3",
-      "goalName": "Personal - China",
+      "goalId": "mock-goal-house-purchase-3",
+      "goalName": "House Purchase - Tech",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION",
       "totalInvestmentAmount": {
         "display": {
-          "amount": 13742.42
+          "amount": 19409.5
         }
       }
     },
     {
-      "goalId": "mock-goal-personal-4",
-      "goalName": "Personal - Megatrends",
+      "goalId": "mock-goal-house-purchase-4",
+      "goalName": "House Purchase - China",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION",
       "totalInvestmentAmount": {
         "display": {
-          "amount": 10194.41
+          "amount": 18571.63
         }
       }
     },
     {
-      "goalId": "mock-goal-personal-5",
-      "goalName": "Personal - Real Estate",
+      "goalId": "mock-goal-retirement-1",
+      "goalName": "Retirement - Core - Aggressive",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION",
       "totalInvestmentAmount": {
         "display": {
-          "amount": 7465.63
+          "amount": 31698.22
         }
       }
     },
     {
-      "goalId": "mock-goal-holiday-1",
-      "goalName": "Holiday - Core",
+      "goalId": "mock-goal-retirement-2",
+      "goalName": "Retirement - Megatrends",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION",
       "totalInvestmentAmount": {
         "display": {
-          "amount": 19120.38
+          "amount": 9602.85
         }
       }
     },
     {
-      "goalId": "mock-goal-holiday-2",
-      "goalName": "Holiday - Tech",
+      "goalId": "mock-goal-retirement-3",
+      "goalName": "Retirement - Tech",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION",
       "totalInvestmentAmount": {
         "display": {
-          "amount": 5532.81
+          "amount": 8594.92
         }
       }
     },
     {
-      "goalId": "mock-goal-holiday-3",
-      "goalName": "Holiday - China",
+      "goalId": "mock-goal-retirement-4",
+      "goalName": "Retirement - China",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION",
       "totalInvestmentAmount": {
         "display": {
-          "amount": 4375.81
-        }
-      }
-    },
-    {
-      "goalId": "mock-goal-holiday-4",
-      "goalName": "Holiday - Megatrends",
-      "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION",
-      "totalInvestmentAmount": {
-        "display": {
-          "amount": 2853.49
-        }
-      }
-    },
-    {
-      "goalId": "mock-goal-holiday-5",
-      "goalName": "Holiday - Real Estate",
-      "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION",
-      "totalInvestmentAmount": {
-        "display": {
-          "amount": 3110.56
+          "amount": 9596.83
         }
       }
     }
   ],
   "summary": [
     {
-      "goalId": "mock-goal-personal-1",
-      "goalName": "Personal - Core",
+      "goalId": "mock-goal-house-purchase-1",
+      "goalName": "House Purchase - Core - Balanced",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION"
     },
     {
-      "goalId": "mock-goal-personal-2",
-      "goalName": "Personal - Tech",
+      "goalId": "mock-goal-house-purchase-2",
+      "goalName": "House Purchase - Megatrends",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION"
     },
     {
-      "goalId": "mock-goal-personal-3",
-      "goalName": "Personal - China",
+      "goalId": "mock-goal-house-purchase-3",
+      "goalName": "House Purchase - Tech",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION"
     },
     {
-      "goalId": "mock-goal-personal-4",
-      "goalName": "Personal - Megatrends",
+      "goalId": "mock-goal-house-purchase-4",
+      "goalName": "House Purchase - China",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION"
     },
     {
-      "goalId": "mock-goal-personal-5",
-      "goalName": "Personal - Real Estate",
+      "goalId": "mock-goal-retirement-1",
+      "goalName": "Retirement - Core - Aggressive",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION"
     },
     {
-      "goalId": "mock-goal-holiday-1",
-      "goalName": "Holiday - Core",
+      "goalId": "mock-goal-retirement-2",
+      "goalName": "Retirement - Megatrends",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION"
     },
     {
-      "goalId": "mock-goal-holiday-2",
-      "goalName": "Holiday - Tech",
+      "goalId": "mock-goal-retirement-3",
+      "goalName": "Retirement - Tech",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION"
     },
     {
-      "goalId": "mock-goal-holiday-3",
-      "goalName": "Holiday - China",
-      "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION"
-    },
-    {
-      "goalId": "mock-goal-holiday-4",
-      "goalName": "Holiday - Megatrends",
-      "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION"
-    },
-    {
-      "goalId": "mock-goal-holiday-5",
-      "goalName": "Holiday - Real Estate",
+      "goalId": "mock-goal-retirement-4",
+      "goalName": "Retirement - China",
       "investmentGoalType": "GENERAL_WEALTH_ACCUMULATION"
     }
   ]
