@@ -4240,40 +4240,70 @@ function setupSyncSettingsListeners() {
  */
 
 function showSyncSettings() {
-    // Create modal overlay
-    const overlay = document.createElement('div');
-    overlay.className = 'gpv-modal-overlay';
-    overlay.innerHTML = `
-        <div class="gpv-modal gpv-sync-modal">
-            <div class="gpv-modal-header">
-                <h2>Sync Settings</h2>
-                <button class="gpv-modal-close" id="gpv-sync-modal-close">&times;</button>
-            </div>
-            <div class="gpv-modal-body">
-                ${createSyncSettingsHTML()}
-            </div>
-        </div>
-    `;
+    console.log('[Goal Portfolio Viewer] showSyncSettings called');
     
-    document.body.appendChild(overlay);
-
-    // Setup listeners
-    setupSyncSettingsListeners();
-
-    // Close button
-    const closeBtn = document.getElementById('gpv-sync-modal-close');
-    if (closeBtn) {
-        closeBtn.addEventListener('click', () => {
-            overlay.remove();
-        });
-    }
-
-    // Close on overlay click
-    overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) {
-            overlay.remove();
+    try {
+        // Create modal overlay
+        const overlay = document.createElement('div');
+        overlay.className = 'gpv-modal-overlay';
+        
+        console.log('[Goal Portfolio Viewer] Creating sync settings HTML...');
+        let settingsHTML;
+        try {
+            settingsHTML = createSyncSettingsHTML();
+            console.log('[Goal Portfolio Viewer] Settings HTML created successfully');
+        } catch (error) {
+            console.error('[Goal Portfolio Viewer] Error creating settings HTML:', error);
+            settingsHTML = '<div style="padding: 20px; color: #ef4444;">Error loading sync settings. Please check console for details.</div>';
         }
-    });
+        
+        overlay.innerHTML = `
+            <div class="gpv-modal gpv-sync-modal">
+                <div class="gpv-modal-header">
+                    <h2>Sync Settings</h2>
+                    <button class="gpv-modal-close" id="gpv-sync-modal-close">&times;</button>
+                </div>
+                <div class="gpv-modal-body">
+                    ${settingsHTML}
+                </div>
+            </div>
+        `;
+        
+        console.log('[Goal Portfolio Viewer] Appending overlay to body...');
+        document.body.appendChild(overlay);
+        console.log('[Goal Portfolio Viewer] Overlay appended to body');
+
+        // Setup listeners
+        try {
+            console.log('[Goal Portfolio Viewer] Setting up sync settings listeners...');
+            setupSyncSettingsListeners();
+            console.log('[Goal Portfolio Viewer] Listeners setup complete');
+        } catch (error) {
+            console.error('[Goal Portfolio Viewer] Error setting up listeners:', error);
+        }
+
+        // Close button
+        const closeBtn = document.getElementById('gpv-sync-modal-close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                console.log('[Goal Portfolio Viewer] Close button clicked');
+                overlay.remove();
+            });
+        }
+
+        // Close on overlay click
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                console.log('[Goal Portfolio Viewer] Overlay clicked, closing...');
+                overlay.remove();
+            }
+        });
+        
+        console.log('[Goal Portfolio Viewer] Sync settings modal shown successfully');
+    } catch (error) {
+        console.error('[Goal Portfolio Viewer] Critical error in showSyncSettings:', error);
+        alert('Error opening sync settings: ' + error.message + '\n\nPlease check the browser console for more details.');
+    }
 }
 
 // ============================================
@@ -5927,9 +5957,13 @@ function updateSyncUI() {
         const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
         syncBtn.title = 'Configure cross-device sync';
         syncBtn.onclick = () => {
+            console.log('[Goal Portfolio Viewer] Sync button clicked');
+            console.log('[Goal Portfolio Viewer] typeof showSyncSettings:', typeof showSyncSettings);
             if (typeof showSyncSettings === 'function') {
+                console.log('[Goal Portfolio Viewer] Calling showSyncSettings...');
                 showSyncSettings();
             } else {
+                console.error('[Goal Portfolio Viewer] showSyncSettings is not a function!');
                 alert('Sync settings are not available. Please ensure the sync module is loaded.');
             }
         };
