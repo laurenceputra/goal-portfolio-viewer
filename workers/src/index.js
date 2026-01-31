@@ -6,7 +6,7 @@
  */
 
 import { handleSync, handleGetSync, handleDeleteSync } from './handlers';
-import { validateApiKey } from './auth';
+import { validateApiKey, validatePassword, registerUser, loginUser } from './auth';
 import { rateLimit } from './ratelimit';
 
 // Configuration
@@ -20,7 +20,7 @@ const CONFIG = {
 const CORS_HEADERS = {
 	'Access-Control-Allow-Origin': CONFIG.CORS_ORIGINS,
 	'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-	'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
+	'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, X-Password-Hash, X-User-Id',
 	'Access-Control-Max-Age': '86400' // 24 hours
 };
 
@@ -49,12 +49,43 @@ export default {
 			});
 		}
 
+		// Auth endpoints (no auth required for these)
+		if (method === 'POST' && url.pathname === '/auth/register') {
+			const body = await request.json();
+			const { userId, passwordHash } = body;
+			const result = await registerUser(userId, passwordHash, env);
+			return jsonResponse(result, result.success ? 200 : 400);
+		}
+
+		if (method === 'POST' && url.pathname === '/auth/login') {
+			const body = await request.json();
+			const { userId, passwordHash } = body;
+			const result = await loginUser(userId, passwordHash, env);
+			return jsonResponse(result, result.success ? 200 : 401);
+		}
+
 		// All other endpoints require authentication
-		const apiKey = request.headers.get('X-API-Key');
-		if (!validateApiKey(apiKey, env)) {
+		// Support both password-based and legacy API key auth
+		let authenticated = false;
+		
+		// Try password-based auth first
+		const passwordHash = request.headers.get('X-Password-Hash');
+		const userId = request.headers.get('X-User-Id');
+		if (passwordHash && userId) {
+			authenticated = await validatePassword(userId, passwordHash, env);
+		}
+		
+		// Fall back to legacy API key auth
+		if (!authenticated) {
+			const apiKey = request.headers.get('X-API-Key');
+			authenticated = validateApiKey(apiKey, env);
+		}
+		
+		if (!authenticated) {
 			return jsonResponse({
 				success: false,
-				error: 'UNAUTHORIZED'
+				error: 'UNAUTHORIZED',
+				message: 'Invalid credentials'
 			}, 401);
 		}
 

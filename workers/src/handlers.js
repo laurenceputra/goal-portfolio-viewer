@@ -131,7 +131,7 @@ function jsonResponse(data, status = 200) {
 			'Content-Type': 'application/json',
 			'Access-Control-Allow-Origin': '*',
 			'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-			'Access-Control-Allow-Headers': 'Content-Type, X-API-Key'
+			'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, X-Password-Hash, X-User-Id'
 		}
 	});
 }

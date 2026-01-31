@@ -1,19 +1,38 @@
 /**
  * Authentication middleware
- * Validates API keys for secure access
+ * Validates passwords for secure access
  */
 
 /**
- * Validate API key
+ * Validate password hash against stored user credentials
  * 
- * In production, this should compare against stored API keys.
- * For simplicity, this validates against a single API_KEY secret.
+ * @param {string} userId - User identifier (email or username)
+ * @param {string} passwordHash - SHA-256 hash of password
+ * @param {Object} env - Cloudflare Workers environment (includes KV binding)
+ * @returns {Promise<boolean>} - True if valid, false otherwise
+ */
+export async function validatePassword(userId, passwordHash, env) {
+	if (!userId || !passwordHash) {
+		return false;
+	}
+
+	// Retrieve user credentials from KV
+	const userKey = `user:${userId}`;
+	const userData = await env.SYNC_KV.get(userKey, 'json');
+	
+	if (!userData || !userData.passwordHash) {
+		return false;
+	}
+
+	// Constant-time comparison to prevent timing attacks
+	return timingSafeEqual(passwordHash, userData.passwordHash);
+}
+
+/**
+ * Legacy: Validate API key (for backward compatibility)
  * 
- * For multi-user scenarios, implement:
- * - Store API keys in KV with metadata (user, created_at, permissions)
- * - Hash API keys before storage (bcrypt/scrypt)
- * - Support key rotation
- * - Track key usage for auditing
+ * This supports existing users with API keys.
+ * New users should use password-based authentication.
  */
 export function validateApiKey(apiKey, env) {
 	if (!apiKey) {
@@ -24,8 +43,7 @@ export function validateApiKey(apiKey, env) {
 	// Note: env.API_KEY is set via `wrangler secret put API_KEY`
 	const validKey = env.API_KEY;
 	if (!validKey) {
-		console.error('API_KEY secret not configured');
-		return false;
+		return false; // No legacy API key configured
 	}
 
 	// Constant-time comparison to prevent timing attacks
@@ -73,34 +91,67 @@ export function generateApiKey() {
 }
 
 /**
- * Future: Multi-user API key management
+ * Register a new user
  * 
- * For production deployments serving multiple users, implement:
- * 
- * 1. Store API keys in KV:
- *    Key: `api_key:${hashedKey}`
- *    Value: { userId, createdAt, permissions, usageCount }
- * 
- * 2. Hash keys before storage:
- *    Use subtle.crypto.digest('SHA-256', ...) for hashing
- * 
- * 3. Validate against KV:
- *    async function validateApiKey(apiKey, env) {
- *      const hash = await hashApiKey(apiKey);
- *      const keyData = await env.SYNC_KV.get(`api_key:${hash}`, 'json');
- *      if (!keyData) return false;
- *      
- *      // Update usage counter
- *      keyData.usageCount++;
- *      keyData.lastUsed = Date.now();
- *      await env.SYNC_KV.put(`api_key:${hash}`, JSON.stringify(keyData));
- *      
- *      return true;
- *    }
- * 
- * 4. Provide key management endpoints:
- *    - POST /keys - Generate new key
- *    - GET /keys - List user's keys (masked)
- *    - DELETE /keys/:id - Revoke key
- *    - POST /keys/:id/rotate - Rotate key
+ * @param {string} userId - User identifier (email or username)
+ * @param {string} passwordHash - SHA-256 hash of password
+ * @param {Object} env - Cloudflare Workers environment
+ * @returns {Promise<Object>} - { success: boolean, message: string }
  */
+export async function registerUser(userId, passwordHash, env) {
+	if (!userId || !passwordHash) {
+		return { success: false, message: 'userId and passwordHash required' };
+	}
+
+	// Validate userId format (email or alphanumeric)
+	if (!/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(userId) && 
+	    !/^[a-zA-Z0-9_-]{3,50}$/.test(userId)) {
+		return { success: false, message: 'Invalid userId format. Use email or alphanumeric (3-50 chars)' };
+	}
+
+	// Check if user already exists
+	const userKey = `user:${userId}`;
+	const existing = await env.SYNC_KV.get(userKey);
+	
+	if (existing) {
+		return { success: false, message: 'User already exists' };
+	}
+
+	// Store user credentials
+	const userData = {
+		passwordHash,
+		createdAt: Date.now(),
+		lastLogin: null
+	};
+
+	await env.SYNC_KV.put(userKey, JSON.stringify(userData));
+
+	return { success: true, message: 'User registered successfully' };
+}
+
+/**
+ * Login (verify credentials)
+ * 
+ * @param {string} userId - User identifier
+ * @param {string} passwordHash - SHA-256 hash of password
+ * @param {Object} env - Cloudflare Workers environment
+ * @returns {Promise<Object>} - { success: boolean, message: string }
+ */
+export async function loginUser(userId, passwordHash, env) {
+	const isValid = await validatePassword(userId, passwordHash, env);
+	
+	if (!isValid) {
+		return { success: false, message: 'Invalid credentials' };
+	}
+
+	// Update last login time
+	const userKey = `user:${userId}`;
+	const userData = await env.SYNC_KV.get(userKey, 'json');
+	
+	if (userData) {
+		userData.lastLogin = Date.now();
+		await env.SYNC_KV.put(userKey, JSON.stringify(userData));
+	}
+
+	return { success: true, message: 'Login successful' };
+}
