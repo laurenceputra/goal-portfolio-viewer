@@ -65,8 +65,7 @@
     const SYNC_STORAGE_KEYS = {
         enabled: 'sync_enabled',
         serverUrl: 'sync_server_url',
-        apiKey: 'sync_api_key',
-        passphrase: 'sync_passphrase',
+        password: 'sync_password', // Single password for both auth and encryption
         userId: 'sync_user_id',
         deviceId: 'sync_device_id',
         lastSync: 'sync_last_sync',
@@ -1575,12 +1574,30 @@
         return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     }
 
+    /**
+     * Hash password for authentication
+     * Uses SHA-256 with userId as salt
+     */
+    async function hashPasswordForAuth(password, userId) {
+        if (!isSupported()) {
+            throw new Error('Web Crypto API not supported');
+        }
+
+        const encoder = new TextEncoder();
+        const data = encoder.encode(password + '|' + userId);
+        const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        return hashHex;
+    }
+
     return {
         isSupported,
         generateUUID,
         encrypt,
         decrypt,
-        hash
+        hash,
+        hashPasswordForAuth
     };
 })();
     testExports.SyncEncryption = SyncEncryption;
@@ -1606,10 +1623,9 @@
      */
     function isConfigured() {
         const serverUrl = Storage.get(SYNC_STORAGE_KEYS.serverUrl, null);
-        const apiKey = Storage.get(SYNC_STORAGE_KEYS.apiKey, null);
-        const passphrase = Storage.get(SYNC_STORAGE_KEYS.passphrase, null);
+        const password = Storage.get(SYNC_STORAGE_KEYS.password, null);
         const userId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
-        return serverUrl && apiKey && passphrase && userId;
+        return serverUrl && password && userId;
     }
 
     /**
@@ -1689,17 +1705,19 @@
      */
     async function uploadConfig(config) {
         const serverUrl = Storage.get(SYNC_STORAGE_KEYS.serverUrl, SYNC_DEFAULTS.serverUrl);
-        const apiKey = Storage.get(SYNC_STORAGE_KEYS.apiKey, null);
-        const passphrase = Storage.get(SYNC_STORAGE_KEYS.passphrase, null);
+        const password = Storage.get(SYNC_STORAGE_KEYS.password, null);
         const userId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
 
-        if (!apiKey || !passphrase || !userId) {
+        if (!password || !userId) {
             throw new Error('Sync not configured');
         }
 
-        // Encrypt config
+        // Encrypt config using password
         const plaintext = JSON.stringify(config);
-        const encryptedData = await SyncEncryption.encrypt(plaintext, passphrase);
+        const encryptedData = await SyncEncryption.encrypt(plaintext, password);
+
+        // Hash password for authentication
+        const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
 
         // Prepare payload
         const payload = {
@@ -1715,7 +1733,8 @@
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-API-Key': apiKey
+                'X-Password-Hash': passwordHash,
+                'X-User-Id': userId
             },
             body: JSON.stringify(payload)
         });
@@ -1733,19 +1752,22 @@
      */
     async function downloadConfig() {
         const serverUrl = Storage.get(SYNC_STORAGE_KEYS.serverUrl, SYNC_DEFAULTS.serverUrl);
-        const apiKey = Storage.get(SYNC_STORAGE_KEYS.apiKey, null);
-        const passphrase = Storage.get(SYNC_STORAGE_KEYS.passphrase, null);
+        const password = Storage.get(SYNC_STORAGE_KEYS.password, null);
         const userId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
 
-        if (!apiKey || !passphrase || !userId) {
+        if (!password || !userId) {
             throw new Error('Sync not configured');
         }
+
+        // Hash password for authentication
+        const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
 
         // Download from server
         const response = await fetch(`${serverUrl}/sync/${userId}`, {
             method: 'GET',
             headers: {
-                'X-API-Key': apiKey
+                'X-Password-Hash': passwordHash,
+                'X-User-Id': userId
             }
         });
 
@@ -1768,8 +1790,8 @@
             throw new Error('Invalid server response: missing encrypted data');
         }
 
-        // Decrypt config
-        const plaintext = await SyncEncryption.decrypt(data.encryptedData, passphrase);
+        // Decrypt config using password
+        const plaintext = await SyncEncryption.decrypt(data.encryptedData, password);
         const config = JSON.parse(plaintext);
 
         return {
@@ -1997,14 +2019,13 @@
      * Enable sync
      */
     function enable(config) {
-        if (!config || !config.serverUrl || !config.apiKey || !config.passphrase || !config.userId) {
-            throw new Error('Invalid sync configuration');
+        if (!config || !config.serverUrl || !config.password || !config.userId) {
+            throw new Error('Invalid sync configuration: serverUrl, password, and userId required');
         }
 
         Storage.set(SYNC_STORAGE_KEYS.enabled, true);
         Storage.set(SYNC_STORAGE_KEYS.serverUrl, config.serverUrl);
-        Storage.set(SYNC_STORAGE_KEYS.apiKey, config.apiKey);
-        Storage.set(SYNC_STORAGE_KEYS.passphrase, config.passphrase);
+        Storage.set(SYNC_STORAGE_KEYS.password, config.password);
         Storage.set(SYNC_STORAGE_KEYS.userId, config.userId);
         
         if (config.autoSync !== undefined) {
@@ -2016,6 +2037,74 @@
 
         startAutoSync();
         logDebug('[Goal Portfolio Viewer] Sync enabled');
+    }
+
+    /**
+     * Register a new user account
+     */
+    async function register(serverUrl, userId, password) {
+        if (!serverUrl || !userId || !password) {
+            throw new Error('serverUrl, userId, and password are required');
+        }
+
+        if (password.length < 8) {
+            throw new Error('Password must be at least 8 characters');
+        }
+
+        // Hash password for authentication
+        const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
+
+        // Call register endpoint
+        const response = await fetch(`${serverUrl}/auth/register`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                userId,
+                passwordHash
+            })
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+            throw new Error(result.message || 'Registration failed');
+        }
+
+        return result;
+    }
+
+    /**
+     * Login (verify credentials)
+     */
+    async function login(serverUrl, userId, password) {
+        if (!serverUrl || !userId || !password) {
+            throw new Error('serverUrl, userId, and password are required');
+        }
+
+        // Hash password for authentication
+        const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
+
+        // Call login endpoint
+        const response = await fetch(`${serverUrl}/auth/login`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                userId,
+                passwordHash
+            })
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+            throw new Error(result.message || 'Login failed');
+        }
+
+        return result;
     }
 
     /**
@@ -2055,7 +2144,9 @@
         startAutoSync,
         stopAutoSync,
         collectConfigData,
-        applyConfigData
+        applyConfigData,
+        register,
+        login
     };
 })();
     testExports.SyncManager = SyncManager;
@@ -3879,8 +3970,7 @@ function createSyncSettingsHTML() {
     
     const serverUrl = Storage.get(SYNC_STORAGE_KEYS.serverUrl, SYNC_DEFAULTS.serverUrl);
     const userId = Storage.get(SYNC_STORAGE_KEYS.userId, '');
-    const apiKey = Storage.get(SYNC_STORAGE_KEYS.apiKey, '');
-    const passphrase = Storage.get(SYNC_STORAGE_KEYS.passphrase, '');
+    const password = Storage.get(SYNC_STORAGE_KEYS.password, '');
     const autoSync = Storage.get(SYNC_STORAGE_KEYS.autoSync, SYNC_DEFAULTS.autoSync);
     const syncInterval = Storage.get(SYNC_STORAGE_KEYS.syncInterval, SYNC_DEFAULTS.syncInterval);
     
@@ -3954,49 +4044,50 @@ function createSyncSettingsHTML() {
                 </div>
 
                 <div class="gpv-sync-form-group">
-                    <label for="gpv-sync-user-id">User ID</label>
+                    <label for="gpv-sync-user-id">User ID / Email</label>
                     <input 
                         type="text" 
                         id="gpv-sync-user-id"
                         class="gpv-sync-input"
                         value="${escapeHtml(userId)}"
-                        placeholder="your-unique-user-id"
+                        placeholder="your.email@example.com or username"
                         ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
                     />
                     <p class="gpv-sync-help">
-                        A unique identifier for your account (e.g., email address or custom ID)
+                        Your unique identifier - use email address or custom username (3-50 characters)
                     </p>
                 </div>
 
                 <div class="gpv-sync-form-group">
-                    <label for="gpv-sync-api-key">API Key</label>
+                    <label for="gpv-sync-password">Password</label>
                     <input 
                         type="password" 
-                        id="gpv-sync-api-key"
+                        id="gpv-sync-password"
                         class="gpv-sync-input"
-                        value="${escapeHtml(apiKey)}"
-                        placeholder="Your API key from the sync server"
+                        value="${escapeHtml(password)}"
+                        placeholder="Strong password (min 8 characters)"
                         ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
                     />
                     <p class="gpv-sync-help">
-                        API key for authentication with the sync server
+                        🔒 Your password is used for both authentication and encryption.<br>
+                        ⚠️ <strong>Keep it safe!</strong> If lost, your data cannot be recovered.
                     </p>
                 </div>
 
-                <div class="gpv-sync-form-group">
-                    <label for="gpv-sync-passphrase">Encryption Passphrase</label>
-                    <input 
-                        type="password" 
-                        id="gpv-sync-passphrase"
-                        class="gpv-sync-input"
-                        value="${escapeHtml(passphrase)}"
-                        placeholder="Strong passphrase for encryption"
-                        ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
-                    />
-                    <p class="gpv-sync-help">
-                        ⚠️ Keep this safe! Your data is encrypted with this passphrase. If lost, data cannot be recovered.
+                ${!isConfigured ? `
+                    <div class="gpv-sync-auth-buttons">
+                        <button type="button" class="gpv-sync-btn-primary" id="gpv-sync-register-btn" ${!cryptoSupported ? 'disabled' : ''}>
+                            📝 Sign Up
+                        </button>
+                        <button type="button" class="gpv-sync-btn-secondary" id="gpv-sync-login-btn" ${!cryptoSupported ? 'disabled' : ''}>
+                            🔑 Login
+                        </button>
+                    </div>
+                    <p class="gpv-sync-help" style="text-align: center; margin-top: 8px;">
+                        New user? Click <strong>Sign Up</strong> to create an account.<br>
+                        Existing user? Click <strong>Login</strong> to verify credentials.
                     </p>
-                </div>
+                ` : ''}
 
                 <div class="gpv-sync-form-group">
                     <label class="gpv-sync-toggle">
@@ -4099,18 +4190,17 @@ function setupSyncSettingsListeners() {
                 const enabled = document.getElementById('gpv-sync-enabled').checked;
                 const serverUrl = document.getElementById('gpv-sync-server-url').value.trim();
                 const userId = document.getElementById('gpv-sync-user-id').value.trim();
-                const apiKey = document.getElementById('gpv-sync-api-key').value.trim();
-                const passphrase = document.getElementById('gpv-sync-passphrase').value;
+                const password = document.getElementById('gpv-sync-password').value;
                 const autoSync = document.getElementById('gpv-sync-auto').checked;
                 const syncInterval = parseInt(document.getElementById('gpv-sync-interval').value) || SYNC_DEFAULTS.syncInterval;
 
                 // Validation
                 if (enabled) {
-                    if (!serverUrl || !userId || !apiKey || !passphrase) {
+                    if (!serverUrl || !userId || !password) {
                         throw new Error('All fields are required when sync is enabled');
                     }
-                    if (passphrase.length < 8) {
-                        throw new Error('Passphrase must be at least 8 characters');
+                    if (password.length < 8) {
+                        throw new Error('Password must be at least 8 characters');
                     }
                     if (syncInterval < 5 || syncInterval > 1440) {
                         throw new Error('Sync interval must be between 5 and 1440 minutes');
@@ -4121,8 +4211,7 @@ function setupSyncSettingsListeners() {
                     SyncManager.enable({
                         serverUrl,
                         userId,
-                        apiKey,
-                        passphrase,
+                        password,
                         autoSync,
                         syncInterval
                     });
@@ -4146,6 +4235,80 @@ function setupSyncSettingsListeners() {
             } finally {
                 saveBtn.disabled = false;
                 saveBtn.textContent = 'Save Settings';
+            }
+        });
+    }
+
+    // Register button
+    const registerBtn = document.getElementById('gpv-sync-register-btn');
+    if (registerBtn) {
+        registerBtn.addEventListener('click', async () => {
+            try {
+                registerBtn.disabled = true;
+                registerBtn.textContent = 'Signing up...';
+
+                const serverUrl = document.getElementById('gpv-sync-server-url').value.trim();
+                const userId = document.getElementById('gpv-sync-user-id').value.trim();
+                const password = document.getElementById('gpv-sync-password').value;
+
+                if (!serverUrl || !userId || !password) {
+                    throw new Error('Please fill in Server URL, User ID, and Password');
+                }
+
+                if (password.length < 8) {
+                    throw new Error('Password must be at least 8 characters');
+                }
+
+                const result = await SyncManager.register(serverUrl, userId, password);
+                showSuccessMessage('✅ Account created successfully! You can now enable sync.');
+                
+                // Refresh UI to show that user is now registered
+                setTimeout(() => {
+                    const settingsPanel = document.querySelector('.gpv-sync-settings');
+                    if (settingsPanel) {
+                        settingsPanel.outerHTML = createSyncSettingsHTML();
+                        setupSyncSettingsListeners();
+                    }
+                }, 1500);
+            } catch (error) {
+                console.error('[Goal Portfolio Viewer] Registration failed:', error);
+                showErrorMessage(`Registration failed: ${error.message}`);
+            } finally {
+                registerBtn.disabled = false;
+                registerBtn.textContent = '📝 Sign Up';
+            }
+        });
+    }
+
+    // Login button
+    const loginBtn = document.getElementById('gpv-sync-login-btn');
+    if (loginBtn) {
+        loginBtn.addEventListener('click', async () => {
+            try {
+                loginBtn.disabled = true;
+                loginBtn.textContent = 'Logging in...';
+
+                const serverUrl = document.getElementById('gpv-sync-server-url').value.trim();
+                const userId = document.getElementById('gpv-sync-user-id').value.trim();
+                const password = document.getElementById('gpv-sync-password').value;
+
+                if (!serverUrl || !userId || !password) {
+                    throw new Error('Please fill in Server URL, User ID, and Password');
+                }
+
+                const result = await SyncManager.login(serverUrl, userId, password);
+                showSuccessMessage('✅ Login successful! You can now enable sync.');
+                
+                // Auto-enable sync after successful login
+                document.getElementById('gpv-sync-enabled').checked = true;
+                document.getElementById('gpv-sync-enabled').dispatchEvent(new Event('change'));
+                
+            } catch (error) {
+                console.error('[Goal Portfolio Viewer] Login failed:', error);
+                showErrorMessage(`Login failed: ${error.message}`);
+            } finally {
+                loginBtn.disabled = false;
+                loginBtn.textContent = '🔑 Login';
             }
         });
     }
