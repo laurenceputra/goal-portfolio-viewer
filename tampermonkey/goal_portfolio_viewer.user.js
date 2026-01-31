@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.7.7
-// @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore).
+// @version      2.8.0
+// @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
+// @grant        GM_listValues
 // @grant        GM_cookie
 // @run-at       document-start
 // @updateURL    https://raw.githubusercontent.com/laurenceputra/goal-portfolio-viewer/main/tampermonkey/goal_portfolio_viewer.user.js
@@ -56,6 +57,37 @@
         remainingAlert: 'gpv-remaining-alert',
         diffCell: 'gpv-diff-cell'
     };
+
+    // ============================================
+    // Sync Constants (Cross-Device Sync Feature)
+    // ============================================
+
+    const SYNC_STORAGE_KEYS = {
+        enabled: 'sync_enabled',
+        serverUrl: 'sync_server_url',
+        passphrase: 'sync_passphrase',
+        userId: 'sync_user_id',
+        deviceId: 'sync_device_id',
+        lastSync: 'sync_last_sync',
+        lastSyncHash: 'sync_last_hash',
+        autoSync: 'sync_auto_sync',
+        syncInterval: 'sync_interval_minutes'
+    };
+
+    const SYNC_DEFAULTS = {
+        serverUrl: 'https://goal-sync.workers.dev',
+        autoSync: false,
+        syncInterval: 30 // minutes
+    };
+
+    const SYNC_STATUS = {
+        idle: 'idle',
+        syncing: 'syncing',
+        success: 'success',
+        error: 'error',
+        conflict: 'conflict'
+    };
+
 
     // Export surface for tests; populated as helpers become available.
     // When set before load, window.__GPV_DISABLE_AUTO_INIT prevents DOM auto-init (used in tests).
