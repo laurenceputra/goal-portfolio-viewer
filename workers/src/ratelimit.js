@@ -36,11 +36,10 @@ const RATE_LIMITS = {
 export async function rateLimit(request, env, pathname) {
 	const method = request.method;
 	const userId = request.headers.get('X-User-Id');
-	const apiKey = request.headers.get('X-API-Key');
 	const connectingIP = request.headers.get('CF-Connecting-IP');
 
-	// Use userId for password auth, API key for legacy, or IP as fallback
-	const identifier = userId || apiKey || connectingIP || 'unknown';
+	// Use userId for password auth, or IP as fallback
+	const identifier = userId || connectingIP || 'unknown';
 
 	// Normalize pathname (replace dynamic segments)
 	const normalizedPath = pathname.startsWith('/sync/') && pathname !== '/sync'

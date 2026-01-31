@@ -86,40 +86,15 @@ export async function validatePassword(userId, passwordHash, env) {
 		return false;
 	}
 
-	// Support legacy format (direct SHA-256 hash) for backward compatibility
+	// Verify hardened password storage
 	if (!userData.salt || !userData.derivedHash) {
-		// Legacy format: direct comparison
-		if (!userData.passwordHash) {
-			return false;
-		}
-		return timingSafeEqual(passwordHash, userData.passwordHash);
-	}
-
-	// New format: derive storage hash from incoming hash and compare
-	const derivedHash = await deriveStorageHash(passwordHash, userData.salt);
-	return timingSafeEqual(derivedHash, userData.derivedHash);
-}
-
-/**
- * Legacy: Validate API key (for backward compatibility)
- * 
- * This supports existing users with API keys.
- * New users should use password-based authentication.
- */
-export function validateApiKey(apiKey, env) {
-	if (!apiKey) {
+		// Missing required fields
 		return false;
 	}
 
-	// Check against stored secret
-	// Note: env.API_KEY is set via `wrangler secret put API_KEY`
-	const validKey = env.API_KEY;
-	if (!validKey) {
-		return false; // No legacy API key configured
-	}
-
-	// Constant-time comparison to prevent timing attacks
-	return timingSafeEqual(apiKey, validKey);
+	// Derive storage hash from incoming hash and compare
+	const derivedHash = await deriveStorageHash(passwordHash, userData.salt);
+	return timingSafeEqual(derivedHash, userData.derivedHash);
 }
 
 /**
@@ -137,29 +112,6 @@ function timingSafeEqual(a, b) {
 	}
 
 	return result === 0;
-}
-
-/**
- * Generate API key (utility function, not used in runtime)
- * 
- * Usage (in Node.js):
- * ```
- * node -e "console.log('sk_live_' + require('crypto').randomBytes(32).toString('base64url'))"
- * ```
- * 
- * Then store as secret:
- * ```
- * npx wrangler secret put API_KEY
- * ```
- */
-export function generateApiKey() {
-	// This is a reference implementation
-	// In practice, generate keys server-side or via CLI
-	const randomBytes = new Uint8Array(32);
-	crypto.getRandomValues(randomBytes);
-	const base64 = btoa(String.fromCharCode(...randomBytes));
-	const urlSafe = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-	return `sk_live_${urlSafe}`;
 }
 
 /**

@@ -91,7 +91,6 @@
 
     // Export surface for tests; populated as helpers become available.
     // When set before load, window.__GPV_DISABLE_AUTO_INIT prevents DOM auto-init (used in tests).
-    const testExports = {};
 
     function logDebug(message, data) {
         if (!DEBUG) {
@@ -1648,7 +1647,6 @@
         hashPasswordForAuth
     };
 })();
-    testExports.SyncEncryption = SyncEncryption;
 
     // ============================================
     // Sync Manager (Cross-Device Sync)
@@ -2197,7 +2195,6 @@
         login
     };
 })();
-    testExports.SyncManager = SyncManager;
 
     // ============================================
     // Browser-Only Code (Skip in Node.js/Testing Environment)
@@ -2405,7 +2402,6 @@
             logDebug(`[Goal Portfolio Viewer] Deleted goal fixed state for ${goalId}`);
         }
     };
-    testExports.GoalTargetStore = GoalTargetStore;
     
     /**
      * Load previously intercepted API data from Tampermonkey storage
@@ -2698,7 +2694,6 @@
         }
         return parsed;
     }
-    testExports.readPerformanceCache = readPerformanceCache;
 
     function writePerformanceCache(goalId, responseData) {
         const key = getPerformanceCacheKey(goalId);
@@ -2708,7 +2703,6 @@
         };
         Storage.writeJson(key, payload, 'Error writing performance cache');
     }
-    testExports.writePerformanceCache = writePerformanceCache;
 
     function getCachedPerformanceResponse(goalId, ignoreFreshness = false) {
         const cached = readPerformanceCache(goalId, ignoreFreshness);
@@ -2717,7 +2711,6 @@
         }
         return cached.response ? normalizePerformanceResponse(cached.response) : null;
     }
-    testExports.getCachedPerformanceResponse = getCachedPerformanceResponse;
 
     async function fetchPerformanceForGoal(goalId) {
         const url = `${PERFORMANCE_ENDPOINT}?displayCcy=SGD&goalId=${encodeURIComponent(goalId)}`;
@@ -2744,7 +2737,6 @@
         }
         return cloned.json();
     }
-    testExports.fetchPerformanceForGoal = fetchPerformanceForGoal;
 
     async function ensurePerformanceData(goalIds) {
         const results = {};
@@ -2792,7 +2784,6 @@
 
         return results;
     }
-    testExports.ensurePerformanceData = ensurePerformanceData;
 
     function buildGoalTypePerformanceSummary(performanceResponses) {
         // Guard against empty/null input - Staff Engineer requirement
@@ -2837,7 +2828,6 @@
             metrics
         };
     }
-    testExports.buildGoalTypePerformanceSummary = buildGoalTypePerformanceSummary;
 
     function getLatestPerformanceCacheTimestamp(goalIds) {
         if (!Array.isArray(goalIds)) {
@@ -2855,7 +2845,6 @@
         });
         return latestFetchedAt;
     }
-    testExports.getLatestPerformanceCacheTimestamp = getLatestPerformanceCacheTimestamp;
 
     function clearPerformanceCache(goalIds) {
         if (!Array.isArray(goalIds)) {
@@ -2870,7 +2859,6 @@
             delete state.performance.goalData[goalId];
         });
     }
-    testExports.clearPerformanceCache = clearPerformanceCache;
 
     // ============================================
     // UI
@@ -2898,7 +2886,6 @@
             Math.max(PERFORMANCE_CHART_MIN_HEIGHT, targetHeight || PERFORMANCE_CHART_DEFAULT_HEIGHT)
         );
     }
-    testExports.getChartHeightForWidth = getChartHeightForWidth;
 
     function getChartPadding(chartWidth, chartHeight) {
         const base = Math.min(chartWidth, chartHeight);
@@ -2921,7 +2908,6 @@
             height: height || PERFORMANCE_CHART_DEFAULT_HEIGHT
         };
     }
-    testExports.getChartDimensions = getChartDimensions;
 
     function renderPerformanceChart(chartWrapper, series, dimensionsOverride) {
         if (!chartWrapper) {
@@ -2932,7 +2918,6 @@
         chartWrapper.innerHTML = '';
         chartWrapper.appendChild(svg);
     }
-    testExports.renderPerformanceChart = renderPerformanceChart;
 
     function initializePerformanceChart(chartWrapper, series) {
         if (typeof ResizeObserver === 'undefined' || !chartWrapper) {
@@ -3192,7 +3177,6 @@
         svg.appendChild(pointGroup);
         return svg;
     }
-    testExports.createLineChartSvg = createLineChartSvg;
 
     function buildPerformanceWindowGrid(windowReturns) {
         const grid = createElement('div', 'gpv-performance-window-grid');
@@ -3224,7 +3208,6 @@
 
         return grid;
     }
-    testExports.buildPerformanceWindowGrid = buildPerformanceWindowGrid;
 
     function buildPerformanceMetricsTable(metrics) {
         const table = createElement('table', 'gpv-performance-metrics-table');
@@ -3468,7 +3451,6 @@
 
         contentDiv.appendChild(summaryContainer);
     }
-    testExports.renderSummaryView = renderSummaryView;
 
     function renderBucketView({
         contentDiv,
@@ -3868,7 +3850,6 @@
             projectedInvestmentsState
         });
     }
-    testExports.handleGoalTargetChange = handleGoalTargetChange;
 
     function handleGoalFixedToggle({
         input,
@@ -3896,7 +3877,6 @@
             options: { forceTargetRefresh: true }
         });
     }
-    testExports.handleGoalFixedToggle = handleGoalFixedToggle;
 
     /**
      * Handle changes to projected investment input
@@ -3947,7 +3927,6 @@
             });
         }
     }
-    testExports.handleProjectedInvestmentChange = handleProjectedInvestmentChange;
 
     const EventHandlers = {
         handleGoalTargetChange,
@@ -4451,7 +4430,6 @@ function setupSyncSettingsListeners() {
  */
 
 function showSyncSettings() {
-    console.log('[Goal Portfolio Viewer] showSyncSettings called');
     
     try {
         // Get or create overlay
@@ -4470,11 +4448,9 @@ function showSyncSettings() {
         const container = document.createElement('div');
         container.className = 'gpv-container';
         
-        console.log('[Goal Portfolio Viewer] Creating sync settings HTML...');
         let settingsHTML;
         try {
             settingsHTML = createSyncSettingsHTML();
-            console.log('[Goal Portfolio Viewer] Settings HTML created successfully');
         } catch (error) {
             console.error('[Goal Portfolio Viewer] Error creating settings HTML:', error);
             settingsHTML = '<div style="padding: 20px; color: #ef4444;">Error loading sync settings. Please check console for details.</div>';
@@ -4493,7 +4469,6 @@ function showSyncSettings() {
         backBtn.innerHTML = '← Back to Investments';
         backBtn.title = 'Return to portfolio view';
         backBtn.onclick = () => {
-            console.log('[Goal Portfolio Viewer] Back button clicked');
             // Re-render portfolio view
             if (typeof renderPortfolioView === 'function') {
                 overlay.innerHTML = '';
@@ -4508,7 +4483,6 @@ function showSyncSettings() {
         closeBtn.className = 'gpv-close-btn';
         closeBtn.innerHTML = '✕';
         closeBtn.onclick = () => {
-            console.log('[Goal Portfolio Viewer] Close button clicked');
             overlay.remove();
         };
         
@@ -4531,13 +4505,10 @@ function showSyncSettings() {
         container.appendChild(body);
         overlay.appendChild(container);
         
-        console.log('[Goal Portfolio Viewer] Container appended to overlay');
 
         // Setup listeners
         try {
-            console.log('[Goal Portfolio Viewer] Setting up sync settings listeners...');
             setupSyncSettingsListeners();
-            console.log('[Goal Portfolio Viewer] Listeners setup complete');
         } catch (error) {
             console.error('[Goal Portfolio Viewer] Error setting up listeners:', error);
         }
@@ -4545,12 +4516,10 @@ function showSyncSettings() {
         // Close on overlay click (outside container)
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) {
-                console.log('[Goal Portfolio Viewer] Overlay clicked, closing...');
                 overlay.remove();
             }
         });
         
-        console.log('[Goal Portfolio Viewer] Sync settings modal shown successfully in overlay');
     } catch (error) {
         console.error('[Goal Portfolio Viewer] Critical error in showSyncSettings:', error);
         alert('Error opening sync settings: ' + error.message + '\n\nPlease check the browser console for more details.');
@@ -6219,10 +6188,7 @@ function updateSyncUI() {
         const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
         syncBtn.title = 'Configure cross-device sync';
         syncBtn.onclick = () => {
-            console.log('[Goal Portfolio Viewer] Sync button clicked');
-            console.log('[Goal Portfolio Viewer] typeof showSyncSettings:', typeof showSyncSettings);
             if (typeof showSyncSettings === 'function') {
-                console.log('[Goal Portfolio Viewer] Calling showSyncSettings...');
                 showSyncSettings();
             } else {
                 console.error('[Goal Portfolio Viewer] showSyncSettings is not a function!');
@@ -6462,7 +6428,6 @@ function updateSyncUI() {
             
             // Add event listener for back button from sync settings
             document.addEventListener('gpv-show-portfolio', () => {
-                console.log('[Goal Portfolio Viewer] gpv-show-portfolio event received');
                 showOverlay();
             });
         } else {
@@ -6543,7 +6508,7 @@ function updateSyncUI() {
             createSequentialRequestQueue
         };
 
-        module.exports = { ...baseExports, ...testExports };
+        module.exports = baseExports;
     }
 
 })();

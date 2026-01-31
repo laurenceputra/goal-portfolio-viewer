@@ -6,7 +6,7 @@
  */
 
 import { handleSync, handleGetSync, handleDeleteSync } from './handlers';
-import { validateApiKey, validatePassword, registerUser, loginUser } from './auth';
+import { validatePassword, registerUser, loginUser } from './auth';
 import { rateLimit } from './ratelimit';
 
 // Configuration
@@ -20,7 +20,7 @@ const CONFIG = {
 const CORS_HEADERS = {
 	'Access-Control-Allow-Origin': CONFIG.CORS_ORIGINS,
 	'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-	'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, X-Password-Hash, X-User-Id',
+	'Access-Control-Allow-Headers': 'Content-Type, X-Password-Hash, X-User-Id',
 	'Access-Control-Max-Age': '86400' // 24 hours
 };
 
@@ -104,12 +104,11 @@ export default {
 			}
 		}
 
-		// All other endpoints require authentication
-		// Support both password-based and legacy API key auth
+		// All other endpoints require authentication via password
 		let authenticated = false;
 		let authenticatedUserId = null; // Track which user is authenticated
 		
-		// Try password-based auth first
+		// Password-based authentication
 		const passwordHash = request.headers.get('X-Password-Hash');
 		const headerUserId = request.headers.get('X-User-Id');
 		if (passwordHash && headerUserId) {
@@ -117,13 +116,6 @@ export default {
 			if (authenticated) {
 				authenticatedUserId = headerUserId;
 			}
-		}
-		
-		// Fall back to legacy API key auth
-		if (!authenticated) {
-			const apiKey = request.headers.get('X-API-Key');
-			authenticated = validateApiKey(apiKey, env);
-			// Legacy API key has access to all users (backward compatibility)
 		}
 		
 		if (!authenticated) {
