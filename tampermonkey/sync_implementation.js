@@ -325,12 +325,13 @@ const SyncManager = (() => {
             encryptedData,
             deviceId: getDeviceId(),
             timestamp: config.timestamp,
-            version: config.version
+            version: config.version,
+            userId
         };
 
-        // Upload to server
-        const response = await fetch(`${serverUrl}/sync/${userId}`, {
-            method: 'PUT',
+        // Upload to server (POST /sync)
+        const response = await fetch(`${serverUrl}/sync`, {
+            method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-API-Key': apiKey

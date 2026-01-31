@@ -65,6 +65,7 @@
     const SYNC_STORAGE_KEYS = {
         enabled: 'sync_enabled',
         serverUrl: 'sync_server_url',
+        apiKey: 'sync_api_key',
         passphrase: 'sync_passphrase',
         userId: 'sync_user_id',
         deviceId: 'sync_device_id',
@@ -1389,14 +1390,25 @@
     }
 
     /**
-     * Generate a UUID v4
+     * Generate a UUID v4 using cryptographically secure randomness
      */
     function generateUUID() {
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-            const r = Math.random() * 16 | 0;
-            const v = c === 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-        });
+        // Use crypto.randomUUID() if available (modern browsers)
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return window.crypto.randomUUID();
+        }
+
+        // Fallback: use crypto.getRandomValues() for secure random bytes
+        const buffer = new Uint8Array(16);
+        window.crypto.getRandomValues(buffer);
+
+        // Set version (4) and variant (RFC 4122) bits
+        buffer[6] = (buffer[6] & 0x0f) | 0x40;
+        buffer[8] = (buffer[8] & 0x3f) | 0x80;
+
+        // Convert to UUID string format
+        const hex = Array.from(buffer).map(b => b.toString(16).padStart(2, '0')).join('');
+        return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20,32)}`;
     }
 
     /**
@@ -1639,12 +1651,13 @@
             encryptedData,
             deviceId: getDeviceId(),
             timestamp: config.timestamp,
-            version: config.version
+            version: config.version,
+            userId
         };
 
-        // Upload to server
-        const response = await fetch(`${serverUrl}/sync/${userId}`, {
-            method: 'PUT',
+        // Upload to server (POST /sync)
+        const response = await fetch(`${serverUrl}/sync`, {
+            method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-API-Key': apiKey
@@ -1693,16 +1706,23 @@
 
         const serverData = await response.json();
 
+        // Server returns: { success: true, data: { encryptedData, deviceId, timestamp, version } }
+        const { data } = serverData || {};
+
+        if (!data || !data.encryptedData) {
+            throw new Error('Invalid server response: missing encrypted data');
+        }
+
         // Decrypt config
-        const plaintext = await SyncEncryption.decrypt(serverData.encryptedData, passphrase);
+        const plaintext = await SyncEncryption.decrypt(data.encryptedData, passphrase);
         const config = JSON.parse(plaintext);
 
         return {
             config,
             metadata: {
-                deviceId: serverData.deviceId,
-                timestamp: serverData.timestamp,
-                version: serverData.version
+                deviceId: data.deviceId,
+                timestamp: data.timestamp,
+                version: data.version
             }
         };
     }
@@ -1754,7 +1774,9 @@
         }
 
         syncStatus = SYNC_STATUS.syncing;
-        updateSyncUI();
+        if (typeof updateSyncUI === 'function') {
+            updateSyncUI();
+        }
 
         try {
             const localConfig = collectConfigData();
@@ -1791,7 +1813,9 @@
                     
                     if (conflict && !force) {
                         syncStatus = SYNC_STATUS.conflict;
-                        showConflictResolutionUI(conflict);
+                        if (typeof showConflictResolutionUI === 'function') {
+                            showConflictResolutionUI(conflict);
+                        }
                         return { status: 'conflict', conflict };
                     } else if (serverData) {
                         // Apply server data
@@ -1808,13 +1832,17 @@
                 }
             }
 
-            updateSyncUI();
+            if (typeof updateSyncUI === 'function') {
+                updateSyncUI();
+            }
             return { status: 'success' };
         } catch (error) {
             console.error('[Goal Portfolio Viewer] Sync failed:', error);
             syncStatus = SYNC_STATUS.error;
             lastError = error.message;
-            updateSyncUI();
+            if (typeof updateSyncUI === 'function') {
+                updateSyncUI();
+            }
             throw error;
         }
     }
@@ -1825,7 +1853,9 @@
     async function resolveConflict(resolution, conflict) {
         try {
             syncStatus = SYNC_STATUS.syncing;
-            updateSyncUI();
+            if (typeof updateSyncUI === 'function') {
+                updateSyncUI();
+            }
 
             if (resolution === 'local') {
                 // Upload local, overwrite server
@@ -1841,7 +1871,9 @@
 
             syncStatus = SYNC_STATUS.success;
             lastError = null;
-            updateSyncUI();
+            if (typeof updateSyncUI === 'function') {
+                updateSyncUI();
+            }
             
             // Refresh the portfolio view
             if (typeof renderPortfolioView === 'function') {
@@ -1851,7 +1883,9 @@
             console.error('[Goal Portfolio Viewer] Conflict resolution failed:', error);
             syncStatus = SYNC_STATUS.error;
             lastError = error.message;
-            updateSyncUI();
+            if (typeof updateSyncUI === 'function') {
+                updateSyncUI();
+            }
             throw error;
         }
     }
