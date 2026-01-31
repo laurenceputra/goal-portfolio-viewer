@@ -1,0 +1,457 @@
+# Cloudflare Workers Sync Backend
+
+This directory contains the backend sync service for Goal Portfolio Viewer, built on Cloudflare Workers.
+
+## 🌟 Features
+
+- ✅ End-to-end encrypted sync (server never sees plaintext)
+- ✅ Privacy-first architecture
+- ✅ Free tier supports 1000+ users
+- ✅ Global edge network (low latency)
+- ✅ Self-hostable (you control your data)
+- ✅ Simple API (3 endpoints)
+
+## 📋 Prerequisites
+
+- [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier works)
+- [Node.js](https://nodejs.org/) (v18 or later)
+- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/) (Cloudflare Workers CLI)
+
+## 🚀 Quick Start (Self-Hosting)
+
+### 1. Install Dependencies
+
+```bash
+cd workers
+npm install
+```
+
+### 2. Login to Cloudflare
+
+```bash
+npx wrangler login
+```
+
+This opens a browser to authenticate with your Cloudflare account.
+
+### 3. Create KV Namespace
+
+```bash
+# Production namespace
+npx wrangler kv:namespace create "SYNC_KV"
+
+# Development namespace
+npx wrangler kv:namespace create "SYNC_KV" --preview
+```
+
+This outputs namespace IDs like:
+```
+{ binding = "SYNC_KV", id = "abc123..." }
+```
+
+### 4. Update Configuration
+
+Edit `wrangler.toml` and add your KV namespace IDs:
+
+```toml
+[[kv_namespaces]]
+binding = "SYNC_KV"
+id = "YOUR_NAMESPACE_ID_HERE"  # From step 3
+preview_id = "YOUR_PREVIEW_NAMESPACE_ID_HERE"
+```
+
+### 5. Set API Key Secret
+
+```bash
+# Generate a secure API key
+node -e "console.log('sk_live_' + require('crypto').randomBytes(32).toString('base64url'))"
+
+# Store it as a secret
+npx wrangler secret put API_KEY
+# Paste the generated key when prompted
+```
+
+**Important**: Save this API key! You'll need it in the UserScript settings.
+
+### 6. Deploy
+
+```bash
+# Deploy to production
+npm run deploy
+
+# Or deploy to staging first
+npm run deploy:staging
+```
+
+Your API will be available at: `https://goal-portfolio-sync.YOUR_SUBDOMAIN.workers.dev`
+
+### 7. Test Deployment
+
+```bash
+# Health check
+curl https://goal-portfolio-sync.YOUR_SUBDOMAIN.workers.dev/health
+
+# Should return:
+# {"status":"ok","version":"1.0.0","timestamp":1234567890}
+```
+
+### 8. Configure UserScript
+
+1. Open Goal Portfolio Viewer settings
+2. Navigate to "Sync" tab
+3. Enter:
+   - **Server URL**: `https://goal-portfolio-sync.YOUR_SUBDOMAIN.workers.dev`
+   - **API Key**: The key from step 5
+   - **Passphrase**: Create a strong passphrase (this encrypts your data)
+4. Click "Enable Sync"
+
+Done! Your settings will now sync across all devices where you've configured this.
+
+## 🛠️ Development
+
+### Local Development
+
+```bash
+# Start local development server
+npm run dev
+
+# API available at http://localhost:8787
+```
+
+Test locally:
+```bash
+# Health check
+curl http://localhost:8787/health
+
+# Upload test (replace YOUR_API_KEY)
+curl -X POST http://localhost:8787/sync \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "test-user-123",
+    "deviceId": "test-device-456",
+    "encryptedData": "dGVzdCBlbmNyeXB0ZWQgZGF0YQ==",
+    "timestamp": 1234567890000,
+    "version": 1
+  }'
+
+# Download test
+curl http://localhost:8787/sync/test-user-123 \
+  -H "X-API-Key: YOUR_API_KEY"
+```
+
+### Run Tests
+
+```bash
+npm test
+```
+
+### View Logs
+
+```bash
+# Tail production logs
+npx wrangler tail
+
+# Filter for errors only
+npx wrangler tail --status error
+```
+
+## 📚 API Reference
+
+### Base URL
+```
+https://goal-portfolio-sync.YOUR_SUBDOMAIN.workers.dev
+```
+
+### Authentication
+All endpoints (except `/health`) require an API key in the `X-API-Key` header.
+
+### Endpoints
+
+#### Health Check
+```
+GET /health
+
+Response (200):
+{
+  "status": "ok",
+  "version": "1.0.0",
+  "timestamp": 1234567890000
+}
+```
+
+#### Upload Config
+```
+POST /sync
+
+Headers:
+  X-API-Key: <your-api-key>
+  Content-Type: application/json
+
+Body:
+{
+  "userId": "string (uuid)",
+  "deviceId": "string (uuid)",
+  "encryptedData": "string (base64)",
+  "timestamp": number,
+  "version": number
+}
+
+Response (200):
+{
+  "success": true,
+  "timestamp": 1234567890000
+}
+
+Response (409 Conflict):
+{
+  "success": false,
+  "error": "CONFLICT",
+  "serverData": { ... }
+}
+```
+
+#### Download Config
+```
+GET /sync/:userId
+
+Headers:
+  X-API-Key: <your-api-key>
+
+Response (200):
+{
+  "success": true,
+  "data": {
+    "encryptedData": "string (base64)",
+    "deviceId": "string",
+    "timestamp": number,
+    "version": number
+  }
+}
+
+Response (404):
+{
+  "success": false,
+  "error": "NOT_FOUND"
+}
+```
+
+#### Delete Config
+```
+DELETE /sync/:userId
+
+Headers:
+  X-API-Key: <your-api-key>
+
+Response (200):
+{
+  "success": true
+}
+```
+
+### Rate Limits
+
+- **Upload**: 10 requests/minute per API key
+- **Download**: 60 requests/minute per API key
+- **Delete**: 5 requests/minute per API key
+
+If rate limited, server returns `429 Too Many Requests` with `Retry-After` header.
+
+## 🔒 Security
+
+### What's Encrypted?
+All user config data is encrypted client-side using AES-GCM 256-bit encryption before upload.
+
+### What's Stored?
+The server stores:
+- User ID (identifier, not personal info)
+- Device ID (random UUID)
+- Encrypted blob (cannot be decrypted by server)
+- Timestamp (metadata)
+
+The server **NEVER** sees:
+- Your passphrase
+- Your goal names
+- Your investment amounts
+- Your settings
+
+### Key Management
+- API keys are stored as Cloudflare secrets (never in code)
+- API keys can be rotated anytime
+- Each user should have a unique API key
+
+### Audit
+All access is logged (can be reviewed via `wrangler tail`).
+
+## 💰 Cost Breakdown
+
+### Cloudflare Free Tier Limits
+- **Workers**: 100,000 requests/day
+- **KV Storage**: 1GB
+- **KV Reads**: 100,000/day
+- **KV Writes**: 1,000/day
+
+### Typical Usage (per user per day)
+- **Syncs**: 12 (every 2 hours)
+- **Storage**: ~1KB
+- **Bandwidth**: ~12KB/day
+
+### Cost for 1000 Active Users
+- Workers: $0 (within free tier)
+- KV Writes: ~$2/month (12,000 writes/day exceeds 1,000 free)
+- KV Reads: $0 (within free tier)
+- Storage: $0 (1MB total, well within 1GB)
+
+**Total**: ~$2/month for 1000 users
+
+### Scaling
+If you exceed free tier:
+- Workers: $5/month + $0.50 per million requests
+- KV: $0.50 per million reads/writes, $0.50/GB storage
+
+A $10/month budget supports 10,000+ active users.
+
+## 🔧 Configuration
+
+### Environment Variables
+
+Set in `wrangler.toml`:
+
+```toml
+[env.production]
+vars = { 
+  ENVIRONMENT = "production",
+  MAX_PAYLOAD_SIZE = "10240",  # 10KB
+  ENABLE_DEBUG = "false"
+}
+
+[env.staging]
+vars = { 
+  ENVIRONMENT = "staging",
+  MAX_PAYLOAD_SIZE = "10240",
+  ENABLE_DEBUG = "true"
+}
+```
+
+### Secrets
+
+Stored securely, not in code:
+
+```bash
+# Set API key
+npx wrangler secret put API_KEY
+
+# Update API key
+npx wrangler secret put API_KEY --env production
+
+# List secrets (doesn't show values)
+npx wrangler secret list
+```
+
+### Custom Domain
+
+Add a custom domain in Cloudflare dashboard or `wrangler.toml`:
+
+```toml
+routes = [
+  { pattern = "sync.yourdomain.com/*", zone_name = "yourdomain.com" }
+]
+```
+
+## 📊 Monitoring
+
+### View Metrics
+```bash
+# Open dashboard
+npx wrangler dashboard
+
+# Or visit: https://dash.cloudflare.com → Workers → Your Worker → Metrics
+```
+
+### Tail Logs
+```bash
+# Real-time logs
+npx wrangler tail
+
+# Filter by status code
+npx wrangler tail --status error
+npx wrangler tail --status ok
+
+# Filter by method
+npx wrangler tail --method POST
+```
+
+### Alerts
+
+Setup alerts in Cloudflare dashboard:
+1. Workers → Your Worker → Settings → Alerts
+2. Configure alerts for:
+   - Error rate > 5%
+   - Response time > 2s
+   - Request volume spikes
+
+## 🐛 Troubleshooting
+
+### Error: "Unauthorized"
+- Check API key is correct
+- Verify secret is set: `npx wrangler secret list`
+- Ensure header is `X-API-Key` (case-sensitive)
+
+### Error: "KV namespace not found"
+- Check `wrangler.toml` has correct namespace IDs
+- Run `npx wrangler kv:namespace list` to see your namespaces
+- Update IDs in `wrangler.toml`
+
+### Error: "Rate limit exceeded"
+- Wait 60 seconds and retry
+- Check if you're making too many sync requests
+- Consider increasing `syncInterval` in UserScript
+
+### Deployment fails
+- Check you're logged in: `npx wrangler whoami`
+- Ensure your account has Workers enabled
+- Check `wrangler.toml` syntax
+
+### Data not syncing
+- Check server logs: `npx wrangler tail`
+- Verify API key in UserScript settings
+- Test API manually with `curl`
+- Check browser console for errors
+
+## 🚢 Production Checklist
+
+Before deploying to production:
+
+- [ ] Generate strong API key
+- [ ] Store API key as secret (not in code)
+- [ ] Setup KV namespaces (production + staging)
+- [ ] Configure custom domain (optional)
+- [ ] Setup monitoring alerts
+- [ ] Test sync flow end-to-end
+- [ ] Document API key for your users
+- [ ] Plan API key rotation schedule (quarterly recommended)
+
+## 🤝 Contributing
+
+Improvements welcome! Please:
+1. Test changes locally (`npm run dev`)
+2. Run tests (`npm test`)
+3. Deploy to staging first (`npm run deploy:staging`)
+4. Submit PR with clear description
+
+## 📄 License
+
+MIT License - Same as parent project
+
+## 🆘 Support
+
+- **Issues**: [GitHub Issues](https://github.com/laurenceputra/goal-portfolio-viewer/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/laurenceputra/goal-portfolio-viewer/discussions)
+- **Docs**: [Main README](../README.md) | [Architecture](../SYNC_ARCHITECTURE.md)
+
+## 🔗 Resources
+
+- [Cloudflare Workers Docs](https://developers.cloudflare.com/workers/)
+- [Wrangler CLI Docs](https://developers.cloudflare.com/workers/wrangler/)
+- [KV Documentation](https://developers.cloudflare.com/workers/runtime-apis/kv/)
+- [Workers Pricing](https://developers.cloudflare.com/workers/platform/pricing/)
