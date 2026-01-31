@@ -4,10 +4,72 @@
  */
 
 /**
+ * Derive a slow hash from the incoming password hash for storage
+ * Uses PBKDF2 with high iterations and per-user salt
+ * 
+ * @param {string} passwordHash - SHA-256 hash from client
+ * @param {string} salt - Hex-encoded random salt (per-user)
+ * @returns {Promise<string>} - Hex-encoded PBKDF2 hash
+ */
+async function deriveStorageHash(passwordHash, salt) {
+	const encoder = new TextEncoder();
+	const keyMaterial = await crypto.subtle.importKey(
+		'raw',
+		encoder.encode(passwordHash),
+		{ name: 'PBKDF2' },
+		false,
+		['deriveBits']
+	);
+
+	const saltBytes = hexToBytes(salt);
+	const derivedBits = await crypto.subtle.deriveBits(
+		{
+			name: 'PBKDF2',
+			salt: saltBytes,
+			iterations: 100000, // High iteration count for slow hashing
+			hash: 'SHA-256'
+		},
+		keyMaterial,
+		256 // 32 bytes
+	);
+
+	return bytesToHex(new Uint8Array(derivedBits));
+}
+
+/**
+ * Convert hex string to Uint8Array
+ */
+function hexToBytes(hex) {
+	const bytes = new Uint8Array(hex.length / 2);
+	for (let i = 0; i < hex.length; i += 2) {
+		bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+	}
+	return bytes;
+}
+
+/**
+ * Convert Uint8Array to hex string
+ */
+function bytesToHex(bytes) {
+	return Array.from(bytes)
+		.map(b => b.toString(16).padStart(2, '0'))
+		.join('');
+}
+
+/**
+ * Generate a random salt (hex-encoded)
+ */
+function generateSalt() {
+	const saltBytes = new Uint8Array(16); // 128 bits
+	crypto.getRandomValues(saltBytes);
+	return bytesToHex(saltBytes);
+}
+
+/**
  * Validate password hash against stored user credentials
  * 
  * @param {string} userId - User identifier (email or username)
- * @param {string} passwordHash - SHA-256 hash of password
+ * @param {string} passwordHash - SHA-256 hash of password from client
  * @param {Object} env - Cloudflare Workers environment (includes KV binding)
  * @returns {Promise<boolean>} - True if valid, false otherwise
  */
@@ -20,12 +82,22 @@ export async function validatePassword(userId, passwordHash, env) {
 	const userKey = `user:${userId}`;
 	const userData = await env.SYNC_KV.get(userKey, 'json');
 	
-	if (!userData || !userData.passwordHash) {
+	if (!userData) {
 		return false;
 	}
 
-	// Constant-time comparison to prevent timing attacks
-	return timingSafeEqual(passwordHash, userData.passwordHash);
+	// Support legacy format (direct SHA-256 hash) for backward compatibility
+	if (!userData.salt || !userData.derivedHash) {
+		// Legacy format: direct comparison
+		if (!userData.passwordHash) {
+			return false;
+		}
+		return timingSafeEqual(passwordHash, userData.passwordHash);
+	}
+
+	// New format: derive storage hash from incoming hash and compare
+	const derivedHash = await deriveStorageHash(passwordHash, userData.salt);
+	return timingSafeEqual(derivedHash, userData.derivedHash);
 }
 
 /**
@@ -94,7 +166,7 @@ export function generateApiKey() {
  * Register a new user
  * 
  * @param {string} userId - User identifier (email or username)
- * @param {string} passwordHash - SHA-256 hash of password
+ * @param {string} passwordHash - SHA-256 hash of password from client
  * @param {Object} env - Cloudflare Workers environment
  * @returns {Promise<Object>} - { success: boolean, message: string }
  */
@@ -117,9 +189,17 @@ export async function registerUser(userId, passwordHash, env) {
 		return { success: false, message: 'User already exists' };
 	}
 
-	// Store user credentials
+	// Generate per-user salt
+	const salt = generateSalt();
+
+	// Derive storage hash using PBKDF2 (slow hash)
+	// This protects against offline brute-force if KV is leaked
+	const derivedHash = await deriveStorageHash(passwordHash, salt);
+
+	// Store user credentials with salt and derived hash
 	const userData = {
-		passwordHash,
+		salt, // Per-user random salt
+		derivedHash, // PBKDF2(passwordHash, salt, 100k iterations)
 		createdAt: Date.now(),
 		lastLogin: null
 	};
