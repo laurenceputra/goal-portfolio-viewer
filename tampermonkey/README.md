@@ -38,6 +38,15 @@ Perfect for investors using strategies like Core + Satellite across multiple lif
 - **Efficient Data Processing**: Merges data from multiple API endpoints intelligently
 - **Auto-updates**: Configured to check for script updates automatically
 
+### ☁️ Sync Feature (Optional)
+- **Cross-device Sync**: Sync your goal configurations across multiple devices
+- **End-to-End Encryption**: Client-side AES-GCM 256-bit encryption before data leaves your browser
+- **Privacy-First**: Server never sees your plaintext data
+- **Self-Hostable**: Run your own sync server using Cloudflare Workers
+- **Conflict Resolution**: Visual interface for resolving sync conflicts
+- **Auto-sync**: Configurable automatic background synchronization
+- **Zero-Knowledge**: You control all encryption keys
+
 ## Installation
 
 ### Prerequisites
@@ -116,6 +125,32 @@ For each bucket/goal, you'll see:
 - **Goal Breakdown**: Individual goals with their specific metrics
 - **% of Goal Type**: What percentage each goal represents within its type
 
+### Sync Setup (Optional)
+
+If you want to sync your goal configurations across devices:
+
+1. **Deploy Backend** (one-time setup):
+   - See `../workers/README.md` for Cloudflare Workers deployment instructions
+   - Or use the default public server: `https://goal-sync.workers.dev`
+
+2. **Configure Sync**:
+   - Click the sync indicator (bottom-right) or "Sync Settings" button
+   - Enable sync
+   - Enter your server URL, user ID, API key, and encryption passphrase
+   - Click "Save Settings" then "Sync Now"
+
+3. **Use on Other Devices**:
+   - Install the UserScript on other devices
+   - Configure sync with the same credentials
+   - Your goal targets and settings will sync automatically
+
+**Important**: 
+- Your encryption passphrase is used to encrypt data before it leaves your device
+- If you lose your passphrase, your synced data cannot be recovered
+- The sync server never sees your unencrypted data
+
+For detailed sync setup instructions, see `QUICK_START.md`.
+
 ## How It Works
 
 ### API Interception
@@ -181,7 +216,13 @@ The script uses monkey patching to intercept API responses from the Endowus plat
 ```
 tampermonkey/
 ├── goal_portfolio_viewer.user.js  # Main script file
-└── README.md                          # This file
+├── sync_implementation.js         # Sync core logic (for integration)
+├── sync_ui.js                     # Sync UI components (for integration)
+├── sync_complete.js               # Quick reference
+├── README.md                      # This file
+├── QUICK_START.md                 # Quick integration guide
+├── SYNC_INTEGRATION.md            # Detailed integration guide
+└── SYNC_IMPLEMENTATION_SUMMARY.md # Implementation summary
 ```
 
 ### Modifying the Script
