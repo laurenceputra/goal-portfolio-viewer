@@ -4521,9 +4521,9 @@ function showSyncSettings() {
         header.appendChild(title);
         header.appendChild(headerButtons);
         
-        // Create body
+        // Create body (use gpv-content for scrolling)
         const body = document.createElement('div');
-        body.className = 'gpv-body';
+        body.className = 'gpv-content';
         body.innerHTML = settingsHTML;
         
         // Assemble
