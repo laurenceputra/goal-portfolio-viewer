@@ -3779,6 +3779,56 @@
     };
 
     // ============================================
+    // UI: Sync Helper Functions
+    // ============================================
+
+    /**
+     * Escape HTML to prevent XSS
+     */
+    function escapeHtml(unsafe) {
+        if (!unsafe) return '';
+        return unsafe
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    /**
+     * Show notification (toast)
+     */
+    function showNotification(message, type = 'info') {
+        const notification = createElement('div');
+        notification.className = `gpv-notification gpv-notification-${type}`;
+        notification.textContent = message;
+        
+        document.body.appendChild(notification);
+        
+        // Fade in
+        setTimeout(() => {
+            notification.classList.add('gpv-notification-show');
+        }, 10);
+        
+        // Fade out and remove
+        setTimeout(() => {
+            notification.classList.remove('gpv-notification-show');
+            setTimeout(() => {
+                notification.remove();
+            }, 300);
+        }, 3000);
+    }
+
+    /**
+     * Format timestamp for display
+     */
+    function formatTimestamp(timestamp) {
+        if (!timestamp) return 'Never';
+        const date = new Date(timestamp);
+        return date.toLocaleString();
+    }
+
+    // ============================================
     // UI: Styles
     // ============================================
     
