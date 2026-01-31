@@ -4239,6 +4239,12 @@ function showSyncSettings() {
 }
 
 // ============================================
+// CHUNK 5: CONFLICT RESOLUTION UI
+// ============================================
+
+/**
+ * Format timestamp for display
+ */
 
 function createConflictDialogHTML(conflict) {
     const localTargets = Object.keys(conflict.local.goalTargets || {}).length;
@@ -5330,30 +5336,26 @@ function updateSyncUI() {
             .gpv-content::-webkit-scrollbar-thumb:hover {
                 background: #94a3b8;
             }
-
-
             /* =========================== */
             /* Sync UI Styles */
             /* =========================== */
-
-const SYNC_STYLES = `
                 /* Sync Settings Modal */
                 .gpv-sync-modal {
                     max-width: 700px;
                     max-height: 90vh;
                     overflow-y: auto;
                 }
-            
+
                 .gpv-sync-settings {
                     padding: 20px;
                 }
-            
+
                 .gpv-sync-header h3 {
                     margin: 0 0 15px 0;
                     font-size: 20px;
                     font-weight: 600;
                 }
-            
+
                 .gpv-sync-warning {
                     background-color: #fff3cd;
                     border: 1px solid #ffc107;
@@ -5362,7 +5364,7 @@ const SYNC_STYLES = `
                     margin-bottom: 15px;
                     color: #856404;
                 }
-            
+
                 .gpv-sync-status-bar {
                     background-color: #f8f9fa;
                     border: 1px solid #dee2e6;
@@ -5370,72 +5372,72 @@ const SYNC_STYLES = `
                     padding: 12px;
                     margin-bottom: 20px;
                 }
-            
+
                 .gpv-sync-status-item {
                     display: flex;
                     align-items: center;
                     margin-bottom: 8px;
                 }
-            
+
                 .gpv-sync-status-item:last-child {
                     margin-bottom: 0;
                 }
-            
+
                 .gpv-sync-label {
                     font-weight: 600;
                     margin-right: 8px;
                     min-width: 100px;
                 }
-            
+
                 .gpv-sync-value {
                     flex: 1;
                 }
-            
+
                 .gpv-sync-status-idle {
                     color: #6c757d;
                 }
-            
+
                 .gpv-sync-status-syncing {
                     color: #007bff;
                     font-weight: 600;
                 }
-            
+
                 .gpv-sync-status-success {
                     color: #28a745;
                     font-weight: 600;
                 }
-            
+
                 .gpv-sync-status-error {
                     color: #dc3545;
                     font-weight: 600;
                 }
-            
+
                 .gpv-sync-status-conflict {
                     color: #ffc107;
                     font-weight: 600;
                 }
-            
+
                 .gpv-sync-error {
                     color: #dc3545;
                 }
-            
+
                 .gpv-sync-form {
                     display: flex;
                     flex-direction: column;
                     gap: 20px;
                 }
-            
+
                 .gpv-sync-form-group {
                     display: flex;
                     flex-direction: column;
                 }
-            
+
                 .gpv-sync-form-group label {
                     font-weight: 600;
                     margin-bottom: 6px;
                     font-size: 14px;
                 }
-            
+
                 .gpv-sync-input {
                     padding: 8px 12px;
                     border: 1px solid #ced4da;
@@ -5443,56 +5445,56 @@ const SYNC_STYLES = `
                     font-size: 14px;
                     font-family: inherit;
                 }
-            
+
                 .gpv-sync-input:disabled {
                     background-color: #e9ecef;
                     cursor: not-allowed;
                 }
-            
+
                 .gpv-sync-input:focus {
                     outline: none;
                     border-color: #007bff;
                     box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
                 }
-            
+
                 .gpv-sync-toggle {
                     display: flex;
                     align-items: center;
                     cursor: pointer;
                     user-select: none;
                 }
-            
+
                 .gpv-sync-toggle input[type="checkbox"] {
                     margin-right: 8px;
                     cursor: pointer;
                 }
-            
+
                 .gpv-sync-toggle input[type="checkbox"]:disabled {
                     cursor: not-allowed;
                 }
-            
+
                 .gpv-sync-help {
                     margin: 6px 0 0 0;
                     font-size: 12px;
                     color: #6c757d;
                 }
-            
+
                 .gpv-sync-help a {
                     color: #007bff;
                     text-decoration: none;
                 }
-            
+
                 .gpv-sync-help a:hover {
                     text-decoration: underline;
                 }
-            
+
                 .gpv-sync-actions {
                     display: flex;
                     gap: 10px;
                     flex-wrap: wrap;
                     margin-top: 10px;
                 }
-            
+
                 .gpv-sync-btn {
                     padding: 10px 20px;
                     border: none;
@@ -5502,59 +5504,59 @@ const SYNC_STYLES = `
                     cursor: pointer;
                     transition: all 0.2s;
                 }
-            
+
                 .gpv-sync-btn:disabled {
                     opacity: 0.6;
                     cursor: not-allowed;
                 }
-            
+
                 .gpv-sync-btn-primary {
                     background-color: #007bff;
                     color: white;
                 }
-            
+
                 .gpv-sync-btn-primary:hover:not(:disabled) {
                     background-color: #0056b3;
                 }
-            
+
                 .gpv-sync-btn-secondary {
                     background-color: #6c757d;
                     color: white;
                 }
-            
+
                 .gpv-sync-btn-secondary:hover:not(:disabled) {
                     background-color: #545b62;
                 }
-            
+
                 .gpv-sync-btn-danger {
                     background-color: #dc3545;
                     color: white;
                 }
-            
+
                 .gpv-sync-btn-danger:hover:not(:disabled) {
                     background-color: #c82333;
                 }
-            
+
                 /* Conflict Dialog */
                 .gpv-conflict-modal {
                     max-width: 800px;
                 }
-            
+
                 .gpv-conflict-dialog {
                     padding: 20px;
                 }
-            
+
                 .gpv-conflict-dialog h3 {
                     margin: 0 0 15px 0;
                     font-size: 20px;
                     font-weight: 600;
                 }
-            
+
                 .gpv-conflict-description {
                     margin: 0 0 20px 0;
                     color: #6c757d;
                 }
-            
+
                 .gpv-conflict-comparison {
                     display: grid;
                     grid-template-columns: 1fr auto 1fr;
@@ -5562,36 +5564,36 @@ const SYNC_STYLES = `
                     margin-bottom: 20px;
                     align-items: center;
                 }
-            
+
                 .gpv-conflict-option {
                     border: 2px solid #dee2e6;
                     border-radius: 8px;
                     padding: 20px;
                 }
-            
+
                 .gpv-conflict-option h4 {
                     margin: 0 0 15px 0;
                     font-size: 16px;
                     font-weight: 600;
                 }
-            
+
                 .gpv-conflict-details {
                     list-style: none;
                     padding: 0;
                     margin: 0 0 15px 0;
                 }
-            
+
                 .gpv-conflict-details li {
                     padding: 6px 0;
                     font-size: 14px;
                 }
-            
+
                 .gpv-conflict-divider {
                     font-weight: 600;
                     color: #6c757d;
                     text-align: center;
                 }
-            
+
                 .gpv-conflict-warning {
                     background-color: #fff3cd;
                     border: 1px solid #ffc107;
@@ -5599,18 +5601,18 @@ const SYNC_STYLES = `
                     padding: 12px;
                     margin-bottom: 15px;
                 }
-            
+
                 .gpv-conflict-warning p {
                     margin: 0;
                     color: #856404;
                     font-size: 14px;
                 }
-            
+
                 .gpv-conflict-actions {
                     display: flex;
                     justify-content: center;
                 }
-            
+
                 /* Sync Indicator */
                 .gpv-sync-indicator {
                     position: fixed;
@@ -5628,24 +5630,24 @@ const SYNC_STYLES = `
                     transition: all 0.2s;
                     z-index: 9999;
                 }
-            
+
                 .gpv-sync-indicator:hover {
                     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
                 }
-            
+
                 .gpv-sync-icon {
                     font-size: 16px;
                 }
-            
+
                 .gpv-sync-text {
                     font-size: 13px;
                     font-weight: 600;
                 }
-            
+
                 .gpv-sync-indicator.gpv-sync-status-syncing .gpv-sync-icon {
                     animation: gpv-spin 1s linear infinite;
                 }
-            
+
                 @keyframes gpv-spin {
                     from {
                         transform: rotate(0deg);
@@ -5654,7 +5656,7 @@ const SYNC_STYLES = `
                         transform: rotate(360deg);
                     }
                 }
-            
+
                 /* Notifications */
                 .gpv-notification {
                     position: fixed;
@@ -5670,44 +5672,44 @@ const SYNC_STYLES = `
                     transition: all 0.3s;
                     max-width: 400px;
                 }
-            
+
                 .gpv-notification-show {
                     opacity: 1;
                     transform: translateY(0);
                 }
-            
+
                 .gpv-notification-success {
                     border-left: 4px solid #28a745;
                 }
-            
+
                 .gpv-notification-error {
                     border-left: 4px solid #dc3545;
                 }
-            
+
                 .gpv-notification-info {
                     border-left: 4px solid #007bff;
                 }
-            
+
                 /* Responsive adjustments */
                 @media (max-width: 768px) {
                     .gpv-conflict-comparison {
                         grid-template-columns: 1fr;
                     }
-            
+
                     .gpv-conflict-divider {
                         display: none;
                     }
-            
+
                     .gpv-sync-indicator {
                         bottom: 10px;
                         right: 10px;
                     }
-            
+
                     .gpv-sync-text {
                         display: none;
                     }
                 }
-            `;
+
         `;
         document.head.appendChild(style);
     }
