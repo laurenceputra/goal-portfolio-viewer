@@ -5869,21 +5869,32 @@ function updateSyncUI() {
                 }
 
                 .gpv-sync-btn-primary {
-                    background-color: #007bff;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                     color: white;
+                    border-radius: 20px;
+                    padding: 12px 24px;
+                    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+                    font-weight: 600;
                 }
 
                 .gpv-sync-btn-primary:hover:not(:disabled) {
-                    background-color: #0056b3;
+                    transform: translateY(-2px);
+                    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
                 }
 
                 .gpv-sync-btn-secondary {
-                    background-color: #6c757d;
-                    color: white;
+                    background: rgba(255, 255, 255, 0.2);
+                    color: #667eea;
+                    border: 2px solid #667eea;
+                    border-radius: 20px;
+                    padding: 12px 24px;
+                    font-weight: 600;
                 }
 
                 .gpv-sync-btn-secondary:hover:not(:disabled) {
-                    background-color: #545b62;
+                    background: rgba(255, 255, 255, 0.3);
+                    transform: translateY(-2px);
+                    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
                 }
 
                 .gpv-sync-btn-danger {
