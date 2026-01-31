@@ -4603,6 +4603,19 @@ function updateSyncUI() {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             }
             
+            .gpv-sync-indicator-container {
+                flex: 1;
+                display: flex;
+                justify-content: center;
+                padding: 0 16px;
+            }
+            
+            .gpv-header-buttons {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            
             .gpv-close-btn {
                 background: rgba(255, 255, 255, 0.2);
                 border: none;
@@ -4622,6 +4635,32 @@ function updateSyncUI() {
             .gpv-close-btn:hover {
                 background: rgba(255, 255, 255, 0.3);
                 transform: rotate(90deg);
+            }
+            
+            .gpv-sync-btn {
+                background: rgba(255, 255, 255, 0.2);
+                border: none;
+                color: #ffffff;
+                font-size: 14px;
+                padding: 8px 16px;
+                border-radius: 18px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.2s ease;
+                font-weight: 500;
+                gap: 6px;
+            }
+            
+            .gpv-sync-btn:hover {
+                background: rgba(255, 255, 255, 0.3);
+                transform: translateY(-1px);
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            }
+            
+            .gpv-sync-btn:active {
+                transform: translateY(0);
             }
             
             .gpv-controls {
@@ -5863,6 +5902,34 @@ function updateSyncUI() {
 
         const header = createElement('div', 'gpv-header');
         const title = createElement('h1', null, 'Portfolio Viewer');
+        
+        // Add sync status indicator if sync is enabled
+        const syncIndicatorContainer = createElement('div', 'gpv-sync-indicator-container');
+        if (typeof createSyncIndicatorHTML === 'function') {
+            const indicatorHTML = createSyncIndicatorHTML();
+            if (indicatorHTML) {
+                syncIndicatorContainer.innerHTML = indicatorHTML;
+                const indicator = syncIndicatorContainer.querySelector('#gpv-sync-indicator');
+                if (indicator) {
+                    indicator.addEventListener('click', showSyncSettings);
+                }
+            }
+        }
+        
+        // Create button container for sync and close buttons
+        const buttonContainer = createElement('div', 'gpv-header-buttons');
+        
+        // Add sync settings button
+        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
+        syncBtn.title = 'Configure cross-device sync';
+        syncBtn.onclick = () => {
+            if (typeof showSyncSettings === 'function') {
+                showSyncSettings();
+            } else {
+                alert('Sync settings are not available. Please ensure the sync module is loaded.');
+            }
+        };
+        
         const closeBtn = createElement('button', 'gpv-close-btn', '✕');
         function teardownOverlay() {
             if (!overlay.isConnected) {
@@ -5889,8 +5956,12 @@ function updateSyncUI() {
 
         closeBtn.onclick = closeOverlay;
         
+        buttonContainer.appendChild(syncBtn);
+        buttonContainer.appendChild(closeBtn);
+        
         header.appendChild(title);
-        header.appendChild(closeBtn);
+        header.appendChild(syncIndicatorContainer);
+        header.appendChild(buttonContainer);
         container.appendChild(header);
 
         const controls = createElement('div', 'gpv-controls');
