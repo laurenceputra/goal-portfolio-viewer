@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.7.7
-// @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore).
+// @version      2.8.0
+// @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
+// @grant        GM_listValues
 // @grant        GM_cookie
 // @run-at       document-start
 // @updateURL    https://raw.githubusercontent.com/laurenceputra/goal-portfolio-viewer/main/tampermonkey/goal_portfolio_viewer.user.js
@@ -57,9 +58,39 @@
         diffCell: 'gpv-diff-cell'
     };
 
+    // ============================================
+    // Sync Constants (Cross-Device Sync Feature)
+    // ============================================
+
+    const SYNC_STORAGE_KEYS = {
+        enabled: 'sync_enabled',
+        serverUrl: 'sync_server_url',
+        password: 'sync_password', // Single password for both auth and encryption
+        userId: 'sync_user_id',
+        deviceId: 'sync_device_id',
+        lastSync: 'sync_last_sync',
+        lastSyncHash: 'sync_last_hash',
+        autoSync: 'sync_auto_sync',
+        syncInterval: 'sync_interval_minutes'
+    };
+
+    const SYNC_DEFAULTS = {
+        serverUrl: 'https://goal-sync.workers.dev',
+        autoSync: false,
+        syncInterval: 30 // minutes
+    };
+
+    const SYNC_STATUS = {
+        idle: 'idle',
+        syncing: 'syncing',
+        success: 'success',
+        error: 'error',
+        conflict: 'conflict'
+    };
+
+
     // Export surface for tests; populated as helpers become available.
     // When set before load, window.__GPV_DISABLE_AUTO_INIT prevents DOM auto-init (used in tests).
-    const testExports = {};
 
     function logDebug(message, data) {
         if (!DEBUG) {
@@ -1334,6 +1365,838 @@
     }
 
     // ============================================
+    // Storage Management
+    // ============================================
+
+    const Storage = {
+        get(key, fallback, context) {
+            try {
+                return GM_getValue(key, fallback);
+            } catch (error) {
+                const label = context || 'Error reading storage';
+                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
+                return fallback;
+            }
+        },
+        set(key, value, context) {
+            try {
+                GM_setValue(key, value);
+                return true;
+            } catch (error) {
+                const label = context || 'Error writing storage';
+                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
+                return false;
+            }
+        },
+        remove(key, context) {
+            try {
+                GM_deleteValue(key);
+                return true;
+            } catch (error) {
+                const label = context || 'Error deleting storage';
+                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
+                return false;
+            }
+        },
+        readJson(key, validateFn, context) {
+            const stored = Storage.get(key, null, context);
+            if (!stored) {
+                return null;
+            }
+            const parsed = parseJsonSafely(stored);
+            if (!validateFn(parsed)) {
+                Storage.remove(key, context);
+                return null;
+            }
+            return parsed;
+        },
+        writeJson(key, value, context) {
+            return Storage.set(key, JSON.stringify(value), context);
+        }
+    };
+
+    // ============================================
+    // Sync Modules (Cross-Device Sync Feature)
+    // ============================================
+
+    const SyncEncryption = (() => {
+    const PBKDF2_ITERATIONS = 100000;
+    const MASTER_KEY_ITERATIONS = 200000; // Higher iterations for master key derivation
+    const KEY_LENGTH = 256;
+    const IV_LENGTH = 12; // 96 bits for GCM
+    const SALT_LENGTH = 16; // 128 bits
+    const MASTER_KEY_SALT = 'goal-portfolio-viewer-master-key-v1'; // Fixed salt for master key derivation
+
+    /**
+     * Check if Web Crypto API is available
+     */
+    function isSupported() {
+        return typeof window !== 'undefined' && 
+               window.crypto && 
+               window.crypto.subtle &&
+               typeof window.crypto.getRandomValues === 'function';
+    }
+
+    /**
+     * Generate a cryptographically secure random buffer
+     */
+    function generateRandomBuffer(length) {
+        return window.crypto.getRandomValues(new Uint8Array(length));
+    }
+
+    /**
+     * Generate a UUID v4 using cryptographically secure randomness
+     */
+    function generateUUID() {
+        // Use crypto.randomUUID() if available (modern browsers)
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return window.crypto.randomUUID();
+        }
+
+        // Fallback: use crypto.getRandomValues() for secure random bytes
+        const buffer = new Uint8Array(16);
+        window.crypto.getRandomValues(buffer);
+
+        // Set version (4) and variant (RFC 4122) bits
+        buffer[6] = (buffer[6] & 0x0f) | 0x40;
+        buffer[8] = (buffer[8] & 0x3f) | 0x80;
+
+        // Convert to UUID string format
+        const hex = Array.from(buffer).map(b => b.toString(16).padStart(2, '0')).join('');
+        return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20,32)}`;
+    }
+
+    /**
+     * Derive master key from password using PBKDF2
+     * Master key acts as intermediate key material - password is never used directly for encryption
+     * Returns: raw key bytes (Uint8Array) for use as input to encryption key derivation
+     */
+    async function deriveMasterKey(password) {
+        if (!isSupported()) {
+            throw new Error('Web Crypto API not supported');
+        }
+
+        const encoder = new TextEncoder();
+        const passwordKey = await window.crypto.subtle.importKey(
+            'raw',
+            encoder.encode(password),
+            'PBKDF2',
+            false,
+            ['deriveBits']
+        );
+
+        // Derive 32 bytes (256 bits) of key material
+        const masterKeyBits = await window.crypto.subtle.deriveBits(
+            {
+                name: 'PBKDF2',
+                salt: encoder.encode(MASTER_KEY_SALT),
+                iterations: MASTER_KEY_ITERATIONS,
+                hash: 'SHA-256'
+            },
+            passwordKey,
+            256
+        );
+
+        return new Uint8Array(masterKeyBits);
+    }
+
+    /**
+     * Derive encryption key from master key using PBKDF2
+     * This adds another layer of key derivation for defense in depth
+     */
+    async function deriveKey(masterKey, salt) {
+        const masterKeyObj = await window.crypto.subtle.importKey(
+            'raw',
+            masterKey,
+            'PBKDF2',
+            false,
+            ['deriveBits', 'deriveKey']
+        );
+
+        return window.crypto.subtle.deriveKey(
+            {
+                name: 'PBKDF2',
+                salt: salt,
+                iterations: PBKDF2_ITERATIONS,
+                hash: 'SHA-256'
+            },
+            masterKeyObj,
+            { name: 'AES-GCM', length: KEY_LENGTH },
+            false,
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    /**
+     * Encrypt data with AES-GCM
+     * Password is used as proxy to derive master key, which then derives encryption key
+     * Returns: base64(salt + iv + ciphertext + auth_tag)
+     */
+    async function encrypt(plaintext, password) {
+        if (!isSupported()) {
+            throw new Error('Web Crypto API not supported');
+        }
+
+        try {
+            const encoder = new TextEncoder();
+            const salt = generateRandomBuffer(SALT_LENGTH);
+            const iv = generateRandomBuffer(IV_LENGTH);
+            
+            // Step 1: Derive master key from password (password is proxy)
+            const masterKey = await deriveMasterKey(password);
+            
+            // Step 2: Derive encryption key from master key
+            const key = await deriveKey(masterKey, salt);
+
+            const ciphertext = await window.crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv: iv },
+                key,
+                encoder.encode(plaintext)
+            );
+
+            // Concatenate: salt + iv + ciphertext (includes auth tag)
+            const combined = new Uint8Array(
+                salt.length + iv.length + ciphertext.byteLength
+            );
+            combined.set(salt, 0);
+            combined.set(iv, salt.length);
+            combined.set(new Uint8Array(ciphertext), salt.length + iv.length);
+
+            // Convert to base64 for transmission
+            return btoa(String.fromCharCode(...combined));
+        } catch (error) {
+            console.error('[Goal Portfolio Viewer] Encryption failed:', error);
+            throw new Error('Encryption failed');
+        }
+    }
+
+    /**
+     * Decrypt data encrypted with encrypt()
+     * Password is used as proxy to derive master key, which then derives decryption key
+     */
+    async function decrypt(encryptedBase64, password) {
+        if (!isSupported()) {
+            throw new Error('Web Crypto API not supported');
+        }
+
+        try {
+            // Decode from base64
+            const combined = new Uint8Array(
+                atob(encryptedBase64).split('').map(c => c.charCodeAt(0))
+            );
+
+            // Extract components
+            const salt = combined.slice(0, SALT_LENGTH);
+            const iv = combined.slice(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
+            const ciphertext = combined.slice(SALT_LENGTH + IV_LENGTH);
+
+            // Step 1: Derive master key from password (password is proxy)
+            const masterKey = await deriveMasterKey(password);
+            
+            // Step 2: Derive decryption key from master key
+            const key = await deriveKey(masterKey, salt);
+
+            const plaintext = await window.crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: iv },
+                key,
+                ciphertext
+            );
+
+            const decoder = new TextDecoder();
+            return decoder.decode(plaintext);
+        } catch (error) {
+            console.error('[Goal Portfolio Viewer] Decryption failed:', error);
+            throw new Error('Decryption failed - check password');
+        }
+    }
+
+    /**
+     * Compute SHA-256 hash of data
+     */
+    async function hash(data) {
+        const encoder = new TextEncoder();
+        const buffer = await window.crypto.subtle.digest('SHA-256', encoder.encode(data));
+        const hashArray = Array.from(new Uint8Array(buffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    /**
+     * Hash password for authentication
+     * Uses SHA-256 with userId as salt
+     */
+    async function hashPasswordForAuth(password, userId) {
+        if (!isSupported()) {
+            throw new Error('Web Crypto API not supported');
+        }
+
+        const encoder = new TextEncoder();
+        const data = encoder.encode(password + '|' + userId);
+        const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        return hashHex;
+    }
+
+    return {
+        isSupported,
+        generateUUID,
+        deriveMasterKey,
+        encrypt,
+        decrypt,
+        hash,
+        hashPasswordForAuth
+    };
+})();
+
+    // ============================================
+    // Sync Manager (Cross-Device Sync)
+    // ============================================
+
+    const SyncManager = (() => {
+    let syncStatus = SYNC_STATUS.idle;
+    let lastError = null;
+    let autoSyncTimer = null;
+
+    /**
+     * Check if sync is enabled
+     */
+    function isEnabled() {
+        return Storage.get(SYNC_STORAGE_KEYS.enabled, false) === true;
+    }
+
+    /**
+     * Check if sync is configured
+     */
+    function isConfigured() {
+        const serverUrl = Storage.get(SYNC_STORAGE_KEYS.serverUrl, null);
+        const password = Storage.get(SYNC_STORAGE_KEYS.password, null);
+        const userId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
+        return serverUrl && password && userId;
+    }
+
+    /**
+     * Get or create device ID
+     */
+    function getDeviceId() {
+        let deviceId = Storage.get(SYNC_STORAGE_KEYS.deviceId, null);
+        if (!deviceId) {
+            deviceId = SyncEncryption.generateUUID();
+            Storage.set(SYNC_STORAGE_KEYS.deviceId, deviceId);
+        }
+        return deviceId;
+    }
+
+    /**
+     * Collect syncable config data
+     */
+    function collectConfigData() {
+        const config = {
+            version: 1,
+            goalTargets: {},
+            goalFixed: {},
+            timestamp: Date.now()
+        };
+
+        // Collect all goal target percentages
+        const allKeys = GM_listValues ? GM_listValues() : [];
+        for (const key of allKeys) {
+            if (key.startsWith(STORAGE_KEY_PREFIXES.goalTarget)) {
+                const goalId = key.substring(STORAGE_KEY_PREFIXES.goalTarget.length);
+                const value = Storage.get(key, null);
+                if (value !== null) {
+                    config.goalTargets[goalId] = value;
+                }
+            } else if (key.startsWith(STORAGE_KEY_PREFIXES.goalFixed)) {
+                const goalId = key.substring(STORAGE_KEY_PREFIXES.goalFixed.length);
+                const value = Storage.get(key, false);
+                config.goalFixed[goalId] = value;
+            }
+        }
+
+        return config;
+    }
+
+    /**
+     * Apply config data to local storage
+     */
+    function applyConfigData(config) {
+        if (!config || typeof config !== 'object') {
+            throw new Error('Invalid config data');
+        }
+
+        // Apply goal targets
+        if (config.goalTargets && typeof config.goalTargets === 'object') {
+            for (const [goalId, value] of Object.entries(config.goalTargets)) {
+                const key = getGoalTargetKey(goalId);
+                Storage.set(key, value);
+            }
+        }
+
+        // Apply goal fixed states
+        if (config.goalFixed && typeof config.goalFixed === 'object') {
+            for (const [goalId, value] of Object.entries(config.goalFixed)) {
+                const key = getGoalFixedKey(goalId);
+                Storage.set(key, value === true);
+            }
+        }
+
+        logDebug('[Goal Portfolio Viewer] Applied sync config data', {
+            targets: Object.keys(config.goalTargets || {}).length,
+            fixed: Object.keys(config.goalFixed || {}).length
+        });
+    }
+
+    /**
+     * Upload config to server
+     */
+    async function uploadConfig(config) {
+        const serverUrl = Storage.get(SYNC_STORAGE_KEYS.serverUrl, SYNC_DEFAULTS.serverUrl);
+        const password = Storage.get(SYNC_STORAGE_KEYS.password, null);
+        const userId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
+
+        if (!password || !userId) {
+            throw new Error('Sync not configured');
+        }
+
+        // Encrypt config using password
+        const plaintext = JSON.stringify(config);
+        const encryptedData = await SyncEncryption.encrypt(plaintext, password);
+
+        // Hash password for authentication
+        const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
+
+        // Prepare payload
+        const payload = {
+            encryptedData,
+            deviceId: getDeviceId(),
+            timestamp: config.timestamp,
+            version: config.version,
+            userId
+        };
+
+        // Upload to server (POST /sync)
+        const response = await fetch(`${serverUrl}/sync`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Password-Hash': passwordHash,
+                'X-User-Id': userId
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `Upload failed: ${response.status}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Download config from server
+     */
+    async function downloadConfig() {
+        const serverUrl = Storage.get(SYNC_STORAGE_KEYS.serverUrl, SYNC_DEFAULTS.serverUrl);
+        const password = Storage.get(SYNC_STORAGE_KEYS.password, null);
+        const userId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
+
+        if (!password || !userId) {
+            throw new Error('Sync not configured');
+        }
+
+        // Hash password for authentication
+        const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
+
+        // Download from server
+        const response = await fetch(`${serverUrl}/sync/${userId}`, {
+            method: 'GET',
+            headers: {
+                'X-Password-Hash': passwordHash,
+                'X-User-Id': userId
+            }
+        });
+
+        if (response.status === 404) {
+            // No data on server yet
+            return null;
+        }
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `Download failed: ${response.status}`);
+        }
+
+        const serverData = await response.json();
+
+        // Server returns: { success: true, data: { encryptedData, deviceId, timestamp, version } }
+        const { data } = serverData || {};
+
+        if (!data || !data.encryptedData) {
+            throw new Error('Invalid server response: missing encrypted data');
+        }
+
+        // Decrypt config using password
+        const plaintext = await SyncEncryption.decrypt(data.encryptedData, password);
+        const config = JSON.parse(plaintext);
+
+        return {
+            config,
+            metadata: {
+                deviceId: data.deviceId,
+                timestamp: data.timestamp,
+                version: data.version
+            }
+        };
+    }
+
+    /**
+     * Check if there's a sync conflict
+     */
+    async function detectConflict(localConfig, serverData) {
+        if (!serverData) {
+            return null; // No server data, no conflict
+        }
+
+        const localTimestamp = localConfig.timestamp;
+        const serverTimestamp = serverData.metadata.timestamp;
+        const localDeviceId = getDeviceId();
+        const serverDeviceId = serverData.metadata.deviceId;
+
+        // If last sync was from this device, no conflict
+        if (serverDeviceId === localDeviceId) {
+            return null;
+        }
+
+        // If local is older than server, it's a conflict
+        if (localTimestamp < serverTimestamp) {
+            return {
+                local: localConfig,
+                remote: serverData.config,
+                localTimestamp,
+                remoteTimestamp: serverTimestamp,
+                remoteDeviceId: serverDeviceId
+            };
+        }
+
+        return null;
+    }
+
+    /**
+     * Perform sync operation
+     */
+    async function performSync(options = {}) {
+        const { force = false, direction = 'both' } = options;
+
+        if (!isEnabled() || !isConfigured()) {
+            throw new Error('Sync not enabled or configured');
+        }
+
+        if (!SyncEncryption.isSupported()) {
+            throw new Error('Web Crypto API not supported in this browser');
+        }
+
+        syncStatus = SYNC_STATUS.syncing;
+        if (typeof updateSyncUI === 'function') {
+            updateSyncUI();
+        }
+
+        try {
+            const localConfig = collectConfigData();
+            
+            if (direction === 'upload' || direction === 'both') {
+                // Upload local config
+                await uploadConfig(localConfig);
+                Storage.set(SYNC_STORAGE_KEYS.lastSync, Date.now());
+                
+                const hash = await SyncEncryption.hash(JSON.stringify(localConfig));
+                Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, hash);
+
+                syncStatus = SYNC_STATUS.success;
+                lastError = null;
+                logDebug('[Goal Portfolio Viewer] Sync upload successful');
+            }
+
+            if (direction === 'download' || direction === 'both') {
+                // Download and check for conflicts
+                const serverData = await downloadConfig();
+                
+                if (!serverData) {
+                    // No server data, upload local
+                    if (direction === 'both') {
+                        await uploadConfig(localConfig);
+                        Storage.set(SYNC_STORAGE_KEYS.lastSync, Date.now());
+                    }
+                    syncStatus = SYNC_STATUS.success;
+                    lastError = null;
+                    logDebug('[Goal Portfolio Viewer] No server data, uploaded local config');
+                } else {
+                    // Check for conflicts
+                    const conflict = await detectConflict(localConfig, serverData);
+                    
+                    if (conflict && !force) {
+                        syncStatus = SYNC_STATUS.conflict;
+                        if (typeof showConflictResolutionUI === 'function') {
+                            showConflictResolutionUI(conflict);
+                        }
+                        return { status: 'conflict', conflict };
+                    } else if (serverData) {
+                        // Apply server data
+                        applyConfigData(serverData.config);
+                        Storage.set(SYNC_STORAGE_KEYS.lastSync, Date.now());
+                        
+                        const hash = await SyncEncryption.hash(JSON.stringify(serverData.config));
+                        Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, hash);
+
+                        syncStatus = SYNC_STATUS.success;
+                        lastError = null;
+                        logDebug('[Goal Portfolio Viewer] Sync download successful');
+                    }
+                }
+            }
+
+            if (typeof updateSyncUI === 'function') {
+                updateSyncUI();
+            }
+            return { status: 'success' };
+        } catch (error) {
+            console.error('[Goal Portfolio Viewer] Sync failed:', error);
+            syncStatus = SYNC_STATUS.error;
+            lastError = error.message;
+            if (typeof updateSyncUI === 'function') {
+                updateSyncUI();
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Resolve conflict by choosing local or remote
+     */
+    async function resolveConflict(resolution, conflict) {
+        try {
+            syncStatus = SYNC_STATUS.syncing;
+            if (typeof updateSyncUI === 'function') {
+                updateSyncUI();
+            }
+
+            if (resolution === 'local') {
+                // Upload local, overwrite server
+                await uploadConfig(conflict.local);
+                Storage.set(SYNC_STORAGE_KEYS.lastSync, Date.now());
+            } else if (resolution === 'remote') {
+                // Apply remote, keep server
+                applyConfigData(conflict.remote);
+                Storage.set(SYNC_STORAGE_KEYS.lastSync, Date.now());
+            } else {
+                throw new Error('Invalid resolution');
+            }
+
+            syncStatus = SYNC_STATUS.success;
+            lastError = null;
+            if (typeof updateSyncUI === 'function') {
+                updateSyncUI();
+            }
+            
+            // Refresh the portfolio view
+            if (typeof renderPortfolioView === 'function') {
+                renderPortfolioView();
+            }
+        } catch (error) {
+            console.error('[Goal Portfolio Viewer] Conflict resolution failed:', error);
+            syncStatus = SYNC_STATUS.error;
+            lastError = error.message;
+            if (typeof updateSyncUI === 'function') {
+                updateSyncUI();
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Start automatic sync
+     */
+    function startAutoSync() {
+        stopAutoSync(); // Clear any existing timer
+
+        const autoSync = Storage.get(SYNC_STORAGE_KEYS.autoSync, SYNC_DEFAULTS.autoSync);
+        const intervalMinutes = Storage.get(SYNC_STORAGE_KEYS.syncInterval, SYNC_DEFAULTS.syncInterval);
+
+        if (!autoSync || !isEnabled() || !isConfigured()) {
+            return;
+        }
+
+        const intervalMs = intervalMinutes * 60 * 1000;
+        autoSyncTimer = setInterval(() => {
+            performSync({ direction: 'both' }).catch(error => {
+                console.error('[Goal Portfolio Viewer] Auto-sync failed:', error);
+            });
+        }, intervalMs);
+
+        logDebug(`[Goal Portfolio Viewer] Auto-sync started (interval: ${intervalMinutes} minutes)`);
+    }
+
+    /**
+     * Stop automatic sync
+     */
+    function stopAutoSync() {
+        if (autoSyncTimer) {
+            clearInterval(autoSyncTimer);
+            autoSyncTimer = null;
+            logDebug('[Goal Portfolio Viewer] Auto-sync stopped');
+        }
+    }
+
+    /**
+     * Get current sync status
+     */
+    function getStatus() {
+        return {
+            status: syncStatus,
+            lastError,
+            lastSync: Storage.get(SYNC_STORAGE_KEYS.lastSync, null),
+            isEnabled: isEnabled(),
+            isConfigured: isConfigured(),
+            cryptoSupported: SyncEncryption.isSupported()
+        };
+    }
+
+    /**
+     * Enable sync
+     */
+    function enable(config) {
+        if (!config || !config.serverUrl || !config.password || !config.userId) {
+            throw new Error('Invalid sync configuration: serverUrl, password, and userId required');
+        }
+
+        Storage.set(SYNC_STORAGE_KEYS.enabled, true);
+        Storage.set(SYNC_STORAGE_KEYS.serverUrl, config.serverUrl);
+        Storage.set(SYNC_STORAGE_KEYS.password, config.password);
+        Storage.set(SYNC_STORAGE_KEYS.userId, config.userId);
+        
+        if (config.autoSync !== undefined) {
+            Storage.set(SYNC_STORAGE_KEYS.autoSync, config.autoSync);
+        }
+        if (config.syncInterval !== undefined) {
+            Storage.set(SYNC_STORAGE_KEYS.syncInterval, config.syncInterval);
+        }
+
+        startAutoSync();
+        logDebug('[Goal Portfolio Viewer] Sync enabled');
+    }
+
+    /**
+     * Register a new user account
+     */
+    async function register(serverUrl, userId, password) {
+        if (!serverUrl || !userId || !password) {
+            throw new Error('serverUrl, userId, and password are required');
+        }
+
+        if (password.length < 8) {
+            throw new Error('Password must be at least 8 characters');
+        }
+
+        // Hash password for authentication
+        const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
+
+        // Call register endpoint
+        const response = await fetch(`${serverUrl}/auth/register`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                userId,
+                passwordHash
+            })
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+            throw new Error(result.message || 'Registration failed');
+        }
+
+        return result;
+    }
+
+    /**
+     * Login (verify credentials)
+     */
+    async function login(serverUrl, userId, password) {
+        if (!serverUrl || !userId || !password) {
+            throw new Error('serverUrl, userId, and password are required');
+        }
+
+        // Hash password for authentication
+        const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
+
+        // Call login endpoint
+        const response = await fetch(`${serverUrl}/auth/login`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                userId,
+                passwordHash
+            })
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+            throw new Error(result.message || 'Login failed');
+        }
+
+        return result;
+    }
+
+    /**
+     * Disable sync
+     */
+    function disable() {
+        stopAutoSync();
+        Storage.set(SYNC_STORAGE_KEYS.enabled, false);
+        logDebug('[Goal Portfolio Viewer] Sync disabled');
+    }
+
+    /**
+     * Clear sync configuration
+     */
+    function clearConfig() {
+        stopAutoSync();
+        
+        Object.values(SYNC_STORAGE_KEYS).forEach(key => {
+            Storage.remove(key);
+        });
+        
+        syncStatus = SYNC_STATUS.idle;
+        lastError = null;
+        
+        logDebug('[Goal Portfolio Viewer] Sync configuration cleared');
+    }
+
+    return {
+        isEnabled,
+        isConfigured,
+        getStatus,
+        performSync,
+        resolveConflict,
+        enable,
+        disable,
+        clearConfig,
+        startAutoSync,
+        stopAutoSync,
+        collectConfigData,
+        applyConfigData,
+        register,
+        login
+    };
+})();
+
+    // ============================================
     // Browser-Only Code (Skip in Node.js/Testing Environment)
     // ============================================
     // Everything below this point requires browser APIs (window, document, etc.)
@@ -1495,57 +2358,6 @@
 
     logDebug('[Goal Portfolio Viewer] API interception initialized');
 
-    // ============================================
-    // Storage Management
-    // ============================================
-
-    const Storage = {
-        get(key, fallback, context) {
-            try {
-                return GM_getValue(key, fallback);
-            } catch (error) {
-                const label = context || 'Error reading storage';
-                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
-                return fallback;
-            }
-        },
-        set(key, value, context) {
-            try {
-                GM_setValue(key, value);
-                return true;
-            } catch (error) {
-                const label = context || 'Error writing storage';
-                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
-                return false;
-            }
-        },
-        remove(key, context) {
-            try {
-                GM_deleteValue(key);
-                return true;
-            } catch (error) {
-                const label = context || 'Error deleting storage';
-                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
-                return false;
-            }
-        },
-        readJson(key, validateFn, context) {
-            const stored = Storage.get(key, null, context);
-            if (!stored) {
-                return null;
-            }
-            const parsed = parseJsonSafely(stored);
-            if (!validateFn(parsed)) {
-                Storage.remove(key, context);
-                return null;
-            }
-            return parsed;
-        },
-        writeJson(key, value, context) {
-            return Storage.set(key, JSON.stringify(value), context);
-        }
-    };
-
     const GoalTargetStore = {
         getTarget(goalId) {
             const key = getGoalTargetKey(goalId);
@@ -1590,7 +2402,6 @@
             logDebug(`[Goal Portfolio Viewer] Deleted goal fixed state for ${goalId}`);
         }
     };
-    testExports.GoalTargetStore = GoalTargetStore;
     
     /**
      * Load previously intercepted API data from Tampermonkey storage
@@ -1653,7 +2464,13 @@
         logDebug(`[Goal Portfolio Viewer] Cleared projected investment for ${bucket}|${goalType}`);
     }
 
+
     // ============================================
+    // Sync Encryption Module (Cross-Device Sync)
+    // ============================================
+
+
+        // ============================================
     // Performance Data Fetching
     // ============================================
 
@@ -1877,7 +2694,6 @@
         }
         return parsed;
     }
-    testExports.readPerformanceCache = readPerformanceCache;
 
     function writePerformanceCache(goalId, responseData) {
         const key = getPerformanceCacheKey(goalId);
@@ -1887,7 +2703,6 @@
         };
         Storage.writeJson(key, payload, 'Error writing performance cache');
     }
-    testExports.writePerformanceCache = writePerformanceCache;
 
     function getCachedPerformanceResponse(goalId, ignoreFreshness = false) {
         const cached = readPerformanceCache(goalId, ignoreFreshness);
@@ -1896,7 +2711,6 @@
         }
         return cached.response ? normalizePerformanceResponse(cached.response) : null;
     }
-    testExports.getCachedPerformanceResponse = getCachedPerformanceResponse;
 
     async function fetchPerformanceForGoal(goalId) {
         const url = `${PERFORMANCE_ENDPOINT}?displayCcy=SGD&goalId=${encodeURIComponent(goalId)}`;
@@ -1923,7 +2737,6 @@
         }
         return cloned.json();
     }
-    testExports.fetchPerformanceForGoal = fetchPerformanceForGoal;
 
     async function ensurePerformanceData(goalIds) {
         const results = {};
@@ -1971,7 +2784,6 @@
 
         return results;
     }
-    testExports.ensurePerformanceData = ensurePerformanceData;
 
     function buildGoalTypePerformanceSummary(performanceResponses) {
         // Guard against empty/null input - Staff Engineer requirement
@@ -2016,7 +2828,6 @@
             metrics
         };
     }
-    testExports.buildGoalTypePerformanceSummary = buildGoalTypePerformanceSummary;
 
     function getLatestPerformanceCacheTimestamp(goalIds) {
         if (!Array.isArray(goalIds)) {
@@ -2034,7 +2845,6 @@
         });
         return latestFetchedAt;
     }
-    testExports.getLatestPerformanceCacheTimestamp = getLatestPerformanceCacheTimestamp;
 
     function clearPerformanceCache(goalIds) {
         if (!Array.isArray(goalIds)) {
@@ -2049,7 +2859,6 @@
             delete state.performance.goalData[goalId];
         });
     }
-    testExports.clearPerformanceCache = clearPerformanceCache;
 
     // ============================================
     // UI
@@ -2077,7 +2886,6 @@
             Math.max(PERFORMANCE_CHART_MIN_HEIGHT, targetHeight || PERFORMANCE_CHART_DEFAULT_HEIGHT)
         );
     }
-    testExports.getChartHeightForWidth = getChartHeightForWidth;
 
     function getChartPadding(chartWidth, chartHeight) {
         const base = Math.min(chartWidth, chartHeight);
@@ -2100,7 +2908,6 @@
             height: height || PERFORMANCE_CHART_DEFAULT_HEIGHT
         };
     }
-    testExports.getChartDimensions = getChartDimensions;
 
     function renderPerformanceChart(chartWrapper, series, dimensionsOverride) {
         if (!chartWrapper) {
@@ -2111,7 +2918,6 @@
         chartWrapper.innerHTML = '';
         chartWrapper.appendChild(svg);
     }
-    testExports.renderPerformanceChart = renderPerformanceChart;
 
     function initializePerformanceChart(chartWrapper, series) {
         if (typeof ResizeObserver === 'undefined' || !chartWrapper) {
@@ -2371,7 +3177,6 @@
         svg.appendChild(pointGroup);
         return svg;
     }
-    testExports.createLineChartSvg = createLineChartSvg;
 
     function buildPerformanceWindowGrid(windowReturns) {
         const grid = createElement('div', 'gpv-performance-window-grid');
@@ -2403,7 +3208,6 @@
 
         return grid;
     }
-    testExports.buildPerformanceWindowGrid = buildPerformanceWindowGrid;
 
     function buildPerformanceMetricsTable(metrics) {
         const table = createElement('table', 'gpv-performance-metrics-table');
@@ -2647,7 +3451,6 @@
 
         contentDiv.appendChild(summaryContainer);
     }
-    testExports.renderSummaryView = renderSummaryView;
 
     function renderBucketView({
         contentDiv,
@@ -3047,7 +3850,6 @@
             projectedInvestmentsState
         });
     }
-    testExports.handleGoalTargetChange = handleGoalTargetChange;
 
     function handleGoalFixedToggle({
         input,
@@ -3075,7 +3877,6 @@
             options: { forceTargetRefresh: true }
         });
     }
-    testExports.handleGoalFixedToggle = handleGoalFixedToggle;
 
     /**
      * Handle changes to projected investment input
@@ -3126,13 +3927,811 @@
             });
         }
     }
-    testExports.handleProjectedInvestmentChange = handleProjectedInvestmentChange;
 
     const EventHandlers = {
         handleGoalTargetChange,
         handleGoalFixedToggle,
         handleProjectedInvestmentChange
     };
+
+    // ============================================
+    // UI: Sync Helper Functions
+    // ============================================
+
+    /**
+     * Escape HTML to prevent XSS
+     */
+    function escapeHtml(unsafe) {
+        if (!unsafe) return '';
+        return unsafe
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    /**
+     * Show notification (toast)
+     */
+    function showNotification(message, type = 'info') {
+        const notification = createElement('div');
+        notification.className = `gpv-notification gpv-notification-${type}`;
+        notification.textContent = message;
+        
+        document.body.appendChild(notification);
+        
+        // Fade in
+        setTimeout(() => {
+            notification.classList.add('gpv-notification-show');
+        }, 10);
+        
+        // Fade out and remove
+        setTimeout(() => {
+            notification.classList.remove('gpv-notification-show');
+            setTimeout(() => {
+                notification.remove();
+            }, 300);
+        }, 3000);
+    }
+
+    /**
+     * Format timestamp for display
+     */
+    function formatTimestamp(timestamp) {
+        if (!timestamp) return 'Never';
+        const date = new Date(timestamp);
+        return date.toLocaleString();
+    }
+
+
+    // ============================================
+    // UI: Sync Functions
+    // ============================================
+
+function createSyncSettingsHTML() {
+    const syncStatus = SyncManager.getStatus();
+    const isEnabled = syncStatus.isEnabled;
+    const isConfigured = syncStatus.isConfigured;
+    const cryptoSupported = syncStatus.cryptoSupported;
+    
+    const serverUrl = Storage.get(SYNC_STORAGE_KEYS.serverUrl, SYNC_DEFAULTS.serverUrl);
+    const userId = Storage.get(SYNC_STORAGE_KEYS.userId, '');
+    const password = Storage.get(SYNC_STORAGE_KEYS.password, '');
+    const autoSync = Storage.get(SYNC_STORAGE_KEYS.autoSync, SYNC_DEFAULTS.autoSync);
+    const syncInterval = Storage.get(SYNC_STORAGE_KEYS.syncInterval, SYNC_DEFAULTS.syncInterval);
+    
+    const lastSyncTimestamp = syncStatus.lastSync;
+    const lastSyncText = lastSyncTimestamp 
+        ? new Date(lastSyncTimestamp).toLocaleString()
+        : 'Never';
+
+    return `
+        <div class="gpv-sync-settings">
+            <div class="gpv-sync-header">
+                <h3>Sync Settings</h3>
+                ${!cryptoSupported ? `
+                    <div class="gpv-sync-warning">
+                        ⚠️ Web Crypto API not supported in this browser. Sync requires a modern browser.
+                    </div>
+                ` : ''}
+            </div>
+
+            <div class="gpv-sync-status-bar">
+                <div class="gpv-sync-status-item">
+                    <span class="gpv-sync-label">Status:</span>
+                    <span class="gpv-sync-value gpv-sync-status-${syncStatus.status}">
+                        ${syncStatus.status.toUpperCase()}
+                    </span>
+                </div>
+                <div class="gpv-sync-status-item">
+                    <span class="gpv-sync-label">Last Sync:</span>
+                    <span class="gpv-sync-value">${lastSyncText}</span>
+                </div>
+                ${syncStatus.lastError ? `
+                    <div class="gpv-sync-status-item gpv-sync-error">
+                        <span class="gpv-sync-label">Error:</span>
+                        <span class="gpv-sync-value">${escapeHtml(syncStatus.lastError)}</span>
+                    </div>
+                ` : ''}
+            </div>
+
+            <div class="gpv-sync-form">
+                <div class="gpv-sync-form-group">
+                    <label class="gpv-sync-toggle">
+                        <input 
+                            type="checkbox" 
+                            id="gpv-sync-enabled"
+                            ${isEnabled ? 'checked' : ''}
+                            ${!cryptoSupported ? 'disabled' : ''}
+                        />
+                        <span>Enable Sync</span>
+                    </label>
+                    <p class="gpv-sync-help">
+                        Sync your goal configurations across devices using encrypted cloud storage.
+                        <a href="https://github.com/laurenceputra/goal-portfolio-viewer/blob/main/SYNC_ARCHITECTURE.md" 
+                           target="_blank" 
+                           rel="noopener noreferrer">Learn more</a>
+                    </p>
+                </div>
+
+                <div class="gpv-sync-form-group">
+                    <label for="gpv-sync-server-url">Server URL</label>
+                    <input 
+                        type="text" 
+                        id="gpv-sync-server-url"
+                        class="gpv-sync-input"
+                        value="${escapeHtml(serverUrl)}"
+                        placeholder="${SYNC_DEFAULTS.serverUrl}"
+                        ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
+                    />
+                    <p class="gpv-sync-help">
+                        Default: ${SYNC_DEFAULTS.serverUrl} (or use your self-hosted instance)
+                    </p>
+                </div>
+
+                <div class="gpv-sync-form-group">
+                    <label for="gpv-sync-user-id">User ID / Email</label>
+                    <input 
+                        type="text" 
+                        id="gpv-sync-user-id"
+                        class="gpv-sync-input"
+                        value="${escapeHtml(userId)}"
+                        placeholder="your.email@example.com or username"
+                        ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
+                    />
+                    <p class="gpv-sync-help">
+                        Your unique identifier - use email address or custom username (3-50 characters)
+                    </p>
+                </div>
+
+                <div class="gpv-sync-form-group">
+                    <label for="gpv-sync-password">Password</label>
+                    <input 
+                        type="password" 
+                        id="gpv-sync-password"
+                        class="gpv-sync-input"
+                        value="${escapeHtml(password)}"
+                        placeholder="Strong password (min 8 characters)"
+                        ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
+                    />
+                    <p class="gpv-sync-help">
+                        🔒 Your password is used for both authentication and encryption.<br>
+                        ⚠️ <strong>Keep it safe!</strong> If lost, your data cannot be recovered.
+                    </p>
+                </div>
+
+                ${!isConfigured ? `
+                    <div class="gpv-sync-auth-buttons">
+                        <button type="button" class="gpv-sync-btn-primary" id="gpv-sync-register-btn" ${!cryptoSupported ? 'disabled' : ''}>
+                            📝 Sign Up
+                        </button>
+                        <button type="button" class="gpv-sync-btn-secondary" id="gpv-sync-login-btn" ${!cryptoSupported ? 'disabled' : ''}>
+                            🔑 Login
+                        </button>
+                    </div>
+                    <p class="gpv-sync-help" style="text-align: center; margin-top: 8px;">
+                        New user? Click <strong>Sign Up</strong> to create an account.<br>
+                        Existing user? Click <strong>Login</strong> to verify credentials.
+                    </p>
+                ` : ''}
+
+                <div class="gpv-sync-form-group">
+                    <label class="gpv-sync-toggle">
+                        <input 
+                            type="checkbox" 
+                            id="gpv-sync-auto"
+                            ${autoSync ? 'checked' : ''}
+                            ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
+                        />
+                        <span>Automatic Sync</span>
+                    </label>
+                </div>
+
+                <div class="gpv-sync-form-group">
+                    <label for="gpv-sync-interval">Sync Interval (minutes)</label>
+                    <input 
+                        type="number" 
+                        id="gpv-sync-interval"
+                        class="gpv-sync-input"
+                        value="${syncInterval}"
+                        min="5"
+                        max="1440"
+                        ${!isEnabled || !autoSync || !cryptoSupported ? 'disabled' : ''}
+                    />
+                    <p class="gpv-sync-help">
+                        How often to automatically sync (5-1440 minutes)
+                    </p>
+                </div>
+
+                <div class="gpv-sync-actions">
+                    <button 
+                        class="gpv-sync-btn gpv-sync-btn-primary"
+                        id="gpv-sync-save-btn"
+                        ${!cryptoSupported ? 'disabled' : ''}
+                    >
+                        Save Settings
+                    </button>
+                    <button 
+                        class="gpv-sync-btn gpv-sync-btn-secondary"
+                        id="gpv-sync-test-btn"
+                        ${!isEnabled || !isConfigured || !cryptoSupported ? 'disabled' : ''}
+                    >
+                        Test Connection
+                    </button>
+                    <button 
+                        class="gpv-sync-btn gpv-sync-btn-secondary"
+                        id="gpv-sync-now-btn"
+                        ${!isEnabled || !isConfigured || !cryptoSupported ? 'disabled' : ''}
+                    >
+                        Sync Now
+                    </button>
+                    <button 
+                        class="gpv-sync-btn gpv-sync-btn-danger"
+                        id="gpv-sync-clear-btn"
+                    >
+                        Clear Configuration
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function setupSyncSettingsListeners() {
+    // Enable/disable sync
+    const enabledCheckbox = document.getElementById('gpv-sync-enabled');
+    if (enabledCheckbox) {
+        enabledCheckbox.addEventListener('change', (e) => {
+            const inputs = document.querySelectorAll('.gpv-sync-input, #gpv-sync-auto, #gpv-sync-interval');
+            inputs.forEach(input => {
+                input.disabled = !e.target.checked;
+            });
+            
+            const buttons = document.querySelectorAll('#gpv-sync-test-btn, #gpv-sync-now-btn');
+            buttons.forEach(btn => {
+                btn.disabled = !e.target.checked;
+            });
+        });
+    }
+
+    // Auto-sync toggle
+    const autoSyncCheckbox = document.getElementById('gpv-sync-auto');
+    if (autoSyncCheckbox) {
+        autoSyncCheckbox.addEventListener('change', (e) => {
+            const intervalInput = document.getElementById('gpv-sync-interval');
+            if (intervalInput) {
+                intervalInput.disabled = !e.target.checked;
+            }
+        });
+    }
+
+    // Save settings
+    const saveBtn = document.getElementById('gpv-sync-save-btn');
+    if (saveBtn) {
+        saveBtn.addEventListener('click', async () => {
+            try {
+                saveBtn.disabled = true;
+                saveBtn.textContent = 'Saving...';
+
+                const enabled = document.getElementById('gpv-sync-enabled').checked;
+                const serverUrl = document.getElementById('gpv-sync-server-url').value.trim();
+                const userId = document.getElementById('gpv-sync-user-id').value.trim();
+                const password = document.getElementById('gpv-sync-password').value;
+                const autoSync = document.getElementById('gpv-sync-auto').checked;
+                const syncInterval = parseInt(document.getElementById('gpv-sync-interval').value) || SYNC_DEFAULTS.syncInterval;
+
+                // Validation
+                if (enabled) {
+                    if (!serverUrl || !userId || !password) {
+                        throw new Error('All fields are required when sync is enabled');
+                    }
+                    if (password.length < 8) {
+                        throw new Error('Password must be at least 8 characters');
+                    }
+                    if (syncInterval < 5 || syncInterval > 1440) {
+                        throw new Error('Sync interval must be between 5 and 1440 minutes');
+                    }
+                }
+
+                if (enabled) {
+                    SyncManager.enable({
+                        serverUrl,
+                        userId,
+                        password,
+                        autoSync,
+                        syncInterval
+                    });
+                    showSuccessMessage('Sync settings saved successfully!');
+                } else {
+                    SyncManager.disable();
+                    showSuccessMessage('Sync disabled');
+                }
+
+                // Refresh the settings panel
+                setTimeout(() => {
+                    const settingsPanel = document.querySelector('.gpv-sync-settings');
+                    if (settingsPanel) {
+                        settingsPanel.outerHTML = createSyncSettingsHTML();
+                        setupSyncSettingsListeners();
+                    }
+                }, 1000);
+            } catch (error) {
+                console.error('[Goal Portfolio Viewer] Save sync settings failed:', error);
+                showErrorMessage(`Failed to save settings: ${error.message}`);
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Settings';
+            }
+        });
+    }
+
+    // Register button
+    const registerBtn = document.getElementById('gpv-sync-register-btn');
+    if (registerBtn) {
+        registerBtn.addEventListener('click', async () => {
+            try {
+                registerBtn.disabled = true;
+                registerBtn.textContent = 'Signing up...';
+
+                const serverUrl = document.getElementById('gpv-sync-server-url').value.trim();
+                const userId = document.getElementById('gpv-sync-user-id').value.trim();
+                const password = document.getElementById('gpv-sync-password').value;
+
+                if (!serverUrl || !userId || !password) {
+                    throw new Error('Please fill in Server URL, User ID, and Password');
+                }
+
+                if (password.length < 8) {
+                    throw new Error('Password must be at least 8 characters');
+                }
+
+                const result = await SyncManager.register(serverUrl, userId, password);
+                showSuccessMessage('✅ Account created successfully! You can now enable sync.');
+                
+                // Refresh UI to show that user is now registered
+                setTimeout(() => {
+                    const settingsPanel = document.querySelector('.gpv-sync-settings');
+                    if (settingsPanel) {
+                        settingsPanel.outerHTML = createSyncSettingsHTML();
+                        setupSyncSettingsListeners();
+                    }
+                }, 1500);
+            } catch (error) {
+                console.error('[Goal Portfolio Viewer] Registration failed:', error);
+                showErrorMessage(`Registration failed: ${error.message}`);
+            } finally {
+                registerBtn.disabled = false;
+                registerBtn.textContent = '📝 Sign Up';
+            }
+        });
+    }
+
+    // Login button
+    const loginBtn = document.getElementById('gpv-sync-login-btn');
+    if (loginBtn) {
+        loginBtn.addEventListener('click', async () => {
+            try {
+                loginBtn.disabled = true;
+                loginBtn.textContent = 'Logging in...';
+
+                const serverUrl = document.getElementById('gpv-sync-server-url').value.trim();
+                const userId = document.getElementById('gpv-sync-user-id').value.trim();
+                const password = document.getElementById('gpv-sync-password').value;
+
+                if (!serverUrl || !userId || !password) {
+                    throw new Error('Please fill in Server URL, User ID, and Password');
+                }
+
+                const result = await SyncManager.login(serverUrl, userId, password);
+                showSuccessMessage('✅ Login successful! You can now enable sync.');
+                
+                // Auto-enable sync after successful login
+                document.getElementById('gpv-sync-enabled').checked = true;
+                document.getElementById('gpv-sync-enabled').dispatchEvent(new Event('change'));
+                
+            } catch (error) {
+                console.error('[Goal Portfolio Viewer] Login failed:', error);
+                showErrorMessage(`Login failed: ${error.message}`);
+            } finally {
+                loginBtn.disabled = false;
+                loginBtn.textContent = '🔑 Login';
+            }
+        });
+    }
+
+    // Test connection
+    const testBtn = document.getElementById('gpv-sync-test-btn');
+    if (testBtn) {
+        testBtn.addEventListener('click', async () => {
+            try {
+                testBtn.disabled = true;
+                testBtn.textContent = 'Testing...';
+
+                const serverUrl = Storage.get(SYNC_STORAGE_KEYS.serverUrl, SYNC_DEFAULTS.serverUrl);
+                const response = await fetch(`${serverUrl}/health`);
+                const data = await response.json();
+
+                if (response.ok && data.status === 'ok') {
+                    showSuccessMessage(`Connection successful! Server version: ${data.version}`);
+                } else {
+                    throw new Error('Server returned unexpected response');
+                }
+            } catch (error) {
+                console.error('[Goal Portfolio Viewer] Test connection failed:', error);
+                showErrorMessage(`Connection failed: ${error.message}`);
+            } finally {
+                testBtn.disabled = false;
+                testBtn.textContent = 'Test Connection';
+            }
+        });
+    }
+
+    // Sync now
+    const syncNowBtn = document.getElementById('gpv-sync-now-btn');
+    if (syncNowBtn) {
+        syncNowBtn.addEventListener('click', async () => {
+            try {
+                syncNowBtn.disabled = true;
+                syncNowBtn.textContent = 'Syncing...';
+
+                const result = await SyncManager.performSync({ direction: 'both' });
+                
+                if (result.status === 'conflict') {
+                    showInfoMessage('Sync conflict detected. Please resolve the conflict.');
+                } else {
+                    showSuccessMessage('Sync completed successfully!');
+                    
+                    // Refresh the portfolio view
+                    if (typeof renderPortfolioView === 'function') {
+                        renderPortfolioView();
+                    }
+                }
+
+                // Refresh the settings panel
+                setTimeout(() => {
+                    const settingsPanel = document.querySelector('.gpv-sync-settings');
+                    if (settingsPanel) {
+                        settingsPanel.outerHTML = createSyncSettingsHTML();
+                        setupSyncSettingsListeners();
+                    }
+                }, 1000);
+            } catch (error) {
+                console.error('[Goal Portfolio Viewer] Sync failed:', error);
+                showErrorMessage(`Sync failed: ${error.message}`);
+            } finally {
+                syncNowBtn.disabled = false;
+                syncNowBtn.textContent = 'Sync Now';
+            }
+        });
+    }
+
+    // Clear configuration
+    const clearBtn = document.getElementById('gpv-sync-clear-btn');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+            if (confirm('Are you sure you want to clear sync configuration? This will not delete data from the server.')) {
+                SyncManager.clearConfig();
+                showInfoMessage('Sync configuration cleared');
+                
+                // Refresh the settings panel
+                const settingsPanel = document.querySelector('.gpv-sync-settings');
+                if (settingsPanel) {
+                    settingsPanel.outerHTML = createSyncSettingsHTML();
+                    setupSyncSettingsListeners();
+                }
+            }
+        });
+    }
+}
+
+/**
+ * Show sync settings modal
+ */
+
+function showSyncSettings() {
+    
+    try {
+        // Get or create overlay
+        let overlay = document.getElementById('gpv-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'gpv-overlay';
+            overlay.className = 'gpv-overlay';
+            document.body.appendChild(overlay);
+        }
+        
+        // Clear existing content
+        overlay.innerHTML = '';
+        
+        // Create container
+        const container = document.createElement('div');
+        container.className = 'gpv-container';
+        
+        let settingsHTML;
+        try {
+            settingsHTML = createSyncSettingsHTML();
+        } catch (error) {
+            console.error('[Goal Portfolio Viewer] Error creating settings HTML:', error);
+            settingsHTML = '<div style="padding: 20px; color: #ef4444;">Error loading sync settings. Please check console for details.</div>';
+        }
+        
+        // Create header with back button
+        const header = document.createElement('div');
+        header.className = 'gpv-header';
+        
+        const headerButtons = document.createElement('div');
+        headerButtons.className = 'gpv-header-buttons';
+        
+        // Back to Investments button
+        const backBtn = document.createElement('button');
+        backBtn.className = 'gpv-sync-btn';
+        backBtn.innerHTML = '← Back to Investments';
+        backBtn.title = 'Return to portfolio view';
+        backBtn.onclick = () => {
+            // Re-render portfolio view
+            if (typeof renderPortfolioView === 'function') {
+                overlay.innerHTML = '';
+                // Trigger the main portfolio view to re-render
+                const event = new CustomEvent('gpv-show-portfolio');
+                document.dispatchEvent(event);
+            }
+        };
+        
+        // Close button
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'gpv-close-btn';
+        closeBtn.innerHTML = '✕';
+        closeBtn.onclick = () => {
+            overlay.remove();
+        };
+        
+        headerButtons.appendChild(backBtn);
+        headerButtons.appendChild(closeBtn);
+        
+        const title = document.createElement('h1');
+        title.textContent = 'Sync Settings';
+        
+        header.appendChild(title);
+        header.appendChild(headerButtons);
+        
+        // Create body (use gpv-content for scrolling)
+        const body = document.createElement('div');
+        body.className = 'gpv-content';
+        body.innerHTML = settingsHTML;
+        
+        // Assemble
+        container.appendChild(header);
+        container.appendChild(body);
+        overlay.appendChild(container);
+        
+
+        // Setup listeners
+        try {
+            setupSyncSettingsListeners();
+        } catch (error) {
+            console.error('[Goal Portfolio Viewer] Error setting up listeners:', error);
+        }
+
+        // Close on overlay click (outside container)
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                overlay.remove();
+            }
+        });
+        
+    } catch (error) {
+        console.error('[Goal Portfolio Viewer] Critical error in showSyncSettings:', error);
+        alert('Error opening sync settings: ' + error.message + '\n\nPlease check the browser console for more details.');
+    }
+}
+
+// ============================================
+// CHUNK 5: CONFLICT RESOLUTION UI
+// ============================================
+
+/**
+ * Format timestamp for display
+ */
+
+function createConflictDialogHTML(conflict) {
+    const localTargets = Object.keys(conflict.local.goalTargets || {}).length;
+    const remoteTargets = Object.keys(conflict.remote.goalTargets || {}).length;
+    const localFixed = Object.keys(conflict.local.goalFixed || {}).length;
+    const remoteFixed = Object.keys(conflict.remote.goalFixed || {}).length;
+
+    return `
+        <div class="gpv-conflict-dialog">
+            <h3>⚠️ Sync Conflict Detected</h3>
+            <p class="gpv-conflict-description">
+                Your local configuration conflicts with the data on the server. 
+                This typically happens when you've made changes on multiple devices.
+            </p>
+
+            <div class="gpv-conflict-comparison">
+                <div class="gpv-conflict-option">
+                    <h4>📱 Local (This Device)</h4>
+                    <ul class="gpv-conflict-details">
+                        <li><strong>Last Modified:</strong> ${formatTimestamp(conflict.localTimestamp)}</li>
+                        <li><strong>Goal Targets:</strong> ${localTargets} configured</li>
+                        <li><strong>Fixed Goals:</strong> ${localFixed} configured</li>
+                    </ul>
+                    <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-conflict-keep-local">
+                        Keep Local
+                    </button>
+                </div>
+
+                <div class="gpv-conflict-divider">OR</div>
+
+                <div class="gpv-conflict-option">
+                    <h4>☁️ Remote (Server)</h4>
+                    <ul class="gpv-conflict-details">
+                        <li><strong>Last Modified:</strong> ${formatTimestamp(conflict.remoteTimestamp)}</li>
+                        <li><strong>Goal Targets:</strong> ${remoteTargets} configured</li>
+                        <li><strong>Fixed Goals:</strong> ${remoteFixed} configured</li>
+                        <li><strong>Device:</strong> ${conflict.remoteDeviceId.substring(0, 8)}...</li>
+                    </ul>
+                    <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-conflict-use-remote">
+                        Use Remote
+                    </button>
+                </div>
+            </div>
+
+            <div class="gpv-conflict-warning">
+                <p><strong>⚠️ Warning:</strong> Choosing one option will overwrite the other. Make sure to choose carefully.</p>
+            </div>
+
+            <div class="gpv-conflict-actions">
+                <button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-conflict-cancel">
+                    Cancel (Resolve Later)
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Show conflict resolution UI
+ */
+
+function showConflictResolutionUI(conflict) {
+    // Create modal overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'gpv-modal-overlay gpv-conflict-overlay';
+    overlay.innerHTML = `
+        <div class="gpv-modal gpv-conflict-modal">
+            ${createConflictDialogHTML(conflict)}
+        </div>
+    `;
+    
+    document.body.appendChild(overlay);
+
+    // Keep local button
+    const keepLocalBtn = document.getElementById('gpv-conflict-keep-local');
+    if (keepLocalBtn) {
+        keepLocalBtn.addEventListener('click', async () => {
+            try {
+                keepLocalBtn.disabled = true;
+                keepLocalBtn.textContent = 'Resolving...';
+                
+                await SyncManager.resolveConflict('local', conflict);
+                showSuccessMessage('Conflict resolved! Local data uploaded to server.');
+                overlay.remove();
+            } catch (error) {
+                console.error('[Goal Portfolio Viewer] Conflict resolution failed:', error);
+                showErrorMessage(`Failed to resolve conflict: ${error.message}`);
+                keepLocalBtn.disabled = false;
+                keepLocalBtn.textContent = 'Keep Local';
+            }
+        });
+    }
+
+    // Use remote button
+    const useRemoteBtn = document.getElementById('gpv-conflict-use-remote');
+    if (useRemoteBtn) {
+        useRemoteBtn.addEventListener('click', async () => {
+            try {
+                useRemoteBtn.disabled = true;
+                useRemoteBtn.textContent = 'Resolving...';
+                
+                await SyncManager.resolveConflict('remote', conflict);
+                showSuccessMessage('Conflict resolved! Remote data applied locally.');
+                overlay.remove();
+            } catch (error) {
+                console.error('[Goal Portfolio Viewer] Conflict resolution failed:', error);
+                showErrorMessage(`Failed to resolve conflict: ${error.message}`);
+                useRemoteBtn.disabled = false;
+                useRemoteBtn.textContent = 'Use Remote';
+            }
+        });
+    }
+
+    // Cancel button
+    const cancelBtn = document.getElementById('gpv-conflict-cancel');
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+            overlay.remove();
+            showInfoMessage('Conflict resolution postponed. Sync will retry later.');
+        });
+    }
+
+    // Prevent closing on overlay click for conflicts
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+            showInfoMessage('Please choose an option to resolve the conflict.');
+        }
+    });
+}
+
+// ============================================
+// CHUNK 6: SYNC STATUS INDICATOR
+// ============================================
+
+/**
+
+function createSyncIndicatorHTML() {
+    const syncStatus = SyncManager.getStatus();
+    
+    if (!syncStatus.isEnabled) {
+        return ''; // Don't show indicator if sync is disabled
+    }
+
+    const statusIcons = {
+        idle: '⚪',
+        syncing: '🔄',
+        success: '✅',
+        error: '❌',
+        conflict: '⚠️'
+    };
+
+    const statusTexts = {
+        idle: 'Sync Idle',
+        syncing: 'Syncing...',
+        success: 'Synced',
+        error: 'Sync Error',
+        conflict: 'Sync Conflict'
+    };
+
+    const icon = statusIcons[syncStatus.status] || statusIcons.idle;
+    const text = statusTexts[syncStatus.status] || statusTexts.idle;
+
+    return `
+        <div class="gpv-sync-indicator gpv-sync-status-${syncStatus.status}" 
+             id="gpv-sync-indicator"
+             title="${text}${syncStatus.lastError ? ': ' + syncStatus.lastError : ''}">
+            <span class="gpv-sync-icon">${icon}</span>
+            <span class="gpv-sync-text">${text}</span>
+        </div>
+    `;
+}
+
+/**
+ * Update sync UI elements
+ */
+
+function updateSyncUI() {
+    // Update sync indicator
+    const indicator = document.getElementById('gpv-sync-indicator');
+    if (indicator) {
+        const parent = indicator.parentElement;
+        indicator.outerHTML = createSyncIndicatorHTML();
+        
+        // Re-attach click listener
+        const newIndicator = parent.querySelector('#gpv-sync-indicator');
+        if (newIndicator) {
+            newIndicator.addEventListener('click', showSyncSettings);
+        }
+    }
+
+    // Update sync settings panel if open
+    const settingsPanel = document.querySelector('.gpv-sync-settings');
+    if (settingsPanel) {
+        settingsPanel.outerHTML = createSyncSettingsHTML();
+        setupSyncSettingsListeners();
+    }
+}
+
+// ============================================
 
     // ============================================
     // UI: Styles
@@ -3258,6 +4857,19 @@
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             }
             
+            .gpv-sync-indicator-container {
+                flex: 1;
+                display: flex;
+                justify-content: center;
+                padding: 0 16px;
+            }
+            
+            .gpv-header-buttons {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            
             .gpv-close-btn {
                 background: rgba(255, 255, 255, 0.2);
                 border: none;
@@ -3277,6 +4889,32 @@
             .gpv-close-btn:hover {
                 background: rgba(255, 255, 255, 0.3);
                 transform: rotate(90deg);
+            }
+            
+            .gpv-sync-btn {
+                background: rgba(255, 255, 255, 0.2);
+                border: none;
+                color: #ffffff;
+                font-size: 14px;
+                padding: 8px 16px;
+                border-radius: 18px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.2s ease;
+                font-weight: 500;
+                gap: 6px;
+            }
+            
+            .gpv-sync-btn:hover {
+                background: rgba(255, 255, 255, 0.3);
+                transform: translateY(-1px);
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            }
+            
+            .gpv-sync-btn:active {
+                transform: translateY(0);
             }
             
             .gpv-controls {
@@ -4025,6 +5663,391 @@
             .gpv-content::-webkit-scrollbar-thumb:hover {
                 background: #94a3b8;
             }
+            /* =========================== */
+            /* Sync UI Styles */
+            /* =========================== */
+                /* Sync Settings Modal */
+                .gpv-sync-modal {
+                    max-width: 700px;
+                    max-height: 90vh;
+                    overflow-y: auto;
+                }
+
+                .gpv-sync-settings {
+                    padding: 20px;
+                }
+
+                .gpv-sync-header h3 {
+                    margin: 0 0 15px 0;
+                    font-size: 20px;
+                    font-weight: 600;
+                }
+
+                .gpv-sync-warning {
+                    background-color: #fff3cd;
+                    border: 1px solid #ffc107;
+                    border-radius: 4px;
+                    padding: 12px;
+                    margin-bottom: 15px;
+                    color: #856404;
+                }
+
+                .gpv-sync-status-bar {
+                    background-color: #f8f9fa;
+                    border: 1px solid #dee2e6;
+                    border-radius: 4px;
+                    padding: 12px;
+                    margin-bottom: 20px;
+                }
+
+                .gpv-sync-status-item {
+                    display: flex;
+                    align-items: center;
+                    margin-bottom: 8px;
+                }
+
+                .gpv-sync-status-item:last-child {
+                    margin-bottom: 0;
+                }
+
+                .gpv-sync-label {
+                    font-weight: 600;
+                    margin-right: 8px;
+                    min-width: 100px;
+                }
+
+                .gpv-sync-value {
+                    flex: 1;
+                }
+
+                .gpv-sync-status-idle {
+                    color: #6c757d;
+                }
+
+                .gpv-sync-status-syncing {
+                    color: #007bff;
+                    font-weight: 600;
+                }
+
+                .gpv-sync-status-success {
+                    color: #28a745;
+                    font-weight: 600;
+                }
+
+                .gpv-sync-status-error {
+                    color: #dc3545;
+                    font-weight: 600;
+                }
+
+                .gpv-sync-status-conflict {
+                    color: #ffc107;
+                    font-weight: 600;
+                }
+
+                .gpv-sync-error {
+                    color: #dc3545;
+                }
+
+                .gpv-sync-form {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 20px;
+                }
+
+                .gpv-sync-form-group {
+                    display: flex;
+                    flex-direction: column;
+                }
+
+                .gpv-sync-form-group label {
+                    font-weight: 600;
+                    margin-bottom: 6px;
+                    font-size: 14px;
+                }
+
+                .gpv-sync-input {
+                    padding: 8px 12px;
+                    border: 1px solid #ced4da;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    font-family: inherit;
+                }
+
+                .gpv-sync-input:disabled {
+                    background-color: #e9ecef;
+                    cursor: not-allowed;
+                }
+
+                .gpv-sync-input:focus {
+                    outline: none;
+                    border-color: #007bff;
+                    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+                }
+
+                .gpv-sync-toggle {
+                    display: flex;
+                    align-items: center;
+                    cursor: pointer;
+                    user-select: none;
+                }
+
+                .gpv-sync-toggle input[type="checkbox"] {
+                    margin-right: 8px;
+                    cursor: pointer;
+                }
+
+                .gpv-sync-toggle input[type="checkbox"]:disabled {
+                    cursor: not-allowed;
+                }
+
+                .gpv-sync-help {
+                    margin: 6px 0 0 0;
+                    font-size: 12px;
+                    color: #6c757d;
+                }
+
+                .gpv-sync-help a {
+                    color: #007bff;
+                    text-decoration: none;
+                }
+
+                .gpv-sync-help a:hover {
+                    text-decoration: underline;
+                }
+
+                .gpv-sync-actions {
+                    display: flex;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                    margin-top: 10px;
+                }
+
+                .gpv-sync-btn {
+                    padding: 10px 20px;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+
+                .gpv-sync-btn:disabled {
+                    opacity: 0.6;
+                    cursor: not-allowed;
+                }
+
+                .gpv-sync-btn-primary {
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    border-radius: 20px;
+                    padding: 12px 24px;
+                    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+                    font-weight: 600;
+                }
+
+                .gpv-sync-btn-primary:hover:not(:disabled) {
+                    transform: translateY(-2px);
+                    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+                }
+
+                .gpv-sync-btn-secondary {
+                    background: rgba(255, 255, 255, 0.2);
+                    color: #667eea;
+                    border: 2px solid #667eea;
+                    border-radius: 20px;
+                    padding: 12px 24px;
+                    font-weight: 600;
+                }
+
+                .gpv-sync-btn-secondary:hover:not(:disabled) {
+                    background: rgba(255, 255, 255, 0.3);
+                    transform: translateY(-2px);
+                    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+                }
+
+                .gpv-sync-btn-danger {
+                    background-color: #dc3545;
+                    color: white;
+                }
+
+                .gpv-sync-btn-danger:hover:not(:disabled) {
+                    background-color: #c82333;
+                }
+
+                /* Conflict Dialog */
+                .gpv-conflict-modal {
+                    max-width: 800px;
+                }
+
+                .gpv-conflict-dialog {
+                    padding: 20px;
+                }
+
+                .gpv-conflict-dialog h3 {
+                    margin: 0 0 15px 0;
+                    font-size: 20px;
+                    font-weight: 600;
+                }
+
+                .gpv-conflict-description {
+                    margin: 0 0 20px 0;
+                    color: #6c757d;
+                }
+
+                .gpv-conflict-comparison {
+                    display: grid;
+                    grid-template-columns: 1fr auto 1fr;
+                    gap: 20px;
+                    margin-bottom: 20px;
+                    align-items: center;
+                }
+
+                .gpv-conflict-option {
+                    border: 2px solid #dee2e6;
+                    border-radius: 8px;
+                    padding: 20px;
+                }
+
+                .gpv-conflict-option h4 {
+                    margin: 0 0 15px 0;
+                    font-size: 16px;
+                    font-weight: 600;
+                }
+
+                .gpv-conflict-details {
+                    list-style: none;
+                    padding: 0;
+                    margin: 0 0 15px 0;
+                }
+
+                .gpv-conflict-details li {
+                    padding: 6px 0;
+                    font-size: 14px;
+                }
+
+                .gpv-conflict-divider {
+                    font-weight: 600;
+                    color: #6c757d;
+                    text-align: center;
+                }
+
+                .gpv-conflict-warning {
+                    background-color: #fff3cd;
+                    border: 1px solid #ffc107;
+                    border-radius: 4px;
+                    padding: 12px;
+                    margin-bottom: 15px;
+                }
+
+                .gpv-conflict-warning p {
+                    margin: 0;
+                    color: #856404;
+                    font-size: 14px;
+                }
+
+                .gpv-conflict-actions {
+                    display: flex;
+                    justify-content: center;
+                }
+
+                /* Sync Indicator */
+                .gpv-sync-indicator {
+                    position: fixed;
+                    bottom: 20px;
+                    right: 20px;
+                    background-color: white;
+                    border: 1px solid #dee2e6;
+                    border-radius: 20px;
+                    padding: 8px 16px;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    cursor: pointer;
+                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+                    transition: all 0.2s;
+                    z-index: 9999;
+                }
+
+                .gpv-sync-indicator:hover {
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+                }
+
+                .gpv-sync-icon {
+                    font-size: 16px;
+                }
+
+                .gpv-sync-text {
+                    font-size: 13px;
+                    font-weight: 600;
+                }
+
+                .gpv-sync-indicator.gpv-sync-status-syncing .gpv-sync-icon {
+                    animation: gpv-spin 1s linear infinite;
+                }
+
+                @keyframes gpv-spin {
+                    from {
+                        transform: rotate(0deg);
+                    }
+                    to {
+                        transform: rotate(360deg);
+                    }
+                }
+
+                /* Notifications */
+                .gpv-notification {
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    background-color: white;
+                    border-radius: 4px;
+                    padding: 12px 16px;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+                    z-index: 10000;
+                    opacity: 0;
+                    transform: translateY(-20px);
+                    transition: all 0.3s;
+                    max-width: 400px;
+                }
+
+                .gpv-notification-show {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+
+                .gpv-notification-success {
+                    border-left: 4px solid #28a745;
+                }
+
+                .gpv-notification-error {
+                    border-left: 4px solid #dc3545;
+                }
+
+                .gpv-notification-info {
+                    border-left: 4px solid #007bff;
+                }
+
+                /* Responsive adjustments */
+                @media (max-width: 768px) {
+                    .gpv-conflict-comparison {
+                        grid-template-columns: 1fr;
+                    }
+
+                    .gpv-conflict-divider {
+                        display: none;
+                    }
+
+                    .gpv-sync-indicator {
+                        bottom: 10px;
+                        right: 10px;
+                    }
+
+                    .gpv-sync-text {
+                        display: none;
+                    }
+                }
+
         `;
         document.head.appendChild(style);
     }
@@ -4144,6 +6167,35 @@
 
         const header = createElement('div', 'gpv-header');
         const title = createElement('h1', null, 'Portfolio Viewer');
+        
+        // Add sync status indicator if sync is enabled
+        const syncIndicatorContainer = createElement('div', 'gpv-sync-indicator-container');
+        if (typeof createSyncIndicatorHTML === 'function') {
+            const indicatorHTML = createSyncIndicatorHTML();
+            if (indicatorHTML) {
+                syncIndicatorContainer.innerHTML = indicatorHTML;
+                const indicator = syncIndicatorContainer.querySelector('#gpv-sync-indicator');
+                if (indicator) {
+                    indicator.addEventListener('click', showSyncSettings);
+                }
+            }
+        }
+        
+        // Create button container for sync and close buttons
+        const buttonContainer = createElement('div', 'gpv-header-buttons');
+        
+        // Add sync settings button
+        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
+        syncBtn.title = 'Configure cross-device sync';
+        syncBtn.onclick = () => {
+            if (typeof showSyncSettings === 'function') {
+                showSyncSettings();
+            } else {
+                console.error('[Goal Portfolio Viewer] showSyncSettings is not a function!');
+                alert('Sync settings are not available. Please ensure the sync module is loaded.');
+            }
+        };
+        
         const closeBtn = createElement('button', 'gpv-close-btn', '✕');
         function teardownOverlay() {
             if (!overlay.isConnected) {
@@ -4170,8 +6222,12 @@
 
         closeBtn.onclick = closeOverlay;
         
+        buttonContainer.appendChild(syncBtn);
+        buttonContainer.appendChild(closeBtn);
+        
         header.appendChild(title);
-        header.appendChild(closeBtn);
+        header.appendChild(syncIndicatorContainer);
+        header.appendChild(buttonContainer);
         container.appendChild(header);
 
         const controls = createElement('div', 'gpv-controls');
@@ -4369,6 +6425,11 @@
         if (document.body) {
             injectStyles();
             startUrlMonitoring();
+            
+            // Add event listener for back button from sync settings
+            document.addEventListener('gpv-show-portfolio', () => {
+                showOverlay();
+            });
         } else {
             setTimeout(init, 100);
         }
@@ -4447,7 +6508,7 @@
             createSequentialRequestQueue
         };
 
-        module.exports = { ...baseExports, ...testExports };
+        module.exports = baseExports;
     }
 
 })();

@@ -1,0 +1,36 @@
+name = "goal-portfolio-sync"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+workers_dev = true
+
+# KV Namespace for sync data
+# Create with: npx wrangler kv:namespace create "SYNC_KV"
+# Then update the IDs below with your namespace IDs
+[[kv_namespaces]]
+binding = "SYNC_KV"
+id = "YOUR_KV_NAMESPACE_ID_HERE"
+preview_id = "YOUR_PREVIEW_KV_NAMESPACE_ID_HERE"
+
+# Production environment
+[env.production]
+name = "goal-portfolio-sync"
+vars = { ENVIRONMENT = "production" }
+
+# Staging environment
+[env.staging]
+name = "goal-portfolio-sync-staging"
+vars = { ENVIRONMENT = "staging" }
+
+# Custom domain routing (optional)
+# Uncomment and configure if you want a custom domain
+# routes = [
+#   { pattern = "sync.yourdomain.com/*", zone_name = "yourdomain.com" }
+# ]
+
+# Observability
+[observability]
+enabled = true
+
+# Limits
+[limits]
+cpu_ms = 50

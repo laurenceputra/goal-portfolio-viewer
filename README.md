@@ -80,6 +80,33 @@ Bring your core-satellite strategy to life with a view that aligns with how you 
 
 ---
 
+## 🆕 Cross-Device Sync (Optional)
+
+Sync your portfolio configuration across multiple devices with end-to-end encryption.
+
+**Key Features**:
+- 🔒 **Zero-Knowledge**: All encryption happens on your device
+- 🌐 **Self-Hostable**: Run your own backend on Cloudflare Workers
+- 🔄 **Automatic Sync**: Keep configs in sync across devices
+- 🎯 **Conflict Resolution**: Clear UI for handling sync conflicts
+- ⚡ **Fast**: ~5ms encryption, global CDN distribution
+
+**Getting Started**:
+1. Review the [Sync Setup Guide](docs/sync-setup.md)
+2. Configure your passphrase and backend URL
+3. Enable sync and enjoy seamless multi-device experience
+
+**For Self-Hosting**:
+- Deploy your own backend: See [workers/README.md](workers/README.md)
+- 5-minute setup with Cloudflare Workers (free tier available)
+
+**Technical Details**:
+- [Architecture Documentation](SYNC_ARCHITECTURE.md)
+- [Integration Guide](tampermonkey/QUICK_START.md)
+- [Self-Hosting Guide](workers/README.md)
+
+---
+
 ## Contributing
 
 We use a multi-agent workflow to maintain code quality and ensure robust development practices.
