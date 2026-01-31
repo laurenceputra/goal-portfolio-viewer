@@ -6,6 +6,14 @@
  */
 
 const RATE_LIMITS = {
+	'/auth/register': {
+		// POST /auth/register - Registration
+		POST: { limit: 5, window: 300 }, // 5 registrations per 5 minutes
+	},
+	'/auth/login': {
+		// POST /auth/login - Login
+		POST: { limit: 10, window: 60 }, // 10 login attempts per minute
+	},
 	'/sync': {
 		// POST /sync - Upload
 		POST: { limit: 10, window: 60 }, // 10 requests per minute
@@ -27,7 +35,12 @@ const RATE_LIMITS = {
  */
 export async function rateLimit(request, env, pathname) {
 	const method = request.method;
+	const userId = request.headers.get('X-User-Id');
 	const apiKey = request.headers.get('X-API-Key');
+	const connectingIP = request.headers.get('CF-Connecting-IP');
+
+	// Use userId for password auth, API key for legacy, or IP as fallback
+	const identifier = userId || apiKey || connectingIP || 'unknown';
 
 	// Normalize pathname (replace dynamic segments)
 	const normalizedPath = pathname.startsWith('/sync/') && pathname !== '/sync'
@@ -44,7 +57,7 @@ export async function rateLimit(request, env, pathname) {
 	const { limit, window } = limitConfig;
 
 	// Generate rate limit key
-	const rateLimitKey = `ratelimit:${apiKey}:${normalizedPath}:${method}`;
+	const rateLimitKey = `ratelimit:${identifier}:${normalizedPath}:${method}`;
 
 	// Get current count
 	const currentData = await env.SYNC_KV.get(rateLimitKey, 'json');

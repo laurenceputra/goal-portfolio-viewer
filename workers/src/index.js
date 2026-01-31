@@ -49,36 +49,81 @@ export default {
 			});
 		}
 
-		// Auth endpoints (no auth required for these)
+		// Auth endpoints (rate limited but no auth required)
 		if (method === 'POST' && url.pathname === '/auth/register') {
-			const body = await request.json();
-			const { userId, passwordHash } = body;
-			const result = await registerUser(userId, passwordHash, env);
-			return jsonResponse(result, result.success ? 200 : 400);
+			// Rate limit registration attempts
+			const rateLimitResult = await rateLimit(request, env, url.pathname);
+			if (!rateLimitResult.allowed) {
+				return jsonResponse({
+					success: false,
+					error: 'RATE_LIMIT_EXCEEDED',
+					retryAfter: rateLimitResult.retryAfter
+				}, 429, {
+					'Retry-After': String(rateLimitResult.retryAfter)
+				});
+			}
+
+			try {
+				const body = await request.json();
+				const { userId, passwordHash } = body;
+				const result = await registerUser(userId, passwordHash, env);
+				return jsonResponse(result, result.success ? 200 : 400);
+			} catch (error) {
+				return jsonResponse({
+					success: false,
+					error: 'BAD_REQUEST',
+					message: 'Invalid JSON in request body'
+				}, 400);
+			}
 		}
 
 		if (method === 'POST' && url.pathname === '/auth/login') {
-			const body = await request.json();
-			const { userId, passwordHash } = body;
-			const result = await loginUser(userId, passwordHash, env);
-			return jsonResponse(result, result.success ? 200 : 401);
+			// Rate limit login attempts
+			const rateLimitResult = await rateLimit(request, env, url.pathname);
+			if (!rateLimitResult.allowed) {
+				return jsonResponse({
+					success: false,
+					error: 'RATE_LIMIT_EXCEEDED',
+					retryAfter: rateLimitResult.retryAfter
+				}, 429, {
+					'Retry-After': String(rateLimitResult.retryAfter)
+				});
+			}
+
+			try {
+				const body = await request.json();
+				const { userId, passwordHash } = body;
+				const result = await loginUser(userId, passwordHash, env);
+				return jsonResponse(result, result.success ? 200 : 401);
+			} catch (error) {
+				return jsonResponse({
+					success: false,
+					error: 'BAD_REQUEST',
+					message: 'Invalid JSON in request body'
+				}, 400);
+			}
 		}
 
 		// All other endpoints require authentication
 		// Support both password-based and legacy API key auth
 		let authenticated = false;
+		let authenticatedUserId = null; // Track which user is authenticated
 		
 		// Try password-based auth first
 		const passwordHash = request.headers.get('X-Password-Hash');
-		const userId = request.headers.get('X-User-Id');
-		if (passwordHash && userId) {
-			authenticated = await validatePassword(userId, passwordHash, env);
+		const headerUserId = request.headers.get('X-User-Id');
+		if (passwordHash && headerUserId) {
+			authenticated = await validatePassword(headerUserId, passwordHash, env);
+			if (authenticated) {
+				authenticatedUserId = headerUserId;
+			}
 		}
 		
 		// Fall back to legacy API key auth
 		if (!authenticated) {
 			const apiKey = request.headers.get('X-API-Key');
 			authenticated = validateApiKey(apiKey, env);
+			// Legacy API key has access to all users (backward compatibility)
 		}
 		
 		if (!authenticated) {
@@ -116,6 +161,16 @@ export default {
 				}
 
 				const body = await request.json();
+				
+				// Authorization check: ensure authenticated user matches body.userId
+				if (authenticatedUserId && body.userId && body.userId !== authenticatedUserId) {
+					return jsonResponse({
+						success: false,
+						error: 'FORBIDDEN',
+						message: 'Cannot upload data for another user'
+					}, 403);
+				}
+				
 				return await handleSync(body, env);
 			}
 
@@ -129,6 +184,16 @@ export default {
 						message: 'userId required'
 					}, 400);
 				}
+				
+				// Authorization check: ensure authenticated user matches requested userId
+				if (authenticatedUserId && userId !== authenticatedUserId) {
+					return jsonResponse({
+						success: false,
+						error: 'FORBIDDEN',
+						message: 'Cannot access another user\'s data'
+					}, 403);
+				}
+				
 				return await handleGetSync(userId, env);
 			}
 
@@ -142,6 +207,16 @@ export default {
 						message: 'userId required'
 					}, 400);
 				}
+				
+				// Authorization check: ensure authenticated user matches requested userId
+				if (authenticatedUserId && userId !== authenticatedUserId) {
+					return jsonResponse({
+						success: false,
+						error: 'FORBIDDEN',
+						message: 'Cannot delete another user\'s data'
+					}, 403);
+				}
+				
 				return await handleDeleteSync(userId, env);
 			}
 
