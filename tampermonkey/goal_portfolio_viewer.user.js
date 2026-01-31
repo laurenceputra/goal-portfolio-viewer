@@ -1366,6 +1366,61 @@
         };
     }
 
+    // ============================================
+    // Storage Management
+    // ============================================
+
+    const Storage = {
+        get(key, fallback, context) {
+            try {
+                return GM_getValue(key, fallback);
+            } catch (error) {
+                const label = context || 'Error reading storage';
+                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
+                return fallback;
+            }
+        },
+        set(key, value, context) {
+            try {
+                GM_setValue(key, value);
+                return true;
+            } catch (error) {
+                const label = context || 'Error writing storage';
+                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
+                return false;
+            }
+        },
+        remove(key, context) {
+            try {
+                GM_deleteValue(key);
+                return true;
+            } catch (error) {
+                const label = context || 'Error deleting storage';
+                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
+                return false;
+            }
+        },
+        readJson(key, validateFn, context) {
+            const stored = Storage.get(key, null, context);
+            if (!stored) {
+                return null;
+            }
+            const parsed = parseJsonSafely(stored);
+            if (!validateFn(parsed)) {
+                Storage.remove(key, context);
+                return null;
+            }
+            return parsed;
+        },
+        writeJson(key, value, context) {
+            return Storage.set(key, JSON.stringify(value), context);
+        }
+    };
+
+    // ============================================
+    // Sync Modules (Cross-Device Sync Feature)
+    // ============================================
+
     const SyncEncryption = (() => {
     const PBKDF2_ITERATIONS = 100000;
     const KEY_LENGTH = 256;
@@ -2166,57 +2221,6 @@
     };
 
     logDebug('[Goal Portfolio Viewer] API interception initialized');
-
-    // ============================================
-    // Storage Management
-    // ============================================
-
-    const Storage = {
-        get(key, fallback, context) {
-            try {
-                return GM_getValue(key, fallback);
-            } catch (error) {
-                const label = context || 'Error reading storage';
-                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
-                return fallback;
-            }
-        },
-        set(key, value, context) {
-            try {
-                GM_setValue(key, value);
-                return true;
-            } catch (error) {
-                const label = context || 'Error writing storage';
-                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
-                return false;
-            }
-        },
-        remove(key, context) {
-            try {
-                GM_deleteValue(key);
-                return true;
-            } catch (error) {
-                const label = context || 'Error deleting storage';
-                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
-                return false;
-            }
-        },
-        readJson(key, validateFn, context) {
-            const stored = Storage.get(key, null, context);
-            if (!stored) {
-                return null;
-            }
-            const parsed = parseJsonSafely(stored);
-            if (!validateFn(parsed)) {
-                Storage.remove(key, context);
-                return null;
-            }
-            return parsed;
-        },
-        writeJson(key, value, context) {
-            return Storage.set(key, JSON.stringify(value), context);
-        }
-    };
 
     const GoalTargetStore = {
         getTarget(goalId) {
