@@ -1422,9 +1422,11 @@
 
     const SyncEncryption = (() => {
     const PBKDF2_ITERATIONS = 100000;
+    const MASTER_KEY_ITERATIONS = 200000; // Higher iterations for master key derivation
     const KEY_LENGTH = 256;
     const IV_LENGTH = 12; // 96 bits for GCM
     const SALT_LENGTH = 16; // 128 bits
+    const MASTER_KEY_SALT = 'goal-portfolio-viewer-master-key-v1'; // Fixed salt for master key derivation
 
     /**
      * Check if Web Crypto API is available
@@ -1466,13 +1468,47 @@
     }
 
     /**
-     * Derive encryption key from passphrase using PBKDF2
+     * Derive master key from password using PBKDF2
+     * Master key acts as intermediate key material - password is never used directly for encryption
+     * Returns: raw key bytes (Uint8Array) for use as input to encryption key derivation
      */
-    async function deriveKey(passphrase, salt) {
+    async function deriveMasterKey(password) {
+        if (!isSupported()) {
+            throw new Error('Web Crypto API not supported');
+        }
+
         const encoder = new TextEncoder();
-        const passphraseKey = await window.crypto.subtle.importKey(
+        const passwordKey = await window.crypto.subtle.importKey(
             'raw',
-            encoder.encode(passphrase),
+            encoder.encode(password),
+            'PBKDF2',
+            false,
+            ['deriveBits']
+        );
+
+        // Derive 32 bytes (256 bits) of key material
+        const masterKeyBits = await window.crypto.subtle.deriveBits(
+            {
+                name: 'PBKDF2',
+                salt: encoder.encode(MASTER_KEY_SALT),
+                iterations: MASTER_KEY_ITERATIONS,
+                hash: 'SHA-256'
+            },
+            passwordKey,
+            256
+        );
+
+        return new Uint8Array(masterKeyBits);
+    }
+
+    /**
+     * Derive encryption key from master key using PBKDF2
+     * This adds another layer of key derivation for defense in depth
+     */
+    async function deriveKey(masterKey, salt) {
+        const masterKeyObj = await window.crypto.subtle.importKey(
+            'raw',
+            masterKey,
             'PBKDF2',
             false,
             ['deriveBits', 'deriveKey']
@@ -1485,7 +1521,7 @@
                 iterations: PBKDF2_ITERATIONS,
                 hash: 'SHA-256'
             },
-            passphraseKey,
+            masterKeyObj,
             { name: 'AES-GCM', length: KEY_LENGTH },
             false,
             ['encrypt', 'decrypt']
@@ -1494,9 +1530,10 @@
 
     /**
      * Encrypt data with AES-GCM
+     * Password is used as proxy to derive master key, which then derives encryption key
      * Returns: base64(salt + iv + ciphertext + auth_tag)
      */
-    async function encrypt(plaintext, passphrase) {
+    async function encrypt(plaintext, password) {
         if (!isSupported()) {
             throw new Error('Web Crypto API not supported');
         }
@@ -1505,7 +1542,12 @@
             const encoder = new TextEncoder();
             const salt = generateRandomBuffer(SALT_LENGTH);
             const iv = generateRandomBuffer(IV_LENGTH);
-            const key = await deriveKey(passphrase, salt);
+            
+            // Step 1: Derive master key from password (password is proxy)
+            const masterKey = await deriveMasterKey(password);
+            
+            // Step 2: Derive encryption key from master key
+            const key = await deriveKey(masterKey, salt);
 
             const ciphertext = await window.crypto.subtle.encrypt(
                 { name: 'AES-GCM', iv: iv },
@@ -1531,8 +1573,9 @@
 
     /**
      * Decrypt data encrypted with encrypt()
+     * Password is used as proxy to derive master key, which then derives decryption key
      */
-    async function decrypt(encryptedBase64, passphrase) {
+    async function decrypt(encryptedBase64, password) {
         if (!isSupported()) {
             throw new Error('Web Crypto API not supported');
         }
@@ -1548,7 +1591,11 @@
             const iv = combined.slice(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
             const ciphertext = combined.slice(SALT_LENGTH + IV_LENGTH);
 
-            const key = await deriveKey(passphrase, salt);
+            // Step 1: Derive master key from password (password is proxy)
+            const masterKey = await deriveMasterKey(password);
+            
+            // Step 2: Derive decryption key from master key
+            const key = await deriveKey(masterKey, salt);
 
             const plaintext = await window.crypto.subtle.decrypt(
                 { name: 'AES-GCM', iv: iv },
@@ -1560,7 +1607,7 @@
             return decoder.decode(plaintext);
         } catch (error) {
             console.error('[Goal Portfolio Viewer] Decryption failed:', error);
-            throw new Error('Decryption failed - check passphrase');
+            throw new Error('Decryption failed - check password');
         }
     }
 
@@ -1594,6 +1641,7 @@
     return {
         isSupported,
         generateUUID,
+        deriveMasterKey,
         encrypt,
         decrypt,
         hash,
