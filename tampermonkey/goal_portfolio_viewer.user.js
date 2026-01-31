@@ -4454,9 +4454,21 @@ function showSyncSettings() {
     console.log('[Goal Portfolio Viewer] showSyncSettings called');
     
     try {
-        // Create modal overlay
-        const overlay = document.createElement('div');
-        overlay.className = 'gpv-modal-overlay';
+        // Get or create overlay
+        let overlay = document.getElementById('gpv-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'gpv-overlay';
+            overlay.className = 'gpv-overlay';
+            document.body.appendChild(overlay);
+        }
+        
+        // Clear existing content
+        overlay.innerHTML = '';
+        
+        // Create container
+        const container = document.createElement('div');
+        container.className = 'gpv-container';
         
         console.log('[Goal Portfolio Viewer] Creating sync settings HTML...');
         let settingsHTML;
@@ -4468,21 +4480,58 @@ function showSyncSettings() {
             settingsHTML = '<div style="padding: 20px; color: #ef4444;">Error loading sync settings. Please check console for details.</div>';
         }
         
-        overlay.innerHTML = `
-            <div class="gpv-modal gpv-sync-modal">
-                <div class="gpv-modal-header">
-                    <h2>Sync Settings</h2>
-                    <button class="gpv-modal-close" id="gpv-sync-modal-close">&times;</button>
-                </div>
-                <div class="gpv-modal-body">
-                    ${settingsHTML}
-                </div>
-            </div>
-        `;
+        // Create header with back button
+        const header = document.createElement('div');
+        header.className = 'gpv-header';
         
-        console.log('[Goal Portfolio Viewer] Appending overlay to body...');
-        document.body.appendChild(overlay);
-        console.log('[Goal Portfolio Viewer] Overlay appended to body');
+        const headerButtons = document.createElement('div');
+        headerButtons.className = 'gpv-header-buttons';
+        
+        // Back to Investments button
+        const backBtn = document.createElement('button');
+        backBtn.className = 'gpv-sync-btn';
+        backBtn.innerHTML = '← Back to Investments';
+        backBtn.title = 'Return to portfolio view';
+        backBtn.onclick = () => {
+            console.log('[Goal Portfolio Viewer] Back button clicked');
+            // Re-render portfolio view
+            if (typeof renderPortfolioView === 'function') {
+                overlay.innerHTML = '';
+                // Trigger the main portfolio view to re-render
+                const event = new CustomEvent('gpv-show-portfolio');
+                document.dispatchEvent(event);
+            }
+        };
+        
+        // Close button
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'gpv-close-btn';
+        closeBtn.innerHTML = '✕';
+        closeBtn.onclick = () => {
+            console.log('[Goal Portfolio Viewer] Close button clicked');
+            overlay.remove();
+        };
+        
+        headerButtons.appendChild(backBtn);
+        headerButtons.appendChild(closeBtn);
+        
+        const title = document.createElement('h1');
+        title.textContent = 'Sync Settings';
+        
+        header.appendChild(title);
+        header.appendChild(headerButtons);
+        
+        // Create body
+        const body = document.createElement('div');
+        body.className = 'gpv-body';
+        body.innerHTML = settingsHTML;
+        
+        // Assemble
+        container.appendChild(header);
+        container.appendChild(body);
+        overlay.appendChild(container);
+        
+        console.log('[Goal Portfolio Viewer] Container appended to overlay');
 
         // Setup listeners
         try {
@@ -4493,16 +4542,7 @@ function showSyncSettings() {
             console.error('[Goal Portfolio Viewer] Error setting up listeners:', error);
         }
 
-        // Close button
-        const closeBtn = document.getElementById('gpv-sync-modal-close');
-        if (closeBtn) {
-            closeBtn.addEventListener('click', () => {
-                console.log('[Goal Portfolio Viewer] Close button clicked');
-                overlay.remove();
-            });
-        }
-
-        // Close on overlay click
+        // Close on overlay click (outside container)
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) {
                 console.log('[Goal Portfolio Viewer] Overlay clicked, closing...');
@@ -4510,7 +4550,7 @@ function showSyncSettings() {
             }
         });
         
-        console.log('[Goal Portfolio Viewer] Sync settings modal shown successfully');
+        console.log('[Goal Portfolio Viewer] Sync settings modal shown successfully in overlay');
     } catch (error) {
         console.error('[Goal Portfolio Viewer] Critical error in showSyncSettings:', error);
         alert('Error opening sync settings: ' + error.message + '\n\nPlease check the browser console for more details.');
@@ -6408,6 +6448,12 @@ function updateSyncUI() {
         if (document.body) {
             injectStyles();
             startUrlMonitoring();
+            
+            // Add event listener for back button from sync settings
+            document.addEventListener('gpv-show-portfolio', () => {
+                console.log('[Goal Portfolio Viewer] gpv-show-portfolio event received');
+                showOverlay();
+            });
         } else {
             setTimeout(init, 100);
         }
