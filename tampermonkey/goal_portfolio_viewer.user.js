@@ -1365,331 +1365,6 @@
         };
     }
 
-    // ============================================
-    // Browser-Only Code (Skip in Node.js/Testing Environment)
-    // ============================================
-    // Everything below this point requires browser APIs (window, document, etc.)
-    // and should not execute when running tests in Node.js.
-    if (typeof window !== 'undefined') {
-
-    // ============================================
-    // Adapters/State
-    // ============================================
-    const PERFORMANCE_ENDPOINT = 'https://bff.prod.silver.endowus.com/v1/performance';
-    const REQUEST_DELAY_MS = 500;
-    const PERFORMANCE_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-    const PERFORMANCE_CACHE_REFRESH_MIN_AGE_MS = 24 * 60 * 60 * 1000;
-    const PERFORMANCE_CHART_WINDOW = PERFORMANCE_WINDOWS.oneYear.key;
-    const PERFORMANCE_REQUEST_TIMEOUT_MS = 10000;
-
-    const state = {
-        apiData: {
-            performance: null,
-            investible: null,
-            summary: null
-        },
-        projectedInvestments: {},
-        performance: {
-            goalData: {},
-            requestQueue: createSequentialRequestQueue({
-                delayMs: REQUEST_DELAY_MS
-            })
-        },
-        auth: {
-            requestHeaders: null,
-            gmCookieAuthToken: null,
-            gmCookieDumped: false
-        },
-        ui: {
-            portfolioButton: null,
-            lastUrl: window.location.href,
-            urlMonitorCleanup: null,
-            urlCheckTimeout: null,
-            observer: null
-        }
-    };
-
-    const ENDPOINT_HANDLERS = {
-        performance: data => {
-            state.apiData.performance = data;
-            Storage.writeJson(STORAGE_KEYS.performance, data, 'Error saving performance data');
-            logDebug('[Goal Portfolio Viewer] Intercepted performance data');
-        },
-        investible: data => {
-            state.apiData.investible = data;
-            Storage.writeJson(STORAGE_KEYS.investible, data, 'Error saving investible data');
-            logDebug('[Goal Portfolio Viewer] Intercepted investible data');
-        },
-        summary: data => {
-            if (!Array.isArray(data)) {
-                return;
-            }
-            state.apiData.summary = data;
-            Storage.writeJson(STORAGE_KEYS.summary, data, 'Error saving summary data');
-            logDebug('[Goal Portfolio Viewer] Intercepted summary data');
-        }
-    };
-
-    function detectEndpointKey(url) {
-        if (typeof url !== 'string') {
-            return null;
-        }
-        if (url.includes(ENDPOINT_PATHS.performance)) {
-            return 'performance';
-        }
-        if (url.includes(ENDPOINT_PATHS.investible)) {
-            return 'investible';
-        }
-        if (url.match(SUMMARY_ENDPOINT_REGEX)) {
-            return 'summary';
-        }
-        return null;
-    }
-
-    async function handleInterceptedResponse(url, readData) {
-        const endpointKey = detectEndpointKey(url);
-        if (!endpointKey) {
-            return;
-        }
-        const handler = ENDPOINT_HANDLERS[endpointKey];
-        if (typeof handler !== 'function') {
-            return;
-        }
-        try {
-            const data = await readData();
-            if (data === null || data === undefined) {
-                return;
-            }
-            handler(data);
-        } catch (error) {
-            console.error('[Goal Portfolio Viewer] Error parsing API response:', error);
-        }
-    }
-
-    function logAuthDebug(message, data) {
-        if (!DEBUG_AUTH) {
-            return;
-        }
-        if (data && typeof data === 'object') {
-            console.log(message, data);
-            return;
-        }
-        console.log(message);
-    }
-    // Non-persistent storage for projected investments (resets on reload)
-    // Key format: "bucketName|goalType" -> projected amount
-
-    // ============================================
-    // API Interception via Monkey Patching
-    // ============================================
-    
-    // Store original functions
-    const originalFetch = window.fetch;
-    const originalXHROpen = XMLHttpRequest.prototype.open;
-    const originalXHRSend = XMLHttpRequest.prototype.send;
-    const originalXHRSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
-
-    // Fetch interception
-    window.fetch = async function(...args) {
-        extractAuthHeaders(args[0], args[1]);
-        const response = await originalFetch.apply(this, args);
-        const url = args[0];
-        void handleInterceptedResponse(url, () => response.clone().json());
-        return response;
-    };
-
-    // XMLHttpRequest interception
-    XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-        this._url = url;
-        this._headers = {};
-        return originalXHROpen.apply(this, [method, url, ...rest]);
-    };
-
-    XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
-        if (this._headers) {
-            this._headers[header] = value;
-        }
-        return originalXHRSetRequestHeader.apply(this, [header, value]);
-    };
-
-    XMLHttpRequest.prototype.send = function(...args) {
-        const url = this._url;
-        extractAuthHeaders(url, { headers: this._headers });
-        
-        if (url && typeof url === 'string') {
-            this.addEventListener('load', function() {
-                handleInterceptedResponse(url, () => Promise.resolve(parseJsonSafely(this.responseText)));
-            });
-        }
-        
-        return originalXHRSend.apply(this, args);
-    };
-
-    logDebug('[Goal Portfolio Viewer] API interception initialized');
-
-    // ============================================
-    // Storage Management
-    // ============================================
-
-    const Storage = {
-        get(key, fallback, context) {
-            try {
-                return GM_getValue(key, fallback);
-            } catch (error) {
-                const label = context || 'Error reading storage';
-                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
-                return fallback;
-            }
-        },
-        set(key, value, context) {
-            try {
-                GM_setValue(key, value);
-                return true;
-            } catch (error) {
-                const label = context || 'Error writing storage';
-                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
-                return false;
-            }
-        },
-        remove(key, context) {
-            try {
-                GM_deleteValue(key);
-                return true;
-            } catch (error) {
-                const label = context || 'Error deleting storage';
-                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
-                return false;
-            }
-        },
-        readJson(key, validateFn, context) {
-            const stored = Storage.get(key, null, context);
-            if (!stored) {
-                return null;
-            }
-            const parsed = parseJsonSafely(stored);
-            if (!validateFn(parsed)) {
-                Storage.remove(key, context);
-                return null;
-            }
-            return parsed;
-        },
-        writeJson(key, value, context) {
-            return Storage.set(key, JSON.stringify(value), context);
-        }
-    };
-
-    const GoalTargetStore = {
-        getTarget(goalId) {
-            const key = getGoalTargetKey(goalId);
-            const value = Storage.get(key, null, 'Error loading goal target percentage');
-            if (value === null) {
-                return null;
-            }
-            const numericValue = parseFloat(value);
-            return Number.isFinite(numericValue) ? numericValue : null;
-        },
-        setTarget(goalId, percentage) {
-            const numericPercentage = parseFloat(percentage);
-            if (!Number.isFinite(numericPercentage)) {
-                return null;
-            }
-            const validPercentage = Math.max(0, Math.min(100, numericPercentage));
-            const key = getGoalTargetKey(goalId);
-            const didSet = Storage.set(key, validPercentage, 'Error saving goal target percentage');
-            if (!didSet) {
-                return null;
-            }
-            logDebug(`[Goal Portfolio Viewer] Saved goal target percentage for ${goalId}: ${validPercentage}%`);
-            return validPercentage;
-        },
-        clearTarget(goalId) {
-            const key = getGoalTargetKey(goalId);
-            Storage.remove(key, 'Error deleting goal target percentage');
-            logDebug(`[Goal Portfolio Viewer] Deleted goal target percentage for ${goalId}`);
-        },
-        getFixed(goalId) {
-            const key = getGoalFixedKey(goalId);
-            return Storage.get(key, false, 'Error loading goal fixed state') === true;
-        },
-        setFixed(goalId, isFixed) {
-            const key = getGoalFixedKey(goalId);
-            Storage.set(key, isFixed === true, 'Error saving goal fixed state');
-            logDebug(`[Goal Portfolio Viewer] Saved goal fixed state for ${goalId}: ${isFixed === true}`);
-        },
-        clearFixed(goalId) {
-            const key = getGoalFixedKey(goalId);
-            Storage.remove(key, 'Error deleting goal fixed state');
-            logDebug(`[Goal Portfolio Viewer] Deleted goal fixed state for ${goalId}`);
-        }
-    };
-    testExports.GoalTargetStore = GoalTargetStore;
-    
-    /**
-     * Load previously intercepted API data from Tampermonkey storage
-     */
-    function loadStoredData(appState) {
-        const apiDataState = appState?.apiData;
-        if (!apiDataState) {
-            return;
-        }
-        const performance = Storage.readJson(
-            STORAGE_KEYS.performance,
-            data => data && typeof data === 'object',
-            'Error loading performance data'
-        );
-        if (performance) {
-            apiDataState.performance = performance;
-            logDebug('[Goal Portfolio Viewer] Loaded performance data from storage');
-        }
-        const investible = Storage.readJson(
-            STORAGE_KEYS.investible,
-            data => data && typeof data === 'object',
-            'Error loading investible data'
-        );
-        if (investible) {
-            apiDataState.investible = investible;
-            logDebug('[Goal Portfolio Viewer] Loaded investible data from storage');
-        }
-        const summary = Storage.readJson(
-            STORAGE_KEYS.summary,
-            data => Array.isArray(data),
-            'Error loading summary data'
-        );
-        if (summary) {
-            apiDataState.summary = summary;
-            logDebug('[Goal Portfolio Viewer] Loaded summary data from storage');
-        }
-    }
-
-    /**
-     * Set projected investment for a specific goal type
-     * @param {string} bucket - Bucket name
-     * @param {string} goalType - Goal type
-     * @param {number} amount - Projected investment amount
-     */
-    function setProjectedInvestment(projectedInvestmentsState, bucket, goalType, amount) {
-        const key = getProjectedInvestmentKey(bucket, goalType);
-        const validAmount = parseFloat(amount) || 0;
-        projectedInvestmentsState[key] = validAmount;
-        logDebug(`[Goal Portfolio Viewer] Set projected investment for ${bucket}|${goalType}: ${validAmount}`);
-    }
-
-    /**
-     * Clear projected investment for a specific goal type
-     * @param {string} bucket - Bucket name
-     * @param {string} goalType - Goal type
-     */
-    function clearProjectedInvestment(projectedInvestmentsState, bucket, goalType) {
-        const key = getProjectedInvestmentKey(bucket, goalType);
-        delete projectedInvestmentsState[key];
-        logDebug(`[Goal Portfolio Viewer] Cleared projected investment for ${bucket}|${goalType}`);
-    }
-
-
-    // ============================================
-    // Sync Encryption Module (Cross-Device Sync)
-    // ============================================
-
     const SyncEncryption = (() => {
     const PBKDF2_ITERATIONS = 100000;
     const KEY_LENGTH = 256;
@@ -2295,6 +1970,332 @@
     };
 })();
     testExports.SyncManager = SyncManager;
+
+    // ============================================
+    // Browser-Only Code (Skip in Node.js/Testing Environment)
+    // ============================================
+    // Everything below this point requires browser APIs (window, document, etc.)
+    // and should not execute when running tests in Node.js.
+    if (typeof window !== 'undefined') {
+
+    // ============================================
+    // Adapters/State
+    // ============================================
+    const PERFORMANCE_ENDPOINT = 'https://bff.prod.silver.endowus.com/v1/performance';
+    const REQUEST_DELAY_MS = 500;
+    const PERFORMANCE_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+    const PERFORMANCE_CACHE_REFRESH_MIN_AGE_MS = 24 * 60 * 60 * 1000;
+    const PERFORMANCE_CHART_WINDOW = PERFORMANCE_WINDOWS.oneYear.key;
+    const PERFORMANCE_REQUEST_TIMEOUT_MS = 10000;
+
+    const state = {
+        apiData: {
+            performance: null,
+            investible: null,
+            summary: null
+        },
+        projectedInvestments: {},
+        performance: {
+            goalData: {},
+            requestQueue: createSequentialRequestQueue({
+                delayMs: REQUEST_DELAY_MS
+            })
+        },
+        auth: {
+            requestHeaders: null,
+            gmCookieAuthToken: null,
+            gmCookieDumped: false
+        },
+        ui: {
+            portfolioButton: null,
+            lastUrl: window.location.href,
+            urlMonitorCleanup: null,
+            urlCheckTimeout: null,
+            observer: null
+        }
+    };
+
+    const ENDPOINT_HANDLERS = {
+        performance: data => {
+            state.apiData.performance = data;
+            Storage.writeJson(STORAGE_KEYS.performance, data, 'Error saving performance data');
+            logDebug('[Goal Portfolio Viewer] Intercepted performance data');
+        },
+        investible: data => {
+            state.apiData.investible = data;
+            Storage.writeJson(STORAGE_KEYS.investible, data, 'Error saving investible data');
+            logDebug('[Goal Portfolio Viewer] Intercepted investible data');
+        },
+        summary: data => {
+            if (!Array.isArray(data)) {
+                return;
+            }
+            state.apiData.summary = data;
+            Storage.writeJson(STORAGE_KEYS.summary, data, 'Error saving summary data');
+            logDebug('[Goal Portfolio Viewer] Intercepted summary data');
+        }
+    };
+
+    function detectEndpointKey(url) {
+        if (typeof url !== 'string') {
+            return null;
+        }
+        if (url.includes(ENDPOINT_PATHS.performance)) {
+            return 'performance';
+        }
+        if (url.includes(ENDPOINT_PATHS.investible)) {
+            return 'investible';
+        }
+        if (url.match(SUMMARY_ENDPOINT_REGEX)) {
+            return 'summary';
+        }
+        return null;
+    }
+
+    async function handleInterceptedResponse(url, readData) {
+        const endpointKey = detectEndpointKey(url);
+        if (!endpointKey) {
+            return;
+        }
+        const handler = ENDPOINT_HANDLERS[endpointKey];
+        if (typeof handler !== 'function') {
+            return;
+        }
+        try {
+            const data = await readData();
+            if (data === null || data === undefined) {
+                return;
+            }
+            handler(data);
+        } catch (error) {
+            console.error('[Goal Portfolio Viewer] Error parsing API response:', error);
+        }
+    }
+
+    function logAuthDebug(message, data) {
+        if (!DEBUG_AUTH) {
+            return;
+        }
+        if (data && typeof data === 'object') {
+            console.log(message, data);
+            return;
+        }
+        console.log(message);
+    }
+    // Non-persistent storage for projected investments (resets on reload)
+    // Key format: "bucketName|goalType" -> projected amount
+
+    // ============================================
+    // API Interception via Monkey Patching
+    // ============================================
+    
+    // Store original functions
+    const originalFetch = window.fetch;
+    const originalXHROpen = XMLHttpRequest.prototype.open;
+    const originalXHRSend = XMLHttpRequest.prototype.send;
+    const originalXHRSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+
+    // Fetch interception
+    window.fetch = async function(...args) {
+        extractAuthHeaders(args[0], args[1]);
+        const response = await originalFetch.apply(this, args);
+        const url = args[0];
+        void handleInterceptedResponse(url, () => response.clone().json());
+        return response;
+    };
+
+    // XMLHttpRequest interception
+    XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+        this._url = url;
+        this._headers = {};
+        return originalXHROpen.apply(this, [method, url, ...rest]);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
+        if (this._headers) {
+            this._headers[header] = value;
+        }
+        return originalXHRSetRequestHeader.apply(this, [header, value]);
+    };
+
+    XMLHttpRequest.prototype.send = function(...args) {
+        const url = this._url;
+        extractAuthHeaders(url, { headers: this._headers });
+        
+        if (url && typeof url === 'string') {
+            this.addEventListener('load', function() {
+                handleInterceptedResponse(url, () => Promise.resolve(parseJsonSafely(this.responseText)));
+            });
+        }
+        
+        return originalXHRSend.apply(this, args);
+    };
+
+    logDebug('[Goal Portfolio Viewer] API interception initialized');
+
+    // ============================================
+    // Storage Management
+    // ============================================
+
+    const Storage = {
+        get(key, fallback, context) {
+            try {
+                return GM_getValue(key, fallback);
+            } catch (error) {
+                const label = context || 'Error reading storage';
+                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
+                return fallback;
+            }
+        },
+        set(key, value, context) {
+            try {
+                GM_setValue(key, value);
+                return true;
+            } catch (error) {
+                const label = context || 'Error writing storage';
+                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
+                return false;
+            }
+        },
+        remove(key, context) {
+            try {
+                GM_deleteValue(key);
+                return true;
+            } catch (error) {
+                const label = context || 'Error deleting storage';
+                console.error(`[Goal Portfolio Viewer] ${label}:`, error);
+                return false;
+            }
+        },
+        readJson(key, validateFn, context) {
+            const stored = Storage.get(key, null, context);
+            if (!stored) {
+                return null;
+            }
+            const parsed = parseJsonSafely(stored);
+            if (!validateFn(parsed)) {
+                Storage.remove(key, context);
+                return null;
+            }
+            return parsed;
+        },
+        writeJson(key, value, context) {
+            return Storage.set(key, JSON.stringify(value), context);
+        }
+    };
+
+    const GoalTargetStore = {
+        getTarget(goalId) {
+            const key = getGoalTargetKey(goalId);
+            const value = Storage.get(key, null, 'Error loading goal target percentage');
+            if (value === null) {
+                return null;
+            }
+            const numericValue = parseFloat(value);
+            return Number.isFinite(numericValue) ? numericValue : null;
+        },
+        setTarget(goalId, percentage) {
+            const numericPercentage = parseFloat(percentage);
+            if (!Number.isFinite(numericPercentage)) {
+                return null;
+            }
+            const validPercentage = Math.max(0, Math.min(100, numericPercentage));
+            const key = getGoalTargetKey(goalId);
+            const didSet = Storage.set(key, validPercentage, 'Error saving goal target percentage');
+            if (!didSet) {
+                return null;
+            }
+            logDebug(`[Goal Portfolio Viewer] Saved goal target percentage for ${goalId}: ${validPercentage}%`);
+            return validPercentage;
+        },
+        clearTarget(goalId) {
+            const key = getGoalTargetKey(goalId);
+            Storage.remove(key, 'Error deleting goal target percentage');
+            logDebug(`[Goal Portfolio Viewer] Deleted goal target percentage for ${goalId}`);
+        },
+        getFixed(goalId) {
+            const key = getGoalFixedKey(goalId);
+            return Storage.get(key, false, 'Error loading goal fixed state') === true;
+        },
+        setFixed(goalId, isFixed) {
+            const key = getGoalFixedKey(goalId);
+            Storage.set(key, isFixed === true, 'Error saving goal fixed state');
+            logDebug(`[Goal Portfolio Viewer] Saved goal fixed state for ${goalId}: ${isFixed === true}`);
+        },
+        clearFixed(goalId) {
+            const key = getGoalFixedKey(goalId);
+            Storage.remove(key, 'Error deleting goal fixed state');
+            logDebug(`[Goal Portfolio Viewer] Deleted goal fixed state for ${goalId}`);
+        }
+    };
+    testExports.GoalTargetStore = GoalTargetStore;
+    
+    /**
+     * Load previously intercepted API data from Tampermonkey storage
+     */
+    function loadStoredData(appState) {
+        const apiDataState = appState?.apiData;
+        if (!apiDataState) {
+            return;
+        }
+        const performance = Storage.readJson(
+            STORAGE_KEYS.performance,
+            data => data && typeof data === 'object',
+            'Error loading performance data'
+        );
+        if (performance) {
+            apiDataState.performance = performance;
+            logDebug('[Goal Portfolio Viewer] Loaded performance data from storage');
+        }
+        const investible = Storage.readJson(
+            STORAGE_KEYS.investible,
+            data => data && typeof data === 'object',
+            'Error loading investible data'
+        );
+        if (investible) {
+            apiDataState.investible = investible;
+            logDebug('[Goal Portfolio Viewer] Loaded investible data from storage');
+        }
+        const summary = Storage.readJson(
+            STORAGE_KEYS.summary,
+            data => Array.isArray(data),
+            'Error loading summary data'
+        );
+        if (summary) {
+            apiDataState.summary = summary;
+            logDebug('[Goal Portfolio Viewer] Loaded summary data from storage');
+        }
+    }
+
+    /**
+     * Set projected investment for a specific goal type
+     * @param {string} bucket - Bucket name
+     * @param {string} goalType - Goal type
+     * @param {number} amount - Projected investment amount
+     */
+    function setProjectedInvestment(projectedInvestmentsState, bucket, goalType, amount) {
+        const key = getProjectedInvestmentKey(bucket, goalType);
+        const validAmount = parseFloat(amount) || 0;
+        projectedInvestmentsState[key] = validAmount;
+        logDebug(`[Goal Portfolio Viewer] Set projected investment for ${bucket}|${goalType}: ${validAmount}`);
+    }
+
+    /**
+     * Clear projected investment for a specific goal type
+     * @param {string} bucket - Bucket name
+     * @param {string} goalType - Goal type
+     */
+    function clearProjectedInvestment(projectedInvestmentsState, bucket, goalType) {
+        const key = getProjectedInvestmentKey(bucket, goalType);
+        delete projectedInvestmentsState[key];
+        logDebug(`[Goal Portfolio Viewer] Cleared projected investment for ${bucket}|${goalType}`);
+    }
+
+
+    // ============================================
+    // Sync Encryption Module (Cross-Device Sync)
+    // ============================================
+
 
         // ============================================
     // Performance Data Fetching

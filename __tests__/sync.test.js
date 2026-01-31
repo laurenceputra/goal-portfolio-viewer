@@ -3,22 +3,35 @@
  * Tests AES-GCM encryption, PBKDF2 key derivation, and hash functions
  */
 
+// Set up browser environment mocks BEFORE importing the module
+if (!global.crypto || !global.crypto.subtle) {
+    const { webcrypto } = require('crypto');
+    global.crypto = webcrypto;
+    global.window = global.window || {};
+    global.window.crypto = {
+        ...webcrypto,
+        getRandomValues: webcrypto.getRandomValues.bind(webcrypto),
+        subtle: webcrypto.subtle
+    };
+    global.window.location = { href: 'https://test.example.com' };
+    
+    // Mock XMLHttpRequest to prevent errors from browser-only code
+    global.XMLHttpRequest = class XMLHttpRequest {
+        open() {}
+        send() {}
+        addEventListener() {}
+    };
+    global.XMLHttpRequest.prototype = {
+        open: function() {},
+        send: function() {},
+        addEventListener: function() {}
+    };
+}
+
 // Import the UserScript to get access to SyncEncryption
 const { SyncEncryption } = require('../tampermonkey/goal_portfolio_viewer.user.js');
 
 describe('SyncEncryption', () => {
-    // Check if Web Crypto API is available in test environment
-    beforeAll(() => {
-        // Note: Web Crypto API may not be available in Node.js test environment
-        // These tests will need a browser environment or a polyfill
-        if (!global.crypto || !global.crypto.subtle) {
-            console.warn('Web Crypto API not available in test environment');
-            console.warn('Installing webcrypto polyfill...');
-            const { webcrypto } = require('crypto');
-            global.crypto = webcrypto;
-        }
-    });
-
     describe('isSupported', () => {
         test('returns true when Web Crypto API is available', () => {
             expect(SyncEncryption.isSupported()).toBe(true);
