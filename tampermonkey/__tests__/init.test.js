@@ -212,6 +212,34 @@ describe('initialization and URL monitoring', () => {
         expect(document.querySelector('#gpv-overlay')).toBeNull();
     });
 
+    test('showOverlay renders FSM workspace with product type and bulk assignment controls', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', name: 'Alpha', productType: 'UNIT_TRUST', currentValueLcy: 1000 }
+        ]));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        expect(overlay).toBeTruthy();
+        expect(overlay.textContent).toContain('Product Type');
+        expect(overlay.textContent).toContain('Apply to 1 filtered holdings');
+        expect(overlay.querySelector('input[aria-label="Select all holdings"]')).toBeTruthy();
+    });
+
     test('selecting a different view scrolls overlay content to top smoothly', () => {
         const performanceData = [{
             goalId: 'goal1',
@@ -435,7 +463,8 @@ describe('initialization and URL monitoring', () => {
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Portfolio Viewer (FSM)');
         expect(overlay.textContent).toContain('Fund A');
-        expect(overlay.querySelector('.gpv-select')).toBeNull();
+        expect(overlay.querySelector('.gpv-select')).toBeTruthy();
+        expect(overlay.textContent).toContain('Product Type');
     });
 
     test('showOverlay on FSM route alerts when FSM holdings are unavailable', () => {

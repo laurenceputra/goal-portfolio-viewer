@@ -116,4 +116,43 @@ describe('conflict diff helpers', () => {
         expect(formatSyncFixed(true)).toBe('Yes');
         expect(formatSyncFixed(false)).toBe('No');
     });
+
+    it('detects FSM portfolio definition and assignment differences', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: {
+                        targetsByCode: {},
+                        fixedByCode: {},
+                        tagsByCode: {},
+                        tagCatalog: [],
+                        portfolios: [{ id: 'core', name: 'Core', archived: false }],
+                        assignmentByCode: { AAA: 'core' },
+                        driftSettings: {}
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: {
+                        targetsByCode: {},
+                        fixedByCode: {},
+                        tagsByCode: {},
+                        tagCatalog: [],
+                        portfolios: [{ id: 'income', name: 'Income', archived: false }],
+                        assignmentByCode: { AAA: 'income' },
+                        driftSettings: {}
+                    }
+                }
+            }
+        };
+
+        const fsmItems = buildFsmConflictDiffItems(conflict);
+        expect(fsmItems.some(item => item.settingName === 'Portfolio Definitions')).toBe(true);
+        expect(fsmItems.some(item => item.settingName === 'Assignment AAA')).toBe(true);
+    });
 });

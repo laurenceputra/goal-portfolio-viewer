@@ -219,8 +219,10 @@ describe('SyncManager', () => {
         storage.set(fsmFixed, true);
         storage.set(fsmTag, 'cash');
         storage.set(fsmSetting, 10);
+        storage.set('fsm_portfolios', JSON.stringify([{ id: 'core', name: 'Core', archived: false }]));
+        storage.set('fsm_assignment_by_code', JSON.stringify({ AAA: 'core', BBB: 'unknown' }));
         storage.set('fsm_tag_catalog', JSON.stringify(['cash']));
-        global.GM_listValues = () => [fsmTarget, fsmFixed, fsmTag, fsmSetting, 'fsm_tag_catalog'];
+        global.GM_listValues = () => [fsmTarget, fsmFixed, fsmTag, fsmSetting, 'fsm_tag_catalog', 'fsm_portfolios', 'fsm_assignment_by_code'];
 
         const config = SyncManager.collectConfigData();
 
@@ -229,6 +231,32 @@ describe('SyncManager', () => {
         expect(config.platforms.fsm.tagsByCode).toEqual({ AAA: 'cash' });
         expect(config.platforms.fsm.tagCatalog).toEqual(['cash']);
         expect(config.platforms.fsm.driftSettings).toEqual({ warningPct: 10 });
+        expect(config.platforms.fsm.portfolios).toEqual([{ id: 'core', name: 'Core', archived: false }]);
+        expect(config.platforms.fsm.assignmentByCode).toEqual({ AAA: 'core', BBB: 'unassigned' });
+    });
+
+    test('applyConfigData stores FSM portfolio definitions and assignments', () => {
+        const { SyncManager } = loadModule();
+        SyncManager.applyConfigData({
+            version: 2,
+            platforms: {
+                endowus: { goalTargets: {}, goalFixed: {}, timestamp: Date.now() },
+                fsm: {
+                    targetsByCode: {},
+                    fixedByCode: {},
+                    tagsByCode: {},
+                    tagCatalog: [],
+                    portfolios: [{ id: 'income', name: 'Income', archived: false }],
+                    assignmentByCode: { AAPL: 'income', BOND: 'missing' },
+                    driftSettings: {},
+                    timestamp: Date.now()
+                }
+            },
+            timestamp: Date.now()
+        });
+
+        expect(JSON.parse(storage.get('fsm_portfolios'))).toEqual([{ id: 'income', name: 'Income', archived: false }]);
+        expect(JSON.parse(storage.get('fsm_assignment_by_code'))).toEqual({ AAPL: 'income', BOND: 'unassigned' });
     });
 
     describe('multi-device reconciliation', () => {
