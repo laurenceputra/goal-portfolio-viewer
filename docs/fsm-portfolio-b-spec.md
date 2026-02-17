@@ -47,7 +47,10 @@ This phase focuses on portfolio grouping + weight management UX, including requi
 7. **Unassigned behavior:** `Unassigned` is a first-class default portfolio.
 8. **Migration default:** existing holdings default to `Unassigned`; provide optional checkbox-driven mass assignment helper.
 9. **Display requirement:** `productType` shown as raw API value (no label mapping in this phase).
-10. **Privacy:** sync only config metadata; no amount-bearing holdings sync.
+10. **Portfolio ID rule:** slug from portfolio name with collision suffix (e.g., `core`, `core-2`).
+11. **Bulk assignment UX:** include per-row checkboxes and a header-level `Select all` checkbox.
+12. **Conflict UX rollout:** ship Proposal B multi-step wizard immediately (no interim Proposal A rollout).
+13. **Privacy:** sync only config metadata; no amount-bearing holdings sync.
 
 ---
 
@@ -56,6 +59,7 @@ This phase focuses on portfolio grouping + weight management UX, including requi
 ## FR-1 Portfolio manager
 - User can create custom portfolios with no hard limit.
 - Portfolio name length is limited to 64 characters.
+- Portfolio IDs are slug-based and collision-safe (`name`, `name-2`, ...).
 - User can rename and archive portfolios.
 - Archiving a portfolio force-reassigns its holdings to `Unassigned`.
 
@@ -99,7 +103,7 @@ This phase focuses on portfolio grouping + weight management UX, including requi
 ## FR-7 Migration and bulk assignment
 - On rollout, holdings without assignment default to `unassigned`.
 - Provide a bulk-assignment helper with checkbox row selection and target portfolio picker.
-- Bulk assignment must support applying to all currently filtered rows.
+- Include a header-level `Select all` checkbox and support applying to all currently filtered rows.
 
 ---
 
@@ -113,27 +117,19 @@ This phase focuses on portfolio grouping + weight management UX, including requi
 
 ---
 
-## Conflict UX Proposals for Assignment Changes
+## Conflict UX (Confirmed): Multi-step Wizard (Ship Immediately)
 
-### Proposal A: Single-screen grouped diff
-- One modal with sectioned diff blocks:
-  - Portfolio definitions (create/rename/archive)
-  - Assignment changes (code -> portfolioId)
-  - Target changes per portfolio
-- Pros: fast, fewer clicks.
-- Cons: can be dense with many rows.
+Use a 5-step wizard for assignment-related conflicts:
+1. Step 1: high-level summary (counts by change category).
+2. Step 2: portfolio definition changes (create/rename/archive).
+3. Step 3: assignment changes (`code -> portfolioId`) with search/filter.
+4. Step 4: target/drift setting changes by portfolio.
+5. Step 5: final decision (Keep Local / Use Remote) with impact summary.
 
-### Proposal B: Multi-step conflict wizard (**recommended**)
-1. Step 1: high-level conflict summary (counts per category).
-2. Step 2: portfolio definitions changes.
-3. Step 3: assignment changes (search/filter by code and portfolio).
-4. Step 4: target/drift setting changes.
-5. Step 5: final decision (Keep Local / Use Remote).
-
-Why multi-step works here:
-- Better readability at scale when assignments are numerous.
-- Lower risk of accidental overwrite because user sees categories separately.
-- Aligns with current concern about diff explainability parity.
+UX rationale:
+- Improves scanability for high-volume assignment diffs.
+- Reduces accidental destructive resolution by staged review.
+- Maintains explainability parity with conflict detection scope.
 
 ---
 
@@ -211,21 +207,36 @@ Suggested implementation commit:
 
 ## Spec Gaps
 
-Based on your latest decisions, **no blocking product spec gaps remain** for Proposal B core behavior.
+### Blocking product spec gaps
+None. Your latest decisions are sufficient to start implementation.
 
-### Non-blocking implementation clarifications (can be finalized during build)
-1. **Portfolio ID generation rule**
-   - e.g., slug from name with collision suffix (`core`, `core-2`) vs UUID.
-2. **Bulk assignment max batch UX**
-   - whether to show soft warning for large selections (e.g., >200 rows).
-3. **Conflict UX rollout strategy**
-   - whether to ship Proposal A first and upgrade to multi-step wizard later, or ship wizard immediately.
+### UX/Product review: non-blocking gaps worth closing early
+From a product design + UX perspective, these are still open quality decisions (not blockers, but high impact):
+
+1. **Wizard navigation safeguards**
+   - Can users go back without losing staged selections/scroll positions?
+   - Should there be an explicit "Review all changes" step before final submit?
+
+2. **Bulk assignment safety messaging**
+   - Confirm copy for `Select all` action on filtered rows (e.g., “Apply to 128 filtered holdings”).
+   - Decide whether to require confirmation for large-batch apply actions.
+
+3. **Accessibility details for new controls**
+   - Keyboard flow for row checkboxes + header `Select all` checkbox.
+   - Screen-reader labels for portfolio selector, wizard steps, and conflict counts.
+
+4. **Empty/error states for wizard steps**
+   - Explicit copy for “no changes in this category” steps.
+   - Recovery behavior if data changes mid-resolution (e.g., new sync fetch).
+
+5. **Portfolio slug transparency**
+   - Decide whether slug/ID is user-visible anywhere or internal-only.
 
 ---
 
 ## Completion Checklist
 
-- [ ] Product decisions above are encoded in implementation tasks.
+- [ ] Confirm non-blocking UX copy/accessibility details before release hardening.
 - [ ] UI + sync behavior finalized for row-level assignment model.
 - [ ] Tests cover assignment and orphan edge cases.
 - [ ] Rollout notes prepared for FSM users.
