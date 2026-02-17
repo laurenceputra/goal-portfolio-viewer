@@ -280,10 +280,16 @@ Use a **platform-namespaced config envelope** inside encrypted payload, e.g.:
 
 ### Required changes: backend (Workers)
 
-**Minimum required: none** for functional compatibility.
+**Required for production cross-origin sync:** update CORS allowlist to include FSM origin.
 
-- Existing upload/download contract is already generic encrypted blob storage.
-- Existing size limits likely still sufficient, but monitor payload growth as second platform config is added.
+- Existing upload/download contract remains generic encrypted blob storage; no schema-level parsing is required server-side.
+- However, browser requests from `https://secure.fundsupermart.com` require explicit CORS allowlist support.
+- Worker CORS handling must evaluate request `Origin` against an allowlist and echo only allowed origins (do not return comma-separated origins in `Access-Control-Allow-Origin`).
+
+**Required backend updates for this spec**
+1. Add FSM origin (`https://secure.fundsupermart.com`) alongside Endowus in `CORS_ORIGINS` configuration.
+2. Update CORS header builder to support multi-origin allowlist parsing and per-request origin resolution.
+3. Add tests for allowed FSM origin and disallowed origin behavior.
 
 **Recommended hardening (optional)**
 - Add server-side max payload guardrail review for v2 envelope growth.

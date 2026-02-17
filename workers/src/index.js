@@ -14,7 +14,7 @@ import { jsonResponse } from './responses.js';
 // Configuration
 const CONFIG = {
 	MAX_PAYLOAD_SIZE: 10 * 1024, // 10KB
-	CORS_ORIGINS: 'https://app.sg.endowus.com',
+	CORS_ORIGINS: 'https://app.sg.endowus.com,https://secure.fundsupermart.com',
 	SYNC_KV_BINDING: 'SYNC_KV',
 		VERSION: '1.1.1'
 };
@@ -105,7 +105,10 @@ async function authenticateRequest(request, env) {
  */
 export default {
 	async fetch(request, env, ctx) {
-		const resolvedEnv = resolveEnv(env);
+		const resolvedEnv = {
+			...resolveEnv(env),
+			REQUEST_ORIGIN: request.headers.get('Origin')
+		};
 		const url = new URL(request.url);
 		const method = request.method;
 

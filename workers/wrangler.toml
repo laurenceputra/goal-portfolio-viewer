@@ -20,17 +20,17 @@ preview_id = "YOUR_PREVIEW_KV_NAMESPACE_ID_HERE"
 # Production environment
 [env.production]
 name = "goal-portfolio-sync"
-vars = { ENVIRONMENT = "production", SYNC_KV_BINDING = "SYNC_KV", CORS_ORIGINS = "https://app.sg.endowus.com" }
+vars = { ENVIRONMENT = "production", SYNC_KV_BINDING = "SYNC_KV", CORS_ORIGINS = "https://app.sg.endowus.com,https://secure.fundsupermart.com" }
 
 # Staging environment
 [env.staging]
 name = "goal-portfolio-sync-staging"
-vars = { ENVIRONMENT = "staging", SYNC_KV_BINDING = "SYNC_KV", CORS_ORIGINS = "https://app.sg.endowus.com" }
+vars = { ENVIRONMENT = "staging", SYNC_KV_BINDING = "SYNC_KV", CORS_ORIGINS = "https://app.sg.endowus.com,https://secure.fundsupermart.com" }
 
 # Example secondary instance (optional)
 # [env.secondary]
 # name = "goal-portfolio-sync-secondary"
-# vars = { ENVIRONMENT = "production", SYNC_KV_BINDING = "SYNC_KV_SECONDARY", CORS_ORIGINS = "https://app.sg.endowus.com" }
+# vars = { ENVIRONMENT = "production", SYNC_KV_BINDING = "SYNC_KV_SECONDARY", CORS_ORIGINS = "https://app.sg.endowus.com,https://secure.fundsupermart.com" }
 # kv_namespaces = [{ binding = "SYNC_KV_SECONDARY", id = "SECONDARY_KV_ID", preview_id = "SECONDARY_PREVIEW_KV_ID" }]
 
 # Custom domain routing (optional)
