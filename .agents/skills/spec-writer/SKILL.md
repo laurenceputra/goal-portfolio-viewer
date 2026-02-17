@@ -12,7 +12,7 @@ allowed-tools:
   - markdown
 metadata:
   author: laurenceputra
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # Spec Writer
@@ -41,6 +41,15 @@ Write clear, executable specifications/plan documents that other contributors ca
 - Include a **commit step** with a suggested concise message.
 - Keep formatting consistent and scannable (headings + lists).
 - Avoid implementation details that aren’t required for execution.
+
+## Cross-Origin + Sync Spec Checklist (when relevant)
+If work introduces a new frontend origin, API host, or sync surface, explicitly include:
+- Which backend configs must be updated (`CORS_ORIGINS`, envs, deploy manifests).
+- Origin matching policy (single-origin echo from allowlist; disallowed origin behavior).
+- Required CORS response consistency (preflight + normal responses).
+- Data-scope boundaries for sync payloads (what remains excluded, e.g., amounts/PII).
+- Migration/backward compatibility expectations.
+- Test cases that prove allowed/disallowed origin behavior.
 
 ## Required Sections (minimum)
 - **Goal**
