@@ -40,18 +40,24 @@ This phase focuses on portfolio grouping + weight management UX, including requi
 
 1. **Assignment model:** `1 row => 1 portfolio`.
 2. **Identity key:** `code` (row-level primary identity for FSM settings).
-3. **Orphan handling:** holdings without explicit assignment remain in `Unassigned`; never hidden.
-4. **Display requirement:** `productType` must be shown in FSM holdings views.
-5. **Privacy:** sync only config metadata; no amount-bearing holdings sync.
+3. **Portfolio limits:** no hard limit on number of portfolios.
+4. **Portfolio naming:** max 64 characters per portfolio name.
+5. **Archive behavior:** archive always force-reassigns member holdings to `Unassigned`.
+6. **Target scope for `All`:** derived from portfolio targets.
+7. **Unassigned behavior:** `Unassigned` is a first-class default portfolio.
+8. **Migration default:** existing holdings default to `Unassigned`; provide optional checkbox-driven mass assignment helper.
+9. **Display requirement:** `productType` shown as raw API value (no label mapping in this phase).
+10. **Privacy:** sync only config metadata; no amount-bearing holdings sync.
 
 ---
 
 ## Functional Requirements
 
 ## FR-1 Portfolio manager
-- User can create custom portfolios (minimum 2 supported, no hard max in UI unless constrained by UX decision).
+- User can create custom portfolios with no hard limit.
+- Portfolio name length is limited to 64 characters.
 - User can rename and archive portfolios.
-- Archiving a portfolio reassigns its holdings to `Unassigned`.
+- Archiving a portfolio force-reassigns its holdings to `Unassigned`.
 
 ## FR-2 Assignment behavior
 - Each holdings row has one `portfolioId` assignment.
@@ -66,6 +72,7 @@ This phase focuses on portfolio grouping + weight management UX, including requi
 - `All` shows all holdings and full-account summary.
 - Portfolio-specific view filters to assigned rows only.
 - `Unassigned` view shows orphan holdings and a clear assignment CTA.
+- `Unassigned` is treated as a normal/default portfolio for filtering and calculations.
 
 ## FR-4 Weight management and rebalance outputs
 - For the selected view scope (All or specific portfolio):
@@ -89,6 +96,11 @@ This phase focuses on portfolio grouping + weight management UX, including requi
   - per-code assignment map (`assignmentByCode`)
 - No holdings values/PII in sync payload.
 
+## FR-7 Migration and bulk assignment
+- On rollout, holdings without assignment default to `unassigned`.
+- Provide a bulk-assignment helper with checkbox row selection and target portfolio picker.
+- Bulk assignment must support applying to all currently filtered rows.
+
 ---
 
 ## UX Requirements
@@ -96,6 +108,32 @@ This phase focuses on portfolio grouping + weight management UX, including requi
 - If there are orphan holdings (`Unassigned` count > 0), show a visible badge/chip count.
 - Empty portfolio view shows informative empty state with action to assign holdings.
 - Assignment changes should be immediate in UI and reflected in summary calculations without full reload.
+- Bulk assignment flow includes checkbox selection + clear confirmation of number of rows affected.
+- `productType` is displayed as-is from FSM payload in holdings tables.
+
+---
+
+## Conflict UX Proposals for Assignment Changes
+
+### Proposal A: Single-screen grouped diff
+- One modal with sectioned diff blocks:
+  - Portfolio definitions (create/rename/archive)
+  - Assignment changes (code -> portfolioId)
+  - Target changes per portfolio
+- Pros: fast, fewer clicks.
+- Cons: can be dense with many rows.
+
+### Proposal B: Multi-step conflict wizard (**recommended**)
+1. Step 1: high-level conflict summary (counts per category).
+2. Step 2: portfolio definitions changes.
+3. Step 3: assignment changes (search/filter by code and portfolio).
+4. Step 4: target/drift setting changes.
+5. Step 5: final decision (Keep Local / Use Remote).
+
+Why multi-step works here:
+- Better readability at scale when assignments are numerous.
+- Lower risk of accidental overwrite because user sees categories separately.
+- Aligns with current concern about diff explainability parity.
 
 ---
 
@@ -173,37 +211,21 @@ Suggested implementation commit:
 
 ## Spec Gaps
 
-The following items still need explicit product decisions before implementation starts:
+Based on your latest decisions, **no blocking product spec gaps remain** for Proposal B core behavior.
 
-1. **Portfolio lifecycle limits**
-   - Max number of portfolios?
-   - Name length/character rules?
-
-2. **Archived portfolio behavior**
-   - Should archived portfolios be hidden entirely or visible in a separate section?
-   - Must archive always force reassignment to `Unassigned`, or allow deferred migration?
-
-3. **Target model scope default**
-   - When user is in `All`, should targets be global-only or derived/aggregated from portfolio targets?
-   - Should each portfolio have independent target sets by default?
-
-4. **Unassigned policy strictness**
-   - Is rebalancing allowed when unassigned holdings exist, or should there be a warning/block?
-
-5. **Conflict UX for assignment changes**
-   - In sync conflict dialog, how should portfolio/assignment diffs be grouped and labeled for readability at scale?
-
-6. **Migration strategy for existing FSM users**
-   - On first rollout, should every holding default to `Unassigned` or offer a one-time quick assignment wizard?
-
-7. **ProductType normalization**
-   - Should raw API `productType` values be shown as-is, or mapped to user-friendly labels?
+### Non-blocking implementation clarifications (can be finalized during build)
+1. **Portfolio ID generation rule**
+   - e.g., slug from name with collision suffix (`core`, `core-2`) vs UUID.
+2. **Bulk assignment max batch UX**
+   - whether to show soft warning for large selections (e.g., >200 rows).
+3. **Conflict UX rollout strategy**
+   - whether to ship Proposal A first and upgrade to multi-step wizard later, or ship wizard immediately.
 
 ---
 
 ## Completion Checklist
 
-- [ ] Product confirms spec gap decisions.
+- [ ] Product decisions above are encoded in implementation tasks.
 - [ ] UI + sync behavior finalized for row-level assignment model.
 - [ ] Tests cover assignment and orphan edge cases.
 - [ ] Rollout notes prepared for FSM users.
