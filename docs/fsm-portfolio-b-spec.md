@@ -210,33 +210,37 @@ Suggested implementation commit:
 ### Blocking product spec gaps
 None. Your latest decisions are sufficient to start implementation.
 
-### UX/Product review: non-blocking gaps worth closing early
-From a product design + UX perspective, these are still open quality decisions (not blockers, but high impact):
+### UX/Product review: resolved clarifications
+The following UX clarifications are now decided:
 
 1. **Wizard navigation safeguards**
-   - Can users go back without losing staged selections/scroll positions?
-   - Should there be an explicit "Review all changes" step before final submit?
+   - Yes, allow step-back navigation while preserving staged state.
+   - Include a pre-submit impact summary in final step.
 
 2. **Bulk assignment safety messaging**
-   - Confirm copy for `Select all` action on filtered rows (e.g., “Apply to 128 filtered holdings”).
-   - Decide whether to require confirmation for large-batch apply actions.
+   - Use copy style like: `Apply to 128 filtered holdings`.
+   - No extra confirmation modal required for bulk apply.
 
 3. **Accessibility details for new controls**
-   - Keyboard flow for row checkboxes + header `Select all` checkbox.
-   - Screen-reader labels for portfolio selector, wizard steps, and conflict counts.
+   - Implement using accessibility best practices (keyboard operable controls, focus order, ARIA labels for stepper/checkboxes/counts).
 
 4. **Empty/error states for wizard steps**
-   - Explicit copy for “no changes in this category” steps.
-   - Recovery behavior if data changes mid-resolution (e.g., new sync fetch).
+   - Use default empty-state copy for no-change categories.
+   - If upstream data changes during resolution, cancel wizard and prompt user to restart with explanation.
 
 5. **Portfolio slug transparency**
-   - Decide whether slug/ID is user-visible anywhere or internal-only.
+   - Slug/ID is internal-only; users interact with display names only.
+
+
+### Remaining gaps
+- **No blocking or non-blocking product/UX gaps remain** for spec completeness.
+- Implementation can proceed with the decisions captured above.
 
 ---
 
 ## Completion Checklist
 
-- [ ] Confirm non-blocking UX copy/accessibility details before release hardening.
+- [ ] Implement wizard + bulk assignment UX per resolved decisions above.
 - [ ] UI + sync behavior finalized for row-level assignment model.
 - [ ] Tests cover assignment and orphan edge cases.
 - [ ] Rollout notes prepared for FSM users.
