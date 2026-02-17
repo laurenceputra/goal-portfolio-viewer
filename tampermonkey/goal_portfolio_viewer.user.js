@@ -3299,6 +3299,115 @@ function getEndowusSyncView(config) {
     };
 }
 
+function getFsmSyncView(config) {
+    if (!config || typeof config !== 'object') {
+        return { targetsByCode: {}, fixedByCode: {}, tagsByCode: {}, tagCatalog: [], driftSettings: {} };
+    }
+    if (config.platforms && typeof config.platforms === 'object') {
+        const fsm = config.platforms.fsm && typeof config.platforms.fsm === 'object'
+            ? config.platforms.fsm
+            : {};
+        return {
+            targetsByCode: fsm.targetsByCode && typeof fsm.targetsByCode === 'object' ? fsm.targetsByCode : {},
+            fixedByCode: fsm.fixedByCode && typeof fsm.fixedByCode === 'object' ? fsm.fixedByCode : {},
+            tagsByCode: fsm.tagsByCode && typeof fsm.tagsByCode === 'object' ? fsm.tagsByCode : {},
+            tagCatalog: Array.isArray(fsm.tagCatalog) ? fsm.tagCatalog : [],
+            driftSettings: fsm.driftSettings && typeof fsm.driftSettings === 'object' ? fsm.driftSettings : {}
+        };
+    }
+    return { targetsByCode: {}, fixedByCode: {}, tagsByCode: {}, tagCatalog: [], driftSettings: {} };
+}
+
+function formatSyncValue(value) {
+    if (value == null) {
+        return '-';
+    }
+    if (typeof value === 'string') {
+        return value || '-';
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+        return String(value);
+    }
+    if (Array.isArray(value)) {
+        return value.length ? value.join(', ') : '-';
+    }
+    return JSON.stringify(value);
+}
+
+function buildFsmConflictDiffItems(conflict) {
+    if (!conflict || !conflict.local || !conflict.remote) {
+        return [];
+    }
+    const localFsm = getFsmSyncView(conflict.local);
+    const remoteFsm = getFsmSyncView(conflict.remote);
+
+    const rows = [];
+    const codes = new Set([
+        ...Object.keys(localFsm.targetsByCode || {}),
+        ...Object.keys(remoteFsm.targetsByCode || {}),
+        ...Object.keys(localFsm.fixedByCode || {}),
+        ...Object.keys(remoteFsm.fixedByCode || {}),
+        ...Object.keys(localFsm.tagsByCode || {}),
+        ...Object.keys(remoteFsm.tagsByCode || {})
+    ]);
+
+    Array.from(codes).sort().forEach(code => {
+        const localTarget = localFsm.targetsByCode?.[code];
+        const remoteTarget = remoteFsm.targetsByCode?.[code];
+        const localFixed = localFsm.fixedByCode?.[code] === true;
+        const remoteFixed = remoteFsm.fixedByCode?.[code] === true;
+        const localTag = localFsm.tagsByCode?.[code] || '-';
+        const remoteTag = remoteFsm.tagsByCode?.[code] || '-';
+        const targetChanged = localTarget !== remoteTarget;
+        const fixedChanged = localFixed !== remoteFixed;
+        const tagChanged = localTag !== remoteTag;
+        if (!targetChanged && !fixedChanged && !tagChanged) {
+            return;
+        }
+        rows.push({
+            settingName: `Instrument ${code}`,
+            localDisplay: `Target ${formatSyncTarget(localTarget)} · Fixed ${formatSyncFixed(localFixed)} · Tag ${localTag}`,
+            remoteDisplay: `Target ${formatSyncTarget(remoteTarget)} · Fixed ${formatSyncFixed(remoteFixed)} · Tag ${remoteTag}`
+        });
+    });
+
+    const localCatalog = Array.isArray(localFsm.tagCatalog) ? [...localFsm.tagCatalog].sort() : [];
+    const remoteCatalog = Array.isArray(remoteFsm.tagCatalog) ? [...remoteFsm.tagCatalog].sort() : [];
+    if (JSON.stringify(localCatalog) !== JSON.stringify(remoteCatalog)) {
+        rows.push({
+            settingName: 'Tag Catalog',
+            localDisplay: formatSyncValue(localCatalog),
+            remoteDisplay: formatSyncValue(remoteCatalog)
+        });
+    }
+
+    const driftKeys = new Set([
+        ...Object.keys(localFsm.driftSettings || {}),
+        ...Object.keys(remoteFsm.driftSettings || {})
+    ]);
+    Array.from(driftKeys).sort().forEach(key => {
+        const localValue = localFsm.driftSettings?.[key];
+        const remoteValue = remoteFsm.driftSettings?.[key];
+        if (localValue === remoteValue) {
+            return;
+        }
+        rows.push({
+            settingName: `Drift Setting: ${key}`,
+            localDisplay: formatSyncValue(localValue),
+            remoteDisplay: formatSyncValue(remoteValue)
+        });
+    });
+
+    return rows;
+}
+
+function buildConflictDiffSections(conflict, nameMapOverride = {}) {
+    return {
+        endowus: buildConflictDiffItemsForMap(conflict, nameMapOverride),
+        fsm: buildFsmConflictDiffItems(conflict)
+    };
+}
+
 function buildConflictDiffItemsForMap(conflict, nameMapOverride = {}) {
     if (!conflict || !conflict.local || !conflict.remote) {
         return [];
@@ -6533,8 +6642,8 @@ function createConflictDialogHTML(conflict) {
     const remoteTargets = countSyncedTargets(remoteEndowus.goalTargets, remoteEndowus.goalFixed);
     const localFixed = Object.keys(localEndowus.goalFixed || {}).length;
     const remoteFixed = Object.keys(remoteEndowus.goalFixed || {}).length;
-    const diffItems = _buildConflictDiffItems(conflict);
-    const diffRows = diffItems.map(item => `
+    const diffSections = _buildConflictDiffItems(conflict);
+    const endowusRows = diffSections.endowus.map(item => `
         <tr>
             <td class="gpv-conflict-goal-name">${escapeHtml(item.goalName)}</td>
             <td>
@@ -6547,10 +6656,18 @@ function createConflictDialogHTML(conflict) {
             </td>
         </tr>
     `).join('');
-    const diffSection = diffItems.length > 0
+    const fsmRows = diffSections.fsm.map(item => `
+        <tr>
+            <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
+            <td>${escapeHtml(item.localDisplay)}</td>
+            <td>${escapeHtml(item.remoteDisplay)}</td>
+        </tr>
+    `).join('');
+
+    const endowusSection = diffSections.endowus.length > 0
         ? `
             <div class="gpv-conflict-diff">
-                <h4>Changed Goals</h4>
+                <h4>Changed Endowus Goals</h4>
                 <table class="gpv-conflict-diff-table">
                     <thead>
                         <tr>
@@ -6560,17 +6677,50 @@ function createConflictDialogHTML(conflict) {
                         </tr>
                     </thead>
                     <tbody>
-                        ${diffRows}
+                        ${endowusRows}
                     </tbody>
                 </table>
             </div>
         `
         : `
             <div class="gpv-conflict-diff">
-                <h4>Changed Goals</h4>
-                <div class="gpv-conflict-diff-empty">No goal-level differences detected.</div>
+                <h4>Changed Endowus Goals</h4>
+                <div class="gpv-conflict-diff-empty">No Endowus goal-level differences detected.</div>
             </div>
         `;
+
+    const fsmSection = diffSections.fsm.length > 0
+        ? `
+            <div class="gpv-conflict-diff">
+                <h4>Changed FSM Settings</h4>
+                <table class="gpv-conflict-diff-table">
+                    <thead>
+                        <tr>
+                            <th>Setting</th>
+                            <th>Local</th>
+                            <th>Remote</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${fsmRows}
+                    </tbody>
+                </table>
+            </div>
+        `
+        : `
+            <div class="gpv-conflict-diff">
+                <h4>Changed FSM Settings</h4>
+                <div class="gpv-conflict-diff-empty">No FSM differences detected.</div>
+            </div>
+        `;
+
+    const diffSection = `
+        <div class="gpv-conflict-diff-group">
+            <h4>Changed Settings</h4>
+            ${endowusSection}
+            ${fsmSection}
+        </div>
+    `;
 
     return `
         <div class="gpv-conflict-dialog">
@@ -6668,7 +6818,7 @@ function buildGoalNameMap() {
 }
 
 function _buildConflictDiffItems(conflict) {
-    return buildConflictDiffItemsForMap(conflict, buildGoalNameMap());
+    return buildConflictDiffSections(conflict, buildGoalNameMap());
 }
 
 /**
@@ -8525,7 +8675,104 @@ syncUi.update = function updateSyncUI() {
     // Controller
     // ============================================
 
+    function renderFsmOverlay(fsmHoldings) {
+        const overlay = createElement('div', 'gpv-overlay');
+        overlay.id = 'gpv-overlay';
+
+        const container = createElement('div', 'gpv-container');
+        const cleanupCallbacks = [];
+        container.gpvCleanupCallbacks = cleanupCallbacks;
+        overlay.gpvCleanupCallbacks = cleanupCallbacks;
+
+        const header = createElement('div', 'gpv-header');
+        const title = createElement('h1', null, 'Portfolio Viewer (FSM)');
+        const titleId = 'gpv-portfolio-title';
+        title.id = titleId;
+
+        const buttonContainer = createElement('div', 'gpv-header-buttons');
+        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
+        syncBtn.title = 'Configure cross-device sync';
+        syncBtn.onclick = () => {
+            if (typeof showSyncSettings === 'function') {
+                showSyncSettings();
+            }
+        };
+
+        const closeBtn = createElement('button', 'gpv-close-btn', '✕');
+        const closeOverlay = () => {
+            if (!overlay.isConnected) {
+                return;
+            }
+            cleanupCallbacks.forEach(callback => {
+                if (typeof callback === 'function') {
+                    callback();
+                }
+            });
+            cleanupCallbacks.length = 0;
+            overlay.remove();
+        };
+        closeBtn.onclick = closeOverlay;
+
+        buttonContainer.appendChild(syncBtn);
+        buttonContainer.appendChild(closeBtn);
+        header.appendChild(title);
+        header.appendChild(buttonContainer);
+        container.appendChild(header);
+
+        const contentDiv = createElement('div', 'gpv-content');
+        const summary = createElement('p', null, `Holdings loaded: ${fsmHoldings.length}`);
+        contentDiv.appendChild(summary);
+
+        if (fsmHoldings.length > 0) {
+            const table = createElement('table', 'gpv-table');
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>Code</th>
+                        <th>Name</th>
+                        <th>Value (SGD)</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            `;
+            const tbody = table.querySelector('tbody');
+            fsmHoldings.forEach(row => {
+                const tr = document.createElement('tr');
+                const code = utils.normalizeString(row?.code, '-');
+                const name = utils.normalizeString(row?.name, '-');
+                const value = Number.isFinite(Number(row?.currentValueLcy))
+                    ? formatMoney(Number(row.currentValueLcy), '$')
+                    : '-';
+                tr.innerHTML = `<td>${escapeHtml(code)}</td><td>${escapeHtml(name)}</td><td>${escapeHtml(value)}</td>`;
+                tbody.appendChild(tr);
+            });
+            contentDiv.appendChild(table);
+        }
+
+        container.appendChild(contentDiv);
+        overlay.appendChild(container);
+        overlay.onclick = (e) => {
+            if (e.target === overlay) {
+                closeOverlay();
+            }
+        };
+
+        document.body.appendChild(overlay);
+
+        const modalCleanup = setupModalAccessibility({
+            overlay,
+            container,
+            titleId,
+            onClose: closeOverlay,
+            initialFocus: closeBtn
+        });
+        if (typeof modalCleanup === 'function') {
+            cleanupCallbacks.push(modalCleanup);
+        }
+    }
+
     function showOverlay() {
+
         let old = document.getElementById('gpv-overlay');
         if (old) {
             if (Array.isArray(old.gpvCleanupCallbacks)) {
@@ -8537,6 +8784,18 @@ syncUi.update = function updateSyncUI() {
                 old.gpvCleanupCallbacks.length = 0;
             }
             old.remove();
+        }
+
+        const isFsmRoute = isFsmInvestmentsRoute(window.location.href, window.location.origin);
+        if (isFsmRoute) {
+            const fsmHoldings = Array.isArray(state.apiData.fsmHoldings) ? state.apiData.fsmHoldings : [];
+            if (fsmHoldings.length === 0) {
+                logDebug('[Goal Portfolio Viewer] FSM holdings not available yet');
+                alert('Please wait for FSM holdings data to load, then try again.');
+                return;
+            }
+            renderFsmOverlay(fsmHoldings);
+            return;
         }
 
         const mergedInvestmentDataState = buildMergedInvestmentData(
@@ -9080,6 +9339,8 @@ syncUi.update = function updateSyncUI() {
             createSyncSettingsHTML: syncUiExports?.createSyncSettingsHTML,
             setupSyncSettingsListeners: syncUiExports?.setupSyncSettingsListeners,
             buildConflictDiffItems: buildConflictDiffItemsForMap,
+            buildConflictDiffSections,
+            buildFsmConflictDiffItems,
             formatSyncTarget,
             formatSyncFixed,
             clearSortCacheIfExpired,

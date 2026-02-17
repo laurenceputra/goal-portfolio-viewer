@@ -1,5 +1,7 @@
 const {
     buildConflictDiffItems: buildConflictDiffItemsForMap,
+    buildConflictDiffSections,
+    buildFsmConflictDiffItems,
     formatSyncTarget,
     formatSyncFixed
 } = require('../goal_portfolio_viewer.user.js');
@@ -68,6 +70,44 @@ describe('conflict diff helpers', () => {
         const items = buildConflictDiffItemsForMap(conflict, {});
         expect(items).toHaveLength(1);
         expect(items[0].goalName).toMatch(/^Goal goalXYZ/);
+    });
+
+    it('detects FSM-only differences for conflict explanation parity', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: {
+                        targetsByCode: { AAA: 15 },
+                        fixedByCode: { BBB: true },
+                        tagsByCode: { AAA: 'cash' },
+                        tagCatalog: ['cash'],
+                        driftSettings: { warningPct: 10 }
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: {
+                        targetsByCode: { AAA: 25 },
+                        fixedByCode: { BBB: false },
+                        tagsByCode: { AAA: 'income' },
+                        tagCatalog: ['income'],
+                        driftSettings: { warningPct: 12 }
+                    }
+                }
+            }
+        };
+
+        const fsmItems = buildFsmConflictDiffItems(conflict);
+        expect(fsmItems.length).toBeGreaterThan(0);
+
+        const sections = buildConflictDiffSections(conflict, {});
+        expect(sections.endowus).toHaveLength(0);
+        expect(sections.fsm.length).toBeGreaterThan(0);
     });
 
     it('formats sync values', () => {
