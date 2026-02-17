@@ -148,7 +148,7 @@ describe('SyncManager', () => {
         expect(scheduleSpy).toHaveBeenCalledWith('fixed-clear');
     });
 
-    test('collectConfigData excludes targets for fixed goals', () => {
+    test('collectConfigData emits v2 payload and excludes Endowus targets for fixed goals', () => {
         const { SyncManager, storageKeys } = loadModule();
         const targetKey = storageKeys.goalTarget('goal-1');
         const fixedKey = storageKeys.goalFixed('goal-1');
@@ -159,22 +159,76 @@ describe('SyncManager', () => {
 
         const config = SyncManager.collectConfigData();
 
-        expect(config.goalTargets).toEqual({});
-        expect(config.goalFixed).toEqual({ 'goal-1': true });
+        expect(config.version).toBe(2);
+        expect(config.platforms.endowus.goalTargets).toEqual({});
+        expect(config.platforms.endowus.goalFixed).toEqual({ 'goal-1': true });
+        expect(config.platforms.fsm.targetsByCode).toEqual({});
     });
 
-    test('applyConfigData skips targets when goal is fixed', () => {
+    test('applyConfigData skips Endowus targets when goal is fixed for v2 payload', () => {
         const { SyncManager, storageKeys } = loadModule();
         const targetKey = storageKeys.goalTarget('goal-1');
         const fixedKey = storageKeys.goalFixed('goal-1');
 
         SyncManager.applyConfigData({
-            goalTargets: { 'goal-1': 45 },
-            goalFixed: { 'goal-1': true }
+            version: 2,
+            platforms: {
+                endowus: {
+                    goalTargets: { 'goal-1': 45 },
+                    goalFixed: { 'goal-1': true },
+                    timestamp: Date.now()
+                },
+                fsm: {
+                    targetsByCode: {},
+                    fixedByCode: {},
+                    tagsByCode: {},
+                    tagCatalog: [],
+                    driftSettings: {},
+                    timestamp: Date.now()
+                }
+            },
+            timestamp: Date.now()
         });
 
         expect(storage.has(targetKey)).toBe(false);
         expect(storage.get(fixedKey)).toBe(true);
+    });
+
+
+    test('applyConfigData migrates legacy v1 payload to Endowus keys', () => {
+        const { SyncManager, storageKeys } = loadModule();
+        SyncManager.applyConfigData({
+            version: 1,
+            goalTargets: { 'goal-2': 33 },
+            goalFixed: { 'goal-3': true },
+            timestamp: Date.now()
+        });
+
+        expect(storage.get(storageKeys.goalTarget('goal-2'))).toBe(33);
+        expect(storage.get(storageKeys.goalFixed('goal-3'))).toBe(true);
+    });
+
+    test('collectConfigData includes FSM namespaced sync keys', () => {
+        const { SyncManager, storageKeys } = loadModule();
+        const fsmTarget = storageKeys.fsmTarget('AAA');
+        const fsmFixed = storageKeys.fsmFixed('BBB');
+        const fsmTag = storageKeys.fsmTag('AAA');
+        const fsmSetting = storageKeys.fsmDriftSetting('warningPct');
+
+        storage.set(fsmTarget, 12);
+        storage.set(fsmFixed, true);
+        storage.set(fsmTag, 'cash');
+        storage.set(fsmSetting, 10);
+        storage.set('fsm_tag_catalog', JSON.stringify(['cash']));
+        global.GM_listValues = () => [fsmTarget, fsmFixed, fsmTag, fsmSetting, 'fsm_tag_catalog'];
+
+        const config = SyncManager.collectConfigData();
+
+        expect(config.platforms.fsm.targetsByCode).toEqual({ AAA: 12 });
+        expect(config.platforms.fsm.fixedByCode).toEqual({ BBB: true });
+        expect(config.platforms.fsm.tagsByCode).toEqual({ AAA: 'cash' });
+        expect(config.platforms.fsm.tagCatalog).toEqual(['cash']);
+        expect(config.platforms.fsm.driftSettings).toEqual({ warningPct: 10 });
     });
 
     describe('multi-device reconciliation', () => {
@@ -189,9 +243,22 @@ describe('SyncManager', () => {
 
             const serverTimestamp = Date.now() + 60_000;
             const serverConfig = {
-                version: 1,
-                goalTargets: { 'goal-1': 25 },
-                goalFixed: {},
+                version: 2,
+                platforms: {
+                    endowus: {
+                        goalTargets: { 'goal-1': 25 },
+                        goalFixed: {},
+                        timestamp: serverTimestamp
+                    },
+                    fsm: {
+                        targetsByCode: {},
+                        fixedByCode: {},
+                        tagsByCode: {},
+                        tagCatalog: [],
+                        driftSettings: {},
+                        timestamp: serverTimestamp
+                    }
+                },
                 timestamp: serverTimestamp
             };
             const encryptedData = await SyncEncryption.encryptWithMasterKey(
@@ -210,7 +277,7 @@ describe('SyncManager', () => {
                                 encryptedData,
                                 deviceId: 'other-device-id',
                                 timestamp: serverTimestamp,
-                                version: 1
+                                version: 2
                             }
                         })
                     });
@@ -265,7 +332,7 @@ describe('SyncManager', () => {
                                 encryptedData,
                                 deviceId: 'other-device-id',
                                 timestamp: serverTimestamp,
-                                version: 1
+                                version: 2
                             }
                         })
                     });
