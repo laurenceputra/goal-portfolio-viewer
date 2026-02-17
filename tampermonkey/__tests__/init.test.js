@@ -226,7 +226,7 @@ describe('initialization and URL monitoring', () => {
         global.alert = jest.fn();
 
         storage.set('api_fsm_holdings', JSON.stringify([
-            { code: 'AAA', name: 'Alpha', productType: 'UNIT_TRUST', currentValueLcy: 1000 }
+            { code: 'AAA', subcode: 'AAPL', name: 'Alpha', productType: 'UNIT_TRUST', currentValueLcy: 1000 }
         ]));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -236,6 +236,7 @@ describe('initialization and URL monitoring', () => {
         const overlay = document.querySelector('#gpv-overlay');
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Product Type');
+        expect(overlay.textContent).toContain('AAPL');
         expect(overlay.textContent).toContain('Apply to 1 filtered holdings');
         expect(overlay.querySelector('input[aria-label="Select all holdings"]')).toBeTruthy();
     });
@@ -452,7 +453,7 @@ describe('initialization and URL monitoring', () => {
         global.XMLHttpRequest = FakeXHR;
 
         global.GM_setValue('api_fsm_holdings', JSON.stringify([
-            { code: 'AAA', name: 'Fund A', currentValueLcy: 1234.56 }
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', currentValueLcy: 1234.56 }
         ]));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -463,6 +464,7 @@ describe('initialization and URL monitoring', () => {
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Portfolio Viewer (FSM)');
         expect(overlay.textContent).toContain('Fund A');
+        expect(overlay.textContent).toContain('AAPL');
         expect(overlay.querySelector('.gpv-select')).toBeTruthy();
         expect(overlay.textContent).toContain('Product Type');
     });

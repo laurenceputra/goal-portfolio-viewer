@@ -8909,10 +8909,12 @@ syncUi.update = function updateSyncUI() {
     function buildFsmRowsWithAssignment(fsmHoldings, assignmentByCode) {
         return (Array.isArray(fsmHoldings) ? fsmHoldings : []).map(row => {
             const code = utils.normalizeString(row?.code, '');
+            const subcode = utils.normalizeString(row?.subcode ?? row?.subCode, '');
             const currentValue = Number(row?.currentValueLcy);
             return {
                 ...row,
                 code,
+                displayTicker: subcode || code,
                 name: utils.normalizeString(row?.name, '-'),
                 productType: utils.normalizeString(row?.productType, '-'),
                 currentValueLcy: Number.isFinite(currentValue) ? currentValue : 0,
@@ -9165,7 +9167,7 @@ syncUi.update = function updateSyncUI() {
                 <thead>
                     <tr>
                         <th><input type="checkbox" aria-label="Select all holdings" ${selectAllFiltered ? 'checked' : ''} /></th>
-                        <th>Code</th>
+                        <th>Ticker</th>
                         <th>Name</th>
                         <th>Product Type</th>
                         <th>Value (SGD)</th>
@@ -9186,8 +9188,8 @@ syncUi.update = function updateSyncUI() {
                 const tr = document.createElement('tr');
                 const checked = selectedCodes.has(row.code);
                 tr.innerHTML = `
-                    <td><input type="checkbox" ${checked ? 'checked' : ''} aria-label="Select holding ${escapeHtml(row.code)}" /></td>
-                    <td>${escapeHtml(row.code || '-')}</td>
+                    <td><input type="checkbox" ${checked ? 'checked' : ''} aria-label="Select holding ${escapeHtml(row.displayTicker || row.code)}" /></td>
+                    <td>${escapeHtml(row.displayTicker || '-')}</td>
                     <td>${escapeHtml(row.name)}</td>
                     <td>${escapeHtml(row.productType)}</td>
                     <td>${escapeHtml(formatMoney(row.currentValueLcy))}</td>
