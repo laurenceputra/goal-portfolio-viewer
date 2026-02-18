@@ -237,8 +237,15 @@ describe('initialization and URL monitoring', () => {
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Product Type');
         expect(overlay.textContent).toContain('AAPL');
+        expect(overlay.textContent).toContain('Manage portfolios');
+        expect(overlay.textContent).not.toContain('New portfolio');
+        expect(overlay.textContent).toContain('Target %');
         expect(overlay.textContent).toContain('Apply to 1 filtered holdings');
         expect(overlay.querySelector('input[aria-label="Select all holdings"]')).toBeTruthy();
+
+        const manageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage portfolios'));
+        manageBtn.click();
+        expect(overlay.textContent).toContain('New portfolio');
     });
 
     test('selecting a different view scrolls overlay content to top smoothly', () => {

@@ -11,6 +11,10 @@
 // @grant        GM_deleteValue
 // @grant        GM_listValues
 // @grant        GM_cookie
+// @grant        GM_xmlhttpRequest
+// @connect      goal-portfolio-sync.laurenceputra.workers.dev
+// @connect      localhost
+// @connect      127.0.0.1
 // @run-at       document-start
 // @updateURL    https://raw.githubusercontent.com/laurenceputra/goal-portfolio-viewer/main/tampermonkey/goal_portfolio_viewer.user.js
 // @downloadURL  https://raw.githubusercontent.com/laurenceputra/goal-portfolio-viewer/main/tampermonkey/goal_portfolio_viewer.user.js
@@ -2281,7 +2285,7 @@
             throw new Error('Not logged in. Please login again.');
         }
 
-        const response = await fetch(`${serverUrl}/auth/refresh`, {
+        const response = await requestJson(`${serverUrl}/auth/refresh`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${refreshToken}`
@@ -2716,6 +2720,79 @@
         return error;
     }
 
+    function buildHeaderAccessor(headers) {
+        if (!headers) {
+            return { get: () => null };
+        }
+        if (typeof headers.get === 'function') {
+            return headers;
+        }
+        const headerMap = Object.entries(headers).reduce((acc, [key, value]) => {
+            acc[String(key).toLowerCase()] = value;
+            return acc;
+        }, {});
+        return {
+            get(name) {
+                if (!name) {
+                    return null;
+                }
+                return headerMap[String(name).toLowerCase()] || null;
+            }
+        };
+    }
+
+    function requestJson(url, options = {}) {
+        const method = options.method || 'GET';
+        const headers = options.headers || {};
+        const body = options.body;
+        const fetchImpl = (typeof fetch === 'function') ? fetch : null;
+
+        if (typeof GM_xmlhttpRequest !== 'function') {
+            if (!fetchImpl) {
+                return Promise.reject(new Error('No HTTP request transport available'));
+            }
+            return fetchImpl(url, { method, headers, body });
+        }
+
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method,
+                url,
+                headers,
+                data: body,
+                responseType: 'text',
+                onload: response => {
+                    const status = Number(response?.status) || 0;
+                    const text = response?.responseText || '';
+                    const rawHeaders = String(response?.responseHeaders || '')
+                        .split(/\r?\n/)
+                        .map(line => line.trim())
+                        .filter(Boolean);
+                    const parsedHeaders = rawHeaders.reduce((acc, line) => {
+                        const index = line.indexOf(':');
+                        if (index <= 0) {
+                            return acc;
+                        }
+                        const key = line.slice(0, index).trim();
+                        const value = line.slice(index + 1).trim();
+                        acc[key] = value;
+                        return acc;
+                    }, {});
+
+                    resolve({
+                        ok: status >= 200 && status < 300,
+                        status,
+                        headers: buildHeaderAccessor(parsedHeaders),
+                        text: async () => text,
+                        json: async () => parseJsonSafely(text) || {}
+                    });
+                },
+                onerror: () => reject(new Error('Network request failed')),
+                ontimeout: () => reject(new Error('Request timed out'))
+            });
+        });
+    }
+
     /**
      * Upload config to server
      */
@@ -2745,7 +2822,7 @@
         };
 
         // Upload to server (POST /sync)
-        const response = await fetch(`${serverUrl}/sync`, {
+        const response = await requestJson(`${serverUrl}/sync`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -2776,7 +2853,7 @@
         const accessToken = await getAccessToken();
 
         // Download from server
-        const response = await fetch(`${serverUrl}/sync/${userId}`, {
+        const response = await requestJson(`${serverUrl}/sync/${userId}`, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${accessToken}`
@@ -3249,7 +3326,7 @@
         const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
 
         // Call register endpoint
-        const response = await fetch(`${normalizedServerUrl}/auth/register`, {
+        const response = await requestJson(`${normalizedServerUrl}/auth/register`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -3287,7 +3364,7 @@
         const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
 
         // Call login endpoint
-        const response = await fetch(`${normalizedServerUrl}/auth/login`, {
+        const response = await requestJson(`${normalizedServerUrl}/auth/login`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -6562,7 +6639,7 @@ function setupSyncSettingsListeners() {
                         throw new Error('Server URL is required to test the connection');
                     }
                     Storage.set(SYNC_STORAGE_KEYS.serverUrl, serverUrl);
-                    const response = await fetch(`${serverUrl}/health`);
+                    const response = await requestJson(`${serverUrl}/health`);
                     const data = await response.json().catch(() => ({}));
 
                     if (response.ok && data.status === 'ok') {
@@ -9003,10 +9080,15 @@ syncUi.update = function updateSyncUI() {
         let filterTerm = '';
         let bulkPortfolioId = FSM_UNASSIGNED_PORTFOLIO_ID;
         let selectAllFiltered = false;
+        let isPortfolioManagerExpanded = false;
+        let editingPortfolioId = null;
+        const targetErrorsByCode = {};
+
+        const activePortfolios = () => portfolios.filter(item => item.archived !== true);
 
         const rerender = () => {
             const rows = buildFsmRowsWithAssignment(fsmHoldings, assignmentByCode);
-            const activePortfolioIds = portfolios.filter(item => item.archived !== true).map(item => item.id);
+            const activePortfolioIds = activePortfolios().map(item => item.id);
             const activePortfolioSet = new Set(activePortfolioIds);
 
             rows.forEach(row => {
@@ -9032,7 +9114,7 @@ syncUi.update = function updateSyncUI() {
                 if (!normalizedFilter) {
                     return true;
                 }
-                return row.code.toLowerCase().includes(normalizedFilter)
+                return row.displayTicker.toLowerCase().includes(normalizedFilter)
                     || row.name.toLowerCase().includes(normalizedFilter)
                     || row.productType.toLowerCase().includes(normalizedFilter);
             });
@@ -9043,50 +9125,111 @@ syncUi.update = function updateSyncUI() {
 
             contentDiv.innerHTML = '';
 
-            const manager = createElement('div', 'gpv-fsm-manager');
-            manager.innerHTML = `
-                <div class="gpv-fsm-manager-row">
-                    <label for="gpv-fsm-create-portfolio">New portfolio</label>
-                    <input id="gpv-fsm-create-portfolio" class="gpv-target-input" maxlength="${FSM_MAX_PORTFOLIO_NAME_LENGTH}" placeholder="Portfolio name" />
-                    <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-fsm-create-portfolio-btn">Create</button>
-                </div>
-            `;
-            const list = createElement('div', 'gpv-fsm-portfolio-list');
-            portfolios.filter(item => item.archived !== true).forEach(item => {
-                const row = createElement('div', 'gpv-fsm-portfolio-list-row');
-                row.innerHTML = `<span>${escapeHtml(item.name)}</span>`;
-                const actions = createElement('div', 'gpv-fsm-portfolio-actions');
-                const renameBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Rename');
-                renameBtn.onclick = () => {
-                    const nextName = normalizePortfolioName(window.prompt('Rename portfolio', item.name));
-                    if (!nextName) {
+            const managerSummary = createElement('div', 'gpv-fsm-toolbar');
+            const summaryBadge = createElement('span', 'gpv-summary-card', `Portfolios: ${activePortfolioIds.length} · Unassigned: ${unassignedCount}`);
+            managerSummary.appendChild(summaryBadge);
+            const managerToggleBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', isPortfolioManagerExpanded ? 'Hide portfolio manager' : 'Manage portfolios');
+            managerToggleBtn.type = 'button';
+            managerToggleBtn.setAttribute('aria-expanded', String(isPortfolioManagerExpanded));
+            managerToggleBtn.onclick = () => {
+                isPortfolioManagerExpanded = !isPortfolioManagerExpanded;
+                rerender();
+            };
+            managerSummary.appendChild(managerToggleBtn);
+            contentDiv.appendChild(managerSummary);
+
+            if (isPortfolioManagerExpanded) {
+                const manager = createElement('div', 'gpv-fsm-manager');
+                manager.innerHTML = `
+                    <div class="gpv-fsm-manager-row">
+                        <label for="gpv-fsm-create-portfolio">New portfolio</label>
+                        <input id="gpv-fsm-create-portfolio" class="gpv-target-input" maxlength="${FSM_MAX_PORTFOLIO_NAME_LENGTH}" placeholder="Portfolio name" />
+                        <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-fsm-create-portfolio-btn">Create</button>
+                    </div>
+                `;
+                const list = createElement('div', 'gpv-fsm-portfolio-list');
+                activePortfolios().forEach(item => {
+                    const row = createElement('div', 'gpv-fsm-portfolio-list-row');
+
+                    if (editingPortfolioId === item.id) {
+                        const renameInput = createElement('input', 'gpv-target-input');
+                        renameInput.maxLength = FSM_MAX_PORTFOLIO_NAME_LENGTH;
+                        renameInput.value = item.name;
+                        renameInput.setAttribute('aria-label', `Rename portfolio ${item.name}`);
+                        row.appendChild(renameInput);
+                        const saveRenameBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', 'Save');
+                        saveRenameBtn.onclick = () => {
+                            const nextName = normalizePortfolioName(renameInput.value);
+                            if (!nextName) {
+                                return;
+                            }
+                            portfolios = portfolios.map(portfolio => portfolio.id === item.id ? { ...portfolio, name: nextName } : portfolio);
+                            editingPortfolioId = null;
+                            saveFsmPortfolioConfig(portfolios, assignmentByCode);
+                            rerender();
+                        };
+                        row.appendChild(saveRenameBtn);
+                        const cancelRenameBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Cancel');
+                        cancelRenameBtn.onclick = () => {
+                            editingPortfolioId = null;
+                            rerender();
+                        };
+                        row.appendChild(cancelRenameBtn);
+                    } else {
+                        row.innerHTML = `<span>${escapeHtml(item.name)}</span>`;
+                        const actions = createElement('div', 'gpv-fsm-portfolio-actions');
+                        const actionSelect = createElement('select', 'gpv-select');
+                        actionSelect.setAttribute('aria-label', `Actions for portfolio ${item.name}`);
+                        actionSelect.innerHTML = `
+                            <option value="">Actions</option>
+                            <option value="rename">Rename</option>
+                            <option value="archive">Archive</option>
+                        `;
+                        actionSelect.onchange = () => {
+                            const action = actionSelect.value;
+                            actionSelect.value = '';
+                            if (action === 'rename') {
+                                editingPortfolioId = item.id;
+                                rerender();
+                                return;
+                            }
+                            if (action === 'archive') {
+                                portfolios = portfolios.map(portfolio => portfolio.id === item.id ? { ...portfolio, archived: true } : portfolio);
+                                Object.keys(assignmentByCode).forEach(code => {
+                                    if (assignmentByCode[code] === item.id) {
+                                        assignmentByCode[code] = FSM_UNASSIGNED_PORTFOLIO_ID;
+                                    }
+                                });
+                                saveFsmPortfolioConfig(portfolios, assignmentByCode);
+                                if (selectedScope === item.id) {
+                                    selectedScope = FSM_UNASSIGNED_PORTFOLIO_ID;
+                                }
+                                rerender();
+                            }
+                        };
+                        actions.appendChild(actionSelect);
+                        row.appendChild(actions);
+                    }
+                    list.appendChild(row);
+                });
+                manager.appendChild(list);
+                contentDiv.appendChild(manager);
+
+                const createBtn = manager.querySelector('#gpv-fsm-create-portfolio-btn');
+                const createInput = manager.querySelector('#gpv-fsm-create-portfolio');
+                createBtn.onclick = () => {
+                    const name = normalizePortfolioName(createInput.value);
+                    if (!name) {
                         return;
                     }
-                    portfolios = portfolios.map(portfolio => portfolio.id === item.id ? { ...portfolio, name: nextName } : portfolio);
+                    const id = buildPortfolioId(name, portfolios.map(item => item.id));
+                    portfolios = [...portfolios, { id, name, archived: false }];
+                    createInput.value = '';
+                    bulkPortfolioId = id;
                     saveFsmPortfolioConfig(portfolios, assignmentByCode);
                     rerender();
                 };
-                const archiveBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Archive');
-                archiveBtn.onclick = () => {
-                    portfolios = portfolios.map(portfolio => portfolio.id === item.id ? { ...portfolio, archived: true } : portfolio);
-                    Object.keys(assignmentByCode).forEach(code => {
-                        if (assignmentByCode[code] === item.id) {
-                            assignmentByCode[code] = FSM_UNASSIGNED_PORTFOLIO_ID;
-                        }
-                    });
-                    saveFsmPortfolioConfig(portfolios, assignmentByCode);
-                    if (selectedScope === item.id) {
-                        selectedScope = FSM_UNASSIGNED_PORTFOLIO_ID;
-                    }
-                    rerender();
-                };
-                actions.appendChild(renameBtn);
-                actions.appendChild(archiveBtn);
-                row.appendChild(actions);
-                list.appendChild(row);
-            });
-            manager.appendChild(list);
-            contentDiv.appendChild(manager);
+            }
 
             const summaryRow = createElement('div', 'gpv-summary-row');
             summaryRow.innerHTML = `
@@ -9102,7 +9245,7 @@ syncUi.update = function updateSyncUI() {
             const scopeSelect = createElement('select', 'gpv-select');
             const scopeOptions = [
                 { id: FSM_ALL_PORTFOLIO_ID, label: 'All' },
-                ...portfolios.filter(item => item.archived !== true).map(item => ({ id: item.id, label: item.name })),
+                ...activePortfolios().map(item => ({ id: item.id, label: item.name })),
                 { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: `Unassigned (${unassignedCount})` }
             ];
             scopeSelect.innerHTML = scopeOptions.map(option => `<option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>`).join('');
@@ -9142,7 +9285,7 @@ syncUi.update = function updateSyncUI() {
             const bulkSelect = createElement('select', 'gpv-select');
             bulkSelect.innerHTML = [
                 { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: 'Unassigned' },
-                ...portfolios.filter(item => item.archived !== true).map(item => ({ id: item.id, label: item.name }))
+                ...activePortfolios().map(item => ({ id: item.id, label: item.name }))
             ].map(option => `<option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>`).join('');
             bulkSelect.value = bulkPortfolioId;
             bulkSelect.onchange = () => {
@@ -9171,6 +9314,8 @@ syncUi.update = function updateSyncUI() {
                         <th>Name</th>
                         <th>Product Type</th>
                         <th>Value (SGD)</th>
+                        <th>Target %</th>
+                        <th>Fixed</th>
                         <th>Portfolio</th>
                     </tr>
                 </thead>
@@ -9194,6 +9339,8 @@ syncUi.update = function updateSyncUI() {
                     <td>${escapeHtml(row.productType)}</td>
                     <td>${escapeHtml(formatMoney(row.currentValueLcy))}</td>
                     <td></td>
+                    <td></td>
+                    <td></td>
                 `;
                 const checkbox = tr.querySelector('input[type="checkbox"]');
                 checkbox.addEventListener('change', () => {
@@ -9205,10 +9352,61 @@ syncUi.update = function updateSyncUI() {
                     }
                 });
 
+                const targetCell = tr.children[5];
+                const targetInput = createElement('input', 'gpv-target-input');
+                targetInput.type = 'number';
+                targetInput.min = '0';
+                targetInput.max = '100';
+                targetInput.step = '0.01';
+                targetInput.placeholder = '0.00';
+                targetInput.setAttribute('aria-label', `Target percentage for ${row.displayTicker || row.code}`);
+                targetInput.value = Number.isFinite(row.targetPercent) ? Number(row.targetPercent).toFixed(2) : '';
+                targetInput.disabled = row.fixed === true;
+                targetInput.onchange = () => {
+                    const rawValue = targetInput.value.trim();
+                    if (!rawValue) {
+                        delete targetErrorsByCode[row.code];
+                        Storage.remove(storageKeys.fsmTarget(row.code));
+                        rerender();
+                        return;
+                    }
+                    const parsed = Number(rawValue);
+                    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+                        targetErrorsByCode[row.code] = 'Enter target between 0 and 100';
+                        rerender();
+                        return;
+                    }
+                    delete targetErrorsByCode[row.code];
+                    Storage.set(storageKeys.fsmTarget(row.code), Number(parsed.toFixed(2)));
+                    rerender();
+                };
+                targetCell.appendChild(targetInput);
+                if (targetErrorsByCode[row.code]) {
+                    const err = createElement('div', 'gpv-conflict-diff-empty', targetErrorsByCode[row.code]);
+                    targetCell.appendChild(err);
+                }
+
+                const fixedCell = tr.children[6];
+                const fixedCheckbox = createElement('input');
+                fixedCheckbox.type = 'checkbox';
+                fixedCheckbox.checked = row.fixed === true;
+                fixedCheckbox.setAttribute('aria-label', `Fixed allocation for ${row.displayTicker || row.code}`);
+                fixedCheckbox.onchange = () => {
+                    const isFixed = fixedCheckbox.checked === true;
+                    Storage.set(storageKeys.fsmFixed(row.code), isFixed);
+                    if (isFixed) {
+                        Storage.remove(storageKeys.fsmTarget(row.code));
+                        delete targetErrorsByCode[row.code];
+                    }
+                    rerender();
+                };
+                fixedCell.appendChild(fixedCheckbox);
+
+                const selectCell = tr.children[7];
                 const select = createElement('select', 'gpv-select');
                 select.innerHTML = [
                     { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: 'Unassigned' },
-                    ...portfolios.filter(item => item.archived !== true).map(item => ({ id: item.id, label: item.name }))
+                    ...activePortfolios().map(item => ({ id: item.id, label: item.name }))
                 ].map(option => `<option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>`).join('');
                 select.value = row.portfolioId;
                 select.onchange = () => {
@@ -9216,25 +9414,10 @@ syncUi.update = function updateSyncUI() {
                     saveFsmPortfolioConfig(portfolios, assignmentByCode);
                     rerender();
                 };
-                tr.querySelector('td:last-child').appendChild(select);
+                selectCell.appendChild(select);
                 tbody.appendChild(tr);
             });
             contentDiv.appendChild(table);
-
-            const createBtn = manager.querySelector('#gpv-fsm-create-portfolio-btn');
-            const createInput = manager.querySelector('#gpv-fsm-create-portfolio');
-            createBtn.onclick = () => {
-                const name = normalizePortfolioName(createInput.value);
-                if (!name) {
-                    return;
-                }
-                const id = buildPortfolioId(name, portfolios.map(item => item.id));
-                portfolios = [...portfolios, { id, name, archived: false }];
-                createInput.value = '';
-                bulkPortfolioId = id;
-                saveFsmPortfolioConfig(portfolios, assignmentByCode);
-                rerender();
-            };
         };
 
         rerender();

@@ -82,6 +82,7 @@ describe('SyncManager', () => {
         delete global.GM_deleteValue;
         delete global.GM_listValues;
         delete global.GM_cookie;
+        delete global.GM_xmlhttpRequest;
         delete global.XMLHttpRequest;
         Date.now = originalDateNow;
         jest.useRealTimers();
@@ -378,6 +379,22 @@ describe('SyncManager', () => {
             expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
             expect(storage.get(storageKeys.goalTarget('goal-2'))).toBe(40);
         });
+    });
+
+    test('register uses GM_xmlhttpRequest transport when available', async () => {
+        global.GM_xmlhttpRequest = jest.fn(({ onload }) => {
+            onload({
+                status: 200,
+                responseText: JSON.stringify({ success: true })
+            });
+        });
+        fetchMock.mockImplementation(() => {
+            throw new Error('fetch should not be called when GM_xmlhttpRequest is available');
+        });
+
+        const { SyncManager } = loadModule();
+        await expect(SyncManager.register('https://sync.example.com', 'user@example.com', 'password123')).resolves.toEqual({ success: true });
+        expect(global.GM_xmlhttpRequest).toHaveBeenCalled();
     });
 
     describe('token helpers', () => {
