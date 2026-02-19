@@ -72,6 +72,38 @@ When helping with debugging, you should:
 5. Fix and verify
 6. Add tests to prevent regression
 
+## Root-Cause Fix Protocol (Primary Owner)
+
+Use this protocol for lint and test failures. The goal is to fix the source cause, not only clear the symptom.
+
+### Steps
+1. Capture failure evidence exactly (rule or test id, file:line, command, and message).
+2. Identify the owning implementation unit (function or module where behavior originates).
+3. Write a causality statement: "<failure> happens because <cause> in <owner>."
+4. Select fix target:
+   - Default: fix owning implementation.
+   - Only adjust tests or config when implementation is demonstrably correct.
+5. Hand off to `qa-testing` with:
+   - causality statement
+   - expected behavior
+   - affected edge cases
+
+### Human Verification Escalation (Blocking)
+Escalate to a human and pause behavior-changing fixes when implementation correctness is unclear.
+
+Escalation triggers:
+- expected behavior is ambiguous or conflicts across docs, tests, or product intent
+- multiple valid fixes exist with different user impact
+- financial or privacy-sensitive logic cannot be proven correct from available evidence
+
+Escalation payload:
+- what is unclear
+- options considered and tradeoffs
+- recommended default
+- what is proven vs unproven
+
+Do not resolve ambiguity by weakening tests, relaxing lint rules, or broad config changes.
+
 ### Debugging Tools
 - Debuggers (breakpoints, step through)
 - Logging frameworks
