@@ -48,6 +48,7 @@ describe('initialization and URL monitoring', () => {
         if (window.__gpvUrlMonitorCleanup) {
             window.__gpvUrlMonitorCleanup();
         }
+        jest.useRealTimers();
         teardownDom();
         delete global.alert;
         delete global.GM_setValue;

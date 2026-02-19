@@ -9845,6 +9845,9 @@ syncUi.update = function updateSyncUI() {
         const restoreReplaceState = wrapHistoryMethod('replaceState', handleUrlChange);
 
         const intervalId = window.setInterval(handleUrlChange, 500);
+        if (intervalId && typeof intervalId.unref === 'function') {
+            intervalId.unref();
+        }
 
         const appRoot = document.querySelector('#root')
             || document.querySelector('#app')

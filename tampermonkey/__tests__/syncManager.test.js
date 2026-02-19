@@ -79,6 +79,7 @@ describe('SyncManager', () => {
         if (exportsModule?.SyncManager?.stopAutoSync) {
             exportsModule.SyncManager.stopAutoSync();
         }
+        jest.useRealTimers();
         teardownDom();
         delete global.GM_setValue;
         delete global.GM_getValue;
