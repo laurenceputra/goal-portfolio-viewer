@@ -3457,6 +3457,7 @@
         applyConfigData,
         register,
         login,
+        requestJson,
         ...(testingHooks ? { __test: testingHooks } : {})
     };
 })();
@@ -6007,7 +6008,7 @@ let GoalTargetStore;
     /**
      * Format timestamp for display
      */
-    function formatTimestamp(timestamp) {
+    function _formatTimestamp(timestamp) {
         if (!timestamp) return 'Never';
         const date = new Date(timestamp);
         return date.toLocaleString();
@@ -6639,7 +6640,7 @@ function setupSyncSettingsListeners() {
                         throw new Error('Server URL is required to test the connection');
                     }
                     Storage.set(SYNC_STORAGE_KEYS.serverUrl, serverUrl);
-                    const response = await requestJson(`${serverUrl}/health`);
+                    const response = await SyncManager.requestJson(`${serverUrl}/health`);
                     const data = await response.json().catch(() => ({}));
 
                     if (response.ok && data.status === 'ok') {
@@ -6878,13 +6879,6 @@ function createConflictDialogHTML(conflict) {
         </tr>
     `).join('');
 
-    const fsmRows = diffSections.fsm.map(item => `
-        <tr>
-            <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
-            <td>${escapeHtml(item.localDisplay)}</td>
-            <td>${escapeHtml(item.remoteDisplay)}</td>
-        </tr>
-    `).join('');
     const fsmDefinitionRows = diffSections.fsm
         .filter(item => item.settingName === 'Portfolio Definitions')
         .map(item => `
