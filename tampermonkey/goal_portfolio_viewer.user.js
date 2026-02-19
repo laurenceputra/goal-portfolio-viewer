@@ -1063,6 +1063,43 @@
         return displays;
     }
 
+    function hydrateVisibleGoalMetricRows(contentRoot, goalIds) {
+        if (!contentRoot || !Array.isArray(goalIds) || !goalIds.length) {
+            return;
+        }
+        const rowsByGoalId = {};
+        const metricsRows = Array.from(contentRoot.querySelectorAll('tr.gpv-goal-metrics-row'));
+        metricsRows.forEach(row => {
+            const rowGoalId = row.dataset.goalId;
+            if (rowGoalId) {
+                rowsByGoalId[rowGoalId] = row;
+            }
+        });
+
+        goalIds.forEach(goalId => {
+            const metricsRow = rowsByGoalId[goalId];
+            if (!metricsRow) {
+                return;
+            }
+            const windowReturns = getGoalWindowReturns(goalId);
+            const windowReturnDisplays = buildWindowReturnDisplays(windowReturns);
+            Object.values(PERFORMANCE_WINDOWS).forEach(window => {
+                const value = metricsRow.querySelector(
+                    `.gpv-goal-metrics-value[data-window-key="${window.key}"]`
+                );
+                if (!value) {
+                    return;
+                }
+                value.textContent = windowReturnDisplays[window.key] ?? '-';
+                value.classList.remove('positive', 'negative');
+                const numericValue = windowReturns[window.key];
+                if (typeof numericValue === 'number' && Number.isFinite(numericValue)) {
+                    value.classList.add(numericValue >= 0 ? 'positive' : 'negative');
+                }
+            });
+        });
+    }
+
     function getPerformanceCacheKey(goalId) {
         return storageKeys.performanceCache(goalId);
     }
@@ -4210,6 +4247,17 @@ let GoalTargetStore;
         return table;
     }
 
+    function scheduleNextFrame(callback) {
+        if (typeof callback !== 'function') {
+            return;
+        }
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(callback);
+            return;
+        }
+        setTimeout(callback, 0);
+    }
+
     function renderGoalTypePerformance(typeSection, goalIds, cleanupCallbacks, options = {}) {
         const performanceContainer = createElement('div', 'gpv-performance-container');
         const loading = createElement('div', 'gpv-performance-loading', 'Loading performance data...');
@@ -4256,8 +4304,11 @@ let GoalTargetStore;
             performanceContainer.appendChild(footerRow);
             performanceContainer.setAttribute('aria-busy', 'false');
 
-            requestAnimationFrame(() => {
+            scheduleNextFrame(() => {
                 if (!chartWrapper.isConnected) {
+                    return;
+                }
+                if (typeof document === 'undefined' || typeof document.createElementNS !== 'function') {
                     return;
                 }
                 const initialWidth = chartWrapper.getBoundingClientRect().width;
@@ -4856,6 +4907,7 @@ let GoalTargetStore;
 
             goalTypeModel.goals.forEach(goalModel => {
                 const tr = createElement('tr', 'gpv-goal-row');
+                tr.dataset.goalId = goalModel.goalId || '';
                 tr.appendChild(createElement('td', 'gpv-goal-name', goalModel.goalName));
                 tr.appendChild(createElement('td', null, goalModel.endingBalanceDisplay));
                 tr.appendChild(createElement('td', null, goalModel.percentOfTypeDisplay));
@@ -4901,6 +4953,7 @@ let GoalTargetStore;
                 tbody.appendChild(tr);
 
                 const metricsRow = createElement('tr', 'gpv-goal-metrics-row');
+                metricsRow.dataset.goalId = goalModel.goalId || '';
                 const metricsCell = createElement('td', 'gpv-goal-metrics-cell');
                 metricsCell.colSpan = metricsColSpan;
                 const metricsContainer = createElement('div', 'gpv-goal-metrics');
@@ -4912,6 +4965,7 @@ let GoalTargetStore;
                     const label = createElement('span', 'gpv-goal-metrics-label', `${window.label} TWR:`);
                     const displayValue = windowReturnDisplays[window.key] ?? '-';
                     const value = createElement('span', 'gpv-goal-metrics-value', displayValue);
+                    value.dataset.windowKey = window.key;
                     const numericValue = windowReturns[window.key];
                     if (typeof numericValue === 'number' && Number.isFinite(numericValue)) {
                         value.classList.add(numericValue >= 0 ? 'positive' : 'negative');
@@ -8430,24 +8484,6 @@ syncUi.update = function updateSyncUI() {
         });
 
         let performanceRefreshToken = 0;
-        let pendingPerformanceRefresh = null;
-
-        function schedulePerformanceRefresh(token) {
-            if (pendingPerformanceRefresh) {
-                clearTimeout(pendingPerformanceRefresh);
-            }
-            pendingPerformanceRefresh = setTimeout(() => {
-                pendingPerformanceRefresh = null;
-                if (token !== performanceRefreshToken) {
-                    return;
-                }
-                renderView(select.value, {
-                    preserveScroll: true,
-                    useCacheOnly: true,
-                    preservePerformanceToken: true
-                });
-            }, 80);
-        }
 
         function createPerformanceDataLoadedHandler(activeSelection, token) {
             const selectionKey = activeSelection;
@@ -8467,24 +8503,13 @@ syncUi.update = function updateSyncUI() {
                 if (currentBucketMode !== BUCKET_VIEW_MODES.performance) {
                     return;
                 }
-                schedulePerformanceRefresh(token);
+                hydrateVisibleGoalMetricRows(contentDiv, fetchedGoalIds);
             };
         }
 
-        function renderView(
-            value,
-            {
-                scrollToTop = false,
-                preserveScroll = false,
-                useCacheOnly = false,
-                preservePerformanceToken = false
-            } = {}
-        ) {
-            if (!preservePerformanceToken) {
-                performanceRefreshToken += 1;
-            }
+        function renderView(value, { scrollToTop = false, useCacheOnly = false } = {}) {
+            performanceRefreshToken += 1;
             const refreshToken = performanceRefreshToken;
-            const previousScrollTop = preserveScroll ? contentDiv.scrollTop : null;
             ViewPipeline.render({
                 contentDiv,
                 selection: value,
@@ -8501,9 +8526,6 @@ syncUi.update = function updateSyncUI() {
                 applyBucketMode(currentBucketMode);
             } else {
                 contentDiv.classList.remove('gpv-mode-allocation', 'gpv-mode-performance');
-            }
-            if (preserveScroll && previousScrollTop !== null) {
-                contentDiv.scrollTop = previousScrollTop;
             }
             if (scrollToTop) {
                 scrollOverlayContentToTop(contentDiv);
@@ -8781,6 +8803,7 @@ syncUi.update = function updateSyncUI() {
             getWindowStartDate,
             calculateReturnFromTimeSeries,
             mapReturnsTableToWindowReturns,
+            hydrateVisibleGoalMetricRows,
             mergeTimeSeriesByDate,
             getTimeSeriesWindow,
             extractAmount,

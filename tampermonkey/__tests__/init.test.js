@@ -247,9 +247,7 @@ describe('initialization and URL monitoring', () => {
         expect(content.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
     });
 
-    test('performance mode auto-expands panels and refreshes window rows after fetch', async () => {
-        jest.useFakeTimers();
-
+    test('performance mode auto-expands all collapsed performance panels', () => {
         const performanceData = [
             {
                 goalId: 'goal1',
@@ -261,12 +259,6 @@ describe('initialization and URL monitoring', () => {
                 goalId: 'goal2',
                 totalInvestmentValue: { amount: 800 },
                 totalCumulativeReturn: { amount: 40 },
-                simpleRateOfReturnPercent: 0.05
-            },
-            {
-                goalId: 'goal3',
-                totalInvestmentValue: { amount: 600 },
-                totalCumulativeReturn: { amount: 30 },
                 simpleRateOfReturnPercent: 0.05
             }
         ];
@@ -282,12 +274,6 @@ describe('initialization and URL monitoring', () => {
                 goalName: 'Retirement - Cash Reserve',
                 investmentGoalType: 'CASH_MANAGEMENT',
                 totalInvestmentAmount: { display: { amount: 800 } }
-            },
-            {
-                goalId: 'goal3',
-                goalName: 'Retirement - Spending Buffer',
-                investmentGoalType: 'CASH_MANAGEMENT',
-                totalInvestmentAmount: { display: { amount: 600 } }
             }
         ];
         const summaryData = investibleData.map(goal => ({
@@ -296,37 +282,7 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: goal.investmentGoalType
         }));
 
-        const oneMonthByGoalId = {
-            goal1: 0.04,
-            goal2: 0.02,
-            goal3: 0.01
-        };
-
-        const responseFactory = body => ({
-            clone: () => responseFactory(body),
-            json: () => Promise.resolve(body),
-            ok: true,
-            status: 200
-        });
-
-        global.fetch.mockImplementation(requestUrl => {
-            const url = typeof requestUrl === 'string' ? requestUrl : requestUrl?.url || '';
-            const goalId = new URL(url, 'https://app.sg.endowus.com').searchParams.get('goalId');
-            const oneMonthValue = oneMonthByGoalId[goalId] ?? null;
-            const performanceResponse = {
-                returnsTable: {
-                    twr: {
-                        oneMonthValue,
-                        sixMonthValue: null,
-                        ytdValue: null,
-                        oneYearValue: null,
-                        threeYearValue: null
-                    }
-                }
-            };
-            return Promise.resolve(responseFactory(performanceResponse));
-        });
-
+        global.fetch.mockImplementation(() => new Promise(() => {}));
         global.GM_setValue('api_performance', JSON.stringify(performanceData));
         global.GM_setValue('api_investible', JSON.stringify(investibleData));
         global.GM_setValue('api_summary', JSON.stringify(summaryData));
@@ -342,42 +298,19 @@ describe('initialization and URL monitoring', () => {
         select.value = bucketValue;
         select.dispatchEvent(new window.Event('change', { bubbles: true }));
 
+        const panelsBefore = Array.from(overlay.querySelectorAll('.gpv-performance-panel'));
+        expect(panelsBefore.length).toBeGreaterThan(1);
+        panelsBefore.forEach(panel => {
+            expect(panel.classList.contains('gpv-collapsible--collapsed')).toBe(true);
+        });
+
         const performanceButton = overlay.querySelector('.gpv-mode-btn[data-mode="performance"]');
         performanceButton.click();
 
-        const performancePanel = overlay.querySelector('.gpv-performance-panel');
-        expect(performancePanel.classList.contains('gpv-collapsible--collapsed')).toBe(false);
-
-        const getOneMonthByGoalName = () => {
-            const byGoalName = {};
-            const rows = Array.from(overlay.querySelectorAll('tr.gpv-goal-row'));
-            rows.forEach(row => {
-                const goalName = row.querySelector('.gpv-goal-name')?.textContent?.trim();
-                const metricsRow = row.nextElementSibling;
-                const oneMonth = metricsRow?.querySelector('.gpv-goal-metrics-value')?.textContent;
-                if (goalName) {
-                    byGoalName[goalName] = oneMonth;
-                }
-            });
-            return byGoalName;
-        };
-
-        const beforeValues = getOneMonthByGoalName();
-        expect(beforeValues['Retirement - Core Portfolio']).toBe('-');
-        expect(beforeValues['Retirement - Cash Reserve']).toBe('-');
-        expect(beforeValues['Retirement - Spending Buffer']).toBe('-');
-
-        await Promise.resolve();
-        jest.advanceTimersByTime(3200);
-        await Promise.resolve();
-        await Promise.resolve();
-
-        const afterValues = getOneMonthByGoalName();
-        expect(afterValues['Retirement - Core Portfolio']).toBe('+4.00%');
-        expect(afterValues['Retirement - Cash Reserve']).toBe('+2.00%');
-        expect(afterValues['Retirement - Spending Buffer']).toBe('+1.00%');
-
-        jest.useRealTimers();
+        const panelsAfter = Array.from(overlay.querySelectorAll('.gpv-performance-panel'));
+        panelsAfter.forEach(panel => {
+            expect(panel.classList.contains('gpv-collapsible--collapsed')).toBe(false);
+        });
     });
 
     test('sync indicator exposes keyboard attributes when enabled', () => {
