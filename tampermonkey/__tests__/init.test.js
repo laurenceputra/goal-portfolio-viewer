@@ -250,34 +250,56 @@ describe('initialization and URL monitoring', () => {
     test('performance mode auto-expands panels and refreshes window rows after fetch', async () => {
         jest.useFakeTimers();
 
-        const performanceData = [{
-            goalId: 'goal1',
-            totalInvestmentValue: { amount: 1000 },
-            totalCumulativeReturn: { amount: 100 },
-            simpleRateOfReturnPercent: 0.1
-        }];
-        const investibleData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-            totalInvestmentAmount: { display: { amount: 1000 } }
-        }];
-        const summaryData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
-        }];
-
-        const performanceResponse = {
-            returnsTable: {
-                twr: {
-                    oneMonthValue: 0.04,
-                    sixMonthValue: null,
-                    ytdValue: null,
-                    oneYearValue: null,
-                    threeYearValue: null
-                }
+        const performanceData = [
+            {
+                goalId: 'goal1',
+                totalInvestmentValue: { amount: 1000 },
+                totalCumulativeReturn: { amount: 100 },
+                simpleRateOfReturnPercent: 0.1
+            },
+            {
+                goalId: 'goal2',
+                totalInvestmentValue: { amount: 800 },
+                totalCumulativeReturn: { amount: 40 },
+                simpleRateOfReturnPercent: 0.05
+            },
+            {
+                goalId: 'goal3',
+                totalInvestmentValue: { amount: 600 },
+                totalCumulativeReturn: { amount: 30 },
+                simpleRateOfReturnPercent: 0.05
             }
+        ];
+        const investibleData = [
+            {
+                goalId: 'goal1',
+                goalName: 'Retirement - Core Portfolio',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 1000 } }
+            },
+            {
+                goalId: 'goal2',
+                goalName: 'Retirement - Cash Reserve',
+                investmentGoalType: 'CASH_MANAGEMENT',
+                totalInvestmentAmount: { display: { amount: 800 } }
+            },
+            {
+                goalId: 'goal3',
+                goalName: 'Retirement - Spending Buffer',
+                investmentGoalType: 'CASH_MANAGEMENT',
+                totalInvestmentAmount: { display: { amount: 600 } }
+            }
+        ];
+        const summaryData = investibleData.map(goal => ({
+            goalId: goal.goalId,
+            goalName: goal.goalName,
+            investmentGoalType: goal.investmentGoalType
+        }));
+
+        const oneMonthByGoalId = {
+            goal1: 0.04,
+            goal2: 0.02,
+            goal3: 0.01
         };
 
         const responseFactory = body => ({
@@ -287,7 +309,23 @@ describe('initialization and URL monitoring', () => {
             status: 200
         });
 
-        global.fetch.mockImplementation(() => Promise.resolve(responseFactory(performanceResponse)));
+        global.fetch.mockImplementation(requestUrl => {
+            const url = typeof requestUrl === 'string' ? requestUrl : requestUrl?.url || '';
+            const goalId = new URL(url, 'https://app.sg.endowus.com').searchParams.get('goalId');
+            const oneMonthValue = oneMonthByGoalId[goalId] ?? null;
+            const performanceResponse = {
+                returnsTable: {
+                    twr: {
+                        oneMonthValue,
+                        sixMonthValue: null,
+                        ytdValue: null,
+                        oneYearValue: null,
+                        threeYearValue: null
+                    }
+                }
+            };
+            return Promise.resolve(responseFactory(performanceResponse));
+        });
 
         global.GM_setValue('api_performance', JSON.stringify(performanceData));
         global.GM_setValue('api_investible', JSON.stringify(investibleData));
@@ -310,16 +348,34 @@ describe('initialization and URL monitoring', () => {
         const performancePanel = overlay.querySelector('.gpv-performance-panel');
         expect(performancePanel.classList.contains('gpv-collapsible--collapsed')).toBe(false);
 
-        const beforeValue = overlay.querySelector('.gpv-goal-metrics-value');
-        expect(beforeValue.textContent).toBe('-');
+        const getOneMonthByGoalName = () => {
+            const byGoalName = {};
+            const rows = Array.from(overlay.querySelectorAll('tr.gpv-goal-row'));
+            rows.forEach(row => {
+                const goalName = row.querySelector('.gpv-goal-name')?.textContent?.trim();
+                const metricsRow = row.nextElementSibling;
+                const oneMonth = metricsRow?.querySelector('.gpv-goal-metrics-value')?.textContent;
+                if (goalName) {
+                    byGoalName[goalName] = oneMonth;
+                }
+            });
+            return byGoalName;
+        };
+
+        const beforeValues = getOneMonthByGoalName();
+        expect(beforeValues['Retirement - Core Portfolio']).toBe('-');
+        expect(beforeValues['Retirement - Cash Reserve']).toBe('-');
+        expect(beforeValues['Retirement - Spending Buffer']).toBe('-');
 
         await Promise.resolve();
+        jest.advanceTimersByTime(3200);
         await Promise.resolve();
-        jest.runOnlyPendingTimers();
         await Promise.resolve();
 
-        const afterValue = overlay.querySelector('.gpv-goal-metrics-value');
-        expect(afterValue.textContent).toBe('+4.00%');
+        const afterValues = getOneMonthByGoalName();
+        expect(afterValues['Retirement - Core Portfolio']).toBe('+4.00%');
+        expect(afterValues['Retirement - Cash Reserve']).toBe('+2.00%');
+        expect(afterValues['Retirement - Spending Buffer']).toBe('+1.00%');
 
         jest.useRealTimers();
     });

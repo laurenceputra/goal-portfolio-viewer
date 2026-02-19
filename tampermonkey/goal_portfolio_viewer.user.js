@@ -8432,7 +8432,7 @@ syncUi.update = function updateSyncUI() {
         let performanceRefreshToken = 0;
         let pendingPerformanceRefresh = null;
 
-        function schedulePerformanceRefresh(token, fetchedGoalIds) {
+        function schedulePerformanceRefresh(token) {
             if (pendingPerformanceRefresh) {
                 clearTimeout(pendingPerformanceRefresh);
             }
@@ -8441,13 +8441,16 @@ syncUi.update = function updateSyncUI() {
                 if (token !== performanceRefreshToken) {
                     return;
                 }
-                renderView(select.value, { preserveScroll: true, useCacheOnly: true });
+                renderView(select.value, {
+                    preserveScroll: true,
+                    useCacheOnly: true,
+                    preservePerformanceToken: true
+                });
             }, 80);
         }
 
-        function createPerformanceDataLoadedHandler(activeSelection) {
+        function createPerformanceDataLoadedHandler(activeSelection, token) {
             const selectionKey = activeSelection;
-            const token = performanceRefreshToken;
             return ({ fetchedGoalIds } = {}) => {
                 if (!Array.isArray(fetchedGoalIds) || fetchedGoalIds.length === 0) {
                     return;
@@ -8464,12 +8467,23 @@ syncUi.update = function updateSyncUI() {
                 if (currentBucketMode !== BUCKET_VIEW_MODES.performance) {
                     return;
                 }
-                schedulePerformanceRefresh(token, fetchedGoalIds);
+                schedulePerformanceRefresh(token);
             };
         }
 
-        function renderView(value, { scrollToTop = false, preserveScroll = false, useCacheOnly = false } = {}) {
-            performanceRefreshToken += 1;
+        function renderView(
+            value,
+            {
+                scrollToTop = false,
+                preserveScroll = false,
+                useCacheOnly = false,
+                preservePerformanceToken = false
+            } = {}
+        ) {
+            if (!preservePerformanceToken) {
+                performanceRefreshToken += 1;
+            }
+            const refreshToken = performanceRefreshToken;
             const previousScrollTop = preserveScroll ? contentDiv.scrollTop : null;
             ViewPipeline.render({
                 contentDiv,
@@ -8478,7 +8492,7 @@ syncUi.update = function updateSyncUI() {
                 projectedInvestmentsState: state.projectedInvestments,
                 cleanupCallbacks,
                 onBucketSelect,
-                onPerformanceDataLoaded: createPerformanceDataLoadedHandler(value),
+                onPerformanceDataLoaded: createPerformanceDataLoadedHandler(value, refreshToken),
                 useCacheOnly
             });
             const isBucketView = value !== 'SUMMARY';
