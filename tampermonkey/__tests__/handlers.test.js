@@ -48,6 +48,9 @@ describe('handlers and cache', () => {
     });
 
     afterEach(() => {
+        if (exportsModule?.SyncManager?.stopAutoSync) {
+            exportsModule.SyncManager.stopAutoSync();
+        }
         teardownDom();
         delete global.GM_setValue;
         delete global.GM_getValue;
