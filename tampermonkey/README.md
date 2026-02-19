@@ -113,10 +113,10 @@ The script will automatically group all goals starting with the same bucket name
 - Select a specific bucket from the dropdown (or click a bucket card in the summary view)
 - See detailed information about each goal within that bucket
 - View individual goal performance metrics
-- See a secondary per-goal TWR window row (1M/6M/YTD/1Y/3Y); missing windows show `-` until performance data is cached
+- See a secondary per-goal TWR window row (1M/6M/YTD/1Y/3Y); missing windows show `-` until performance data is cached and refresh automatically once data loads in the current session
 - Use `Allocation` mode for planning fields (Fixed/Target/Diff) and `Performance` mode for return-focused views
 - Mode selection persists between sessions for quick switching
-- Collapse the performance chart/metrics and projection sections per goal type (collapsed by default, remembered per section)
+- Collapse the performance chart/metrics and projection sections per goal type (collapsed by default, remembered per section); switching to Performance mode auto-expands performance panels for visibility
 - Use the header `Expand` button to temporarily grow the overlay (resets to default size each time you reopen it)
 - Compare goals within the same bucket
 - Use per-goal fixed toggles to lock a goal's amount and auto-sync its target %
@@ -299,6 +299,10 @@ Contributions are welcome! To contribute:
 5. Submit a pull request
 
 ## Changelog
+
+### Version 2.12.1
+- Auto-expand performance panels when switching to Performance mode
+- Refresh per-goal TWR window rows after performance data loads without reopening the overlay
 
 ### Version 2.11.1
 - Reduced false multi-device sync conflicts by reconciling identical payloads via content hash and aligning persisted sync timestamps with authoritative source timestamps

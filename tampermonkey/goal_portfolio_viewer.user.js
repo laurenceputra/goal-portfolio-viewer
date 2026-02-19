@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.12.0
+// @version      2.12.1
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -3682,9 +3682,14 @@ let GoalTargetStore;
         return cloned.json();
     }
 
-    async function ensurePerformanceData(goalIds) {
+    async function ensurePerformanceData(goalIds, options = {}) {
         const results = {};
         const idsToFetch = [];
+        const onFreshData = typeof options.onFreshData === 'function'
+            ? options.onFreshData
+            : null;
+        const existingGoalIds = new Set(Object.keys(state.performance.goalData || {}));
+        const cacheOnly = options.cacheOnly === true;
 
         goalIds.forEach(goalId => {
             if (!goalId) {
@@ -3698,7 +3703,7 @@ let GoalTargetStore;
             if (cached) {
                 state.performance.goalData[goalId] = cached;
                 results[goalId] = cached;
-            } else {
+            } else if (!cacheOnly) {
                 idsToFetch.push(goalId);
             }
         });
@@ -3720,11 +3725,26 @@ let GoalTargetStore;
             }
         });
 
+        const fetchedGoalIds = [];
         queueResults.forEach(result => {
             if (result.status === 'fulfilled' && result.value) {
                 results[result.item] = result.value;
+                if (!existingGoalIds.has(result.item)) {
+                    fetchedGoalIds.push(result.item);
+                }
             }
         });
+
+        if (onFreshData && fetchedGoalIds.length) {
+            try {
+                onFreshData({
+                    fetchedGoalIds,
+                    results
+                });
+            } catch (error) {
+                console.warn('[Goal Portfolio Viewer] Performance data callback failed:', error);
+            }
+        }
 
         return results;
     }
@@ -4190,7 +4210,7 @@ let GoalTargetStore;
         return table;
     }
 
-    function renderGoalTypePerformance(typeSection, goalIds, cleanupCallbacks) {
+    function renderGoalTypePerformance(typeSection, goalIds, cleanupCallbacks, options = {}) {
         const performanceContainer = createElement('div', 'gpv-performance-container');
         const loading = createElement('div', 'gpv-performance-loading', 'Loading performance data...');
         performanceContainer.setAttribute('aria-busy', 'true');
@@ -4250,7 +4270,10 @@ let GoalTargetStore;
         }
 
         function loadPerformanceData() {
-            ensurePerformanceData(goalIds).then(performanceMap => {
+            ensurePerformanceData(goalIds, {
+                onFreshData: options.onFreshData,
+                cacheOnly: options.cacheOnly === true
+            }).then(performanceMap => {
                 if (!performanceContainer.isConnected) {
                     return;
                 }
@@ -4456,6 +4479,7 @@ let GoalTargetStore;
         return [prefix, ...normalizedParts.filter(Boolean)].join('-');
     }
 
+
     function appendLabeledValue(container, wrapperClass, labelText, valueText, options = {}) {
         const wrapper = createElement('span', wrapperClass);
         const labelClass = options.labelClass || null;
@@ -4598,7 +4622,9 @@ let GoalTargetStore;
         bucketViewModel,
         mergedInvestmentDataState,
         projectedInvestmentsState,
-        cleanupCallbacks
+        cleanupCallbacks,
+        onPerformanceDataLoaded,
+        useCacheOnly
     }) {
         contentDiv.innerHTML = '';
         if (!bucketViewModel) {
@@ -4679,10 +4705,12 @@ let GoalTargetStore;
             performancePanel.id = performanceSectionId;
             performancePanel.dataset.loaded = 'false';
             performancePanel.classList.toggle('gpv-collapsible--collapsed', performanceCollapsed);
+            performancePanel.dataset.goalType = goalTypeId;
 
             const projectionPanel = createElement('div', 'gpv-collapsible gpv-projection-panel');
             projectionPanel.id = projectionSectionId;
             projectionPanel.classList.toggle('gpv-collapsible--collapsed', projectionCollapsed);
+            projectionPanel.dataset.goalType = goalTypeId;
 
             const performanceToggle = createElement('button', 'gpv-section-toggle gpv-section-toggle--performance');
             performanceToggle.type = 'button';
@@ -4711,7 +4739,11 @@ let GoalTargetStore;
                     renderGoalTypePerformance(
                         performancePanel,
                         goalTypeModel.goals.map(goal => goal.goalId).filter(Boolean),
-                        cleanupCallbacks
+                        cleanupCallbacks,
+                        {
+                            onFreshData: onPerformanceDataLoaded,
+                            cacheOnly: useCacheOnly
+                        }
                     );
                     performancePanel.dataset.loaded = 'true';
                 } catch (error) {
@@ -4722,8 +4754,19 @@ let GoalTargetStore;
             }
 
             performanceToggle.addEventListener('click', () => {
+                const shouldPersist = performanceToggle.dataset.autoExpand !== 'true';
+                if (performanceToggle.dataset.autoExpand) {
+                    delete performanceToggle.dataset.autoExpand;
+                }
                 performanceCollapsed = !performanceCollapsed;
-                setCollapseState(bucketViewModel.bucketName, goalTypeId, COLLAPSE_SECTIONS.performance, performanceCollapsed);
+                if (shouldPersist) {
+                    setCollapseState(
+                        bucketViewModel.bucketName,
+                        goalTypeId,
+                        COLLAPSE_SECTIONS.performance,
+                        performanceCollapsed
+                    );
+                }
                 performancePanel.classList.toggle('gpv-collapsible--collapsed', performanceCollapsed);
                 performanceToggle.setAttribute('aria-expanded', String(!performanceCollapsed));
                 performanceIcon.textContent = performanceCollapsed ? '▸' : '▾';
@@ -8135,7 +8178,9 @@ syncUi.update = function updateSyncUI() {
         mergedInvestmentDataState,
         projectedInvestmentsState,
         cleanupCallbacks,
-        onBucketSelect
+        onBucketSelect,
+        onPerformanceDataLoaded,
+        useCacheOnly
     }) {
         const view = buildPortfolioViewModel({
             selection,
@@ -8154,7 +8199,9 @@ syncUi.update = function updateSyncUI() {
             bucketViewModel: view.viewModel,
             mergedInvestmentDataState,
             projectedInvestmentsState,
-            cleanupCallbacks
+            cleanupCallbacks,
+            onPerformanceDataLoaded,
+            useCacheOnly
         });
     }
 
@@ -8338,6 +8385,32 @@ syncUi.update = function updateSyncUI() {
             contentDiv.classList.toggle('gpv-mode-allocation', normalized === BUCKET_VIEW_MODES.allocation);
             contentDiv.classList.toggle('gpv-mode-performance', normalized === BUCKET_VIEW_MODES.performance);
             updateModeToggle(normalized);
+            if (normalized === BUCKET_VIEW_MODES.performance) {
+                expandPerformancePanels(contentDiv);
+            }
+        }
+
+        function expandPerformancePanels(scope) {
+            if (!scope) {
+                return;
+            }
+            const panels = Array.from(scope.querySelectorAll('.gpv-performance-panel'));
+            if (!panels.length) {
+                return;
+            }
+            panels.forEach(panel => {
+                if (!panel.classList.contains('gpv-collapsible--collapsed')) {
+                    return;
+                }
+                const toggle = scope.querySelector(
+                    `.gpv-section-toggle--performance[aria-controls="${panel.id}"]`
+                );
+                if (!toggle) {
+                    return;
+                }
+                toggle.dataset.autoExpand = 'true';
+                toggle.click();
+            });
         }
 
         allocationButton.addEventListener('click', () => {
@@ -8356,14 +8429,57 @@ syncUi.update = function updateSyncUI() {
             applyBucketMode(currentBucketMode);
         });
 
-        function renderView(value, { scrollToTop = false } = {}) {
+        let performanceRefreshToken = 0;
+        let pendingPerformanceRefresh = null;
+
+        function schedulePerformanceRefresh(token, fetchedGoalIds) {
+            if (pendingPerformanceRefresh) {
+                clearTimeout(pendingPerformanceRefresh);
+            }
+            pendingPerformanceRefresh = setTimeout(() => {
+                pendingPerformanceRefresh = null;
+                if (token !== performanceRefreshToken) {
+                    return;
+                }
+                renderView(select.value, { preserveScroll: true, useCacheOnly: true });
+            }, 80);
+        }
+
+        function createPerformanceDataLoadedHandler(activeSelection) {
+            const selectionKey = activeSelection;
+            const token = performanceRefreshToken;
+            return ({ fetchedGoalIds } = {}) => {
+                if (!Array.isArray(fetchedGoalIds) || fetchedGoalIds.length === 0) {
+                    return;
+                }
+                if (!overlay.isConnected) {
+                    return;
+                }
+                if (token !== performanceRefreshToken) {
+                    return;
+                }
+                if (select.value !== selectionKey) {
+                    return;
+                }
+                if (currentBucketMode !== BUCKET_VIEW_MODES.performance) {
+                    return;
+                }
+                schedulePerformanceRefresh(token, fetchedGoalIds);
+            };
+        }
+
+        function renderView(value, { scrollToTop = false, preserveScroll = false, useCacheOnly = false } = {}) {
+            performanceRefreshToken += 1;
+            const previousScrollTop = preserveScroll ? contentDiv.scrollTop : null;
             ViewPipeline.render({
                 contentDiv,
                 selection: value,
                 mergedInvestmentDataState,
                 projectedInvestmentsState: state.projectedInvestments,
                 cleanupCallbacks,
-                onBucketSelect
+                onBucketSelect,
+                onPerformanceDataLoaded: createPerformanceDataLoadedHandler(value),
+                useCacheOnly
             });
             const isBucketView = value !== 'SUMMARY';
             modeToggle.classList.toggle('gpv-mode-toggle--hidden', !isBucketView);
@@ -8372,8 +8488,14 @@ syncUi.update = function updateSyncUI() {
             } else {
                 contentDiv.classList.remove('gpv-mode-allocation', 'gpv-mode-performance');
             }
+            if (preserveScroll && previousScrollTop !== null) {
+                contentDiv.scrollTop = previousScrollTop;
+            }
             if (scrollToTop) {
                 scrollOverlayContentToTop(contentDiv);
+            }
+            if (value !== 'SUMMARY' && currentBucketMode === BUCKET_VIEW_MODES.performance) {
+                expandPerformancePanels(contentDiv);
             }
         }
 

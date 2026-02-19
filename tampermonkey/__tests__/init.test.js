@@ -247,6 +247,83 @@ describe('initialization and URL monitoring', () => {
         expect(content.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
     });
 
+    test('performance mode auto-expands panels and refreshes window rows after fetch', async () => {
+        jest.useFakeTimers();
+
+        const performanceData = [{
+            goalId: 'goal1',
+            totalInvestmentValue: { amount: 1000 },
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        const performanceResponse = {
+            returnsTable: {
+                twr: {
+                    oneMonthValue: 0.04,
+                    sixMonthValue: null,
+                    ytdValue: null,
+                    oneYearValue: null,
+                    threeYearValue: null
+                }
+            }
+        };
+
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+
+        global.fetch.mockImplementation(() => Promise.resolve(responseFactory(performanceResponse)));
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        global.alert = jest.fn();
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const select = overlay?.querySelector('.gpv-select');
+        const bucketValue = Array.from(select?.options || []).find(option => option.value !== 'SUMMARY')?.value;
+        select.value = bucketValue;
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const performanceButton = overlay.querySelector('.gpv-mode-btn[data-mode="performance"]');
+        performanceButton.click();
+
+        const performancePanel = overlay.querySelector('.gpv-performance-panel');
+        expect(performancePanel.classList.contains('gpv-collapsible--collapsed')).toBe(false);
+
+        const beforeValue = overlay.querySelector('.gpv-goal-metrics-value');
+        expect(beforeValue.textContent).toBe('-');
+
+        await Promise.resolve();
+        await Promise.resolve();
+        jest.runOnlyPendingTimers();
+        await Promise.resolve();
+
+        const afterValue = overlay.querySelector('.gpv-goal-metrics-value');
+        expect(afterValue.textContent).toBe('+4.00%');
+
+        jest.useRealTimers();
+    });
+
     test('sync indicator exposes keyboard attributes when enabled', () => {
         const performanceData = [{
             goalId: 'goal1',
