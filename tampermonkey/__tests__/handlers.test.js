@@ -699,6 +699,58 @@ describe('handlers and cache', () => {
         expect(JSON.parse(stored).performance).toBe(true);
     });
 
+    test('hydrateVisibleGoalMetricRows updates all matching rows', () => {
+        const { hydrateVisibleGoalMetricRows, storageKeys } = exportsModule;
+        if (typeof hydrateVisibleGoalMetricRows !== 'function') return;
+
+        const content = document.createElement('div');
+        const goals = [
+            { goalId: 'goal-1', oneMonthValue: 0.04 },
+            { goalId: 'goal-2', oneMonthValue: 0.02 },
+            { goalId: 'goal-3', oneMonthValue: 0.01 }
+        ];
+
+        goals.forEach(goal => {
+            storage.set(storageKeys.performanceCache(goal.goalId), JSON.stringify({
+                fetchedAt: Date.now(),
+                response: {
+                    returnsTable: {
+                        twr: {
+                            oneMonthValue: goal.oneMonthValue,
+                            sixMonthValue: null,
+                            ytdValue: null,
+                            oneYearValue: null,
+                            threeYearValue: null
+                        }
+                    }
+                }
+            }));
+
+            const metricsRow = document.createElement('tr');
+            metricsRow.className = 'gpv-goal-metrics-row';
+            metricsRow.dataset.goalId = goal.goalId;
+
+            ['oneMonth', 'sixMonth', 'ytd', 'oneYear', 'threeYear'].forEach(windowKey => {
+                const value = document.createElement('span');
+                value.className = 'gpv-goal-metrics-value';
+                value.dataset.windowKey = windowKey;
+                value.textContent = '-';
+                metricsRow.appendChild(value);
+            });
+
+            content.appendChild(metricsRow);
+        });
+
+        hydrateVisibleGoalMetricRows(content, goals.map(goal => goal.goalId));
+
+        const rowValues = Array.from(content.querySelectorAll('.gpv-goal-metrics-row')).map(row => {
+            const value = row.querySelector('.gpv-goal-metrics-value[data-window-key="oneMonth"]');
+            return value?.textContent;
+        });
+
+        expect(rowValues).toEqual(['+4.00%', '+2.00%', '+1.00%']);
+    });
+
     test('createSequentialRequestQueue processes items sequentially', async () => {
         const { createSequentialRequestQueue } = exportsModule;
         const waitSpy = jest.fn(() => Promise.resolve());
