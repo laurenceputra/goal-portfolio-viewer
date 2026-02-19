@@ -136,6 +136,7 @@ describe('API interception', () => {
     });
 
     test('fetch interception tolerates JSON parse errors', async () => {
+        jest.spyOn(console, 'error').mockImplementation(() => {});
         const responseFactory = () => ({
             clone: () => responseFactory(),
             json: () => Promise.reject(new Error('Bad JSON')),
@@ -149,6 +150,7 @@ describe('API interception', () => {
         await flushPromises();
 
         expect(global.GM_setValue).not.toHaveBeenCalled();
+        console.error.mockRestore();
     });
 
     test('XMLHttpRequest interception stores summary data', async () => {
