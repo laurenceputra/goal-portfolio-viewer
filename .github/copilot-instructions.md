@@ -44,7 +44,7 @@ Use this compact workflow for all changes. Keep detailed role guidance in `.gith
   - There are no remaining spec gaps.
   - A human has reviewed and approved the plan.
 - The spec must be created using the `spec-writer` skill.
-- Default spec location is `.spec/plan.md` unless a different path is explicitly requested.
+- Default spec location is `spec/plan.md` unless a different path is explicitly requested.
 
 ### Required Artifacts
 - **Change Brief**: Problem, goal, and acceptance criteria (include change type and required steps).
