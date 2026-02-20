@@ -55,6 +55,11 @@ Include targeted tests for:
 - Config parsing edge cases (comma-separated allowlist with spaces/empty values).
 - Backward compatibility for sync payload migrations (v1 read + v2 write/normalize).
 
+## Refactor Test Focus (Repo)
+- **High-priority before refactors**: UI overlay DOM structure, focus trap/keyboard flow, sync error categorization, retry/backoff logic, performance baselines, worker crypto/validation utilities.
+- **Verification depth**: cross-browser smoke checks plus financial accuracy spot checks for any UI/behavior change.
+- **CI gating**: run targeted tests first, then full suite once targeted checks are green.
+
 ## Output Format
 - Test plan
 - Coverage gaps

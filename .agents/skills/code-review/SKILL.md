@@ -50,6 +50,14 @@ When blocked for ambiguity, require a human decision record before approval.
 
 Reference: `debugging-assistant` escalation policy and `qa-testing` verification matrix.
 
+## Repo-Specific Review Risks
+- **Single-file userscript constraint**: no module imports, no build steps, no file splitting, keep all helpers inside the IIFE.
+- **Financial calculations**: guard zero division, use `Number.isFinite()`, preserve null vs 0, round only at display.
+- **API interception safety**: clone responses before reading, match URLs precisely, avoid blocking the native response, prevent fetch/XHR loops.
+- **XSS prevention**: never render user data via `innerHTML`, avoid inline event handlers, use `textContent` or DOM nodes.
+- **Storage key compatibility**: keep key formats stable, encode separators, add migrations if any key shape changes.
+- **Sync/security boundaries**: no data egress by default, encryption/auth flows unchanged unless explicitly intended and verified.
+
 ## Output Format
 - Summary
 - Critical Issues

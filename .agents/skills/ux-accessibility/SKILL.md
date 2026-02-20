@@ -22,6 +22,12 @@ Review UI changes for accessibility and inclusive design.
 2. Check contrast and semantics.
 3. Confirm motion settings.
 
+## Modal & Keyboard Checklist (Repo)
+- **Focus management**: trap focus within modal, set initial focus, restore focus on close, allow Escape to close when permitted.
+- **ARIA dialog semantics**: `role="dialog"`, `aria-modal="true"`, `aria-labelledby` for titles, `aria-describedby` for helper text or errors.
+- **Keyboard activation**: all custom controls respond to Enter/Space, visible focus styles on all interactive elements.
+- **Live feedback**: use `role="status"`/`aria-live` for updates and `role="alert"` for errors.
+
 ## Output Format
 - Findings
 - Recommendations
