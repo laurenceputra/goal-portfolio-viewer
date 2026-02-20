@@ -76,12 +76,17 @@ describe('SyncManager', () => {
     });
 
     afterEach(() => {
+        if (exportsModule?.SyncManager?.stopAutoSync) {
+            exportsModule.SyncManager.stopAutoSync();
+        }
+        jest.useRealTimers();
         teardownDom();
         delete global.GM_setValue;
         delete global.GM_getValue;
         delete global.GM_deleteValue;
         delete global.GM_listValues;
         delete global.GM_cookie;
+        delete global.GM_xmlhttpRequest;
         delete global.XMLHttpRequest;
         Date.now = originalDateNow;
         jest.useRealTimers();
@@ -148,7 +153,7 @@ describe('SyncManager', () => {
         expect(scheduleSpy).toHaveBeenCalledWith('fixed-clear');
     });
 
-    test('collectConfigData excludes targets for fixed goals', () => {
+    test('collectConfigData emits v2 payload and excludes Endowus targets for fixed goals', () => {
         const { SyncManager, storageKeys } = loadModule();
         const targetKey = storageKeys.goalTarget('goal-1');
         const fixedKey = storageKeys.goalFixed('goal-1');
@@ -159,22 +164,104 @@ describe('SyncManager', () => {
 
         const config = SyncManager.collectConfigData();
 
-        expect(config.goalTargets).toEqual({});
-        expect(config.goalFixed).toEqual({ 'goal-1': true });
+        expect(config.version).toBe(2);
+        expect(config.platforms.endowus.goalTargets).toEqual({});
+        expect(config.platforms.endowus.goalFixed).toEqual({ 'goal-1': true });
+        expect(config.platforms.fsm.targetsByCode).toEqual({});
     });
 
-    test('applyConfigData skips targets when goal is fixed', () => {
+    test('applyConfigData skips Endowus targets when goal is fixed for v2 payload', () => {
         const { SyncManager, storageKeys } = loadModule();
         const targetKey = storageKeys.goalTarget('goal-1');
         const fixedKey = storageKeys.goalFixed('goal-1');
 
         SyncManager.applyConfigData({
-            goalTargets: { 'goal-1': 45 },
-            goalFixed: { 'goal-1': true }
+            version: 2,
+            platforms: {
+                endowus: {
+                    goalTargets: { 'goal-1': 45 },
+                    goalFixed: { 'goal-1': true },
+                    timestamp: Date.now()
+                },
+                fsm: {
+                    targetsByCode: {},
+                    fixedByCode: {},
+                    tagsByCode: {},
+                    tagCatalog: [],
+                    driftSettings: {},
+                    timestamp: Date.now()
+                }
+            },
+            timestamp: Date.now()
         });
 
         expect(storage.has(targetKey)).toBe(false);
         expect(storage.get(fixedKey)).toBe(true);
+    });
+
+
+    test('applyConfigData migrates legacy v1 payload to Endowus keys', () => {
+        const { SyncManager, storageKeys } = loadModule();
+        SyncManager.applyConfigData({
+            version: 1,
+            goalTargets: { 'goal-2': 33 },
+            goalFixed: { 'goal-3': true },
+            timestamp: Date.now()
+        });
+
+        expect(storage.get(storageKeys.goalTarget('goal-2'))).toBe(33);
+        expect(storage.get(storageKeys.goalFixed('goal-3'))).toBe(true);
+    });
+
+    test('collectConfigData includes FSM namespaced sync keys', () => {
+        const { SyncManager, storageKeys } = loadModule();
+        const fsmTarget = storageKeys.fsmTarget('AAA');
+        const fsmFixed = storageKeys.fsmFixed('BBB');
+        const fsmTag = storageKeys.fsmTag('AAA');
+        const fsmSetting = storageKeys.fsmDriftSetting('warningPct');
+
+        storage.set(fsmTarget, 12);
+        storage.set(fsmFixed, true);
+        storage.set(fsmTag, 'cash');
+        storage.set(fsmSetting, 10);
+        storage.set('fsm_portfolios', JSON.stringify([{ id: 'core', name: 'Core', archived: false }]));
+        storage.set('fsm_assignment_by_code', JSON.stringify({ AAA: 'core', BBB: 'unknown' }));
+        storage.set('fsm_tag_catalog', JSON.stringify(['cash']));
+        global.GM_listValues = () => [fsmTarget, fsmFixed, fsmTag, fsmSetting, 'fsm_tag_catalog', 'fsm_portfolios', 'fsm_assignment_by_code'];
+
+        const config = SyncManager.collectConfigData();
+
+        expect(config.platforms.fsm.targetsByCode).toEqual({ AAA: 12 });
+        expect(config.platforms.fsm.fixedByCode).toEqual({ BBB: true });
+        expect(config.platforms.fsm.tagsByCode).toEqual({ AAA: 'cash' });
+        expect(config.platforms.fsm.tagCatalog).toEqual(['cash']);
+        expect(config.platforms.fsm.driftSettings).toEqual({ warningPct: 10 });
+        expect(config.platforms.fsm.portfolios).toEqual([{ id: 'core', name: 'Core', archived: false }]);
+        expect(config.platforms.fsm.assignmentByCode).toEqual({ AAA: 'core', BBB: 'unassigned' });
+    });
+
+    test('applyConfigData stores FSM portfolio definitions and assignments', () => {
+        const { SyncManager } = loadModule();
+        SyncManager.applyConfigData({
+            version: 2,
+            platforms: {
+                endowus: { goalTargets: {}, goalFixed: {}, timestamp: Date.now() },
+                fsm: {
+                    targetsByCode: {},
+                    fixedByCode: {},
+                    tagsByCode: {},
+                    tagCatalog: [],
+                    portfolios: [{ id: 'income', name: 'Income', archived: false }],
+                    assignmentByCode: { AAPL: 'income', BOND: 'missing' },
+                    driftSettings: {},
+                    timestamp: Date.now()
+                }
+            },
+            timestamp: Date.now()
+        });
+
+        expect(JSON.parse(storage.get('fsm_portfolios'))).toEqual([{ id: 'income', name: 'Income', archived: false }]);
+        expect(JSON.parse(storage.get('fsm_assignment_by_code'))).toEqual({ AAPL: 'income', BOND: 'unassigned' });
     });
 
     describe('multi-device reconciliation', () => {
@@ -189,9 +276,22 @@ describe('SyncManager', () => {
 
             const serverTimestamp = Date.now() + 60_000;
             const serverConfig = {
-                version: 1,
-                goalTargets: { 'goal-1': 25 },
-                goalFixed: {},
+                version: 2,
+                platforms: {
+                    endowus: {
+                        goalTargets: { 'goal-1': 25 },
+                        goalFixed: {},
+                        timestamp: serverTimestamp
+                    },
+                    fsm: {
+                        targetsByCode: {},
+                        fixedByCode: {},
+                        tagsByCode: {},
+                        tagCatalog: [],
+                        driftSettings: {},
+                        timestamp: serverTimestamp
+                    }
+                },
                 timestamp: serverTimestamp
             };
             const encryptedData = await SyncEncryption.encryptWithMasterKey(
@@ -210,7 +310,7 @@ describe('SyncManager', () => {
                                 encryptedData,
                                 deviceId: 'other-device-id',
                                 timestamp: serverTimestamp,
-                                version: 1
+                                version: 2
                             }
                         })
                     });
@@ -265,7 +365,7 @@ describe('SyncManager', () => {
                                 encryptedData,
                                 deviceId: 'other-device-id',
                                 timestamp: serverTimestamp,
-                                version: 1
+                                version: 2
                             }
                         })
                     });
@@ -283,6 +383,22 @@ describe('SyncManager', () => {
             expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
             expect(storage.get(storageKeys.goalTarget('goal-2'))).toBe(40);
         });
+    });
+
+    test('register uses GM_xmlhttpRequest transport when available', async () => {
+        global.GM_xmlhttpRequest = jest.fn(({ onload }) => {
+            onload({
+                status: 200,
+                responseText: JSON.stringify({ success: true })
+            });
+        });
+        fetchMock.mockImplementation(() => {
+            throw new Error('fetch should not be called when GM_xmlhttpRequest is available');
+        });
+
+        const { SyncManager } = loadModule();
+        await expect(SyncManager.register('https://sync.example.com', 'user@example.com', 'password123')).resolves.toEqual({ success: true });
+        expect(global.GM_xmlhttpRequest).toHaveBeenCalled();
     });
 
     describe('token helpers', () => {

@@ -26,6 +26,7 @@ const {
     isCacheRefreshAllowed,
     formatPercentage,
     isDashboardRoute,
+    isFsmInvestmentsRoute,
     normalizeTimeSeriesData,
     normalizePerformanceResponse,
     getLatestTimeSeriesPoint,
@@ -53,6 +54,10 @@ describe('storage key helpers', () => {
             { name: 'goal target special', actual: storageKeys.goalTarget('goal-123-abc'), expected: 'goal_target_pct_goal-123-abc' },
             { name: 'goal fixed', actual: storageKeys.goalFixed('goal123'), expected: 'goal_fixed_goal123' },
             { name: 'goal fixed empty', actual: storageKeys.goalFixed(''), expected: 'goal_fixed_' },
+            { name: 'fsm target', actual: storageKeys.fsmTarget('AAA'), expected: 'fsm_target_pct_AAA' },
+            { name: 'fsm fixed', actual: storageKeys.fsmFixed('AAA'), expected: 'fsm_fixed_AAA' },
+            { name: 'fsm tag', actual: storageKeys.fsmTag('AAA'), expected: 'fsm_tag_AAA' },
+            { name: 'fsm drift setting', actual: storageKeys.fsmDriftSetting('warningPct'), expected: 'fsm_drift_setting_warningPct' },
             {
                 name: 'projected investment empty',
                 actual: storageKeys.projectedInvestment('', ''),
@@ -594,6 +599,20 @@ describe('isDashboardRoute', () => {
 
     test('should reject non-dashboard paths', () => {
         expect(isDashboardRoute('https://app.sg.endowus.com/overview')).toBe(false);
+    });
+});
+
+
+
+
+describe('isFsmInvestmentsRoute', () => {
+    test('should match FSM investments path', () => {
+        expect(isFsmInvestmentsRoute('https://secure.fundsupermart.com/fsmone/holdings/investments')).toBe(true);
+        expect(isFsmInvestmentsRoute('https://secure.fundsupermart.com/fsmone/holdings/investments?x=1')).toBe(true);
+    });
+
+    test('should reject non-target FSM paths', () => {
+        expect(isFsmInvestmentsRoute('https://secure.fundsupermart.com/fsmone/holdings')).toBe(false);
     });
 });
 

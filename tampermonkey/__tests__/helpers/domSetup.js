@@ -13,11 +13,15 @@ function setupDom(options = {}) {
 }
 
 function teardownDom() {
+    if (global.window && typeof global.window.close === 'function') {
+        global.window.close();
+    }
     delete global.window;
     delete global.document;
     delete global.MutationObserver;
     delete global.HTMLElement;
     delete global.Node;
+
 }
 
 module.exports = {

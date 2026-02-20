@@ -158,15 +158,18 @@ describe('SyncEncryption', () => {
         });
 
         test('fails to decrypt with wrong passphrase', async () => {
+            jest.spyOn(console, 'error').mockImplementation(() => {});
             const plaintext = 'Secret message';
             const encrypted = await SyncEncryption.encrypt(plaintext, testPassphrase);
             
             await expect(
                 SyncEncryption.decrypt(encrypted, 'wrong-passphrase')
             ).rejects.toThrow('Decryption failed');
+            console.error.mockRestore();
         });
 
         test('fails to decrypt corrupted ciphertext', async () => {
+            jest.spyOn(console, 'error').mockImplementation(() => {});
             const plaintext = 'Secret message';
             const encrypted = await SyncEncryption.encrypt(plaintext, testPassphrase);
             
@@ -176,17 +179,21 @@ describe('SyncEncryption', () => {
             await expect(
                 SyncEncryption.decrypt(corrupted, testPassphrase)
             ).rejects.toThrow();
+            console.error.mockRestore();
         });
 
         test('fails to decrypt invalid base64', async () => {
+            jest.spyOn(console, 'error').mockImplementation(() => {});
             const invalidBase64 = 'not-valid-base64!!!';
             
             await expect(
                 SyncEncryption.decrypt(invalidBase64, testPassphrase)
             ).rejects.toThrow();
+            console.error.mockRestore();
         });
 
         test('different passphrases produce different ciphertexts', async () => {
+            jest.spyOn(console, 'error').mockImplementation(() => {});
             const plaintext = 'Same message';
             
             const encrypted1 = await SyncEncryption.encrypt(plaintext, 'passphrase1');
@@ -201,6 +208,7 @@ describe('SyncEncryption', () => {
             await expect(
                 SyncEncryption.decrypt(encrypted1, 'passphrase2')
             ).rejects.toThrow();
+            console.error.mockRestore();
         });
 
         test('handles unicode characters correctly', async () => {
@@ -387,15 +395,19 @@ describe('SyncEncryption', () => {
         });
 
         test('handles null passphrase gracefully', async () => {
+            jest.spyOn(console, 'error').mockImplementation(() => {});
             await expect(
                 SyncEncryption.encrypt('test', null)
             ).rejects.toThrow();
+            console.error.mockRestore();
         });
 
         test('handles undefined passphrase gracefully', async () => {
+            jest.spyOn(console, 'error').mockImplementation(() => {});
             await expect(
                 SyncEncryption.encrypt('test', undefined)
             ).rejects.toThrow();
+            console.error.mockRestore();
         });
 
         test('handles empty passphrase', async () => {

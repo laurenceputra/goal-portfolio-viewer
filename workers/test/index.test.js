@@ -61,22 +61,43 @@ function createEnv(kvOverrides = {}) {
   };
 }
 
-test('OPTIONS request returns CORS preflight response', async () => {
-  const request = new Request('https://worker.example/sync', { method: 'OPTIONS' });
+test('OPTIONS request returns CORS preflight response for allowed origin', async () => {
+  const request = new Request('https://worker.example/sync', {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://secure.fundsupermart.com'
+    }
+  });
   const response = await worker.fetch(request, {}, {});
 
   assert.equal(response.status, 204);
   assert.equal(response.headers.get('access-control-max-age'), '86400');
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://secure.fundsupermart.com');
+});
+
+test('OPTIONS request omits allow-origin header for disallowed origin', async () => {
+  const request = new Request('https://worker.example/sync', {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://evil.example'
+    }
+  });
+
+  const response = await worker.fetch(request, {}, {});
+
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), null);
 });
 
 test('GET /health returns status payload', async () => {
-  const request = new Request('https://worker.example/health', { method: 'GET' });
+  const request = new Request('https://worker.example/health', { method: 'GET', headers: { Origin: 'https://secure.fundsupermart.com' } });
   const response = await worker.fetch(request, {}, {});
   const parsed = await parseJsonResponse(response);
 
   assert.equal(parsed.status, 200);
   assert.equal(parsed.body.status, 'ok');
   assert.ok(typeof parsed.body.timestamp === 'number');
+  assert.equal(parsed.headers['access-control-allow-origin'], 'https://secure.fundsupermart.com');
 });
 
 test('POST /auth/login with invalid json returns bad request', async () => {

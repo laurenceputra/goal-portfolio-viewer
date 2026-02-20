@@ -40,6 +40,7 @@ export default [
                 GM_deleteValue: 'readonly',
                 GM_listValues: 'readonly',
                 GM_cookie: 'readonly',
+                GM_xmlhttpRequest: 'readonly',
                 TextEncoder: 'readonly',
                 TextDecoder: 'readonly',
                 atob: 'readonly',

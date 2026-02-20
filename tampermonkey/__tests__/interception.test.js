@@ -89,6 +89,36 @@ describe('API interception', () => {
         );
     });
 
+
+    test('fetch interception stores FSM holdings and filters DPMS_HEADER rows', async () => {
+        const holdingsPayload = {
+            data: [
+                {
+                    refno: 'ref-1',
+                    holdings: [
+                        { code: 'AAA', productType: 'STOCK' },
+                        { code: 'HEADER', productType: 'DPMS_HEADER' }
+                    ]
+                }
+            ]
+        };
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        baseFetchMock.mockResolvedValueOnce(responseFactory(holdingsPayload));
+
+        await window.fetch('https://secure.fundsupermart.com/fsmone/rest/holding/client/protected/find-holdings-with-pnl');
+        await flushPromises();
+
+        expect(global.GM_setValue).toHaveBeenCalledWith(
+            'api_fsm_holdings',
+            JSON.stringify([{ code: 'AAA', productType: 'STOCK' }])
+        );
+    });
+
     test('fetch interception ignores non-matching endpoints', async () => {
         const responseFactory = body => ({
             clone: () => responseFactory(body),
@@ -106,6 +136,7 @@ describe('API interception', () => {
     });
 
     test('fetch interception tolerates JSON parse errors', async () => {
+        jest.spyOn(console, 'error').mockImplementation(() => {});
         const responseFactory = () => ({
             clone: () => responseFactory(),
             json: () => Promise.reject(new Error('Bad JSON')),
@@ -119,6 +150,7 @@ describe('API interception', () => {
         await flushPromises();
 
         expect(global.GM_setValue).not.toHaveBeenCalled();
+        console.error.mockRestore();
     });
 
     test('XMLHttpRequest interception stores summary data', async () => {

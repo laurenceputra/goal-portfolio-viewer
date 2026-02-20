@@ -25,6 +25,31 @@ Provide structured, actionable review feedback focused on correctness, security,
 3. Check repo-specific constraints and testing coverage.
 4. Summarize findings using the output template.
 
+## Easy-Fix Guardrail Review (Review Owner)
+
+Use this gate to prevent symptom-only fixes and require evidence-backed closure.
+
+### Review Checks
+1. Confirm a causality statement exists from `debugging-assistant`.
+2. Confirm a QA verification matrix exists from `qa-testing` and maps failures to tests and outcomes.
+3. Verify fix locality:
+   - implementation changed when implementation was at fault
+   - test or config-only changes are justified and scoped
+4. Block anti-patterns unless explicitly justified:
+   - `eslint-disable` added for convenience
+   - skipped or softened tests to force green
+   - broad rule or config relaxations for isolated issues
+
+### Blocking Conditions
+Mark as blocking if:
+- correctness is still ambiguous
+- evidence does not prove root-cause closure
+- financial or privacy-sensitive behavior changed without explicit verification
+
+When blocked for ambiguity, require a human decision record before approval.
+
+Reference: `debugging-assistant` escalation policy and `qa-testing` verification matrix.
+
 ## Output Format
 - Summary
 - Critical Issues

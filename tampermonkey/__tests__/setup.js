@@ -31,3 +31,15 @@ if (typeof global.window === 'undefined') {
 } else if (!global.window.location.href) {
     global.window.location.href = 'https://app.sg.endowus.com/dashboard';
 }
+
+if (!global.window.__GPV_DISABLE_AUTO_INIT) {
+    global.window.__GPV_DISABLE_AUTO_INIT = true;
+}
+
+if (typeof global.afterEach === 'function') {
+    global.afterEach(() => {
+        if (global.window?.__gpvUrlMonitorCleanup) {
+            global.window.__gpvUrlMonitorCleanup();
+        }
+    });
+}
