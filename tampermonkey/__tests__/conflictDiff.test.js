@@ -110,6 +110,52 @@ describe('conflict diff helpers', () => {
         expect(sections.fsm.length).toBeGreaterThan(0);
     });
 
+    it('keeps Endowus-only changes visible', () => {
+        const conflict = {
+            local: { goalTargets: { goal1: 10 }, goalFixed: {} },
+            remote: { goalTargets: { goal1: 20 }, goalFixed: {} }
+        };
+
+        const sections = buildConflictDiffSections(conflict, { goal1: 'Goal One' });
+        expect(sections.endowus).toHaveLength(1);
+        expect(sections.fsm).toHaveLength(0);
+    });
+
+    it('shows both Endowus and FSM diffs when mixed', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: { goal1: 10 }, goalFixed: {} },
+                    fsm: {
+                        targetsByCode: { AAA: 10 },
+                        fixedByCode: {},
+                        tagsByCode: {},
+                        tagCatalog: [],
+                        driftSettings: {}
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: { goal1: 20 }, goalFixed: {} },
+                    fsm: {
+                        targetsByCode: { AAA: 15 },
+                        fixedByCode: {},
+                        tagsByCode: {},
+                        tagCatalog: [],
+                        driftSettings: {}
+                    }
+                }
+            }
+        };
+
+        const sections = buildConflictDiffSections(conflict, { goal1: 'Goal One' });
+        expect(sections.endowus.length).toBeGreaterThan(0);
+        expect(sections.fsm.length).toBeGreaterThan(0);
+    });
+
     it('formats sync values', () => {
         expect(formatSyncTarget(12.345)).toBe('12.35%');
         expect(formatSyncTarget(null)).toBe('-');

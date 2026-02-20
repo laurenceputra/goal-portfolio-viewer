@@ -3,6 +3,7 @@ external_data/
 
 # PR details (local tooling artifacts)
 .pr_details/
+.spec/
 .specifications/
 
 # Demo files (keep demo/ directory structure but ignore specific files)

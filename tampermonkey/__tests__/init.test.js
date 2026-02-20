@@ -463,6 +463,20 @@ describe('initialization and URL monitoring', () => {
         global.GM_setValue('api_fsm_holdings', JSON.stringify([
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', currentValueLcy: 1234.56 }
         ]));
+        global.GM_setValue('api_summary', JSON.stringify([
+            { goalId: 'end-1', goalName: 'Endowus Only Goal', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }
+        ]));
+        global.GM_setValue('api_investible', JSON.stringify([
+            {
+                goalId: 'end-1',
+                goalName: 'Endowus Only Goal',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 1000 } }
+            }
+        ]));
+        global.GM_setValue('api_performance', JSON.stringify([
+            { goalId: 'end-1', totalCumulativeReturn: { amount: 100 }, simpleRateOfReturnPercent: 0.1 }
+        ]));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -473,6 +487,7 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Portfolio Viewer (FSM)');
         expect(overlay.textContent).toContain('Fund A');
         expect(overlay.textContent).toContain('AAPL');
+        expect(overlay.textContent).not.toContain('Endowus Only Goal');
         expect(overlay.querySelector('.gpv-select')).toBeTruthy();
         expect(overlay.textContent).toContain('Product Type');
     });
@@ -516,6 +531,269 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         expect(global.alert).toHaveBeenCalledWith('Please wait for FSM holdings data to load, then try again.');
+    });
+
+    test('FSM portfolio manager supports create, rename, archive and unassigns holdings', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 },
+            { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 800 }
+        ]));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const manageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage portfolios'));
+        manageBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const createInput = overlay.querySelector('#gpv-fsm-create-portfolio');
+        const createBtn = overlay.querySelector('#gpv-fsm-create-portfolio-btn');
+        createInput.value = 'Core';
+        createBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const actionSelect = overlay.querySelector('.gpv-fsm-portfolio-list select');
+        actionSelect.value = 'rename';
+        actionSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        const renameInput = overlay.querySelector('input[aria-label^="Rename portfolio"]');
+        const saveBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent === 'Save');
+        renameInput.value = 'Core Growth';
+        saveBtn.click();
+
+        const portfolios = JSON.parse(storage.get('fsm_portfolios'));
+        const corePortfolio = portfolios.find(item => item.id === 'core');
+        expect(corePortfolio.name).toBe('Core Growth');
+
+        overlay = document.querySelector('#gpv-overlay');
+        const rowSelect = overlay.querySelector('table tbody select.gpv-select');
+        rowSelect.value = 'core';
+        rowSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        let assignments = JSON.parse(storage.get('fsm_assignment_by_code'));
+        expect(assignments.AAA).toBe('core');
+
+        overlay = document.querySelector('#gpv-overlay');
+        const archiveSelect = overlay.querySelector('.gpv-fsm-portfolio-list select');
+        archiveSelect.value = 'archive';
+        archiveSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const archivedPortfolios = JSON.parse(storage.get('fsm_portfolios'));
+        const archived = archivedPortfolios.find(item => item.id === 'core');
+        expect(archived.archived).toBe(true);
+
+        assignments = JSON.parse(storage.get('fsm_assignment_by_code'));
+        expect(assignments.AAA).toBe('unassigned');
+    });
+
+    test('FSM bulk assignment applies to all filtered holdings', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 },
+            { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 800 }
+        ]));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const manageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage portfolios'));
+        manageBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const createInput = overlay.querySelector('#gpv-fsm-create-portfolio');
+        const createBtn = overlay.querySelector('#gpv-fsm-create-portfolio-btn');
+        createInput.value = 'Core';
+        createBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const selectAll = overlay.querySelector('input[aria-label="Select all filtered holdings"]');
+        selectAll.checked = true;
+        selectAll.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        const applyBulkBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Apply to'));
+        const bulkRow = applyBulkBtn.parentElement;
+        const bulkSelect = bulkRow.querySelector('select.gpv-select');
+        bulkSelect.value = 'core';
+        bulkSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        applyBulkBtn.click();
+
+        const assignments = JSON.parse(storage.get('fsm_assignment_by_code'));
+        expect(assignments.AAA).toBe('core');
+        expect(assignments.BBB).toBe('core');
+    });
+
+    test('FSM fixed clears target value and disables input', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+        ]));
+        storage.set('fsm_target_pct_AAA', 35);
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const fixedCheckbox = overlay.querySelector('input[aria-label^="Fixed allocation"]');
+        fixedCheckbox.checked = true;
+        fixedCheckbox.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        const targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
+        expect(storage.has('fsm_target_pct_AAA')).toBe(false);
+        expect(storage.get('fsm_fixed_AAA')).toBe(true);
+        expect(targetInput.disabled).toBe(true);
+    });
+
+    test('FSM target input rejects invalid values without persisting', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+        ]));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
+        targetInput.value = '150';
+        targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Enter target between 0 and 100');
+        expect(storage.has('fsm_target_pct_AAA')).toBe(false);
     });
 
 });
