@@ -10,6 +10,7 @@ spec/
 # Demo files (keep demo/ directory structure but ignore specific files)
 demo/goal_portfolio_viewer.user.js
 demo/goal_portfolio_viewer_demo.user.js
+demo/screenshots/
 
 # Node.js
 node_modules/
