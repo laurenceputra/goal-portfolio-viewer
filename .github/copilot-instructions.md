@@ -42,17 +42,27 @@ Use this compact workflow for all changes. Keep detailed role guidance in `.gith
 - Do not proceed to implementation or execute changes until all of the following are true:
   - A spec has been created.
   - There are no remaining spec gaps.
-  - Either a human has reviewed and approved the plan, or the spec is sufficiently clear for autonomous execution.
+  - Either a human has reviewed and approved the plan, or the Spec-Clarity Gate passes.
 - The spec must be created using the `spec-writer` skill.
 - Default spec location is `spec/plan.md` unless a different path is explicitly requested.
 
-**Sufficiently clear spec** means all of the following are true:
+### Spec-Clarity Gate (Canonical Definition)
+The Spec-Clarity Gate is the named gate used by agent and skill docs when deciding whether work may continue without human confirmation.
+
+This gate **passes** only when all of the following are true:
 - Acceptance criteria are explicit and testable.
 - Scope, constraints, and non-goals are clear.
 - Risks and tradeoffs are documented with chosen direction.
 - Implementation and verification steps are concrete, with no unresolved blocking questions.
 
-When a spec is sufficiently clear, continue without waiting for human confirmation and record the rationale in working notes or PR description.
+If any item above is missing, unclear, or disputed, the gate **fails**.
+
+When the gate passes, continue without waiting for human confirmation and record a short decision note in working notes or PR description:
+- `Spec-Clarity Gate: pass`
+- Acceptance criteria source
+- Open questions: none
+
+When the gate fails, stop progression and request spec updates or human decision.
 
 ### Required Artifacts
 - **Change Brief**: Problem, goal, and acceptance criteria (include change type and required steps).

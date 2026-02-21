@@ -33,7 +33,7 @@ Minimum checks:
 - Verification matrix from `qa-engineer`
 - Fix locality justified when tests or configs are changed without implementation changes
 
-Block approval if correctness is ambiguous or evidence does not prove root-cause closure. Require a human decision record only when ambiguity remains after the spec-clarity gate is applied.
+Block approval if correctness is ambiguous or evidence does not prove root-cause closure. Require a human decision record only when ambiguity remains after applying the Spec-Clarity Gate (canonical definition in `.github/copilot-instructions.md`).
 
 ## Review Checklist
 

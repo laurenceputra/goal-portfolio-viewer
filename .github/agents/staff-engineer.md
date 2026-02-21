@@ -33,7 +33,7 @@ Minimum handoff:
 - Expected behavior
 - Affected edge cases
 
-If correctness is unclear, pause behavior-changing fixes and first check whether the spec already satisfies the spec-clarity gate. Escalate for human verification only if ambiguity remains.
+If correctness is unclear, pause behavior-changing fixes and first apply the Spec-Clarity Gate (canonical definition in `.github/copilot-instructions.md`). Escalate for human verification only if ambiguity remains.
 
 Coordinate with:
 - `qa-engineer` for the verification matrix
