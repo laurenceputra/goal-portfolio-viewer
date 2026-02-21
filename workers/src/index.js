@@ -16,12 +16,16 @@ const CONFIG = {
 	MAX_PAYLOAD_SIZE: 10 * 1024, // 10KB
 	CORS_ORIGINS: 'https://app.sg.endowus.com,https://secure.fundsupermart.com',
 	SYNC_KV_BINDING: 'SYNC_KV',
-		VERSION: '1.1.1'
+	VERSION: '1.1.1'
 };
 
 // CORS headers
 const CORS_MAX_AGE = {
 	'Access-Control-Max-Age': '86400' // 24 hours
+};
+const NO_STORE_HEADERS = {
+	'Cache-Control': 'no-store',
+	Pragma: 'no-cache'
 };
 
 function jsonResponseWithCors(data, status = 200, additionalHeaders = {}, env = {}) {
@@ -75,7 +79,21 @@ function matchRoute(method, pathname) {
 
 async function readJsonBody(request, env) {
 	try {
-		return { ok: true, data: await request.json() };
+		const text = await request.text();
+		if (text && text.length > CONFIG.MAX_PAYLOAD_SIZE) {
+			return {
+				ok: false,
+				response: jsonResponseWithCors({
+					success: false,
+					error: 'PAYLOAD_TOO_LARGE',
+					maxSize: CONFIG.MAX_PAYLOAD_SIZE
+				}, 413, {}, env)
+			};
+		}
+		if (!text) {
+			return { ok: true, data: {} };
+		}
+		return { ok: true, data: JSON.parse(text) };
 	} catch (_error) {
 		return {
 			ok: false,
@@ -116,7 +134,7 @@ export default {
 		if (method === 'OPTIONS') {
 			return new Response(null, {
 				status: 204,
-				headers: applyCorsHeaders(resolvedEnv, CORS_MAX_AGE)
+				headers: applyCorsHeaders(resolvedEnv, { ...CORS_MAX_AGE, ...NO_STORE_HEADERS })
 			});
 		}
 

@@ -73,6 +73,8 @@ test('OPTIONS request returns CORS preflight response for allowed origin', async
   assert.equal(response.status, 204);
   assert.equal(response.headers.get('access-control-max-age'), '86400');
   assert.equal(response.headers.get('access-control-allow-origin'), 'https://secure.fundsupermart.com');
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(response.headers.get('pragma'), 'no-cache');
 });
 
 test('OPTIONS request omits allow-origin header for disallowed origin', async () => {
@@ -98,6 +100,8 @@ test('GET /health returns status payload', async () => {
   assert.equal(parsed.body.status, 'ok');
   assert.ok(typeof parsed.body.timestamp === 'number');
   assert.equal(parsed.headers['access-control-allow-origin'], 'https://secure.fundsupermart.com');
+  assert.equal(parsed.headers['cache-control'], 'no-store');
+  assert.equal(parsed.headers['pragma'], 'no-cache');
 });
 
 test('POST /auth/login with invalid json returns bad request', async () => {
@@ -224,6 +228,25 @@ test('POST /sync rejects payloads larger than MAX_PAYLOAD_SIZE', async () => {
       'Content-Length': String(10 * 1024 + 1)
     },
     body: JSON.stringify({ userId: 'payload-user', data: 'ok' })
+  });
+
+  const response = await worker.fetch(request, env, {});
+  const parsed = await parseJsonResponse(response);
+
+  assert.equal(parsed.status, 413);
+  assert.equal(parsed.body.error, 'PAYLOAD_TOO_LARGE');
+});
+
+test('POST /sync rejects oversized payload without Content-Length', async () => {
+  const env = createEnv();
+  const issuedTokens = await tokens.issueTokens('payload-user', env);
+  const request = new Request('https://worker.example/sync', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${issuedTokens.accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: 'x'.repeat(10 * 1024 + 1)
   });
 
   const response = await worker.fetch(request, env, {});
