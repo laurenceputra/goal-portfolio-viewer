@@ -31,6 +31,7 @@ describe('sync settings UI', () => {
             send() {}
         }
         global.XMLHttpRequest = FakeXHR;
+        global.GM_xmlhttpRequest = undefined;
 
         exportsModule = require('../goal_portfolio_viewer.user.js');
     });
@@ -41,15 +42,17 @@ describe('sync settings UI', () => {
         }
         jest.useRealTimers();
         teardownDom();
-        delete global.GM_setValue;
-        delete global.GM_getValue;
-        delete global.GM_deleteValue;
-        delete global.GM_listValues;
-        delete global.GM_cookie;
-        delete global.XMLHttpRequest;
     });
 
     function seedStatus() {
+        storage.set('sync_enabled', true);
+        storage.set('sync_server_url', 'https://sync.example.com');
+        storage.set('sync_user_id', 'user@example.com');
+        storage.set('sync_refresh_token', 'refresh-token');
+        storage.set('sync_refresh_token_expiry', Date.now() + 120_000);
+    }
+
+    function seedStatusEnabledUnconfigured() {
         storage.set('sync_enabled', true);
         storage.set('sync_server_url', 'https://sync.example.com');
         storage.set('sync_user_id', 'user@example.com');
@@ -92,6 +95,10 @@ describe('sync settings UI', () => {
         jest.useFakeTimers();
         const { createSyncSettingsHTML, setupSyncSettingsListeners, SyncManager } = exportsModule;
 
+        seedStatusEnabledUnconfigured();
+        storage.delete('sync_refresh_token');
+        storage.delete('sync_refresh_token_expiry');
+
         document.body.innerHTML = createSyncSettingsHTML();
         setupSyncSettingsListeners();
 
@@ -119,6 +126,10 @@ describe('sync settings UI', () => {
     test('login respects remember-key checkbox', async () => {
         jest.useFakeTimers();
         const { createSyncSettingsHTML, setupSyncSettingsListeners, SyncManager } = exportsModule;
+
+        seedStatusEnabledUnconfigured();
+        storage.delete('sync_refresh_token');
+        storage.delete('sync_refresh_token_expiry');
 
         document.body.innerHTML = createSyncSettingsHTML();
         setupSyncSettingsListeners();
@@ -150,6 +161,10 @@ describe('sync settings UI', () => {
     test('sign up enables sync with encryption by default and saves settings', async () => {
         jest.useFakeTimers();
         const { createSyncSettingsHTML, setupSyncSettingsListeners, SyncManager } = exportsModule;
+
+        seedStatusEnabledUnconfigured();
+        storage.delete('sync_refresh_token');
+        storage.delete('sync_refresh_token_expiry');
 
         document.body.innerHTML = createSyncSettingsHTML();
         setupSyncSettingsListeners();
