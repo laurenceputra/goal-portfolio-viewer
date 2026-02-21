@@ -43,7 +43,7 @@ Consume the causality statement from `debugging-assistant` and verify the propos
 4. Report coverage gaps and residual risk for `code-review`.
 
 ### Ambiguity Handling
-If expected behavior is unclear during test design, mark it as blocking and route to human verification (do not infer by convenience).
+If expected behavior is unclear during test design, mark it as blocking and first apply the Spec-Clarity Gate (canonical definition in `.github/copilot-instructions.md`). Route to human verification only if ambiguity remains (do not infer by convenience).
 
 Reference: `debugging-assistant` -> Human Verification Escalation (Blocking).
 

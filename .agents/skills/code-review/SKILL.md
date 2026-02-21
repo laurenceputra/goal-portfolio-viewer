@@ -46,7 +46,7 @@ Mark as blocking if:
 - evidence does not prove root-cause closure
 - financial or privacy-sensitive behavior changed without explicit verification
 
-When blocked for ambiguity, require a human decision record before approval.
+When blocked for ambiguity, require a human decision record only when ambiguity remains after applying the Spec-Clarity Gate (canonical definition in `.github/copilot-instructions.md`).
 
 Reference: `debugging-assistant` escalation policy and `qa-testing` verification matrix.
 
