@@ -375,7 +375,7 @@ https://goal-portfolio-sync.YOUR_SUBDOMAIN.workers.dev
 ```
 
 ### Authentication
-All endpoints (except `/health`) require a valid access token in the `Authorization` header.
+All endpoints (except `/health` and `/auth/*`) require a valid access token in the `Authorization` header.
 
 ### Endpoints
 
