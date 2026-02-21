@@ -42,9 +42,17 @@ Use this compact workflow for all changes. Keep detailed role guidance in `.gith
 - Do not proceed to implementation or execute changes until all of the following are true:
   - A spec has been created.
   - There are no remaining spec gaps.
-  - A human has reviewed and approved the plan.
+  - Either a human has reviewed and approved the plan, or the spec is sufficiently clear for autonomous execution.
 - The spec must be created using the `spec-writer` skill.
 - Default spec location is `spec/plan.md` unless a different path is explicitly requested.
+
+**Sufficiently clear spec** means all of the following are true:
+- Acceptance criteria are explicit and testable.
+- Scope, constraints, and non-goals are clear.
+- Risks and tradeoffs are documented with chosen direction.
+- Implementation and verification steps are concrete, with no unresolved blocking questions.
+
+When a spec is sufficiently clear, continue without waiting for human confirmation and record the rationale in working notes or PR description.
 
 ### Required Artifacts
 - **Change Brief**: Problem, goal, and acceptance criteria (include change type and required steps).

@@ -33,7 +33,7 @@ Minimum output:
 - Verification matrix mapping failures -> root cause -> fix location -> tests -> results
 - At least one regression test that fails before and passes after
 
-If expected behavior is unclear, mark as blocking and route to human verification before proceeding.
+If expected behavior is unclear, mark as blocking and first check whether the spec already satisfies the spec-clarity gate. Route to human verification only if ambiguity remains.
 
 Coordinate with:
 - `code-reviewer` to pass the verification matrix and residual risks
