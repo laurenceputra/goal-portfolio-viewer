@@ -96,7 +96,7 @@ function validateSyncRequest(body) {
 		return { valid: false, error: 'userId must be a non-empty string' };
 	}
 	if (!isValidUserId(body.userId)) {
-		return { valid: false, error: 'Invalid userId format. Use email or alphanumeric (3-50 chars)' };
+		return { valid: false, error: 'Invalid userId format. Use email or alphanumeric with underscores/hyphens (3-50 chars)' };
 	}
 
 	if (!body.deviceId || typeof body.deviceId !== 'string') {
