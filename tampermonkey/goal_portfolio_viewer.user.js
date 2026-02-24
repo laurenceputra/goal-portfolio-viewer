@@ -6950,7 +6950,8 @@ function withButtonState(button, busyText, action) {
     if (typeof window !== 'undefined') {
         window.__gpvSyncUi = {
             createSyncSettingsHTML,
-            setupSyncSettingsListeners
+            setupSyncSettingsListeners,
+            createConflictDialogHTML
         };
     }
 
@@ -8696,6 +8697,12 @@ syncUi.update = function updateSyncUI() {
                     font-size: 14px;
                 }
 
+                .gpv-sync-interval {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+
                 .gpv-sync-input {
                     padding: 8px 12px;
                     border: 1px solid #ced4da;
@@ -8977,6 +8984,18 @@ syncUi.update = function updateSyncUI() {
                 .gpv-conflict-step.is-active {
                     background: #2563eb;
                     color: #fff;
+                }
+
+                .gpv-conflict-step-panel {
+                    display: block;
+                }
+
+                .gpv-conflict-step-panel[hidden] {
+                    display: none;
+                }
+
+                .gpv-sync-overlay-title {
+                    display: block;
                 }
 
                 .gpv-fsm-manager,
@@ -10501,6 +10520,7 @@ syncUi.update = function updateSyncUI() {
             GoalTargetStore,
             createSyncSettingsHTML: syncUiExports?.createSyncSettingsHTML,
             setupSyncSettingsListeners: syncUiExports?.setupSyncSettingsListeners,
+            createConflictDialogHTML: syncUiExports?.createConflictDialogHTML,
             buildConflictDiffItems: buildConflictDiffItemsForMap,
             buildConflictDiffSections,
             buildFsmConflictDiffItems,

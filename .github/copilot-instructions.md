@@ -789,8 +789,8 @@ goal-portfolio-viewer/
 
 ### Workflow Phases
 ```
-PLANNING → DESIGN → RISK → IMPLEMENT → QA → REVIEW → MERGE
-   (PM)      (SE)    (DA)       (SE)     (QA)   (CR)
+PLANNING → DESIGN → RISK → IMPLEMENT → QA → SELF-REVIEW → REVIEW → MERGE
+   (PM)      (SE)    (DA)       (SE)     (QA)       (SE)        (CR)
 ```
 
 **Phase Gates**:
@@ -799,9 +799,23 @@ PLANNING → DESIGN → RISK → IMPLEMENT → QA → REVIEW → MERGE
 3. **Risk**: DA challenges assumptions → Gate: Mitigations accepted
 4. **Implementation**: SE codes → Gate: Tests pass
 5. **QA**: QA verifies → Gate: Acceptance criteria met
-6. **Review**: CR approves → Gate: No blocking issues
+6. **Self-Review**: SE validates artifacts → Gate: Checklist complete
+7. **Review**: CR approves → Gate: No blocking issues
 
 **Loopback**: Failed gate returns to appropriate phase for rework.
+
+### Mandatory Self-Review Gate (Required)
+Before sending a completion response for any non-trivial change, perform a self-review and capture the evidence in the response.
+
+**Checklist (UI/behavior changes)**:
+- Inspect the diff for all touched files.
+- Run lint: `cd tampermonkey && npm run lint`.
+- Run targeted tests: `cd tampermonkey && npm test -- syncUi.test.js` (or the exact test file you changed).
+- Run sync UI class validation when sync UI is touched: `cd tampermonkey && npm run check:sync-ui-classes`.
+- Run visual smoke checks for UI changes: `cd demo && node e2e-tests.js` (or the repo-equivalent screenshot command).
+- Summarize evidence before final response (commands + outcomes).
+
+**Loopback rule**: If any self-review check fails, return to implementation, re-run QA, then re-run self-review.
 
 ### Handoff Protocols
 

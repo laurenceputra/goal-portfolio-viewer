@@ -59,6 +59,22 @@ export default [
         rules: baseRules
     },
     {
+        files: ['scripts/**/*.js'],
+        languageOptions: {
+            ecmaVersion: 2021,
+            sourceType: 'commonjs',
+            globals: {
+                require: 'readonly',
+                module: 'readonly',
+                exports: 'readonly',
+                __dirname: 'readonly',
+                process: 'readonly',
+                console: 'readonly'
+            }
+        },
+        rules: baseRules
+    },
+    {
         files: ['__tests__/**/*.js', '__tests__/**/*.cjs', '__tests__/**/*.mjs', '__tests__/**/*.jsx', '__tests__/**/*.ts', '__tests__/**/*.tsx'],
         languageOptions: {
             ecmaVersion: 2021,

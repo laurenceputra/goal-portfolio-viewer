@@ -103,6 +103,9 @@ jobs:
       - name: Run tests
         run: pnpm --filter ./tampermonkey test:coverage
 
+      - name: Validate sync UI classes
+        run: pnpm --filter ./tampermonkey check:sync-ui-classes
+
       - name: Post userscript coverage comment
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7

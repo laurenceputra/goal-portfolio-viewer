@@ -123,6 +123,10 @@ async function runE2ETests() {
         });
         summary.flowsTested.push('retirement');
         summary.screenshots.push('e2e-retirement.png');
+
+        const syncScreens = await captureSyncScreens(page, outputDir);
+        summary.flowsTested.push(...syncScreens.flows);
+        summary.screenshots.push(...syncScreens.screenshots);
     } catch (error) {
         summary.status = 'failed';
         summary.error = error instanceof Error ? error.message : String(error);
@@ -148,3 +152,97 @@ if (require.main === module) {
 module.exports = {
     runE2ETests
 };
+
+async function captureSyncScreens(page, outputDir) {
+    const results = { flows: [], screenshots: [] };
+    const syncButtonSelector = '.gpv-header-buttons .gpv-sync-btn';
+
+    await page.click(syncButtonSelector);
+    await page.waitForSelector('.gpv-sync-settings', { timeout: 5000 });
+
+    await page.waitForFunction(() => {
+        const root = document.querySelector('.gpv-sync-settings');
+        if (!root) {
+            return false;
+        }
+        const required = ['gpv-sync-status-bar', 'gpv-sync-actions', 'gpv-sync-form'];
+        return required.every(token => root.querySelector(`.${token}`));
+    }, null, { timeout: 5000 });
+
+    const unconfiguredPath = path.join(outputDir, 'e2e-sync-unconfigured.png');
+    await page.screenshot({ path: unconfiguredPath, fullPage: false });
+    results.flows.push('sync-unconfigured');
+    results.screenshots.push('e2e-sync-unconfigured.png');
+
+    await page.evaluate(() => {
+        const status = document.querySelector('.gpv-sync-status-bar');
+        if (status) {
+            status.insertAdjacentHTML(
+                'beforeend',
+                '<div class="gpv-sync-status-item"><span class="gpv-sync-label">Auth:</span><span class="gpv-sync-value">Connected (refresh active)</span></div>'
+            );
+        }
+        const actions = document.querySelector('.gpv-sync-actions');
+        if (actions && !actions.querySelector('#gpv-sync-now-btn')) {
+            actions.insertAdjacentHTML(
+                'beforeend',
+                '<button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-now-btn">Sync Now</button>'
+            );
+        }
+    });
+
+    const configuredPath = path.join(outputDir, 'e2e-sync-configured.png');
+    await page.screenshot({ path: configuredPath, fullPage: false });
+    results.flows.push('sync-configured');
+    results.screenshots.push('e2e-sync-configured.png');
+
+    await page.evaluate(() => {
+        const overlay = document.getElementById('gpv-overlay');
+        if (overlay) {
+            overlay.remove();
+        }
+    });
+
+    const conflict = {
+        local: { goalTargets: { goal_1: 10 }, goalFixed: {} },
+        remote: { goalTargets: { goal_1: 20 }, goalFixed: {} },
+        localHash: 'local-hash',
+        remoteHash: 'remote-hash',
+        localTimestamp: Date.now() - 5000,
+        remoteTimestamp: Date.now()
+    };
+
+    await page.evaluate(conflictPayload => {
+        const conflictHtml = window.__gpvSyncUi?.createConflictDialogHTML
+            ? window.__gpvSyncUi.createConflictDialogHTML(conflictPayload)
+            : null;
+        if (!conflictHtml) {
+            throw new Error('Conflict dialog renderer not available for E2E.');
+        }
+        const overlay = document.createElement('div');
+        overlay.id = 'gpv-overlay';
+        overlay.className = 'gpv-overlay gpv-conflict-overlay';
+        const container = document.createElement('div');
+        container.className = 'gpv-container gpv-conflict-modal';
+        container.innerHTML = conflictHtml;
+        overlay.appendChild(container);
+        document.body.appendChild(overlay);
+    }, conflict);
+
+    await page.waitForSelector('.gpv-conflict-dialog', { timeout: 5000 });
+    await page.waitForFunction(() => {
+        const dialog = document.querySelector('.gpv-conflict-dialog');
+        if (!dialog) {
+            return false;
+        }
+        const required = ['gpv-conflict-stepper', 'gpv-conflict-actions', 'gpv-conflict-step-panel'];
+        return required.every(token => dialog.querySelector(`.${token}`));
+    }, null, { timeout: 5000 });
+
+    const conflictPath = path.join(outputDir, 'e2e-sync-conflict.png');
+    await page.screenshot({ path: conflictPath, fullPage: false });
+    results.flows.push('sync-conflict');
+    results.screenshots.push('e2e-sync-conflict.png');
+
+    return results;
+}

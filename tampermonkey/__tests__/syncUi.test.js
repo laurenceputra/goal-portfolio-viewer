@@ -60,6 +60,21 @@ describe('sync settings UI', () => {
         storage.set('sync_refresh_token_expiry', Date.now() + 120_000);
     }
 
+    function renderSyncSettingsAndGetElement(selector) {
+        const { createSyncSettingsHTML } = exportsModule;
+        seedStatus();
+        document.body.innerHTML = createSyncSettingsHTML();
+        return document.querySelector(selector);
+    }
+
+    function expectClassTokens(element, tokens) {
+        expect(element).toBeTruthy();
+        const classList = Array.from(element.classList || []);
+        tokens.forEach(token => {
+            expect(classList).toContain(token);
+        });
+    }
+
     test('renders auth/session status text', () => {
         const { createSyncSettingsHTML } = exportsModule;
         seedStatus();
@@ -85,6 +100,112 @@ describe('sync settings UI', () => {
         expect(document.getElementById('gpv-sync-now-btn').className).toContain('gpv-sync-btn-secondary');
         expect(document.getElementById('gpv-sync-clear-btn').className).toContain('gpv-sync-btn');
         expect(document.getElementById('gpv-sync-clear-btn').className).toContain('gpv-sync-btn-danger');
+    });
+
+    test('renders sync settings containers with required class tokens', () => {
+        const root = renderSyncSettingsAndGetElement('.gpv-sync-settings');
+        expectClassTokens(root, ['gpv-sync-settings']);
+
+        const header = document.querySelector('.gpv-sync-header');
+        expectClassTokens(header, ['gpv-sync-header']);
+
+        const statusBar = document.querySelector('.gpv-sync-status-bar');
+        expectClassTokens(statusBar, ['gpv-sync-status-bar']);
+
+        const form = document.querySelector('.gpv-sync-form');
+        expectClassTokens(form, ['gpv-sync-form']);
+
+        const formGroups = Array.from(document.querySelectorAll('.gpv-sync-form-group'));
+        expect(formGroups.length).toBeGreaterThan(0);
+        formGroups.forEach(group => {
+            expectClassTokens(group, ['gpv-sync-form-group']);
+        });
+    });
+
+    test('renders sync inputs and toggles with required classes', () => {
+        renderSyncSettingsAndGetElement('.gpv-sync-settings');
+
+        const inputs = ['gpv-sync-server-url', 'gpv-sync-user-id', 'gpv-sync-password', 'gpv-sync-interval'];
+        inputs.forEach(id => {
+            const input = document.getElementById(id);
+            expectClassTokens(input, ['gpv-sync-input']);
+        });
+
+        const toggles = Array.from(document.querySelectorAll('.gpv-sync-toggle'));
+        expect(toggles.length).toBeGreaterThan(0);
+        toggles.forEach(toggle => {
+            expectClassTokens(toggle, ['gpv-sync-toggle']);
+        });
+
+        const helpText = Array.from(document.querySelectorAll('.gpv-sync-help'));
+        expect(helpText.length).toBeGreaterThan(0);
+        helpText.forEach(node => {
+            expectClassTokens(node, ['gpv-sync-help']);
+        });
+    });
+
+    test('renders sync auth buttons with styled class tokens when unconfigured', () => {
+        const { createSyncSettingsHTML } = exportsModule;
+        seedStatusEnabledUnconfigured();
+        storage.delete('sync_refresh_token');
+        storage.delete('sync_refresh_token_expiry');
+
+        document.body.innerHTML = createSyncSettingsHTML();
+
+        const authContainer = document.querySelector('.gpv-sync-auth-buttons');
+        expectClassTokens(authContainer, ['gpv-sync-auth-buttons']);
+
+        const registerBtn = document.getElementById('gpv-sync-register-btn');
+        expectClassTokens(registerBtn, ['gpv-sync-btn-primary']);
+        const loginBtn = document.getElementById('gpv-sync-login-btn');
+        expectClassTokens(loginBtn, ['gpv-sync-btn-secondary']);
+    });
+
+    test('renders conflict dialog controls with required class tokens', () => {
+        const { createConflictDialogHTML } = exportsModule;
+        const localConfig = { goalTargets: { goal_1: 10 }, goalFixed: {} };
+        const remoteConfig = { goalTargets: { goal_1: 20 }, goalFixed: {} };
+        const localHash = 'local-hash';
+        const remoteHash = 'remote-hash';
+        const conflict = {
+            local: localConfig,
+            remote: remoteConfig,
+            localHash,
+            remoteHash,
+            localTimestamp: Date.now() - 5000,
+            remoteTimestamp: Date.now()
+        };
+
+        document.body.innerHTML = createConflictDialogHTML(conflict);
+
+        const dialog = document.querySelector('.gpv-conflict-dialog');
+        expectClassTokens(dialog, ['gpv-conflict-dialog']);
+
+        const stepper = document.querySelector('.gpv-conflict-stepper');
+        expectClassTokens(stepper, ['gpv-conflict-stepper']);
+
+        const stepPanels = Array.from(document.querySelectorAll('.gpv-conflict-step-panel'));
+        expect(stepPanels.length).toBeGreaterThan(0);
+        stepPanels.forEach(panel => {
+            expectClassTokens(panel, ['gpv-conflict-step-panel']);
+        });
+
+        const actions = Array.from(document.querySelectorAll('.gpv-conflict-actions'));
+        expect(actions.length).toBeGreaterThan(0);
+        actions.forEach(action => {
+            expectClassTokens(action, ['gpv-conflict-actions']);
+        });
+
+        const keepLocalBtn = document.getElementById('gpv-conflict-keep-local');
+        expectClassTokens(keepLocalBtn, ['gpv-sync-btn', 'gpv-sync-btn-primary']);
+        const useRemoteBtn = document.getElementById('gpv-conflict-use-remote');
+        expectClassTokens(useRemoteBtn, ['gpv-sync-btn', 'gpv-sync-btn-primary']);
+        const prevBtn = document.getElementById('gpv-conflict-prev');
+        expectClassTokens(prevBtn, ['gpv-sync-btn', 'gpv-sync-btn-secondary']);
+        const nextBtn = document.getElementById('gpv-conflict-next');
+        expectClassTokens(nextBtn, ['gpv-sync-btn', 'gpv-sync-btn-secondary']);
+        const cancelBtn = document.getElementById('gpv-conflict-cancel');
+        expectClassTokens(cancelBtn, ['gpv-sync-btn', 'gpv-sync-btn-secondary']);
     });
 
     test('shows remember-key toggle after valid password input', () => {

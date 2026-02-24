@@ -25,7 +25,7 @@ This repository uses a multi-agent workflow for development. Each agent has spec
 For trigger rules and detailed enforcement, see [`.github/copilot-instructions.md`](.github/copilot-instructions.md).
 
 ### Workflow Overview
-For workflow phases, key principles, definition of done, and testing commands, see the [Comprehensive Development Guide](.github/copilot-instructions.md).
+For workflow phases, key principles, definition of done, and testing commands, see the [Comprehensive Development Guide](.github/copilot-instructions.md). The workflow now includes a mandatory SELF-REVIEW gate before responding on non-trivial changes.
 
 ## Further Reading
 
