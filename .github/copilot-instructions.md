@@ -38,11 +38,13 @@ applies_to:
 
 Use this compact workflow for all changes. Keep detailed role guidance in `.github/agents/*.md` and avoid duplicating it here.
 
-### Pre-Execution Spec Gate (Hard Requirement)
+### Pre-Execution Spec Gate (Conditional Requirement)
 - Do not proceed to implementation or execute changes until all of the following are true:
   - A spec has been created.
-  - There are no remaining spec gaps.
-  - Either a human has reviewed and approved the plan, or the Spec-Clarity Gate passes.
+  - There are no remaining major decision gaps.
+  - There are no remaining major spec gaps.
+- Human review and approval for `spec/plan.md` is required only when major decision gaps or major spec gaps remain.
+- If no major gaps remain, proceed without blocking on human acceptance.
 - The spec must be created using the `spec-writer` skill.
 - Default spec location is `spec/plan.md` unless a different path is explicitly requested.
 
@@ -67,6 +69,7 @@ When the gate fails, stop progression and request spec updates or human decision
 ### Required Artifacts
 - **Change Brief**: Problem, goal, and acceptance criteria (include change type and required steps).
 - **Risks & Tradeoffs**: Short note, especially for data accuracy, privacy, or API interception changes.
+- **Assumptions & Minor Gaps (Post-Work)**: Document assumptions and any remaining minor spec gaps after implementation and verification are complete.
 - **Test Plan**: Jest coverage and any manual checks needed.
 - **Verification**: Commands run and outcomes.
 - **Verification Matrix**: Map each acceptance criterion to a test or manual check.
