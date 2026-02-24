@@ -2791,14 +2791,20 @@ function buildBucketDetailGoalRow(goal) {
         parsedJson
     }) {
         const hasText = typeof rawText === 'string' && rawText.trim().length > 0;
-        const parseError = parsedJson === null && hasText;
+        const isJsonNullLiteral = hasText && rawText.trim() === 'null';
+        const parseError = parsedJson === null && hasText && !isJsonNullLiteral;
         return {
             ok: ok && !parseError,
             status,
             headers: buildHeaderAccessor(headers),
             rawText,
             parseError,
-            json: async () => (parsedJson === null ? {} : parsedJson),
+            json: async () => {
+                if (parsedJson === null) {
+                    return isJsonNullLiteral ? null : {};
+                }
+                return parsedJson;
+            },
             text: async () => rawText
         };
     }

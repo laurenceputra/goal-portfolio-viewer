@@ -79,17 +79,66 @@ function matchRoute(method, pathname) {
 
 async function readJsonBody(request, env) {
 	try {
-		const text = await request.text();
-		if (text && text.length > CONFIG.MAX_PAYLOAD_SIZE) {
-			return {
-				ok: false,
-				response: jsonResponseWithCors({
-					success: false,
-					error: 'PAYLOAD_TOO_LARGE',
-					maxSize: CONFIG.MAX_PAYLOAD_SIZE
-				}, 413, {}, env)
-			};
+		const contentLengthHeader = request.headers.get('Content-Length');
+		if (contentLengthHeader) {
+			const contentLength = Number(contentLengthHeader);
+			if (Number.isFinite(contentLength) && contentLength > CONFIG.MAX_PAYLOAD_SIZE) {
+				return {
+					ok: false,
+					response: jsonResponseWithCors({
+						success: false,
+						error: 'PAYLOAD_TOO_LARGE',
+						maxSize: CONFIG.MAX_PAYLOAD_SIZE
+					}, 413, {}, env)
+				};
+			}
 		}
+
+		if (!request.body) {
+			return { ok: true, data: {} };
+		}
+
+		const reader = request.body.getReader();
+		const decoder = new TextDecoder();
+		const chunks = [];
+		let received = 0;
+
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) {
+				break;
+			}
+			if (value) {
+				received += value.byteLength;
+				if (received > CONFIG.MAX_PAYLOAD_SIZE) {
+					try {
+						reader.cancel();
+					} catch (_error) {
+						// Best-effort cancel
+					}
+					return {
+						ok: false,
+						response: jsonResponseWithCors({
+							success: false,
+							error: 'PAYLOAD_TOO_LARGE',
+							maxSize: CONFIG.MAX_PAYLOAD_SIZE
+						}, 413, {}, env)
+					};
+				}
+				chunks.push(value);
+			}
+		}
+
+		if (chunks.length === 0) {
+			return { ok: true, data: {} };
+		}
+
+		let text = '';
+		for (const chunk of chunks) {
+			text += decoder.decode(chunk, { stream: true });
+		}
+		text += decoder.decode();
+
 		if (!text) {
 			return { ok: true, data: {} };
 		}
