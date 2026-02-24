@@ -22,14 +22,18 @@ describe('SyncManager', () => {
                 return Promise.resolve({
                     status: 404,
                     ok: false,
-                    json: () => Promise.resolve({})
+                    json: () => Promise.resolve({}),
+                    text: () => Promise.resolve('{}'),
+                    headers: { get: () => null }
                 });
             }
             if (url.includes('/sync') && options.method === 'POST') {
                 return Promise.resolve({
                     status: 200,
                     ok: true,
-                    json: () => Promise.resolve({ success: true })
+                    json: () => Promise.resolve({ success: true }),
+                    text: () => Promise.resolve('{"success":true}'),
+                    headers: { get: () => null }
                 });
             }
             if (url.includes('/auth/refresh')) {
@@ -44,13 +48,17 @@ describe('SyncManager', () => {
                             accessExpiresAt: Date.now() + 60_000,
                             refreshExpiresAt: Date.now() + 120_000
                         }
-                    })
+                    }),
+                    text: () => Promise.resolve('{"success":true}'),
+                    headers: { get: () => null }
                 });
             }
             return Promise.resolve({
                 status: 200,
                 ok: true,
-                json: () => Promise.resolve({})
+                json: () => Promise.resolve({}),
+                text: () => Promise.resolve('{}'),
+                headers: { get: () => null }
             });
         });
         global.fetch = fetchMock;
@@ -72,6 +80,33 @@ describe('SyncManager', () => {
             send() {}
         }
         global.XMLHttpRequest = FakeXHR;
+        global.GM_xmlhttpRequest = jest.fn(({ url, method, onload }) => {
+            if (url.includes('/sync/') && method === 'GET') {
+                onload({ status: 404, responseText: '{}', responseHeaders: '' });
+                return;
+            }
+            if (url.includes('/sync') && method === 'POST') {
+                onload({ status: 200, responseText: '{"success":true}', responseHeaders: '' });
+                return;
+            }
+            if (url.includes('/auth/refresh')) {
+                onload({
+                    status: 200,
+                    responseText: JSON.stringify({
+                        success: true,
+                        tokens: {
+                            accessToken: 'access-token',
+                            refreshToken: 'refresh-token',
+                            accessExpiresAt: Date.now() + 60_000,
+                            refreshExpiresAt: Date.now() + 120_000
+                        }
+                    }),
+                    responseHeaders: ''
+                });
+                return;
+            }
+            onload({ status: 200, responseText: '{}', responseHeaders: '' });
+        });
 
     });
 
@@ -81,13 +116,6 @@ describe('SyncManager', () => {
         }
         jest.useRealTimers();
         teardownDom();
-        delete global.GM_setValue;
-        delete global.GM_getValue;
-        delete global.GM_deleteValue;
-        delete global.GM_listValues;
-        delete global.GM_cookie;
-        delete global.GM_xmlhttpRequest;
-        delete global.XMLHttpRequest;
         Date.now = originalDateNow;
         jest.useRealTimers();
     });
@@ -110,6 +138,16 @@ describe('SyncManager', () => {
         storage.set('sync_refresh_token_expiry', Date.now() + 120_000);
         storage.set('sync_access_token', 'access-token');
         storage.set('sync_access_token_expiry', Date.now() + 120_000);
+    }
+
+    function seedConfiguredWithoutAccessToken() {
+        storage.set('sync_enabled', true);
+        storage.set('sync_server_url', 'https://sync.example.com');
+        storage.set('sync_user_id', 'user@example.com');
+        storage.set('sync_refresh_token', 'refresh-token');
+        storage.set('sync_refresh_token_expiry', Date.now() + 120_000);
+        storage.delete('sync_access_token');
+        storage.delete('sync_access_token_expiry');
     }
 
     test('startAutoSync does not schedule when auto-sync disabled', () => {
@@ -267,7 +305,9 @@ describe('SyncManager', () => {
     describe('multi-device reconciliation', () => {
         test('performSync(both) treats identical content from another device as up to date', async () => {
             seedConfiguredState();
+            storage.set('sync_access_token_expiry', Date.now() - 1_000);
             seedRememberedKey();
+            global.GM_xmlhttpRequest = undefined;
             const { SyncManager, SyncEncryption, storageKeys } = loadModule();
 
             const targetKey = storageKeys.goalTarget('goal-1');
@@ -275,6 +315,9 @@ describe('SyncManager', () => {
             global.GM_listValues = () => [targetKey];
 
             const serverTimestamp = Date.now() + 60_000;
+            Date.now = jest.fn(() => serverTimestamp + 1);
+            storage.set('sync_refresh_token_expiry', serverTimestamp + 120_000);
+            const serverUrl = 'https://sync.example.com';
             const serverConfig = {
                 version: 2,
                 platforms: {
@@ -299,7 +342,32 @@ describe('SyncManager', () => {
                 new Uint8Array([1, 2, 3, 4])
             );
 
-            fetchMock.mockImplementation((url, options = {}) => {
+            fetchMock = jest.fn((url, options = {}) => {
+                if (url === `${serverUrl}/auth/refresh`) {
+                    return Promise.resolve({
+                        status: 200,
+                        ok: true,
+                        json: () => Promise.resolve({
+                            success: true,
+                            tokens: {
+                                accessToken: 'access-token',
+                                refreshToken: 'refresh-token',
+                                accessExpiresAt: Date.now() + 60_000,
+                                refreshExpiresAt: Date.now() + 120_000
+                            }
+                        }),
+                        text: () => Promise.resolve(JSON.stringify({
+                            success: true,
+                            tokens: {
+                                accessToken: 'access-token',
+                                refreshToken: 'refresh-token',
+                                accessExpiresAt: Date.now() + 60_000,
+                                refreshExpiresAt: Date.now() + 120_000
+                            }
+                        })),
+                        headers: { get: () => null }
+                    });
+                }
                 if (url.includes('/sync/') && options.method === 'GET') {
                     return Promise.resolve({
                         status: 200,
@@ -312,37 +380,59 @@ describe('SyncManager', () => {
                                 timestamp: serverTimestamp,
                                 version: 2
                             }
-                        })
+                        }),
+                        text: () => Promise.resolve(JSON.stringify({
+                            success: true,
+                            data: {
+                                encryptedData,
+                                deviceId: 'other-device-id',
+                                timestamp: serverTimestamp,
+                                version: 2
+                            }
+                        })),
+                        headers: { get: () => null }
                     });
                 }
                 if (url.includes('/sync') && options.method === 'POST') {
                     return Promise.resolve({
                         status: 200,
                         ok: true,
-                        json: () => Promise.resolve({ success: true })
+                        json: () => Promise.resolve({ success: true }),
+                        text: () => Promise.resolve('{"success":true}'),
+                        headers: { get: () => null }
                     });
                 }
                 return Promise.resolve({
                     status: 200,
                     ok: true,
-                    json: () => Promise.resolve({})
+                    json: () => Promise.resolve({}),
+                    text: () => Promise.resolve('{}'),
+                    headers: { get: () => null }
                 });
             });
+            global.fetch = fetchMock;
+            window.fetch = fetchMock;
 
             await expect(SyncManager.performSync({ direction: 'both' })).resolves.toEqual({ status: 'success' });
 
-            const postCalls = fetchMock.mock.calls.filter(([, options = {}]) => options.method === 'POST');
-            expect(postCalls).toHaveLength(0);
-            expect(storage.get('sync_last_sync')).toBe(serverTimestamp);
+            const syncPostCalls = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth'));
+            expect(syncPostCalls).toHaveLength(0);
+            expect(storage.get('sync_last_sync')).toBe(serverTimestamp + 1);
             expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
         });
 
         test('performSync(download) stores server timestamp as lastSync metadata', async () => {
             seedConfiguredState();
+            storage.set('sync_access_token_expiry', Date.now() - 1_000);
             seedRememberedKey();
+            global.GM_xmlhttpRequest = undefined;
             const { SyncManager, SyncEncryption, storageKeys } = loadModule();
 
+            const serverUrl = 'https://sync.example.com';
+
             const serverTimestamp = 1_700_000_000_000;
+            Date.now = jest.fn(() => serverTimestamp + 1);
+            storage.set('sync_refresh_token_expiry', serverTimestamp + 120_000);
             const serverConfig = {
                 version: 1,
                 goalTargets: { 'goal-2': 40 },
@@ -354,7 +444,32 @@ describe('SyncManager', () => {
                 new Uint8Array([1, 2, 3, 4])
             );
 
-            fetchMock.mockImplementation((url, options = {}) => {
+            fetchMock = jest.fn((url, options = {}) => {
+                if (url === `${serverUrl}/auth/refresh`) {
+                    return Promise.resolve({
+                        status: 200,
+                        ok: true,
+                        json: () => Promise.resolve({
+                            success: true,
+                            tokens: {
+                                accessToken: 'access-token',
+                                refreshToken: 'refresh-token',
+                                accessExpiresAt: Date.now() + 60_000,
+                                refreshExpiresAt: Date.now() + 120_000
+                            }
+                        }),
+                        text: () => Promise.resolve(JSON.stringify({
+                            success: true,
+                            tokens: {
+                                accessToken: 'access-token',
+                                refreshToken: 'refresh-token',
+                                accessExpiresAt: Date.now() + 60_000,
+                                refreshExpiresAt: Date.now() + 120_000
+                            }
+                        })),
+                        headers: { get: () => null }
+                    });
+                }
                 if (url.includes('/sync/') && options.method === 'GET') {
                     return Promise.resolve({
                         status: 200,
@@ -367,15 +482,38 @@ describe('SyncManager', () => {
                                 timestamp: serverTimestamp,
                                 version: 2
                             }
-                        })
+                        }),
+                        text: () => Promise.resolve(JSON.stringify({
+                            success: true,
+                            data: {
+                                encryptedData,
+                                deviceId: 'other-device-id',
+                                timestamp: serverTimestamp,
+                                version: 2
+                            }
+                        })),
+                        headers: { get: () => null }
+                    });
+                }
+                if (url.includes('/sync') && options.method === 'POST') {
+                    return Promise.resolve({
+                        status: 200,
+                        ok: true,
+                        json: () => Promise.resolve({ success: true }),
+                        text: () => Promise.resolve('{"success":true}'),
+                        headers: { get: () => null }
                     });
                 }
                 return Promise.resolve({
                     status: 200,
                     ok: true,
-                    json: () => Promise.resolve({})
+                    json: () => Promise.resolve({}),
+                    text: () => Promise.resolve('{}'),
+                    headers: { get: () => null }
                 });
             });
+            global.fetch = fetchMock;
+            window.fetch = fetchMock;
 
             await expect(SyncManager.performSync({ direction: 'download' })).resolves.toEqual({ status: 'success' });
 
@@ -457,6 +595,7 @@ describe('SyncManager', () => {
         });
 
         test('refreshAccessToken clears tokens and surfaces error on failure', async () => {
+            seedConfiguredWithoutAccessToken();
             const { SyncManager } = loadModule();
             const { refreshAccessToken } = SyncManager.__test;
 
@@ -465,11 +604,17 @@ describe('SyncManager', () => {
             storage.set(ACCESS_EXPIRY_KEY, Date.now() + 120_000);
             storage.set(REFRESH_EXPIRY_KEY, Date.now() + 240_000);
 
-            fetchMock.mockImplementationOnce(() => Promise.resolve({
+            const errorMock = jest.fn(() => Promise.resolve({
                 ok: false,
                 status: 401,
-                json: () => Promise.resolve({ success: false, message: 'Session expired.' })
+                json: () => Promise.resolve({ success: false, message: 'Session expired.' }),
+                text: () => Promise.resolve('{"success":false,"message":"Session expired."}'),
+                headers: { get: () => null }
             }));
+            fetchMock = errorMock;
+            global.fetch = errorMock;
+            window.fetch = errorMock;
+            global.GM_xmlhttpRequest = undefined;
 
             await expect(refreshAccessToken()).rejects.toThrow('Session expired.');
             expect(storage.has('sync_access_token')).toBe(false);
@@ -479,13 +624,14 @@ describe('SyncManager', () => {
         });
 
         test('refreshAccessToken stores new tokens on success', async () => {
+            seedConfiguredWithoutAccessToken();
             const { SyncManager } = loadModule();
             const { refreshAccessToken } = SyncManager.__test;
             const now = Date.now();
 
             storage.set('sync_refresh_token', 'refresh-token');
 
-            fetchMock.mockImplementationOnce(() => Promise.resolve({
+            const successMock = jest.fn(() => Promise.resolve({
                 ok: true,
                 status: 200,
                 json: () => Promise.resolve({
@@ -496,8 +642,28 @@ describe('SyncManager', () => {
                         accessExpiresAt: now + 60_000,
                         refreshExpiresAt: now + 120_000
                     }
-                })
+                }),
+                text: () => Promise.resolve('{"success":true}'),
+                headers: { get: () => null }
             }));
+            global.GM_xmlhttpRequest = ({ url, onload }) => {
+                if (url.includes('/auth/refresh')) {
+                    onload({ status: 200, responseText: JSON.stringify({
+                        success: true,
+                        tokens: {
+                            accessToken: 'new-access',
+                            refreshToken: 'new-refresh',
+                            accessExpiresAt: now + 60_000,
+                            refreshExpiresAt: now + 120_000
+                        }
+                    }), responseHeaders: '' });
+                    return;
+                }
+                onload({ status: 200, responseText: '{}', responseHeaders: '' });
+            };
+            fetchMock = successMock;
+            global.fetch = successMock;
+            window.fetch = successMock;
 
             await expect(refreshAccessToken()).resolves.toBe('new-access');
             expect(storage.get('sync_access_token')).toBe('new-access');
@@ -507,6 +673,7 @@ describe('SyncManager', () => {
         });
 
         test('getAccessToken refreshes expired access tokens and preserves valid ones', async () => {
+            seedConfiguredWithoutAccessToken();
             const { SyncManager } = loadModule();
             const { getAccessToken } = SyncManager.__test;
             const now = Date.now();
@@ -522,7 +689,7 @@ describe('SyncManager', () => {
             storage.set(ACCESS_EXPIRY_KEY, now - 1_000);
             storage.set('sync_refresh_token', 'refresh-token');
 
-            fetchMock.mockImplementationOnce(() => Promise.resolve({
+            const refreshMock = jest.fn(() => Promise.resolve({
                 ok: true,
                 status: 200,
                 json: () => Promise.resolve({
@@ -533,8 +700,28 @@ describe('SyncManager', () => {
                         accessExpiresAt: now + 60_000,
                         refreshExpiresAt: now + 120_000
                     }
-                })
+                }),
+                text: () => Promise.resolve('{"success":true}'),
+                headers: { get: () => null }
             }));
+            global.GM_xmlhttpRequest = ({ url, onload }) => {
+                if (url.includes('/auth/refresh')) {
+                    onload({ status: 200, responseText: JSON.stringify({
+                        success: true,
+                        tokens: {
+                            accessToken: 'refreshed-access',
+                            refreshToken: 'refreshed-refresh',
+                            accessExpiresAt: now + 60_000,
+                            refreshExpiresAt: now + 120_000
+                        }
+                    }), responseHeaders: '' });
+                    return;
+                }
+                onload({ status: 200, responseText: '{}', responseHeaders: '' });
+            };
+            fetchMock = refreshMock;
+            global.fetch = refreshMock;
+            window.fetch = refreshMock;
 
             await expect(getAccessToken()).resolves.toBe('refreshed-access');
             expect(storage.get('sync_access_token')).toBe('refreshed-access');

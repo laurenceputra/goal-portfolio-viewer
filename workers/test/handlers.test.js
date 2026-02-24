@@ -46,6 +46,26 @@ test('handleSync rejects invalid request body', async () => {
   assert.equal(parsed.body.error, 'BAD_REQUEST');
 });
 
+test('handleSync rejects invalid userId format', async () => {
+  const env = { SYNC_KV: createKvMock() };
+
+  const response = await handleSync(
+    {
+      userId: 'invalid user',
+      deviceId: 'd1',
+      encryptedData: 'ciphertext',
+      timestamp: Date.now(),
+      version: 1
+    },
+    env
+  );
+
+  const parsed = await parseResponse(response);
+  assert.equal(parsed.status, 400);
+  assert.equal(parsed.body.error, 'BAD_REQUEST');
+  assert.match(parsed.body.message, /userId/i);
+});
+
 test('handleSync returns conflict when server data is newer', async () => {
   const env = { SYNC_KV: createKvMock({ timestamp: 200, encryptedData: 'v2', deviceId: 'd2', version: 1 }) };
 

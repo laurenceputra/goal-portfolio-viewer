@@ -127,6 +127,19 @@
             });
         }
 
+        function waitForSyncUiExports() {
+            return new Promise(resolve => {
+                const check = () => {
+                    if (window.__gpvSyncUi?.createSyncSettingsHTML && window.__gpvSyncUi?.createConflictDialogHTML) {
+                        resolve();
+                        return;
+                    }
+                    setTimeout(check, 50);
+                };
+                check();
+            });
+        }
+
         async function bootstrapMockData() {
             const responses = await Promise.all([
                 fetch('/v1/goals/performance'),
@@ -165,6 +178,7 @@
         loadUserscript()
             .then(bootstrapMockData)
             .then(waitForButton)
+            .then(waitForSyncUiExports)
             .then(() => {
                 updateStatus('Demo data loaded. Ready for E2E tests.');
                 signalReady();

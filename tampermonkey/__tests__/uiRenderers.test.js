@@ -48,11 +48,6 @@ describe('UI renderers', () => {
         }
         jest.useRealTimers();
         teardownDom();
-        delete global.GM_setValue;
-        delete global.GM_getValue;
-        delete global.GM_deleteValue;
-        delete global.GM_cookie;
-        delete global.XMLHttpRequest;
     });
 
     test('renderSummaryView renders cards and wires selection', () => {

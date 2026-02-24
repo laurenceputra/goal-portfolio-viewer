@@ -95,6 +95,9 @@ function validateSyncRequest(body) {
 	if (!body.userId || typeof body.userId !== 'string') {
 		return { valid: false, error: 'userId must be a non-empty string' };
 	}
+	if (!isValidUserId(body.userId)) {
+		return { valid: false, error: 'Invalid userId format. Use email or alphanumeric with underscores/hyphens (3-50 chars)' };
+	}
 
 	if (!body.deviceId || typeof body.deviceId !== 'string') {
 		return { valid: false, error: 'deviceId must be a non-empty string' };
@@ -120,6 +123,11 @@ function validateSyncRequest(body) {
 	}
 
 	return { valid: true };
+}
+
+function isValidUserId(userId) {
+	return (/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(userId)
+		|| /^[a-zA-Z0-9_-]{3,50}$/.test(userId));
 }
 
 /**

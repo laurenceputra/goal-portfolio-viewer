@@ -16,12 +16,16 @@ const CONFIG = {
 	MAX_PAYLOAD_SIZE: 10 * 1024, // 10KB
 	CORS_ORIGINS: 'https://app.sg.endowus.com,https://secure.fundsupermart.com',
 	SYNC_KV_BINDING: 'SYNC_KV',
-		VERSION: '1.1.1'
+	VERSION: '1.1.1'
 };
 
 // CORS headers
 const CORS_MAX_AGE = {
 	'Access-Control-Max-Age': '86400' // 24 hours
+};
+const NO_STORE_HEADERS = {
+	'Cache-Control': 'no-store',
+	Pragma: 'no-cache'
 };
 
 function jsonResponseWithCors(data, status = 200, additionalHeaders = {}, env = {}) {
@@ -75,7 +79,70 @@ function matchRoute(method, pathname) {
 
 async function readJsonBody(request, env) {
 	try {
-		return { ok: true, data: await request.json() };
+		const contentLengthHeader = request.headers.get('Content-Length');
+		if (contentLengthHeader) {
+			const contentLength = Number(contentLengthHeader);
+			if (Number.isFinite(contentLength) && contentLength > CONFIG.MAX_PAYLOAD_SIZE) {
+				return {
+					ok: false,
+					response: jsonResponseWithCors({
+						success: false,
+						error: 'PAYLOAD_TOO_LARGE',
+						maxSize: CONFIG.MAX_PAYLOAD_SIZE
+					}, 413, {}, env)
+				};
+			}
+		}
+
+		if (!request.body) {
+			return { ok: true, data: {} };
+		}
+
+		const reader = request.body.getReader();
+		const decoder = new TextDecoder();
+		const chunks = [];
+		let received = 0;
+
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) {
+				break;
+			}
+			if (value) {
+				received += value.byteLength;
+				if (received > CONFIG.MAX_PAYLOAD_SIZE) {
+					try {
+						reader.cancel();
+					} catch (_error) {
+						// Best-effort cancel
+					}
+					return {
+						ok: false,
+						response: jsonResponseWithCors({
+							success: false,
+							error: 'PAYLOAD_TOO_LARGE',
+							maxSize: CONFIG.MAX_PAYLOAD_SIZE
+						}, 413, {}, env)
+					};
+				}
+				chunks.push(value);
+			}
+		}
+
+		if (chunks.length === 0) {
+			return { ok: true, data: {} };
+		}
+
+		let text = '';
+		for (const chunk of chunks) {
+			text += decoder.decode(chunk, { stream: true });
+		}
+		text += decoder.decode();
+
+		if (!text) {
+			return { ok: true, data: {} };
+		}
+		return { ok: true, data: JSON.parse(text) };
 	} catch (_error) {
 		return {
 			ok: false,
@@ -116,7 +183,7 @@ export default {
 		if (method === 'OPTIONS') {
 			return new Response(null, {
 				status: 204,
-				headers: applyCorsHeaders(resolvedEnv, CORS_MAX_AGE)
+				headers: applyCorsHeaders(resolvedEnv, { ...CORS_MAX_AGE, ...NO_STORE_HEADERS })
 			});
 		}
 

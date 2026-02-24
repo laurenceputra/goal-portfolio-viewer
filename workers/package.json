@@ -16,7 +16,7 @@
     "kv:list": "wrangler kv:namespace list",
     "test": "node --test test/*.test.js",
     "test:unit": "node --test test/*.test.js",
-    "test:unit:coverage": "c8 --reporter=json-summary --reporter=text node --test test/*.test.js"
+    "test:unit:coverage": "c8 --reporter=json-summary --reporter=text --check-coverage --lines 70 --functions 65 --branches 60 --statements 70 node --test test/*.test.js"
   },
   "keywords": [
     "cloudflare",

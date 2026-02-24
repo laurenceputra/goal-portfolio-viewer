@@ -88,6 +88,9 @@ Screenshots are saved to `demo/screenshots/` by default (override with `E2E_SCRE
 - `e2e-summary.png`
 - `e2e-house-purchase.png`
 - `e2e-retirement.png`
+- `e2e-sync-unconfigured.png`
+- `e2e-sync-configured.png`
+- `e2e-sync-conflict.png`
 
 If Playwright is missing system dependencies on Linux, run:
 
@@ -115,6 +118,7 @@ This will automatically:
 - Capture summary view
 - Navigate to each bucket detail view
 - Scroll to capture both the performance graph AND goals table
+- Capture sync settings (unconfigured, configured) and conflict dialog
 - Save all screenshots to `demo/screenshots/` by default (override with `SCREENSHOT_DIR`)
 
 #### Manual
@@ -128,6 +132,9 @@ Or manually capture screenshots:
 - Summary view (both buckets: House Purchase and Retirement)
 - House Purchase bucket detail view (scroll to capture goals table)
 - Retirement bucket detail view (scroll to capture goals table)
+- Sync settings (unconfigured state)
+- Sync settings (configured state)
+- Sync conflict dialog
 
 **Important**: When capturing bucket detail views, make sure to scroll down to include the goals table (individual goal breakdowns with investment amounts and returns).
 

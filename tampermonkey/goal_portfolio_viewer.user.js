@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.13.1
+// @version      2.13.2
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -114,6 +114,7 @@
         autoSync: true,
         syncInterval: 30 // minutes
     };
+    const SYNC_REQUEST_TIMEOUT_MS = 15000;
 
     const utils = {
         normalizeServerUrl(serverUrl) {
@@ -865,7 +866,7 @@
         return { buckets, showAllocationDriftHint };
     }
 
-    function buildBucketDetailViewModel({
+function buildBucketDetailViewModel({
         bucketName,
         bucketMap,
         projectedInvestmentsState,
@@ -886,79 +887,89 @@
         const { orderedTypes, bucketTotalReturn, endingBalanceTotal } = base;
         let showAllocationDriftHint = false;
 
-        return {
-            bucketName,
-            endingBalanceAmount: endingBalanceTotal,
-            totalReturn: bucketTotalReturn,
-            endingBalanceDisplay: formatMoney(endingBalanceTotal),
-            returnDisplay: formatMoney(bucketTotalReturn),
-            growthDisplay: formatGrowthPercentFromEndingBalance(
-                bucketTotalReturn,
-                endingBalanceTotal
-            ),
-            returnClass: getReturnClass(bucketTotalReturn),
-            goalTypes: orderedTypes
-                .map(goalType => {
-                    const group = base.bucketObj[goalType];
-                    if (!group) {
-                        return null;
-                    }
-                    const typeReturn = group.totalCumulativeReturn || 0;
-                    const projectedAmount = getProjectedInvestmentValue(projectedInvestments, bucketName, goalType);
-                    const adjustedTotal = (group.endingBalanceAmount || 0) + projectedAmount;
-                    const goals = Array.isArray(group.goals) ? group.goals : [];
-                    const allocationModel = computeGoalTypeViewState(
-                        goals,
-                        group.endingBalanceAmount || 0,
-                        adjustedTotal,
-                        goalTargets,
-                        goalFixed
-                    );
-                    if (allocationModel.allocationDriftAvailable === false) {
-                        showAllocationDriftHint = true;
-                    }
-                    return {
-                        goalType,
-                        displayName: getDisplayGoalType(goalType),
-                        endingBalanceAmount: group.endingBalanceAmount || 0,
-                        endingBalanceDisplay: formatMoney(group.endingBalanceAmount),
-                        totalReturn: typeReturn,
-                        returnDisplay: formatMoney(typeReturn),
-                        growthDisplay: formatGrowthPercentFromEndingBalance(
-                            typeReturn,
-                            group.endingBalanceAmount
-                        ),
-                        returnClass: getReturnClass(typeReturn),
-                        projectedAmount,
-                        adjustedTotal,
-                        remainingTargetPercent: allocationModel.remainingTargetPercent,
-                        remainingTargetDisplay: formatPercent(allocationModel.remainingTargetPercent),
-                        remainingTargetIsHigh: isRemainingTargetAboveThreshold(allocationModel.remainingTargetPercent),
-                        allocationDriftDisplay: allocationModel.allocationDriftDisplay,
-                        allocationDriftAvailable: allocationModel.allocationDriftAvailable,
-                        goalModelsById: allocationModel.goalModelsById,
-                        goals: allocationModel.goalModels.map(goal => {
-                            const windowReturns = getGoalWindowReturns(goal.goalId);
-                            const windowReturnDisplays = buildWindowReturnDisplays(windowReturns);
-                            return {
-                                ...goal,
-                                endingBalanceDisplay: formatMoney(goal.endingBalanceAmount),
-                                percentOfTypeDisplay: formatPercent(goal.percentOfType),
-                                targetDisplay: goal.targetPercent !== null ? goal.targetPercent.toFixed(2) : '',
-                                diffDisplay: goal.diffAmount === null ? '-' : formatMoney(goal.diffAmount),
-                                returnDisplay: formatMoney(goal.returnValue),
-                                returnPercentDisplay: formatPercent(goal.returnPercent, { multiplier: 100, showSign: false }),
-                                returnClass: getReturnClass(goal.returnValue),
-                                windowReturns,
-                                windowReturnDisplays
-                            };
-                        })
-                    };
-                })
-                .filter(Boolean),
-            showAllocationDriftHint
-        };
-    }
+    return {
+        bucketName,
+        endingBalanceAmount: endingBalanceTotal,
+        totalReturn: bucketTotalReturn,
+        endingBalanceDisplay: formatMoney(endingBalanceTotal),
+        returnDisplay: formatMoney(bucketTotalReturn),
+        growthDisplay: formatGrowthPercentFromEndingBalance(
+            bucketTotalReturn,
+            endingBalanceTotal
+        ),
+        returnClass: getReturnClass(bucketTotalReturn),
+        goalTypes: orderedTypes
+            .map(goalType => {
+                const group = base.bucketObj[goalType];
+                if (!group) {
+                    return null;
+                }
+                const projectedAmount = getProjectedInvestmentValue(projectedInvestments, bucketName, goalType);
+                const allocationModel = computeGoalTypeViewState(
+                    Array.isArray(group.goals) ? group.goals : [],
+                    group.endingBalanceAmount || 0,
+                    (group.endingBalanceAmount || 0) + projectedAmount,
+                    goalTargets,
+                    goalFixed
+                );
+                if (allocationModel.allocationDriftAvailable === false) {
+                    showAllocationDriftHint = true;
+                }
+                return buildBucketDetailGoalTypeModel({
+                    goalType,
+                    group,
+                    projectedAmount,
+                    allocationModel
+                });
+            })
+            .filter(Boolean),
+        showAllocationDriftHint
+    };
+}
+
+function buildBucketDetailGoalTypeModel({ goalType, group, projectedAmount, allocationModel }) {
+    const typeReturn = group.totalCumulativeReturn || 0;
+    const endingBalanceAmount = group.endingBalanceAmount || 0;
+    return {
+        goalType,
+        displayName: getDisplayGoalType(goalType),
+        endingBalanceAmount,
+        endingBalanceDisplay: formatMoney(group.endingBalanceAmount),
+        totalReturn: typeReturn,
+        returnDisplay: formatMoney(typeReturn),
+        growthDisplay: formatGrowthPercentFromEndingBalance(
+            typeReturn,
+            group.endingBalanceAmount
+        ),
+        returnClass: getReturnClass(typeReturn),
+        projectedAmount,
+        adjustedTotal: endingBalanceAmount + projectedAmount,
+        remainingTargetPercent: allocationModel.remainingTargetPercent,
+        remainingTargetDisplay: formatPercent(allocationModel.remainingTargetPercent),
+        remainingTargetIsHigh: isRemainingTargetAboveThreshold(allocationModel.remainingTargetPercent),
+        allocationDriftDisplay: allocationModel.allocationDriftDisplay,
+        allocationDriftAvailable: allocationModel.allocationDriftAvailable,
+        goalModelsById: allocationModel.goalModelsById,
+        goals: allocationModel.goalModels.map(goal => buildBucketDetailGoalRow(goal))
+    };
+}
+
+function buildBucketDetailGoalRow(goal) {
+    const windowReturns = getGoalWindowReturns(goal.goalId);
+    const windowReturnDisplays = buildWindowReturnDisplays(windowReturns);
+    return {
+        ...goal,
+        endingBalanceDisplay: formatMoney(goal.endingBalanceAmount),
+        percentOfTypeDisplay: formatPercent(goal.percentOfType),
+        targetDisplay: goal.targetPercent !== null ? goal.targetPercent.toFixed(2) : '',
+        diffDisplay: goal.diffAmount === null ? '-' : formatMoney(goal.diffAmount),
+        returnDisplay: formatMoney(goal.returnValue),
+        returnPercentDisplay: formatPercent(goal.returnPercent, { multiplier: 100, showSign: false }),
+        returnClass: getReturnClass(goal.returnValue),
+        windowReturns,
+        windowReturnDisplays
+    };
+}
 
     function collectGoalIds(bucketObj) {
         if (!bucketObj || typeof bucketObj !== 'object') {
@@ -1544,92 +1555,130 @@
         const responses = Array.isArray(performanceResponses)
             ? performanceResponses.map(utils.normalizePerformanceResponse)
             : [];
-        const netInvestments = [];
-        const totalReturns = [];
-        const simpleReturns = [];
-        const twrReturns = [];
-        const annualisedIrrReturns = [];
-        let totalReturnAmount = 0;
-        let totalReturnSeen = false;
-        let netFeesAmount = 0;
-        let netFeesSeen = false;
-        let netInvestmentAmount = 0;
-        let netInvestmentSeen = false;
-        let endingBalanceAmount = 0;
-        let endingBalanceSeen = false;
+        const aggregates = initializePerformanceAggregates();
+        const weights = initializePerformanceWeights();
 
         responses.forEach(response => {
-            const totalReturnValue = extractAmount(response?.totalCumulativeReturnAmount);
-            const netInvestmentValue = extractAmount(
-                response?.gainOrLossTable?.netInvestment?.allTimeValue
-            ) ?? extractAmount(response?.netInvestmentAmount ?? response?.netInvestment);
-            const accessFeeValue = extractAmount(response?.gainOrLossTable?.accessFeeCharged?.allTimeValue);
-            const trailerFeeValue = extractAmount(response?.gainOrLossTable?.trailerFeeRebates?.allTimeValue);
-            const endingBalanceValue = extractAmount(
-                response?.endingBalanceAmount ?? response?.totalBalanceAmount ?? response?.marketValueAmount
-            );
-
-            if (Number.isFinite(totalReturnValue)) {
-                totalReturnSeen = true;
-                totalReturnAmount += totalReturnValue;
-            }
-            if (Number.isFinite(accessFeeValue) || Number.isFinite(trailerFeeValue)) {
-                netFeesSeen = true;
-                netFeesAmount += (Number.isFinite(accessFeeValue) ? accessFeeValue : 0)
-                    - (Number.isFinite(trailerFeeValue) ? trailerFeeValue : 0);
-            }
-            if (Number.isFinite(netInvestmentValue)) {
-                netInvestmentSeen = true;
-                netInvestmentAmount += netInvestmentValue;
-            }
-            if (Number.isFinite(endingBalanceValue)) {
-                endingBalanceSeen = true;
-                endingBalanceAmount += endingBalanceValue;
-            }
-
-            const netWeight = Number.isFinite(netInvestmentValue) ? netInvestmentValue : 0;
-            if (Number.isFinite(netWeight) && netWeight > 0) {
-                netInvestments.push(netWeight);
-                totalReturns.push(response?.totalCumulativeReturnPercent);
-                simpleReturns.push(response?.simpleRateOfReturnPercent ?? response?.simpleReturnPercent);
-                twrReturns.push(
-                    response?.returnsTable?.twr?.allTimeValue
-                    ?? response?.timeWeightedReturnPercent
-                    ?? response?.twrPercent
-                );
-                annualisedIrrReturns.push(
-                    response?.returnsTable?.annualisedIrr?.allTimeValue
-                );
-            }
+            accumulatePerformanceTotals(aggregates, response);
+            accumulateWeightedReturns(weights, response);
         });
 
-        if (endingBalanceAmount === 0 && Array.isArray(mergedTimeSeries) && mergedTimeSeries.length) {
-            const latest = mergedTimeSeries[mergedTimeSeries.length - 1];
-            if (Number.isFinite(latest?.amount)) {
-                endingBalanceAmount = latest.amount;
-                endingBalanceSeen = true;
-            }
-        }
+        const endingBalanceAmount = resolveEndingBalanceAmount(
+            aggregates.endingBalanceAmount,
+            aggregates.endingBalanceSeen,
+            mergedTimeSeries
+        );
 
-        const totalReturnPercent = calculateWeightedAverage(totalReturns, netInvestments);
-        const simpleReturnPercent = calculateWeightedAverage(simpleReturns, netInvestments);
-        const twrPercent = calculateWeightedAverage(twrReturns, netInvestments);
-        const annualisedIrrPercent = calculateWeightedAverage(annualisedIrrReturns, netInvestments);
+        const weighted = computeWeightedPerformanceValues(weights);
 
         // Note: We intentionally do not infer netInvestmentAmount from mergedTimeSeries, because
         // the time series typically represents market value over time, not cumulative net investment.
         // Using market value as net investment would produce inaccurate financial metrics.
 
         return {
-            totalReturnPercent,
-            simpleReturnPercent,
-            twrPercent,
-            annualisedIrrPercent,
-            totalReturnAmount: totalReturnSeen ? totalReturnAmount : null,
-            netFeesAmount: netFeesSeen ? netFeesAmount : null,
-            netInvestmentAmount: netInvestmentSeen ? netInvestmentAmount : null,
-            endingBalanceAmount: endingBalanceSeen ? endingBalanceAmount : null
+            totalReturnPercent: weighted.totalReturnPercent,
+            simpleReturnPercent: weighted.simpleReturnPercent,
+            twrPercent: weighted.twrPercent,
+            annualisedIrrPercent: weighted.annualisedIrrPercent,
+            totalReturnAmount: aggregates.totalReturnSeen ? aggregates.totalReturnAmount : null,
+            netFeesAmount: aggregates.netFeesSeen ? aggregates.netFeesAmount : null,
+            netInvestmentAmount: aggregates.netInvestmentSeen ? aggregates.netInvestmentAmount : null,
+            endingBalanceAmount
         };
+    }
+
+    function initializePerformanceAggregates() {
+        return {
+            totalReturnAmount: 0,
+            totalReturnSeen: false,
+            netFeesAmount: 0,
+            netFeesSeen: false,
+            netInvestmentAmount: 0,
+            netInvestmentSeen: false,
+            endingBalanceAmount: 0,
+            endingBalanceSeen: false
+        };
+    }
+
+    function initializePerformanceWeights() {
+        return {
+            netInvestments: [],
+            totalReturns: [],
+            simpleReturns: [],
+            twrReturns: [],
+            annualisedIrrReturns: []
+        };
+    }
+
+    function accumulatePerformanceTotals(aggregates, response) {
+        const totalReturnValue = extractAmount(response?.totalCumulativeReturnAmount);
+        const netInvestmentValue = extractAmount(
+            response?.gainOrLossTable?.netInvestment?.allTimeValue
+        ) ?? extractAmount(response?.netInvestmentAmount ?? response?.netInvestment);
+        const accessFeeValue = extractAmount(response?.gainOrLossTable?.accessFeeCharged?.allTimeValue);
+        const trailerFeeValue = extractAmount(response?.gainOrLossTable?.trailerFeeRebates?.allTimeValue);
+        const endingBalanceValue = extractAmount(
+            response?.endingBalanceAmount ?? response?.totalBalanceAmount ?? response?.marketValueAmount
+        );
+
+        if (Number.isFinite(totalReturnValue)) {
+            aggregates.totalReturnSeen = true;
+            aggregates.totalReturnAmount += totalReturnValue;
+        }
+        if (Number.isFinite(accessFeeValue) || Number.isFinite(trailerFeeValue)) {
+            aggregates.netFeesSeen = true;
+            aggregates.netFeesAmount += (Number.isFinite(accessFeeValue) ? accessFeeValue : 0)
+                - (Number.isFinite(trailerFeeValue) ? trailerFeeValue : 0);
+        }
+        if (Number.isFinite(netInvestmentValue)) {
+            aggregates.netInvestmentSeen = true;
+            aggregates.netInvestmentAmount += netInvestmentValue;
+        }
+        if (Number.isFinite(endingBalanceValue)) {
+            aggregates.endingBalanceSeen = true;
+            aggregates.endingBalanceAmount += endingBalanceValue;
+        }
+        return netInvestmentValue;
+    }
+
+    function accumulateWeightedReturns(weights, response) {
+        const netInvestmentValue = extractAmount(
+            response?.gainOrLossTable?.netInvestment?.allTimeValue
+        ) ?? extractAmount(response?.netInvestmentAmount ?? response?.netInvestment);
+        const netWeight = Number.isFinite(netInvestmentValue) ? netInvestmentValue : 0;
+        if (!Number.isFinite(netWeight) || netWeight <= 0) {
+            return;
+        }
+        weights.netInvestments.push(netWeight);
+        weights.totalReturns.push(response?.totalCumulativeReturnPercent);
+        weights.simpleReturns.push(response?.simpleRateOfReturnPercent ?? response?.simpleReturnPercent);
+        weights.twrReturns.push(
+            response?.returnsTable?.twr?.allTimeValue
+            ?? response?.timeWeightedReturnPercent
+            ?? response?.twrPercent
+        );
+        weights.annualisedIrrReturns.push(
+            response?.returnsTable?.annualisedIrr?.allTimeValue
+        );
+    }
+
+    function computeWeightedPerformanceValues(weights) {
+        return {
+            totalReturnPercent: calculateWeightedAverage(weights.totalReturns, weights.netInvestments),
+            simpleReturnPercent: calculateWeightedAverage(weights.simpleReturns, weights.netInvestments),
+            twrPercent: calculateWeightedAverage(weights.twrReturns, weights.netInvestments),
+            annualisedIrrPercent: calculateWeightedAverage(weights.annualisedIrrReturns, weights.netInvestments)
+        };
+    }
+
+    function resolveEndingBalanceAmount(endingBalanceAmount, endingBalanceSeen, mergedTimeSeries) {
+        if (!endingBalanceSeen && Array.isArray(mergedTimeSeries) && mergedTimeSeries.length) {
+            const latest = mergedTimeSeries[mergedTimeSeries.length - 1];
+            if (Number.isFinite(latest?.amount)) {
+                return latest.amount;
+            }
+        }
+        return endingBalanceSeen ? endingBalanceAmount : null;
     }
 
     function buildPerformanceMetricsRows(metrics) {
@@ -2709,6 +2758,12 @@
         if (errorData && errorData.error) {
             error.code = errorData.error;
         }
+        if (response?.parseError) {
+            error.code = 'PARSE_ERROR';
+            if (typeof response.rawText === 'string') {
+                error.rawResponse = response.rawText.slice(0, 500);
+            }
+        }
         if (response && response.status === 429) {
             error.code = 'RATE_LIMIT_EXCEEDED';
         }
@@ -2718,6 +2773,40 @@
             error.retryAfterSeconds = retryAfterSeconds;
         }
         return error;
+    }
+
+    function buildRequestError(message, code) {
+        const error = new Error(message);
+        if (code) {
+            error.code = code;
+        }
+        return error;
+    }
+
+    function buildResponseWrapper({
+        ok,
+        status,
+        headers,
+        rawText,
+        parsedJson
+    }) {
+        const hasText = typeof rawText === 'string' && rawText.trim().length > 0;
+        const isJsonNullLiteral = hasText && rawText.trim() === 'null';
+        const parseError = parsedJson === null && hasText && !isJsonNullLiteral;
+        return {
+            ok: ok && !parseError,
+            status,
+            headers: buildHeaderAccessor(headers),
+            rawText,
+            parseError,
+            json: async () => {
+                if (parsedJson === null) {
+                    return isJsonNullLiteral ? null : {};
+                }
+                return parsedJson;
+            },
+            text: async () => rawText
+        };
     }
 
     function buildHeaderAccessor(headers) {
@@ -2745,13 +2834,41 @@
         const method = options.method || 'GET';
         const headers = options.headers || {};
         const body = options.body;
+        const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : SYNC_REQUEST_TIMEOUT_MS;
         const fetchImpl = (typeof fetch === 'function') ? fetch : null;
 
         if (typeof GM_xmlhttpRequest !== 'function') {
             if (!fetchImpl) {
                 return Promise.reject(new Error('No HTTP request transport available'));
             }
-            return fetchImpl(url, { method, headers, body });
+            const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+            let timeoutId = null;
+            if (controller && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+                timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            }
+            return fetchImpl(url, { method, headers, body, signal: controller ? controller.signal : undefined })
+                .then(async response => {
+                    const rawText = await response.text();
+                    const parsedJson = parseJsonSafely(rawText);
+                    return buildResponseWrapper({
+                        ok: response.ok,
+                        status: response.status,
+                        headers: response.headers,
+                        rawText,
+                        parsedJson
+                    });
+                })
+                .catch(error => {
+                    if (error?.name === 'AbortError') {
+                        throw buildRequestError('Request timed out', 'TIMEOUT');
+                    }
+                    throw buildRequestError('Network request failed', 'NETWORK_ERROR');
+                })
+                .finally(() => {
+                    if (timeoutId) {
+                        clearTimeout(timeoutId);
+                    }
+                });
         }
 
         return new Promise((resolve, reject) => {
@@ -2761,6 +2878,7 @@
                 headers,
                 data: body,
                 responseType: 'text',
+                timeout: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined,
                 onload: response => {
                     const status = Number(response?.status) || 0;
                     const text = response?.responseText || '';
@@ -2779,16 +2897,17 @@
                         return acc;
                     }, {});
 
-                    resolve({
+                    const parsedJson = parseJsonSafely(text);
+                    resolve(buildResponseWrapper({
                         ok: status >= 200 && status < 300,
                         status,
-                        headers: buildHeaderAccessor(parsedHeaders),
-                        text: async () => text,
-                        json: async () => parseJsonSafely(text) || {}
-                    });
+                        headers: parsedHeaders,
+                        rawText: text,
+                        parsedJson
+                    }));
                 },
-                onerror: () => reject(new Error('Network request failed')),
-                ontimeout: () => reject(new Error('Request timed out'))
+                onerror: () => reject(buildRequestError('Network request failed', 'NETWORK_ERROR')),
+                ontimeout: () => reject(buildRequestError('Request timed out', 'TIMEOUT'))
             });
         });
     }
@@ -3153,6 +3272,11 @@
         }
 
         if (!sessionMasterKey) {
+            lastError = 'Sync is locked. Enter your password and save settings to unlock encryption key.';
+            lastErrorMeta = getSyncErrorGuidance({ code: 'CRYPTO_LOCKED' });
+            if (typeof syncUi.update === 'function') {
+                syncUi.update();
+            }
             return;
         }
 
@@ -5155,6 +5279,357 @@ let GoalTargetStore;
         return fragment;
     }
 
+    function buildBucketHeader(bucketViewModel) {
+        const bucketHeader = createElement('div', 'gpv-detail-header');
+        const bucketTitle = createElement('h2', 'gpv-detail-title', bucketViewModel.bucketName);
+        const bucketStats = createElement('div', 'gpv-stats gpv-detail-stats');
+        bucketStats.appendChild(buildBucketStatsFragment({
+            endingBalanceDisplay: bucketViewModel.endingBalanceDisplay,
+            returnDisplay: bucketViewModel.returnDisplay,
+            returnClass: bucketViewModel.returnClass,
+            growthDisplay: bucketViewModel.growthDisplay,
+            returnLabel: 'Return'
+        }));
+        bucketHeader.appendChild(bucketTitle);
+        bucketHeader.appendChild(bucketStats);
+        return bucketHeader;
+    }
+
+    function renderAllocationDriftHint(contentDiv, bucketViewModel) {
+        if (!bucketViewModel.showAllocationDriftHint) {
+            return;
+        }
+        const hint = createElement('div', 'gpv-allocation-drift-hint', 'Set goal targets to see drift.');
+        contentDiv.appendChild(hint);
+    }
+
+    function createSectionToggle({
+        label,
+        panelId,
+        collapsed,
+        variantClass
+    }) {
+        const toggle = createElement('button', `gpv-section-toggle ${variantClass}`);
+        toggle.type = 'button';
+        toggle.setAttribute('aria-controls', panelId);
+        toggle.setAttribute('aria-expanded', String(!collapsed));
+        const icon = createElement('span', 'gpv-section-toggle-icon', collapsed ? '▸' : '▾');
+        toggle.appendChild(icon);
+        toggle.appendChild(createElement('span', null, label));
+        return { toggle, icon };
+    }
+
+    function createPerformancePanel({
+        bucketViewModel,
+        goalTypeModel,
+        cleanupCallbacks,
+        onPerformanceDataLoaded,
+        useCacheOnly,
+        performanceSectionId,
+        initialCollapsed
+    }) {
+        const performancePanel = createElement('div', 'gpv-collapsible gpv-performance-panel');
+        performancePanel.id = performanceSectionId;
+        performancePanel.dataset.loaded = 'false';
+        performancePanel.classList.toggle('gpv-collapsible--collapsed', initialCollapsed);
+        performancePanel.dataset.goalType = goalTypeModel.goalType;
+
+        const loadPerformancePanel = () => {
+            if (performancePanel.dataset.loaded === 'true') {
+                return;
+            }
+            try {
+                renderGoalTypePerformance(
+                    performancePanel,
+                    goalTypeModel.goals.map(goal => goal.goalId).filter(Boolean),
+                    cleanupCallbacks,
+                    {
+                        onFreshData: onPerformanceDataLoaded,
+                        cacheOnly: useCacheOnly
+                    }
+                );
+                performancePanel.dataset.loaded = 'true';
+            } catch (error) {
+                performancePanel.textContent = 'Performance data unavailable.';
+                performancePanel.dataset.loaded = 'false';
+                console.error('[Goal Portfolio Viewer] Failed to load performance panel:', error);
+            }
+        };
+
+        const { toggle: performanceToggle, icon: performanceIcon } = createSectionToggle({
+            label: 'Performance',
+            panelId: performanceSectionId,
+            collapsed: initialCollapsed,
+            variantClass: 'gpv-section-toggle--performance'
+        });
+
+        const state = {
+            collapsed: initialCollapsed
+        };
+
+        performanceToggle.addEventListener('click', () => {
+            const shouldPersist = performanceToggle.dataset.autoExpand !== 'true';
+            if (performanceToggle.dataset.autoExpand) {
+                delete performanceToggle.dataset.autoExpand;
+            }
+            state.collapsed = !state.collapsed;
+            if (shouldPersist) {
+                setCollapseState(
+                    bucketViewModel.bucketName,
+                    goalTypeModel.goalType,
+                    COLLAPSE_SECTIONS.performance,
+                    state.collapsed
+                );
+            }
+            performancePanel.classList.toggle('gpv-collapsible--collapsed', state.collapsed);
+            performanceToggle.setAttribute('aria-expanded', String(!state.collapsed));
+            performanceIcon.textContent = state.collapsed ? '▸' : '▾';
+            if (!state.collapsed) {
+                loadPerformancePanel();
+            }
+        });
+
+        if (!state.collapsed) {
+            loadPerformancePanel();
+        }
+
+        return {
+            panel: performancePanel,
+            toggle: performanceToggle
+        };
+    }
+
+    function createProjectionPanel({
+        goalTypeModel,
+        bucketViewModel,
+        projectedInvestmentsState,
+        mergedInvestmentDataState,
+        projectionSectionId,
+        initialCollapsed,
+        typeSection
+    }) {
+        const projectionPanel = createElement('div', 'gpv-collapsible gpv-projection-panel');
+        projectionPanel.id = projectionSectionId;
+        projectionPanel.classList.toggle('gpv-collapsible--collapsed', initialCollapsed);
+        projectionPanel.dataset.goalType = goalTypeModel.goalType;
+
+        const { toggle: projectionToggle, icon: projectionIcon } = createSectionToggle({
+            label: 'Projection',
+            panelId: projectionSectionId,
+            collapsed: initialCollapsed,
+            variantClass: 'gpv-section-toggle--projection'
+        });
+
+        let projectionCollapsed = initialCollapsed;
+
+        projectionToggle.addEventListener('click', () => {
+            projectionCollapsed = !projectionCollapsed;
+            setCollapseState(bucketViewModel.bucketName, goalTypeModel.goalType, COLLAPSE_SECTIONS.projection, projectionCollapsed);
+            projectionPanel.classList.toggle('gpv-collapsible--collapsed', projectionCollapsed);
+            projectionToggle.setAttribute('aria-expanded', String(!projectionCollapsed));
+            projectionIcon.textContent = projectionCollapsed ? '▸' : '▾';
+        });
+
+        const projectedInputContainer = createElement('div', 'gpv-projected-input-container');
+        const projectedLabel = createElement('label', 'gpv-projected-label');
+        appendTextSpan(projectedLabel, 'gpv-projected-icon', '💡');
+        appendTextSpan(projectedLabel, null, 'Add Projected Investment (simulation only):');
+
+        const projectedInput = createElement('input', CLASS_NAMES.projectedInput);
+        projectedInput.type = 'number';
+        projectedInput.step = '100';
+        projectedInput.value = goalTypeModel.projectedAmount > 0 ? String(goalTypeModel.projectedAmount) : '';
+        projectedInput.placeholder = 'Enter amount';
+        projectedInput.dataset.bucket = bucketViewModel.bucketName;
+        projectedInput.dataset.goalType = goalTypeModel.goalType;
+
+        projectedInputContainer.appendChild(projectedLabel);
+        projectedInputContainer.appendChild(projectedInput);
+        projectionPanel.appendChild(projectedInputContainer);
+
+        projectedInput.addEventListener('input', function() {
+            EventHandlers.handleProjectedInvestmentChange({
+                input: this,
+                bucket: bucketViewModel.bucketName,
+                goalType: goalTypeModel.goalType,
+                typeSection,
+                mergedInvestmentDataState,
+                projectedInvestmentsState
+            });
+        });
+
+        return {
+            panel: projectionPanel,
+            toggle: projectionToggle
+        };
+    }
+
+    function buildGoalTypeTable({ goalTypeModel, typeSection }) {
+        const table = createElement('table', `gpv-table ${CLASS_NAMES.goalTable}`);
+        const thead = createElement('thead');
+        const headerRow = createElement('tr');
+
+        headerRow.appendChild(createElement('th', 'gpv-goal-name-header', 'Goal Name'));
+        headerRow.appendChild(createElement('th', null, 'Balance'));
+        headerRow.appendChild(createElement('th', null, '% of Goal Type'));
+        headerRow.appendChild(createElement('th', 'gpv-fixed-header gpv-column-fixed', 'Fixed'));
+
+        const targetHeader = createElement('th', 'gpv-target-header gpv-column-target');
+        targetHeader.appendChild(createElement('div', null, 'Target %'));
+        const remainingTargetClass = goalTypeModel.remainingTargetIsHigh
+            ? `${CLASS_NAMES.remainingTarget} ${CLASS_NAMES.remainingAlert}`
+            : CLASS_NAMES.remainingTarget;
+        const remainingTarget = createElement('div', remainingTargetClass);
+        appendTextSpan(remainingTarget, 'gpv-remaining-label', 'Remaining:');
+        remainingTarget.appendChild(document.createTextNode(' '));
+        appendTextSpan(remainingTarget, 'gpv-remaining-value', goalTypeModel.remainingTargetDisplay);
+        targetHeader.appendChild(remainingTarget);
+        headerRow.appendChild(targetHeader);
+
+        headerRow.appendChild(createElement('th', 'gpv-column-diff', 'Diff'));
+        headerRow.appendChild(createElement('th', 'gpv-column-return', 'Cumulative Return'));
+        headerRow.appendChild(createElement('th', 'gpv-column-return-percent', 'Return %'));
+
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const metricsColSpan = headerRow.children.length;
+        const tbody = createElement('tbody');
+
+        goalTypeModel.goals.forEach(goalModel => {
+            const tr = createElement('tr', 'gpv-goal-row');
+            tr.dataset.goalId = goalModel.goalId || '';
+            tr.appendChild(createElement('td', 'gpv-goal-name', goalModel.goalName));
+            tr.appendChild(createElement('td', null, goalModel.endingBalanceDisplay));
+            tr.appendChild(createElement('td', null, goalModel.percentOfTypeDisplay));
+
+            const fixedCell = createElement('td', 'gpv-fixed-cell gpv-column-fixed');
+            const fixedLabel = createElement('label', 'gpv-fixed-toggle');
+            const fixedInput = createElement('input', CLASS_NAMES.fixedToggleInput);
+            fixedInput.type = 'checkbox';
+            fixedInput.dataset.goalId = goalModel.goalId;
+            fixedInput.checked = goalModel.isFixed === true;
+            fixedLabel.appendChild(fixedInput);
+            fixedLabel.appendChild(createElement('span', 'gpv-toggle-slider'));
+            fixedCell.appendChild(fixedLabel);
+            tr.appendChild(fixedCell);
+
+            const targetCell = createElement('td', 'gpv-target-cell gpv-column-target');
+            const targetInput = createElement('input', CLASS_NAMES.targetInput);
+            targetInput.type = 'number';
+            targetInput.min = '0';
+            targetInput.max = '100';
+            targetInput.step = '0.01';
+            targetInput.value = goalModel.targetDisplay ?? '';
+            targetInput.placeholder = 'Set target';
+            targetInput.dataset.goalId = goalModel.goalId;
+            targetInput.dataset.fixed = goalModel.isFixed ? 'true' : 'false';
+            targetInput.disabled = goalModel.isFixed === true;
+            targetCell.appendChild(targetInput);
+            tr.appendChild(targetCell);
+
+            const diffClassName = goalModel.diffClass
+                ? `${CLASS_NAMES.diffCell} gpv-column-diff ${goalModel.diffClass}`
+                : `${CLASS_NAMES.diffCell} gpv-column-diff`;
+            tr.appendChild(createElement('td', diffClassName, goalModel.diffDisplay));
+            const returnClassName = goalModel.returnClass
+                ? `${goalModel.returnClass} gpv-column-return`
+                : 'gpv-column-return';
+            const returnPercentClassName = goalModel.returnClass
+                ? `${goalModel.returnClass} gpv-column-return-percent`
+                : 'gpv-column-return-percent';
+            tr.appendChild(createElement('td', returnClassName, goalModel.returnDisplay));
+            tr.appendChild(createElement('td', returnPercentClassName, goalModel.returnPercentDisplay));
+
+            tbody.appendChild(tr);
+
+            const metricsRow = createElement('tr', 'gpv-goal-metrics-row');
+            metricsRow.dataset.goalId = goalModel.goalId || '';
+            const metricsCell = createElement('td', 'gpv-goal-metrics-cell');
+            metricsCell.colSpan = metricsColSpan;
+            const metricsContainer = createElement('div', 'gpv-goal-metrics');
+            const windowReturnDisplays = goalModel.windowReturnDisplays || {};
+            const windowReturns = goalModel.windowReturns || {};
+
+            Object.values(PERFORMANCE_WINDOWS).forEach(window => {
+                const item = createElement('div', 'gpv-goal-metrics-item');
+                const label = createElement('span', 'gpv-goal-metrics-label', `${window.label} TWR:`);
+                const displayValue = windowReturnDisplays[window.key] ?? '-';
+                const value = createElement('span', 'gpv-goal-metrics-value', displayValue);
+                value.dataset.windowKey = window.key;
+                const numericValue = windowReturns[window.key];
+                if (typeof numericValue === 'number' && Number.isFinite(numericValue)) {
+                    value.classList.add(numericValue >= 0 ? 'positive' : 'negative');
+                }
+                item.appendChild(label);
+                item.appendChild(value);
+                metricsContainer.appendChild(item);
+            });
+
+            metricsCell.appendChild(metricsContainer);
+            metricsRow.appendChild(metricsCell);
+            tbody.appendChild(metricsRow);
+        });
+
+        table.appendChild(tbody);
+        typeSection.appendChild(table);
+    }
+
+    function wireGoalTypeEvents({
+        typeSection,
+        goalTypeModel,
+        bucketViewModel,
+        mergedInvestmentDataState,
+        projectedInvestmentsState
+    }) {
+        const goalModelsById = goalTypeModel.goalModelsById || {};
+
+        typeSection.addEventListener('input', event => {
+            const resolved = resolveGoalTypeActionTarget(event.target);
+            if (!resolved || resolved.type !== 'target') {
+                return;
+            }
+            const goalId = resolved.element.dataset.goalId;
+            const goalModel = goalModelsById[goalId];
+            if (!goalModel) {
+                return;
+            }
+            EventHandlers.handleGoalTargetChange({
+                input: resolved.element,
+                goalId: goalModel.goalId,
+                currentEndingBalance: goalModel.endingBalanceAmount,
+                totalTypeEndingBalance: goalTypeModel.endingBalanceAmount,
+                bucket: bucketViewModel.bucketName,
+                goalType: goalTypeModel.goalType,
+                typeSection,
+                mergedInvestmentDataState,
+                projectedInvestmentsState
+            });
+        });
+
+        typeSection.addEventListener('change', event => {
+            const changeTarget = event.target;
+            const resolved = resolveGoalTypeActionTarget(changeTarget);
+            if (!resolved || resolved.type !== 'fixed') {
+                return;
+            }
+            const goalId = resolved.element.dataset.goalId;
+            const goalModel = goalModelsById[goalId];
+            if (!goalModel) {
+                return;
+            }
+            EventHandlers.handleGoalFixedToggle({
+                input: resolved.element,
+                goalId: goalModel.goalId,
+                bucket: bucketViewModel.bucketName,
+                goalType: goalTypeModel.goalType,
+                typeSection,
+                mergedInvestmentDataState,
+                projectedInvestmentsState
+            });
+        });
+    }
+
     function renderSummaryView(contentDiv, summaryViewModel, onBucketSelect) {
         contentDiv.innerHTML = '';
 
@@ -5270,38 +5745,17 @@ let GoalTargetStore;
             return;
         }
 
-        const bucketHeader = createElement('div', 'gpv-detail-header');
-        const bucketTitle = createElement('h2', 'gpv-detail-title', bucketViewModel.bucketName);
-        const bucketStats = createElement('div', 'gpv-stats gpv-detail-stats');
-        bucketStats.appendChild(buildBucketStatsFragment({
-            endingBalanceDisplay: bucketViewModel.endingBalanceDisplay,
-            returnDisplay: bucketViewModel.returnDisplay,
-            returnClass: bucketViewModel.returnClass,
-            growthDisplay: bucketViewModel.growthDisplay,
-            returnLabel: 'Return'
-        }));
-        
-        bucketHeader.appendChild(bucketTitle);
-        bucketHeader.appendChild(bucketStats);
-        contentDiv.appendChild(bucketHeader);
-
-        if (bucketViewModel.showAllocationDriftHint) {
-            const hint = createElement('div', 'gpv-allocation-drift-hint', 'Set goal targets to see drift.');
-            contentDiv.appendChild(hint);
-        }
+        contentDiv.appendChild(buildBucketHeader(bucketViewModel));
+        renderAllocationDriftHint(contentDiv, bucketViewModel);
 
         bucketViewModel.goalTypes.forEach(goalTypeModel => {
             const typeGrowth = goalTypeModel.growthDisplay;
-            
+
             const typeSection = createElement('div', 'gpv-type-section');
             typeSection.dataset.bucket = bucketViewModel.bucketName;
             typeSection.dataset.goalType = goalTypeModel.goalType;
-            
+
             const typeHeader = createElement('div', 'gpv-type-header');
-            
-            // Get current projected investment for this goal type
-            const currentProjectedInvestment = goalTypeModel.projectedAmount;
-            
             const typeTitle = createElement('h3', null, goalTypeModel.displayName);
             const typeSummary = createElement('div', 'gpv-type-summary');
             appendLabeledValue(typeSummary, null, 'Balance:', goalTypeModel.endingBalanceDisplay);
@@ -5313,7 +5767,6 @@ let GoalTargetStore;
 
             const typeActions = createElement('div', 'gpv-type-actions');
             typeHeader.appendChild(typeActions);
-            
             typeSection.appendChild(typeHeader);
 
             const goalTypeId = goalTypeModel.goalType;
@@ -5329,294 +5782,52 @@ let GoalTargetStore;
                 goalTypeId,
                 'projection'
             );
-            let performanceCollapsed = getCollapseState(
+            const performanceCollapsed = getCollapseState(
                 bucketViewModel.bucketName,
                 goalTypeId,
                 COLLAPSE_SECTIONS.performance
             );
-            let projectionCollapsed = getCollapseState(
+            const projectionCollapsed = getCollapseState(
                 bucketViewModel.bucketName,
                 goalTypeId,
                 COLLAPSE_SECTIONS.projection
             );
 
-            const performancePanel = createElement('div', 'gpv-collapsible gpv-performance-panel');
-            performancePanel.id = performanceSectionId;
-            performancePanel.dataset.loaded = 'false';
-            performancePanel.classList.toggle('gpv-collapsible--collapsed', performanceCollapsed);
-            performancePanel.dataset.goalType = goalTypeId;
-
-            const projectionPanel = createElement('div', 'gpv-collapsible gpv-projection-panel');
-            projectionPanel.id = projectionSectionId;
-            projectionPanel.classList.toggle('gpv-collapsible--collapsed', projectionCollapsed);
-            projectionPanel.dataset.goalType = goalTypeId;
-
-            const performanceToggle = createElement('button', 'gpv-section-toggle gpv-section-toggle--performance');
-            performanceToggle.type = 'button';
-            performanceToggle.setAttribute('aria-controls', performanceSectionId);
-            performanceToggle.setAttribute('aria-expanded', String(!performanceCollapsed));
-            const performanceIcon = createElement('span', 'gpv-section-toggle-icon', performanceCollapsed ? '▸' : '▾');
-            performanceToggle.appendChild(performanceIcon);
-            performanceToggle.appendChild(createElement('span', null, 'Performance'));
-
-            const projectionToggle = createElement('button', 'gpv-section-toggle gpv-section-toggle--projection');
-            projectionToggle.type = 'button';
-            projectionToggle.setAttribute('aria-controls', projectionSectionId);
-            projectionToggle.setAttribute('aria-expanded', String(!projectionCollapsed));
-            const projectionIcon = createElement('span', 'gpv-section-toggle-icon', projectionCollapsed ? '▸' : '▾');
-            projectionToggle.appendChild(projectionIcon);
-            projectionToggle.appendChild(createElement('span', null, 'Projection'));
-
-            typeActions.appendChild(performanceToggle);
-            typeActions.appendChild(projectionToggle);
-
-            function loadPerformancePanel() {
-                if (performancePanel.dataset.loaded === 'true') {
-                    return;
-                }
-                try {
-                    renderGoalTypePerformance(
-                        performancePanel,
-                        goalTypeModel.goals.map(goal => goal.goalId).filter(Boolean),
-                        cleanupCallbacks,
-                        {
-                            onFreshData: onPerformanceDataLoaded,
-                            cacheOnly: useCacheOnly
-                        }
-                    );
-                    performancePanel.dataset.loaded = 'true';
-                } catch (error) {
-                    performancePanel.textContent = 'Performance data unavailable.';
-                    performancePanel.dataset.loaded = 'false';
-                    console.error('[Goal Portfolio Viewer] Failed to load performance panel:', error);
-                }
-            }
-
-            performanceToggle.addEventListener('click', () => {
-                const shouldPersist = performanceToggle.dataset.autoExpand !== 'true';
-                if (performanceToggle.dataset.autoExpand) {
-                    delete performanceToggle.dataset.autoExpand;
-                }
-                performanceCollapsed = !performanceCollapsed;
-                if (shouldPersist) {
-                    setCollapseState(
-                        bucketViewModel.bucketName,
-                        goalTypeId,
-                        COLLAPSE_SECTIONS.performance,
-                        performanceCollapsed
-                    );
-                }
-                performancePanel.classList.toggle('gpv-collapsible--collapsed', performanceCollapsed);
-                performanceToggle.setAttribute('aria-expanded', String(!performanceCollapsed));
-                performanceIcon.textContent = performanceCollapsed ? '▸' : '▾';
-                if (!performanceCollapsed) {
-                    loadPerformancePanel();
-                }
+            const performanceSection = createPerformancePanel({
+                bucketViewModel,
+                goalTypeModel,
+                cleanupCallbacks,
+                onPerformanceDataLoaded,
+                useCacheOnly,
+                performanceSectionId,
+                initialCollapsed: performanceCollapsed
+            });
+            const projectionSection = createProjectionPanel({
+                goalTypeModel,
+                bucketViewModel,
+                projectedInvestmentsState,
+                mergedInvestmentDataState,
+                projectionSectionId,
+                initialCollapsed: projectionCollapsed,
+                typeSection
             });
 
-            projectionToggle.addEventListener('click', () => {
-                projectionCollapsed = !projectionCollapsed;
-                setCollapseState(bucketViewModel.bucketName, goalTypeId, COLLAPSE_SECTIONS.projection, projectionCollapsed);
-                projectionPanel.classList.toggle('gpv-collapsible--collapsed', projectionCollapsed);
-                projectionToggle.setAttribute('aria-expanded', String(!projectionCollapsed));
-                projectionIcon.textContent = projectionCollapsed ? '▸' : '▾';
-            });
+            typeActions.appendChild(performanceSection.toggle);
+            typeActions.appendChild(projectionSection.toggle);
 
-            if (!performanceCollapsed) {
-                loadPerformancePanel();
-            }
+            typeSection.appendChild(performanceSection.panel);
+            typeSection.appendChild(projectionSection.panel);
 
-            typeSection.appendChild(performancePanel);
-
-            // Add projected investment input section as sibling after performance container
-            const projectedInputContainer = createElement('div', 'gpv-projected-input-container');
-            const projectedLabel = createElement('label', 'gpv-projected-label');
-            appendTextSpan(projectedLabel, 'gpv-projected-icon', '💡');
-            appendTextSpan(projectedLabel, null, 'Add Projected Investment (simulation only):');
-
-            const projectedInput = createElement('input', CLASS_NAMES.projectedInput);
-            projectedInput.type = 'number';
-            projectedInput.step = '100';
-            projectedInput.value = currentProjectedInvestment > 0 ? String(currentProjectedInvestment) : '';
-            projectedInput.placeholder = 'Enter amount';
-            projectedInput.dataset.bucket = bucketViewModel.bucketName;
-            projectedInput.dataset.goalType = goalTypeModel.goalType;
-
-            projectedInputContainer.appendChild(projectedLabel);
-            projectedInputContainer.appendChild(projectedInput);
-            
-            projectionPanel.appendChild(projectedInputContainer);
-            typeSection.appendChild(projectionPanel);
-            
-            // Add event listener for projected investment input
-            projectedInput.addEventListener('input', function() {
-                EventHandlers.handleProjectedInvestmentChange({
-                    input: this,
-                    bucket: bucketViewModel.bucketName,
-                    goalType: goalTypeModel.goalType,
-                    typeSection,
-                    mergedInvestmentDataState,
-                    projectedInvestmentsState
-                });
-            });
-
-            const table = createElement('table', `gpv-table ${CLASS_NAMES.goalTable}`);
-            const thead = createElement('thead');
-            const headerRow = createElement('tr');
-
-            headerRow.appendChild(createElement('th', 'gpv-goal-name-header', 'Goal Name'));
-            headerRow.appendChild(createElement('th', null, 'Balance'));
-            headerRow.appendChild(createElement('th', null, '% of Goal Type'));
-            headerRow.appendChild(createElement('th', 'gpv-fixed-header gpv-column-fixed', 'Fixed'));
-
-            const targetHeader = createElement('th', 'gpv-target-header gpv-column-target');
-            targetHeader.appendChild(createElement('div', null, 'Target %'));
-            const remainingTargetClass = goalTypeModel.remainingTargetIsHigh
-                ? `${CLASS_NAMES.remainingTarget} ${CLASS_NAMES.remainingAlert}`
-                : CLASS_NAMES.remainingTarget;
-            const remainingTarget = createElement('div', remainingTargetClass);
-            appendTextSpan(remainingTarget, 'gpv-remaining-label', 'Remaining:');
-            remainingTarget.appendChild(document.createTextNode(' '));
-            appendTextSpan(remainingTarget, 'gpv-remaining-value', goalTypeModel.remainingTargetDisplay);
-            targetHeader.appendChild(remainingTarget);
-            headerRow.appendChild(targetHeader);
-
-            headerRow.appendChild(createElement('th', 'gpv-column-diff', 'Diff'));
-            headerRow.appendChild(createElement('th', 'gpv-column-return', 'Cumulative Return'));
-            headerRow.appendChild(createElement('th', 'gpv-column-return-percent', 'Return %'));
-
-            thead.appendChild(headerRow);
-            table.appendChild(thead);
-
-            const metricsColSpan = headerRow.children.length;
-            const tbody = createElement('tbody');
-
-            const goalModelsById = goalTypeModel.goalModelsById || {};
-
-            goalTypeModel.goals.forEach(goalModel => {
-                const tr = createElement('tr', 'gpv-goal-row');
-                tr.dataset.goalId = goalModel.goalId || '';
-                tr.appendChild(createElement('td', 'gpv-goal-name', goalModel.goalName));
-                tr.appendChild(createElement('td', null, goalModel.endingBalanceDisplay));
-                tr.appendChild(createElement('td', null, goalModel.percentOfTypeDisplay));
-
-                const fixedCell = createElement('td', 'gpv-fixed-cell gpv-column-fixed');
-                const fixedLabel = createElement('label', 'gpv-fixed-toggle');
-                const fixedInput = createElement('input', CLASS_NAMES.fixedToggleInput);
-                fixedInput.type = 'checkbox';
-                fixedInput.dataset.goalId = goalModel.goalId;
-                fixedInput.checked = goalModel.isFixed === true;
-                fixedLabel.appendChild(fixedInput);
-                fixedLabel.appendChild(createElement('span', 'gpv-toggle-slider'));
-                fixedCell.appendChild(fixedLabel);
-                tr.appendChild(fixedCell);
-
-                const targetCell = createElement('td', 'gpv-target-cell gpv-column-target');
-                const targetInput = createElement('input', CLASS_NAMES.targetInput);
-                targetInput.type = 'number';
-                targetInput.min = '0';
-                targetInput.max = '100';
-                targetInput.step = '0.01';
-                targetInput.value = goalModel.targetDisplay ?? '';
-                targetInput.placeholder = 'Set target';
-                targetInput.dataset.goalId = goalModel.goalId;
-                targetInput.dataset.fixed = goalModel.isFixed ? 'true' : 'false';
-                targetInput.disabled = goalModel.isFixed === true;
-                targetCell.appendChild(targetInput);
-                tr.appendChild(targetCell);
-
-                const diffClassName = goalModel.diffClass
-                    ? `${CLASS_NAMES.diffCell} gpv-column-diff ${goalModel.diffClass}`
-                    : `${CLASS_NAMES.diffCell} gpv-column-diff`;
-                tr.appendChild(createElement('td', diffClassName, goalModel.diffDisplay));
-                const returnClassName = goalModel.returnClass
-                    ? `${goalModel.returnClass} gpv-column-return`
-                    : 'gpv-column-return';
-                const returnPercentClassName = goalModel.returnClass
-                    ? `${goalModel.returnClass} gpv-column-return-percent`
-                    : 'gpv-column-return-percent';
-                tr.appendChild(createElement('td', returnClassName, goalModel.returnDisplay));
-                tr.appendChild(createElement('td', returnPercentClassName, goalModel.returnPercentDisplay));
-
-                tbody.appendChild(tr);
-
-                const metricsRow = createElement('tr', 'gpv-goal-metrics-row');
-                metricsRow.dataset.goalId = goalModel.goalId || '';
-                const metricsCell = createElement('td', 'gpv-goal-metrics-cell');
-                metricsCell.colSpan = metricsColSpan;
-                const metricsContainer = createElement('div', 'gpv-goal-metrics');
-                const windowReturnDisplays = goalModel.windowReturnDisplays || {};
-                const windowReturns = goalModel.windowReturns || {};
-
-                Object.values(PERFORMANCE_WINDOWS).forEach(window => {
-                    const item = createElement('div', 'gpv-goal-metrics-item');
-                    const label = createElement('span', 'gpv-goal-metrics-label', `${window.label} TWR:`);
-                    const displayValue = windowReturnDisplays[window.key] ?? '-';
-                    const value = createElement('span', 'gpv-goal-metrics-value', displayValue);
-                    value.dataset.windowKey = window.key;
-                    const numericValue = windowReturns[window.key];
-                    if (typeof numericValue === 'number' && Number.isFinite(numericValue)) {
-                        value.classList.add(numericValue >= 0 ? 'positive' : 'negative');
-                    }
-                    item.appendChild(label);
-                    item.appendChild(value);
-                    metricsContainer.appendChild(item);
-                });
-
-                metricsCell.appendChild(metricsContainer);
-                metricsRow.appendChild(metricsCell);
-                tbody.appendChild(metricsRow);
-            });
-            
-            table.appendChild(tbody);
-            typeSection.appendChild(table);
-
-            typeSection.addEventListener('input', event => {
-                const resolved = resolveGoalTypeActionTarget(event.target);
-                if (!resolved || resolved.type !== 'target') {
-                    return;
-                }
-                const goalId = resolved.element.dataset.goalId;
-                const goalModel = goalModelsById[goalId];
-                if (!goalModel) {
-                    return;
-                }
-                EventHandlers.handleGoalTargetChange({
-                    input: resolved.element,
-                    goalId: goalModel.goalId,
-                    currentEndingBalance: goalModel.endingBalanceAmount,
-                    totalTypeEndingBalance: goalTypeModel.endingBalanceAmount,
-                    bucket: bucketViewModel.bucketName,
-                    goalType: goalTypeModel.goalType,
-                    typeSection,
-                    mergedInvestmentDataState,
-                    projectedInvestmentsState
-                });
-            });
-
-            typeSection.addEventListener('change', event => {
-                const changeTarget = event.target;
-                const resolved = resolveGoalTypeActionTarget(changeTarget);
-                if (!resolved || resolved.type !== 'fixed') {
-                    return;
-                }
-                const goalId = resolved.element.dataset.goalId;
-                if (!goalModelsById[goalId]) {
-                    return;
-                }
-                EventHandlers.handleGoalFixedToggle({
-                    input: resolved.element,
-                    goalId,
-                    bucket: bucketViewModel.bucketName,
-                    goalType: goalTypeModel.goalType,
-                    typeSection,
-                    mergedInvestmentDataState,
-                    projectedInvestmentsState
-                });
+            buildGoalTypeTable({ goalTypeModel, typeSection });
+            wireGoalTypeEvents({
+                typeSection,
+                goalTypeModel,
+                bucketViewModel,
+                mergedInvestmentDataState,
+                projectedInvestmentsState
             });
 
             contentDiv.appendChild(typeSection);
-
         });
     }
 
@@ -6144,32 +6355,37 @@ function withButtonState(button, busyText, action) {
     });
 }
 
-function createSyncSettingsHTML() {
-    const syncStatus = SyncManager.getStatus();
-    const isEnabled = syncStatus.isEnabled;
-    const isConfigured = syncStatus.isConfigured;
-    const cryptoSupported = syncStatus.cryptoSupported;
-    const hasSessionKey = syncStatus.hasSessionKey;
-    const hasValidRefreshToken = syncStatus.hasValidRefreshToken;
-    
-    const serverUrl = utils.normalizeServerUrl(Storage.get(SYNC_STORAGE_KEYS.serverUrl, SYNC_DEFAULTS.serverUrl)) || SYNC_DEFAULTS.serverUrl;
-    const userId = Storage.get(SYNC_STORAGE_KEYS.userId, '');
-    const rememberKey = Storage.get(SYNC_STORAGE_KEYS.rememberKey, false);
-    const password = '';
-    const autoSync = Storage.get(SYNC_STORAGE_KEYS.autoSync, SYNC_DEFAULTS.autoSync);
-    const syncInterval = Storage.get(SYNC_STORAGE_KEYS.syncInterval, SYNC_DEFAULTS.syncInterval);
-    const isValidPassword = Boolean(password && password.length >= 8);
-    const shouldShowRememberKey = isEnabled
-        && cryptoSupported
-        && (hasSessionKey || isValidPassword || rememberKey);
-    
-    const lastSyncTimestamp = syncStatus.lastSync;
-    const lastSyncText = lastSyncTimestamp 
-        ? new Date(lastSyncTimestamp).toLocaleString()
-        : 'Never';
+    function buildSyncSettingsState() {
+        const syncStatus = SyncManager.getStatus();
+        const isEnabled = syncStatus.isEnabled;
+        const cryptoSupported = syncStatus.cryptoSupported;
+        const hasSessionKey = syncStatus.hasSessionKey;
+        const hasValidRefreshToken = syncStatus.hasValidRefreshToken;
+        const serverUrl = utils.normalizeServerUrl(Storage.get(SYNC_STORAGE_KEYS.serverUrl, SYNC_DEFAULTS.serverUrl)) || SYNC_DEFAULTS.serverUrl;
+        const userId = Storage.get(SYNC_STORAGE_KEYS.userId, '');
+        const rememberKey = Storage.get(SYNC_STORAGE_KEYS.rememberKey, false);
+        const autoSync = Storage.get(SYNC_STORAGE_KEYS.autoSync, SYNC_DEFAULTS.autoSync);
+        const syncInterval = Storage.get(SYNC_STORAGE_KEYS.syncInterval, SYNC_DEFAULTS.syncInterval);
+        const lastSyncTimestamp = syncStatus.lastSync;
+        return {
+            syncStatus,
+            isEnabled,
+            cryptoSupported,
+            hasSessionKey,
+            hasValidRefreshToken,
+            serverUrl,
+            userId,
+            rememberKey,
+            autoSync,
+            syncInterval,
+            lastSyncText: lastSyncTimestamp
+                ? new Date(lastSyncTimestamp).toLocaleString()
+                : 'Never'
+        };
+    }
 
-    return `
-        <div class="gpv-sync-settings">
+    function renderSyncHeader({ cryptoSupported }) {
+        return `
             <div class="gpv-sync-header">
                 <h3>Sync Settings</h3>
                 ${!cryptoSupported ? `
@@ -6178,7 +6394,11 @@ function createSyncSettingsHTML() {
                     </div>
                 ` : ''}
             </div>
+        `;
+    }
 
+    function renderSyncStatusBar({ syncStatus, hasValidRefreshToken, hasSessionKey, lastSyncText }) {
+        return `
             <div class="gpv-sync-status-bar">
                 <div class="gpv-sync-status-item">
                     <span class="gpv-sync-label">Status:</span>
@@ -6213,179 +6433,201 @@ function createSyncSettingsHTML() {
                     </div>
                 ` : ''}
             </div>
+        `;
+    }
 
-            <div class="gpv-sync-form">
-                <div class="gpv-sync-form-group">
-                    <label class="gpv-sync-toggle">
-                        <input 
-                            type="checkbox" 
-                            id="gpv-sync-enabled"
-                            ${isEnabled ? 'checked' : ''}
-                            ${!cryptoSupported ? 'disabled' : ''}
-                        />
-                        <span>Activate Sync</span>
-                    </label>
-                    <p class="gpv-sync-help">
-                        Sync your goal configurations across devices using encrypted cloud storage.
-                        <a href="https://github.com/laurenceputra/goal-portfolio-viewer/blob/main/SYNC_ARCHITECTURE.md" 
-                           target="_blank" 
-                           rel="noopener noreferrer">Learn more</a>
-                    </p>
-                    <p class="gpv-sync-help">
-                        🔒 <strong>No data is sent</strong> until you click <strong>Save Settings</strong>.
-                    </p>
-                </div>
-
-                <div class="gpv-sync-form-group">
-                    <label for="gpv-sync-server-url">Server URL</label>
+    function renderSyncActivation({ isEnabled, cryptoSupported }) {
+        return `
+            <div class="gpv-sync-form-group">
+                <label class="gpv-sync-toggle">
                     <input 
-                        type="text" 
-                        id="gpv-sync-server-url"
-                        class="gpv-sync-input"
-                        value="${escapeHtml(serverUrl)}"
-                        placeholder="${SYNC_DEFAULTS.serverUrl}"
+                        type="checkbox" 
+                        id="gpv-sync-enabled"
+                        ${isEnabled ? 'checked' : ''}
+                        ${!cryptoSupported ? 'disabled' : ''}
+                    />
+                    <span>Activate Sync</span>
+                </label>
+                <p class="gpv-sync-help">
+                    Sync your goal configurations across devices using encrypted cloud storage.
+                    <a href="https://github.com/laurenceputra/goal-portfolio-viewer/blob/main/SYNC_ARCHITECTURE.md" 
+                       target="_blank" 
+                       rel="noopener noreferrer">Learn more</a>
+                </p>
+                <p class="gpv-sync-help">
+                    🔒 <strong>No data is sent</strong> until you click <strong>Save Settings</strong>.
+                </p>
+            </div>
+        `;
+    }
+
+    function renderServerUrlField({ serverUrl, isEnabled, cryptoSupported }) {
+        return `
+            <div class="gpv-sync-form-group">
+                <label for="gpv-sync-server-url">Server URL</label>
+                <input 
+                    type="text" 
+                    id="gpv-sync-server-url"
+                    class="gpv-sync-input"
+                    value="${escapeHtml(serverUrl)}"
+                    placeholder="${SYNC_DEFAULTS.serverUrl}"
+                    ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
+                />
+                <p class="gpv-sync-help">
+                    Default: ${SYNC_DEFAULTS.serverUrl} (or use your self-hosted instance)
+                </p>
+            </div>
+        `;
+    }
+
+    function renderUserIdField({ userId, isEnabled, cryptoSupported }) {
+        return `
+            <div class="gpv-sync-form-group">
+                <label for="gpv-sync-user-id">User ID / Email</label>
+                <input 
+                    type="text" 
+                    id="gpv-sync-user-id"
+                    class="gpv-sync-input"
+                    value="${escapeHtml(userId)}"
+                    placeholder="user@example.com"
+                    ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
+                />
+                <p class="gpv-sync-help">Use an email or short username.</p>
+            </div>
+        `;
+    }
+
+    function renderPasswordField({ isEnabled, cryptoSupported }) {
+        return `
+            <div class="gpv-sync-form-group">
+                <label for="gpv-sync-password">Password</label>
+                <input 
+                    type="password" 
+                    id="gpv-sync-password"
+                    class="gpv-sync-input"
+                    placeholder="••••••••"
+                    ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
+                />
+                <p class="gpv-sync-help">Minimum 8 characters. Your password never leaves your device.</p>
+            </div>
+        `;
+    }
+
+    function renderRememberKeySection({ isEnabled, cryptoSupported, hasSessionKey, rememberKey }) {
+        const shouldShowRememberKey = isEnabled && cryptoSupported && (hasSessionKey || rememberKey);
+        return `
+            <div class="gpv-sync-form-group" id="gpv-sync-remember-wrapper" style="display: ${shouldShowRememberKey ? 'block' : 'none'};">
+                <label class="gpv-sync-toggle">
+                    <input 
+                        type="checkbox" 
+                        id="gpv-sync-remember-key"
+                        ${rememberKey ? 'checked' : ''}
                         ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
                     />
-                    <p class="gpv-sync-help">
-                        Default: ${SYNC_DEFAULTS.serverUrl} (or use your self-hosted instance)
-                    </p>
-                </div>
+                    <span>Remember encryption key on this device</span>
+                </label>
+                <p class="gpv-sync-help">Keeps sync unlocked between sessions on this device only.</p>
+            </div>
+            <p class="gpv-sync-help" id="gpv-sync-remember-hint" style="display: ${shouldShowRememberKey || !isEnabled || !cryptoSupported ? 'none' : 'block'};">
+                Save settings after entering your password to unlock sync.
+            </p>
+        `;
+    }
 
-                <div class="gpv-sync-form-group">
-                    <label for="gpv-sync-user-id">User ID / Email</label>
-                    <input 
-                        type="text" 
-                        id="gpv-sync-user-id"
-                        class="gpv-sync-input"
-                        value="${escapeHtml(userId)}"
-                        placeholder="your.email@example.com or username"
+    function renderAutoSyncSection({ autoSync, syncInterval, isEnabled, cryptoSupported }) {
+        return `
+            <div class="gpv-sync-form-group">
+                <label class="gpv-sync-toggle">
+                    <input
+                        type="checkbox"
+                        id="gpv-sync-auto"
+                        ${autoSync ? 'checked' : ''}
                         ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
                     />
-                    <p class="gpv-sync-help">
-                        Your unique identifier - use email address or custom username (3-50 characters)
-                    </p>
-                </div>
-
-                <div class="gpv-sync-form-group">
-                    <label for="gpv-sync-password">Password (not stored)</label>
-                    <input 
-                        type="password" 
-                        id="gpv-sync-password"
-                        class="gpv-sync-input"
-                        value="${escapeHtml(password)}"
-                        placeholder="Strong password (min 8 characters)"
-                        autocomplete="current-password"
-                        ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
-                    />
-                    <p class="gpv-sync-help">
-                        🔒 Your password is used for both authentication and encryption and is not stored locally unless you opt in below.<br>
-                        ⚠️ <strong>Keep it safe!</strong> If lost, your data cannot be recovered.
-                        Use your browser's password manager to autofill each session.
-                    </p>
-                </div>
-
-                <div class="gpv-sync-form-group" id="gpv-sync-remember-hint" style="display: ${shouldShowRememberKey || !isEnabled || !cryptoSupported ? 'none' : 'block'};">
-                    <p class="gpv-sync-help">Enter a valid password to enable device key storage.</p>
-                </div>
-
-                <div class="gpv-sync-form-group" id="gpv-sync-remember-wrapper" style="display: ${shouldShowRememberKey ? 'block' : 'none'};">
-                    <label class="gpv-sync-toggle">
-                        <input 
-                            type="checkbox" 
-                            id="gpv-sync-remember-key"
-                            ${rememberKey ? 'checked' : ''}
-                            ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
-                        />
-                        <span>Remember encryption key on this device</span>
-                    </label>
-                    <p class="gpv-sync-help">
-                        Stores an encryption key on this device after activation. Only enable on a trusted device.
-                        This key encrypts only your goal targets and fixed flags; portfolio balances, holdings, transactions, and personal data never leave your browser.
-                    </p>
-                </div>
-
-                ${!isConfigured ? `
-                    <div class="gpv-sync-auth-buttons">
-                        <button type="button" class="gpv-sync-btn-primary" id="gpv-sync-register-btn" ${!cryptoSupported ? 'disabled' : ''}>
-                            📝 Sign Up
-                        </button>
-                        <button type="button" class="gpv-sync-btn-secondary" id="gpv-sync-login-btn" ${!cryptoSupported ? 'disabled' : ''}>
-                            🔑 Login
-                        </button>
-                    </div>
-                    <p class="gpv-sync-help" style="text-align: center; margin-top: 8px;">
-                        New user? Click <strong>Sign Up</strong> to create an account.<br>
-                        Existing user? Click <strong>Login</strong> to enable sync and verify credentials.
-                    </p>
-                ` : ''}
-
-                <div class="gpv-sync-form-group">
-                    <label class="gpv-sync-toggle">
-                        <input 
-                            type="checkbox" 
-                            id="gpv-sync-auto"
-                            ${autoSync ? 'checked' : ''}
-                            ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
-                        />
-                        <span>Automatic Sync (recommended)</span>
-                    </label>
-                    <p class="gpv-sync-help">
-                        Syncs in the background and after changes (batched within a short buffer).
-                    </p>
-                </div>
-
-                <div class="gpv-sync-form-group">
+                    <span>Enable Auto-Sync</span>
+                </label>
+                <div class="gpv-sync-interval">
                     <label for="gpv-sync-interval">Sync Interval (minutes)</label>
-                    <input 
-                        type="number" 
+                    <input
+                        type="number"
                         id="gpv-sync-interval"
                         class="gpv-sync-input"
-                        value="${syncInterval}"
                         min="5"
                         max="1440"
-                        ${!isEnabled || !autoSync || !cryptoSupported ? 'disabled' : ''}
+                        value="${syncInterval}"
+                        ${!autoSync || !isEnabled || !cryptoSupported ? 'disabled' : ''}
                     />
-                    <p class="gpv-sync-help">
-                        Background sync interval (5-1440 minutes). Changes are also batched and synced automatically.
-                    </p>
-                </div>
-
-                <div class="gpv-sync-actions">
-                    <button 
-                        class="gpv-sync-btn gpv-sync-btn-primary"
-                        id="gpv-sync-save-btn"
-                        ${!cryptoSupported ? 'disabled' : ''}
-                    >
-                        Save Settings
-                    </button>
-                    <button 
-                        class="gpv-sync-btn gpv-sync-btn-secondary"
-                        id="gpv-sync-test-btn"
-                        ${!isEnabled || !isConfigured || !cryptoSupported ? 'disabled' : ''}
-                    >
-                        Test Connection
-                    </button>
-                    <button 
-                        class="gpv-sync-btn gpv-sync-btn-secondary"
-                        id="gpv-sync-now-btn"
-                        ${!isEnabled || !isConfigured || !cryptoSupported || !hasSessionKey ? 'disabled' : ''}
-                    >
-                        Sync Now
-                    </button>
-                    <button 
-                        class="gpv-sync-btn gpv-sync-btn-danger"
-                        id="gpv-sync-clear-btn"
-                    >
-                        Logout
-                    </button>
+                    <p class="gpv-sync-help">Background sync interval (5-1440 minutes). Changes are also batched and synced automatically.</p>
                 </div>
             </div>
-        </div>
-    `;
-}
+        `;
+    }
 
-function setupSyncSettingsListeners() {
-    // TODO: Improve sync auth error handling and user-visible feedback (centralize messaging, handle non-JSON/network failures).
+    function renderSyncAuthButtons({ isEnabled, cryptoSupported, syncStatus }) {
+        if (syncStatus.isConfigured) {
+            return '';
+        }
+        return `
+            <div class="gpv-sync-auth-buttons">
+                <button type="button" class="gpv-sync-btn-primary" id="gpv-sync-register-btn" ${!isEnabled || !cryptoSupported ? 'disabled' : ''}>
+                    📝 Sign Up
+                </button>
+                <button type="button" class="gpv-sync-btn-secondary" id="gpv-sync-login-btn" ${!isEnabled || !cryptoSupported ? 'disabled' : ''}>
+                    🔑 Login
+                </button>
+            </div>
+            <p class="gpv-sync-help" style="text-align: center; margin-top: 8px;">
+                New user? Click <strong>Sign Up</strong> to create an account.<br>
+                Existing user? Click <strong>Login</strong> to enable sync and verify credentials.
+            </p>
+        `;
+    }
+
+    function renderSyncActionButtons({ isEnabled, cryptoSupported, syncStatus }) {
+        return `
+            <div class="gpv-sync-actions">
+                <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-sync-save-btn" ${!cryptoSupported ? 'disabled' : ''}>
+                    Save Settings
+                </button>
+                <button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-test-btn" ${!isEnabled || !cryptoSupported ? 'disabled' : ''}>
+                    Test Connection
+                </button>
+                <button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-now-btn" ${!isEnabled || !syncStatus.isConfigured || !syncStatus.hasSessionKey || !cryptoSupported ? 'disabled' : ''}>
+                    Sync Now
+                </button>
+                <button class="gpv-sync-btn gpv-sync-btn-danger" id="gpv-sync-clear-btn" ${!cryptoSupported ? 'disabled' : ''}>
+                    Logout
+                </button>
+            </div>
+        `;
+    }
+
+    function createSyncSettingsHTML() {
+        const state = buildSyncSettingsState();
+        return `
+            <div class="gpv-sync-settings">
+                ${renderSyncHeader(state)}
+                ${renderSyncStatusBar(state)}
+                <div class="gpv-sync-form">
+                    ${renderSyncActivation(state)}
+                    ${renderServerUrlField(state)}
+                    ${renderUserIdField(state)}
+                    ${renderPasswordField(state)}
+                    ${renderRememberKeySection(state)}
+                    ${renderSyncAuthButtons(state)}
+                    ${renderAutoSyncSection(state)}
+                    ${renderSyncActionButtons({
+                        isEnabled: state.isEnabled,
+                        cryptoSupported: state.cryptoSupported,
+                        syncStatus: state.syncStatus
+                    })}
+                </div>
+            </div>
+        `;
+    }
+
+    function setupSyncSettingsListeners() {
+        // TODO: Improve sync auth error handling and user-visible feedback (centralize messaging, handle non-JSON/network failures).
     const serverUrlInput = document.getElementById('gpv-sync-server-url');
     if (serverUrlInput) {
         serverUrlInput.addEventListener('blur', () => {
@@ -6646,7 +6888,10 @@ function setupSyncSettingsListeners() {
                     if (response.ok && data.status === 'ok') {
                         showSuccessMessage(`Connection successful! Server version: ${data.version}`);
                     } else {
-                        throw new Error(data.message || 'Server returned unexpected response');
+                        const fallback = response.parseError && response.rawText
+                            ? `Server returned non-JSON response: ${response.rawText.slice(0, 120)}`
+                            : (data.message || 'Server returned unexpected response');
+                        throw new Error(fallback);
                     }
                 } catch (error) {
                     console.error('[Goal Portfolio Viewer] Test connection failed:', error);
@@ -6711,7 +6956,8 @@ function setupSyncSettingsListeners() {
     if (typeof window !== 'undefined') {
         window.__gpvSyncUi = {
             createSyncSettingsHTML,
-            setupSyncSettingsListeners
+            setupSyncSettingsListeners,
+            createConflictDialogHTML
         };
     }
 
@@ -7183,14 +7429,9 @@ syncUi.update = function updateSyncUI() {
     // ============================================
     // UI: Styles
     // ============================================
-    
-    function injectStyles() {
-        if (document.getElementById('gpv-styles')) {
-            return;
-        }
-        const style = createElement('style');
-        style.id = 'gpv-styles';
-        style.textContent = `
+
+    const STYLE_SECTIONS = {
+        core: `
             /* Modern Portfolio Viewer Styles */
             
             .gpv-trigger-btn {
@@ -7514,6 +7755,8 @@ syncUi.update = function updateSyncUI() {
                 margin-bottom: 12px;
                 padding: 10px 12px;
             }
+        `,
+        remainder: `
             
             .gpv-bucket-card {
                 background: #ffffff;
@@ -8460,6 +8703,12 @@ syncUi.update = function updateSyncUI() {
                     font-size: 14px;
                 }
 
+                .gpv-sync-interval {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+
                 .gpv-sync-input {
                     padding: 8px 12px;
                     border: 1px solid #ced4da;
@@ -8517,6 +8766,13 @@ syncUi.update = function updateSyncUI() {
                     margin-top: 10px;
                 }
 
+                .gpv-sync-auth-buttons {
+                    display: flex;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                    justify-content: center;
+                }
+
                 .gpv-sync-btn {
                     padding: 10px 20px;
                     border: none;
@@ -8569,6 +8825,31 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-btn-danger:hover:not(:disabled) {
+                    background-color: #c82333;
+                }
+
+                /* Backward-compatible aliases for legacy class names */
+                .gpv-sync-action {
+                    padding: 10px 20px;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+
+                .gpv-sync-action:disabled {
+                    opacity: 0.6;
+                    cursor: not-allowed;
+                }
+
+                .gpv-sync-danger {
+                    background-color: #dc3545;
+                    color: white;
+                }
+
+                .gpv-sync-danger:hover:not(:disabled) {
                     background-color: #c82333;
                 }
 
@@ -8711,6 +8992,18 @@ syncUi.update = function updateSyncUI() {
                     color: #fff;
                 }
 
+                .gpv-conflict-step-panel {
+                    display: block;
+                }
+
+                .gpv-conflict-step-panel[hidden] {
+                    display: none;
+                }
+
+                .gpv-sync-overlay-title {
+                    display: block;
+                }
+
                 .gpv-fsm-manager,
                 .gpv-fsm-toolbar,
                 .gpv-fsm-manager-row,
@@ -8841,7 +9134,20 @@ syncUi.update = function updateSyncUI() {
                     }
                 }
 
-        `;
+        `
+    };
+
+    function buildStyleText() {
+        return Object.values(STYLE_SECTIONS).join('\n');
+    }
+
+    function injectStyles() {
+        if (document.getElementById('gpv-styles')) {
+            return;
+        }
+        const style = createElement('style');
+        style.id = 'gpv-styles';
+        style.textContent = buildStyleText();
         document.head.appendChild(style);
     }
 
@@ -9000,16 +9306,7 @@ syncUi.update = function updateSyncUI() {
         const total = rows.reduce((sum, row) => sum + (Number(row.currentValueLcy) || 0), 0);
         const activeRows = rows.filter(row => row.fixed !== true);
         const targetPercentTotal = activeRows.reduce((sum, row) => sum + (Number(row.targetPercent) || 0), 0);
-        const totalDrift = activeRows.reduce((sum, row) => {
-            if (total <= 0 || !Number.isFinite(row.targetPercent)) {
-                return sum;
-            }
-            const targetAmount = (row.targetPercent / 100) * total;
-            if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
-                return sum;
-            }
-            return sum + Math.abs(targetAmount - row.currentValueLcy) / targetAmount;
-        }, 0);
+        const totalDrift = activeRows.reduce((sum, row) => sum + calculateFsmRowDrift(total, row), 0);
         return {
             total,
             actualWeightDisplay: formatPercent(1, { multiplier: 100, showSign: false }),
@@ -9019,15 +9316,7 @@ syncUi.update = function updateSyncUI() {
         };
     }
 
-    function renderFsmOverlay(fsmHoldings) {
-        const overlay = createElement('div', 'gpv-overlay');
-        overlay.id = 'gpv-overlay';
-
-        const container = createElement('div', 'gpv-container gpv-container--expanded');
-        const cleanupCallbacks = [];
-        container.gpvCleanupCallbacks = cleanupCallbacks;
-        overlay.gpvCleanupCallbacks = cleanupCallbacks;
-
+    function buildFsmHeader({ overlay, cleanupCallbacks }) {
         const header = createElement('div', 'gpv-header');
         const title = createElement('h1', null, 'Portfolio Viewer (FSM)');
         const titleId = 'gpv-portfolio-title';
@@ -9061,6 +9350,358 @@ syncUi.update = function updateSyncUI() {
         buttonContainer.appendChild(closeBtn);
         header.appendChild(title);
         header.appendChild(buttonContainer);
+        return { header, closeBtn, titleId, closeOverlay };
+    }
+
+    function calculateFsmRowDrift(total, row) {
+        if (total <= 0 || !Number.isFinite(row.targetPercent)) {
+            return 0;
+        }
+        const targetAmount = (row.targetPercent / 100) * total;
+        if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
+            return 0;
+        }
+        return Math.abs(targetAmount - row.currentValueLcy) / targetAmount;
+    }
+
+    function buildFsmManagerSummary({
+        activePortfolioCount,
+        unassignedCount,
+        isExpanded,
+        onToggle
+    }) {
+        const managerSummary = createElement('div', 'gpv-fsm-toolbar');
+        const summaryBadge = createElement(
+            'span',
+            'gpv-summary-card',
+            `Portfolios: ${activePortfolioCount} · Unassigned: ${unassignedCount}`
+        );
+        managerSummary.appendChild(summaryBadge);
+        const managerToggleBtn = createElement(
+            'button',
+            'gpv-sync-btn gpv-sync-btn-secondary',
+            isExpanded ? 'Hide portfolio manager' : 'Manage portfolios'
+        );
+        managerToggleBtn.type = 'button';
+        managerToggleBtn.setAttribute('aria-expanded', String(isExpanded));
+        managerToggleBtn.onclick = () => {
+            if (typeof onToggle === 'function') {
+                onToggle();
+            }
+        };
+        managerSummary.appendChild(managerToggleBtn);
+        return managerSummary;
+    }
+
+    function buildFsmManagerPanel({
+        activePortfolios,
+        editingPortfolioId,
+        onCreate,
+        onStartRename,
+        onSaveRename,
+        onCancelRename,
+        onArchive
+    }) {
+        const manager = createElement('div', 'gpv-fsm-manager');
+        manager.innerHTML = `
+            <div class="gpv-fsm-manager-row">
+                <label for="gpv-fsm-create-portfolio">New portfolio</label>
+                <input id="gpv-fsm-create-portfolio" class="gpv-target-input" maxlength="${FSM_MAX_PORTFOLIO_NAME_LENGTH}" placeholder="Portfolio name" />
+                <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-fsm-create-portfolio-btn">Create</button>
+            </div>
+        `;
+        const list = createElement('div', 'gpv-fsm-portfolio-list');
+        activePortfolios.forEach(item => {
+            const row = createElement('div', 'gpv-fsm-portfolio-list-row');
+
+            if (editingPortfolioId === item.id) {
+                const renameInput = createElement('input', 'gpv-target-input');
+                renameInput.maxLength = FSM_MAX_PORTFOLIO_NAME_LENGTH;
+                renameInput.value = item.name;
+                renameInput.setAttribute('aria-label', `Rename portfolio ${item.name}`);
+                row.appendChild(renameInput);
+                const saveRenameBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', 'Save');
+                saveRenameBtn.onclick = () => {
+                    const nextName = normalizePortfolioName(renameInput.value);
+                    if (!nextName) {
+                        return;
+                    }
+                    if (typeof onSaveRename === 'function') {
+                        onSaveRename(item.id, nextName);
+                    }
+                };
+                row.appendChild(saveRenameBtn);
+                const cancelRenameBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Cancel');
+                cancelRenameBtn.onclick = () => {
+                    if (typeof onCancelRename === 'function') {
+                        onCancelRename();
+                    }
+                };
+                row.appendChild(cancelRenameBtn);
+            } else {
+                row.innerHTML = `<span>${escapeHtml(item.name)}</span>`;
+                const actions = createElement('div', 'gpv-fsm-portfolio-actions');
+                const actionSelect = createElement('select', 'gpv-select');
+                actionSelect.setAttribute('aria-label', `Actions for portfolio ${item.name}`);
+                actionSelect.innerHTML = `
+                    <option value="">Actions</option>
+                    <option value="rename">Rename</option>
+                    <option value="archive">Archive</option>
+                `;
+                actionSelect.onchange = () => {
+                    const action = actionSelect.value;
+                    actionSelect.value = '';
+                    if (action === 'rename') {
+                        if (typeof onStartRename === 'function') {
+                            onStartRename(item.id);
+                        }
+                        return;
+                    }
+                    if (action === 'archive') {
+                        if (typeof onArchive === 'function') {
+                            onArchive(item.id);
+                        }
+                    }
+                };
+                actions.appendChild(actionSelect);
+                row.appendChild(actions);
+            }
+            list.appendChild(row);
+        });
+        manager.appendChild(list);
+
+        const createBtn = manager.querySelector('#gpv-fsm-create-portfolio-btn');
+        const createInput = manager.querySelector('#gpv-fsm-create-portfolio');
+        if (createBtn && createInput) {
+            createBtn.onclick = () => {
+                const name = normalizePortfolioName(createInput.value);
+                if (!name) {
+                    return;
+                }
+                if (typeof onCreate === 'function') {
+                    onCreate(name);
+                }
+                createInput.value = '';
+            };
+        }
+
+        return manager;
+    }
+
+    function buildFsmSummaryRow(summary) {
+        const summaryRow = createElement('div', 'gpv-summary-row');
+        summaryRow.innerHTML = `
+            <div class="gpv-summary-card"><strong>Total Value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
+            <div class="gpv-summary-card"><strong>Actual:</strong> ${escapeHtml(summary.actualWeightDisplay)}</div>
+            <div class="gpv-summary-card"><strong>Target:</strong> ${escapeHtml(summary.targetWeightDisplay)}</div>
+            <div class="gpv-summary-card"><strong>Drift:</strong> ${escapeHtml(summary.driftDisplay)}</div>
+            <div class="gpv-summary-card"><strong>Suggestion:</strong> ${escapeHtml(summary.suggestionDisplay)}</div>
+        `;
+        return summaryRow;
+    }
+
+    function buildFsmToolbar({
+        scopeOptions,
+        selectedScope,
+        filterTerm,
+        onScopeChange,
+        onFilterChange
+    }) {
+        const toolbar = createElement('div', 'gpv-fsm-toolbar');
+        const scopeSelect = createElement('select', 'gpv-select');
+        scopeSelect.innerHTML = scopeOptions.map(option => `
+            <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
+        `).join('');
+        scopeSelect.value = selectedScope;
+        scopeSelect.onchange = () => {
+            if (typeof onScopeChange === 'function') {
+                onScopeChange(scopeSelect.value);
+            }
+        };
+        toolbar.appendChild(scopeSelect);
+
+        const searchInput = createElement('input', 'gpv-target-input');
+        searchInput.placeholder = 'Filter holdings';
+        searchInput.value = filterTerm;
+        searchInput.oninput = () => {
+            if (typeof onFilterChange === 'function') {
+                onFilterChange(searchInput.value);
+            }
+        };
+        toolbar.appendChild(searchInput);
+        return toolbar;
+    }
+
+    function buildFsmBulkRow({
+        selectAllFiltered,
+        activePortfolios,
+        bulkPortfolioId,
+        filteredCount,
+        onSelectAllChange,
+        onBulkPortfolioChange,
+        onApplyBulk
+    }) {
+        const bulkRow = createElement('div', 'gpv-fsm-toolbar');
+        const selectAllLabel = createElement('label', null, 'Select all');
+        const selectAll = createElement('input');
+        selectAll.type = 'checkbox';
+        selectAll.checked = selectAllFiltered;
+        selectAll.setAttribute('aria-label', 'Select all filtered holdings');
+        selectAll.onchange = () => {
+            if (typeof onSelectAllChange === 'function') {
+                onSelectAllChange(selectAll.checked);
+            }
+        };
+        selectAllLabel.prepend(selectAll);
+        bulkRow.appendChild(selectAllLabel);
+
+        const bulkSelect = createElement('select', 'gpv-select');
+        bulkSelect.innerHTML = [
+            { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: 'Unassigned' },
+            ...activePortfolios.map(item => ({ id: item.id, label: item.name }))
+        ].map(option => `
+            <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
+        `).join('');
+        bulkSelect.value = bulkPortfolioId;
+        bulkSelect.onchange = () => {
+            if (typeof onBulkPortfolioChange === 'function') {
+                onBulkPortfolioChange(bulkSelect.value);
+            }
+        };
+        bulkRow.appendChild(bulkSelect);
+
+        const applyBulkBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', `Apply to ${filteredCount} filtered holdings`);
+        applyBulkBtn.onclick = () => {
+            if (typeof onApplyBulk === 'function') {
+                onApplyBulk();
+            }
+        };
+        bulkRow.appendChild(applyBulkBtn);
+        return bulkRow;
+    }
+
+    function buildFsmHoldingsTable({
+        filteredRows,
+        selectedCodes,
+        selectAllFiltered,
+        activePortfolios,
+        targetErrorsByCode,
+        onSelectAllChange,
+        onRowSelectChange,
+        onTargetChange,
+        onFixedChange,
+        onPortfolioChange
+    }) {
+        const table = createElement('table', 'gpv-table');
+        table.innerHTML = `
+            <thead>
+                <tr>
+                    <th><input type="checkbox" aria-label="Select all holdings" ${selectAllFiltered ? 'checked' : ''} /></th>
+                    <th>Ticker</th>
+                    <th>Name</th>
+                    <th>Product Type</th>
+                    <th>Value (SGD)</th>
+                    <th>Target %</th>
+                    <th>Fixed</th>
+                    <th>Portfolio</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        `;
+
+        const headerCheckbox = table.querySelector('thead input[type="checkbox"]');
+        if (headerCheckbox) {
+            headerCheckbox.addEventListener('change', () => {
+                if (typeof onSelectAllChange === 'function') {
+                    onSelectAllChange(headerCheckbox.checked);
+                }
+            });
+        }
+
+        const tbody = table.querySelector('tbody');
+        filteredRows.forEach(row => {
+            const tr = document.createElement('tr');
+            const checked = selectedCodes.has(row.code);
+            tr.innerHTML = `
+                <td><input type="checkbox" ${checked ? 'checked' : ''} aria-label="Select holding ${escapeHtml(row.displayTicker || row.code)}" /></td>
+                <td>${escapeHtml(row.displayTicker || '-')}</td>
+                <td>${escapeHtml(row.name)}</td>
+                <td>${escapeHtml(row.productType)}</td>
+                <td>${escapeHtml(formatMoney(row.currentValueLcy))}</td>
+                <td></td>
+                <td></td>
+                <td></td>
+            `;
+            const checkbox = tr.querySelector('input[type="checkbox"]');
+            checkbox.addEventListener('change', () => {
+                if (typeof onRowSelectChange === 'function') {
+                    onRowSelectChange(row.code, checkbox.checked);
+                }
+            });
+
+            const targetCell = tr.children[5];
+            const targetInput = createElement('input', 'gpv-target-input');
+            targetInput.type = 'number';
+            targetInput.min = '0';
+            targetInput.max = '100';
+            targetInput.step = '0.01';
+            targetInput.placeholder = '0.00';
+            targetInput.setAttribute('aria-label', `Target percentage for ${row.displayTicker || row.code}`);
+            targetInput.value = Number.isFinite(row.targetPercent) ? Number(row.targetPercent).toFixed(2) : '';
+            targetInput.disabled = row.fixed === true;
+            targetInput.onchange = () => {
+                if (typeof onTargetChange === 'function') {
+                    onTargetChange(row, targetInput.value.trim());
+                }
+            };
+            targetCell.appendChild(targetInput);
+            if (targetErrorsByCode[row.code]) {
+                const err = createElement('div', 'gpv-conflict-diff-empty', targetErrorsByCode[row.code]);
+                targetCell.appendChild(err);
+            }
+
+            const fixedCell = tr.children[6];
+            const fixedCheckbox = createElement('input');
+            fixedCheckbox.type = 'checkbox';
+            fixedCheckbox.checked = row.fixed === true;
+            fixedCheckbox.setAttribute('aria-label', `Fixed allocation for ${row.displayTicker || row.code}`);
+            fixedCheckbox.onchange = () => {
+                if (typeof onFixedChange === 'function') {
+                    onFixedChange(row.code, fixedCheckbox.checked === true);
+                }
+            };
+            fixedCell.appendChild(fixedCheckbox);
+
+            const selectCell = tr.children[7];
+            const select = createElement('select', 'gpv-select');
+            select.innerHTML = [
+                { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: 'Unassigned' },
+                ...activePortfolios.map(item => ({ id: item.id, label: item.name }))
+            ].map(option => `
+                <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
+            `).join('');
+            select.value = row.portfolioId;
+            select.onchange = () => {
+                if (typeof onPortfolioChange === 'function') {
+                    onPortfolioChange(row.code, select.value);
+                }
+            };
+            selectCell.appendChild(select);
+            tbody.appendChild(tr);
+        });
+        return table;
+    }
+
+    function renderFsmOverlay(fsmHoldings) {
+        const overlay = createElement('div', 'gpv-overlay');
+        overlay.id = 'gpv-overlay';
+
+        const container = createElement('div', 'gpv-container gpv-container--expanded');
+        const cleanupCallbacks = [];
+        container.gpvCleanupCallbacks = cleanupCallbacks;
+        overlay.gpvCleanupCallbacks = cleanupCallbacks;
+
+        const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({ overlay, cleanupCallbacks });
         container.appendChild(header);
 
         const contentDiv = createElement('div', 'gpv-content');
@@ -9119,245 +9760,128 @@ syncUi.update = function updateSyncUI() {
 
             contentDiv.innerHTML = '';
 
-            const managerSummary = createElement('div', 'gpv-fsm-toolbar');
-            const summaryBadge = createElement('span', 'gpv-summary-card', `Portfolios: ${activePortfolioIds.length} · Unassigned: ${unassignedCount}`);
-            managerSummary.appendChild(summaryBadge);
-            const managerToggleBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', isPortfolioManagerExpanded ? 'Hide portfolio manager' : 'Manage portfolios');
-            managerToggleBtn.type = 'button';
-            managerToggleBtn.setAttribute('aria-expanded', String(isPortfolioManagerExpanded));
-            managerToggleBtn.onclick = () => {
-                isPortfolioManagerExpanded = !isPortfolioManagerExpanded;
-                rerender();
-            };
-            managerSummary.appendChild(managerToggleBtn);
+            const managerSummary = buildFsmManagerSummary({
+                activePortfolioCount: activePortfolioIds.length,
+                unassignedCount,
+                isExpanded: isPortfolioManagerExpanded,
+                onToggle: () => {
+                    isPortfolioManagerExpanded = !isPortfolioManagerExpanded;
+                    rerender();
+                }
+            });
             contentDiv.appendChild(managerSummary);
 
             if (isPortfolioManagerExpanded) {
-                const manager = createElement('div', 'gpv-fsm-manager');
-                manager.innerHTML = `
-                    <div class="gpv-fsm-manager-row">
-                        <label for="gpv-fsm-create-portfolio">New portfolio</label>
-                        <input id="gpv-fsm-create-portfolio" class="gpv-target-input" maxlength="${FSM_MAX_PORTFOLIO_NAME_LENGTH}" placeholder="Portfolio name" />
-                        <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-fsm-create-portfolio-btn">Create</button>
-                    </div>
-                `;
-                const list = createElement('div', 'gpv-fsm-portfolio-list');
-                activePortfolios().forEach(item => {
-                    const row = createElement('div', 'gpv-fsm-portfolio-list-row');
-
-                    if (editingPortfolioId === item.id) {
-                        const renameInput = createElement('input', 'gpv-target-input');
-                        renameInput.maxLength = FSM_MAX_PORTFOLIO_NAME_LENGTH;
-                        renameInput.value = item.name;
-                        renameInput.setAttribute('aria-label', `Rename portfolio ${item.name}`);
-                        row.appendChild(renameInput);
-                        const saveRenameBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', 'Save');
-                        saveRenameBtn.onclick = () => {
-                            const nextName = normalizePortfolioName(renameInput.value);
-                            if (!nextName) {
-                                return;
+                const manager = buildFsmManagerPanel({
+                    activePortfolios: activePortfolios(),
+                    editingPortfolioId,
+                    onCreate: name => {
+                        const id = buildPortfolioId(name, portfolios.map(item => item.id));
+                        portfolios = [...portfolios, { id, name, archived: false }];
+                        bulkPortfolioId = id;
+                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
+                        rerender();
+                    },
+                    onStartRename: id => {
+                        editingPortfolioId = id;
+                        rerender();
+                    },
+                    onSaveRename: (id, nextName) => {
+                        portfolios = portfolios.map(portfolio => portfolio.id === id
+                            ? { ...portfolio, name: nextName }
+                            : portfolio);
+                        editingPortfolioId = null;
+                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
+                        rerender();
+                    },
+                    onCancelRename: () => {
+                        editingPortfolioId = null;
+                        rerender();
+                    },
+                    onArchive: id => {
+                        portfolios = portfolios.map(portfolio => portfolio.id === id
+                            ? { ...portfolio, archived: true }
+                            : portfolio);
+                        Object.keys(assignmentByCode).forEach(code => {
+                            if (assignmentByCode[code] === id) {
+                                assignmentByCode[code] = FSM_UNASSIGNED_PORTFOLIO_ID;
                             }
-                            portfolios = portfolios.map(portfolio => portfolio.id === item.id ? { ...portfolio, name: nextName } : portfolio);
-                            editingPortfolioId = null;
-                            saveFsmPortfolioConfig(portfolios, assignmentByCode);
-                            rerender();
-                        };
-                        row.appendChild(saveRenameBtn);
-                        const cancelRenameBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Cancel');
-                        cancelRenameBtn.onclick = () => {
-                            editingPortfolioId = null;
-                            rerender();
-                        };
-                        row.appendChild(cancelRenameBtn);
-                    } else {
-                        row.innerHTML = `<span>${escapeHtml(item.name)}</span>`;
-                        const actions = createElement('div', 'gpv-fsm-portfolio-actions');
-                        const actionSelect = createElement('select', 'gpv-select');
-                        actionSelect.setAttribute('aria-label', `Actions for portfolio ${item.name}`);
-                        actionSelect.innerHTML = `
-                            <option value="">Actions</option>
-                            <option value="rename">Rename</option>
-                            <option value="archive">Archive</option>
-                        `;
-                        actionSelect.onchange = () => {
-                            const action = actionSelect.value;
-                            actionSelect.value = '';
-                            if (action === 'rename') {
-                                editingPortfolioId = item.id;
-                                rerender();
-                                return;
-                            }
-                            if (action === 'archive') {
-                                portfolios = portfolios.map(portfolio => portfolio.id === item.id ? { ...portfolio, archived: true } : portfolio);
-                                Object.keys(assignmentByCode).forEach(code => {
-                                    if (assignmentByCode[code] === item.id) {
-                                        assignmentByCode[code] = FSM_UNASSIGNED_PORTFOLIO_ID;
-                                    }
-                                });
-                                saveFsmPortfolioConfig(portfolios, assignmentByCode);
-                                if (selectedScope === item.id) {
-                                    selectedScope = FSM_UNASSIGNED_PORTFOLIO_ID;
-                                }
-                                rerender();
-                            }
-                        };
-                        actions.appendChild(actionSelect);
-                        row.appendChild(actions);
+                        });
+                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
+                        if (selectedScope === id) {
+                            selectedScope = FSM_UNASSIGNED_PORTFOLIO_ID;
+                        }
+                        rerender();
                     }
-                    list.appendChild(row);
                 });
-                manager.appendChild(list);
                 contentDiv.appendChild(manager);
-
-                const createBtn = manager.querySelector('#gpv-fsm-create-portfolio-btn');
-                const createInput = manager.querySelector('#gpv-fsm-create-portfolio');
-                createBtn.onclick = () => {
-                    const name = normalizePortfolioName(createInput.value);
-                    if (!name) {
-                        return;
-                    }
-                    const id = buildPortfolioId(name, portfolios.map(item => item.id));
-                    portfolios = [...portfolios, { id, name, archived: false }];
-                    createInput.value = '';
-                    bulkPortfolioId = id;
-                    saveFsmPortfolioConfig(portfolios, assignmentByCode);
-                    rerender();
-                };
             }
 
-            const summaryRow = createElement('div', 'gpv-summary-row');
-            summaryRow.innerHTML = `
-                <div class="gpv-summary-card"><strong>Total Value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
-                <div class="gpv-summary-card"><strong>Actual:</strong> ${escapeHtml(summary.actualWeightDisplay)}</div>
-                <div class="gpv-summary-card"><strong>Target:</strong> ${escapeHtml(summary.targetWeightDisplay)}</div>
-                <div class="gpv-summary-card"><strong>Drift:</strong> ${escapeHtml(summary.driftDisplay)}</div>
-                <div class="gpv-summary-card"><strong>Suggestion:</strong> ${escapeHtml(summary.suggestionDisplay)}</div>
-            `;
-            contentDiv.appendChild(summaryRow);
+            contentDiv.appendChild(buildFsmSummaryRow(summary));
 
-            const toolbar = createElement('div', 'gpv-fsm-toolbar');
-            const scopeSelect = createElement('select', 'gpv-select');
             const scopeOptions = [
                 { id: FSM_ALL_PORTFOLIO_ID, label: 'All' },
                 ...activePortfolios().map(item => ({ id: item.id, label: item.name })),
                 { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: `Unassigned (${unassignedCount})` }
             ];
-            scopeSelect.innerHTML = scopeOptions.map(option => `<option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>`).join('');
             if (!scopeOptions.find(option => option.id === selectedScope)) {
                 selectedScope = FSM_ALL_PORTFOLIO_ID;
             }
-            scopeSelect.value = selectedScope;
-            scopeSelect.onchange = () => {
-                selectedScope = scopeSelect.value;
-                rerender();
-            };
-            toolbar.appendChild(scopeSelect);
+            contentDiv.appendChild(buildFsmToolbar({
+                scopeOptions,
+                selectedScope,
+                filterTerm,
+                onScopeChange: value => {
+                    selectedScope = value;
+                    rerender();
+                },
+                onFilterChange: value => {
+                    filterTerm = value;
+                    rerender();
+                }
+            }));
 
-            const searchInput = createElement('input', 'gpv-target-input');
-            searchInput.placeholder = 'Filter holdings';
-            searchInput.value = filterTerm;
-            searchInput.oninput = () => {
-                filterTerm = searchInput.value;
-                rerender();
-            };
-            toolbar.appendChild(searchInput);
-            contentDiv.appendChild(toolbar);
+            contentDiv.appendChild(buildFsmBulkRow({
+                selectAllFiltered,
+                activePortfolios: activePortfolios(),
+                bulkPortfolioId,
+                filteredCount: filteredRows.length,
+                onSelectAllChange: value => {
+                    selectAllFiltered = value;
+                    rerender();
+                },
+                onBulkPortfolioChange: value => {
+                    bulkPortfolioId = value;
+                },
+                onApplyBulk: () => {
+                    const targetCodes = Array.from(selectedCodes);
+                    targetCodes.forEach(code => {
+                        assignmentByCode[code] = bulkPortfolioId;
+                    });
+                    saveFsmPortfolioConfig(portfolios, assignmentByCode);
+                    rerender();
+                }
+            }));
 
-            const bulkRow = createElement('div', 'gpv-fsm-toolbar');
-            const selectAllLabel = createElement('label', null, 'Select all');
-            const selectAll = createElement('input');
-            selectAll.type = 'checkbox';
-            selectAll.checked = selectAllFiltered;
-            selectAll.setAttribute('aria-label', 'Select all filtered holdings');
-            selectAll.onchange = () => {
-                selectAllFiltered = selectAll.checked;
-                rerender();
-            };
-            selectAllLabel.prepend(selectAll);
-            bulkRow.appendChild(selectAllLabel);
-
-            const bulkSelect = createElement('select', 'gpv-select');
-            bulkSelect.innerHTML = [
-                { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: 'Unassigned' },
-                ...activePortfolios().map(item => ({ id: item.id, label: item.name }))
-            ].map(option => `<option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>`).join('');
-            bulkSelect.value = bulkPortfolioId;
-            bulkSelect.onchange = () => {
-                bulkPortfolioId = bulkSelect.value;
-            };
-            bulkRow.appendChild(bulkSelect);
-
-            const applyBulkBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', `Apply to ${filteredRows.length} filtered holdings`);
-            applyBulkBtn.onclick = () => {
-                const targetCodes = Array.from(selectedCodes);
-                targetCodes.forEach(code => {
-                    assignmentByCode[code] = bulkPortfolioId;
-                });
-                saveFsmPortfolioConfig(portfolios, assignmentByCode);
-                rerender();
-            };
-            bulkRow.appendChild(applyBulkBtn);
-            contentDiv.appendChild(bulkRow);
-
-            const table = createElement('table', 'gpv-table');
-            table.innerHTML = `
-                <thead>
-                    <tr>
-                        <th><input type="checkbox" aria-label="Select all holdings" ${selectAllFiltered ? 'checked' : ''} /></th>
-                        <th>Ticker</th>
-                        <th>Name</th>
-                        <th>Product Type</th>
-                        <th>Value (SGD)</th>
-                        <th>Target %</th>
-                        <th>Fixed</th>
-                        <th>Portfolio</th>
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            `;
-
-            const headerCheckbox = table.querySelector('thead input[type="checkbox"]');
-            headerCheckbox.addEventListener('change', () => {
-                selectAllFiltered = headerCheckbox.checked;
-                rerender();
-            });
-
-            const tbody = table.querySelector('tbody');
-            filteredRows.forEach(row => {
-                const tr = document.createElement('tr');
-                const checked = selectedCodes.has(row.code);
-                tr.innerHTML = `
-                    <td><input type="checkbox" ${checked ? 'checked' : ''} aria-label="Select holding ${escapeHtml(row.displayTicker || row.code)}" /></td>
-                    <td>${escapeHtml(row.displayTicker || '-')}</td>
-                    <td>${escapeHtml(row.name)}</td>
-                    <td>${escapeHtml(row.productType)}</td>
-                    <td>${escapeHtml(formatMoney(row.currentValueLcy))}</td>
-                    <td></td>
-                    <td></td>
-                    <td></td>
-                `;
-                const checkbox = tr.querySelector('input[type="checkbox"]');
-                checkbox.addEventListener('change', () => {
-                    if (checkbox.checked) {
-                        selectedCodes.add(row.code);
-                    } else {
-                        selectedCodes.delete(row.code);
-                        selectAllFiltered = false;
+            const table = buildFsmHoldingsTable({
+                filteredRows,
+                selectedCodes,
+                selectAllFiltered,
+                activePortfolios: activePortfolios(),
+                targetErrorsByCode,
+                onSelectAllChange: value => {
+                    selectAllFiltered = value;
+                    rerender();
+                },
+                onRowSelectChange: (code, checked) => {
+                    if (checked) {
+                        selectedCodes.add(code);
+                        return;
                     }
-                });
-
-                const targetCell = tr.children[5];
-                const targetInput = createElement('input', 'gpv-target-input');
-                targetInput.type = 'number';
-                targetInput.min = '0';
-                targetInput.max = '100';
-                targetInput.step = '0.01';
-                targetInput.placeholder = '0.00';
-                targetInput.setAttribute('aria-label', `Target percentage for ${row.displayTicker || row.code}`);
-                targetInput.value = Number.isFinite(row.targetPercent) ? Number(row.targetPercent).toFixed(2) : '';
-                targetInput.disabled = row.fixed === true;
-                targetInput.onchange = () => {
-                    const rawValue = targetInput.value.trim();
+                    selectedCodes.delete(code);
+                    selectAllFiltered = false;
+                },
+                onTargetChange: (row, rawValue) => {
                     if (!rawValue) {
                         delete targetErrorsByCode[row.code];
                         Storage.remove(storageKeys.fsmTarget(row.code));
@@ -9373,43 +9897,20 @@ syncUi.update = function updateSyncUI() {
                     delete targetErrorsByCode[row.code];
                     Storage.set(storageKeys.fsmTarget(row.code), Number(parsed.toFixed(2)));
                     rerender();
-                };
-                targetCell.appendChild(targetInput);
-                if (targetErrorsByCode[row.code]) {
-                    const err = createElement('div', 'gpv-conflict-diff-empty', targetErrorsByCode[row.code]);
-                    targetCell.appendChild(err);
-                }
-
-                const fixedCell = tr.children[6];
-                const fixedCheckbox = createElement('input');
-                fixedCheckbox.type = 'checkbox';
-                fixedCheckbox.checked = row.fixed === true;
-                fixedCheckbox.setAttribute('aria-label', `Fixed allocation for ${row.displayTicker || row.code}`);
-                fixedCheckbox.onchange = () => {
-                    const isFixed = fixedCheckbox.checked === true;
-                    Storage.set(storageKeys.fsmFixed(row.code), isFixed);
+                },
+                onFixedChange: (code, isFixed) => {
+                    Storage.set(storageKeys.fsmFixed(code), isFixed);
                     if (isFixed) {
-                        Storage.remove(storageKeys.fsmTarget(row.code));
-                        delete targetErrorsByCode[row.code];
+                        Storage.remove(storageKeys.fsmTarget(code));
+                        delete targetErrorsByCode[code];
                     }
                     rerender();
-                };
-                fixedCell.appendChild(fixedCheckbox);
-
-                const selectCell = tr.children[7];
-                const select = createElement('select', 'gpv-select');
-                select.innerHTML = [
-                    { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: 'Unassigned' },
-                    ...activePortfolios().map(item => ({ id: item.id, label: item.name }))
-                ].map(option => `<option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>`).join('');
-                select.value = row.portfolioId;
-                select.onchange = () => {
-                    assignmentByCode[row.code] = select.value;
+                },
+                onPortfolioChange: (code, value) => {
+                    assignmentByCode[code] = value;
                     saveFsmPortfolioConfig(portfolios, assignmentByCode);
                     rerender();
-                };
-                selectCell.appendChild(select);
-                tbody.appendChild(tr);
+                }
             });
             contentDiv.appendChild(table);
         };
@@ -9844,7 +10345,23 @@ syncUi.update = function updateSyncUI() {
         const restorePushState = wrapHistoryMethod('pushState', handleUrlChange);
         const restoreReplaceState = wrapHistoryMethod('replaceState', handleUrlChange);
 
-        const intervalId = window.setInterval(handleUrlChange, 500);
+        let intervalId = null;
+        let stableChecks = 0;
+        const maxStableChecks = 10;
+        const pollingIntervalMs = 1000;
+        intervalId = window.setInterval(() => {
+            const beforeUrl = state.ui.lastUrl;
+            handleUrlChange();
+            if (state.ui.lastUrl === beforeUrl) {
+                stableChecks += 1;
+            } else {
+                stableChecks = 0;
+            }
+            if (stableChecks >= maxStableChecks && intervalId) {
+                window.clearInterval(intervalId);
+                intervalId = null;
+            }
+        }, pollingIntervalMs);
         if (intervalId && typeof intervalId.unref === 'function') {
             intervalId.unref();
         }
@@ -9865,7 +10382,10 @@ syncUi.update = function updateSyncUI() {
             window.removeEventListener('popstate', handleUrlChange);
             restorePushState();
             restoreReplaceState();
-            window.clearInterval(intervalId);
+            if (intervalId) {
+                window.clearInterval(intervalId);
+                intervalId = null;
+            }
             if (state.ui.observer) {
                 state.ui.observer.disconnect();
                 state.ui.observer = null;
@@ -10006,6 +10526,7 @@ syncUi.update = function updateSyncUI() {
             GoalTargetStore,
             createSyncSettingsHTML: syncUiExports?.createSyncSettingsHTML,
             setupSyncSettingsListeners: syncUiExports?.setupSyncSettingsListeners,
+            createConflictDialogHTML: syncUiExports?.createConflictDialogHTML,
             buildConflictDiffItems: buildConflictDiffItemsForMap,
             buildConflictDiffSections,
             buildFsmConflictDiffItems,

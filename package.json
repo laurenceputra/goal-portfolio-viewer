@@ -1,9 +1,16 @@
 {
   "name": "goal-portfolio-viewer",
-  "version": "2.12.1",
+  "version": "2.13.2",
   "description": "Goal Portfolio Viewer workspace",
   "private": true,
   "packageManager": "pnpm@9.12.3",
+  "pnpm": {
+    "overrides": {
+      "ajv": "^6.14.0",
+      "minimatch": "^10.2.2",
+      "test-exclude": "^7.0.1"
+    }
+  },
   "scripts": {
     "lint": "pnpm --filter ./tampermonkey lint",
     "test": "pnpm --filter ./tampermonkey test",

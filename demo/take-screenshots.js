@@ -200,6 +200,77 @@ async function takeScreenshots() {
         });
         console.log('   ✓ Saved: retirement-goals.png');
         
+        // Sync settings screens
+        console.log('📸 Capturing Sync Settings (unconfigured)...');
+        await page.click('.gpv-header-buttons .gpv-sync-btn');
+        await page.waitForSelector('.gpv-sync-settings', { timeout: 5000 });
+        await page.screenshot({
+            path: path.join(outputDir, 'sync-settings-unconfigured.png'),
+            fullPage: false
+        });
+        console.log('   ✓ Saved: sync-settings-unconfigured.png');
+
+        console.log('📸 Capturing Sync Settings (configured)...');
+        await page.evaluate(() => {
+            const status = document.querySelector('.gpv-sync-status-bar');
+            if (status) {
+                status.insertAdjacentHTML(
+                    'beforeend',
+                    '<div class="gpv-sync-status-item"><span class="gpv-sync-label">Auth:</span><span class="gpv-sync-value">Connected (refresh active)</span></div>'
+                );
+            }
+            const actions = document.querySelector('.gpv-sync-actions');
+            if (actions && !actions.querySelector('#gpv-sync-now-btn')) {
+                actions.insertAdjacentHTML(
+                    'beforeend',
+                    '<button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-now-btn">Sync Now</button>'
+                );
+            }
+        });
+        await page.screenshot({
+            path: path.join(outputDir, 'sync-settings-configured.png'),
+            fullPage: false
+        });
+        console.log('   ✓ Saved: sync-settings-configured.png');
+
+        console.log('📸 Capturing Sync Conflict dialog...');
+        await page.evaluate(() => {
+            const overlay = document.getElementById('gpv-overlay');
+            if (overlay) {
+                overlay.remove();
+            }
+        });
+        const conflict = {
+            local: { goalTargets: { goal_1: 10 }, goalFixed: {} },
+            remote: { goalTargets: { goal_1: 20 }, goalFixed: {} },
+            localHash: 'local-hash',
+            remoteHash: 'remote-hash',
+            localTimestamp: Date.now() - 5000,
+            remoteTimestamp: Date.now()
+        };
+        await page.evaluate(conflictPayload => {
+            const conflictHtml = window.__gpvSyncUi?.createConflictDialogHTML
+                ? window.__gpvSyncUi.createConflictDialogHTML(conflictPayload)
+                : null;
+            if (!conflictHtml) {
+                throw new Error('Conflict dialog renderer not available for screenshots.');
+            }
+            const overlay = document.createElement('div');
+            overlay.id = 'gpv-overlay';
+            overlay.className = 'gpv-overlay gpv-conflict-overlay';
+            const container = document.createElement('div');
+            container.className = 'gpv-container gpv-conflict-modal';
+            container.innerHTML = conflictHtml;
+            overlay.appendChild(container);
+            document.body.appendChild(overlay);
+        }, conflict);
+        await page.waitForSelector('.gpv-conflict-dialog', { timeout: 5000 });
+        await page.screenshot({
+            path: path.join(outputDir, 'sync-conflict-dialog.png'),
+            fullPage: false
+        });
+        console.log('   ✓ Saved: sync-conflict-dialog.png');
+
         console.log('\n✅ All screenshots captured successfully!');
         console.log(`\n📁 Screenshots saved to: ${outputDir}\n`);
         

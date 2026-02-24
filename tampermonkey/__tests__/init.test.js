@@ -51,12 +51,7 @@ describe('initialization and URL monitoring', () => {
         jest.useRealTimers();
         teardownDom();
         delete global.alert;
-        delete global.GM_setValue;
-        delete global.GM_getValue;
-        delete global.GM_deleteValue;
-        delete global.GM_cookie;
         delete global.history;
-        delete global.XMLHttpRequest;
     });
 
     test('auto-init stays disabled when flag is set', () => {

@@ -300,9 +300,9 @@ Contributions are welcome! To contribute:
 
 ## Changelog
 
-### Version 2.12.1
-- Auto-expand performance panels when switching to Performance mode
-- Refresh per-goal TWR window rows after performance data loads without reopening the overlay
+### Version 2.13.2
+- Hardened sync error handling and performance request timeouts
+- Refactored bucket and FSM overlays for easier maintenance
 
 ### Version 2.11.1
 - Reduced false multi-device sync conflicts by reconciling identical payloads via content hash and aligning persisted sync timestamps with authoritative source timestamps
