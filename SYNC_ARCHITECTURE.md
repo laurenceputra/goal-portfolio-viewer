@@ -228,7 +228,8 @@ Request Body:
   "deviceId": "uuid-v4",
   "encryptedData": "base64-encoded-encrypted-blob",
   "timestamp": 1234567890000,
-  "version": 1
+  "version": 1,
+  "force": false
 }
 
 Response (200 OK):
@@ -237,6 +238,8 @@ Response (200 OK):
   "timestamp": 1234567890000,
   "conflictDetected": false
 }
+
+When `force` is `true`, the server accepts the upload even if the incoming timestamp is older and stores a fresh server timestamp.
 
 Response (409 Conflict):
 {
@@ -321,7 +324,7 @@ GET /health
 Response (200 OK):
 {
   "status": "ok",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "timestamp": 1234567890000
 }
 ```

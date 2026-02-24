@@ -20,12 +20,13 @@ export async function handleSync(body, env) {
 	}
 
 	const { userId, deviceId, encryptedData, timestamp, version } = body;
+	const force = body.force === true;
 
 	// Check for existing data (conflict detection)
 	const existing = await getFromKV(env, userId);
 	if (existing) {
 		// Check if server has newer data
-		if (existing.timestamp > timestamp) {
+		if (existing.timestamp > timestamp && !force) {
 			// Server data is newer - conflict!
 			return jsonResponse({
 				success: false,
@@ -36,11 +37,13 @@ export async function handleSync(body, env) {
 		}
 	}
 
+	const storedTimestamp = force ? Date.now() : timestamp;
+
 	// Store new data
 	const data = {
 		encryptedData,
 		deviceId,
-		timestamp,
+		timestamp: storedTimestamp,
 		version
 	};
 
@@ -48,7 +51,7 @@ export async function handleSync(body, env) {
 
 	return jsonResponse({
 		success: true,
-		timestamp: timestamp
+		timestamp: storedTimestamp
 	}, 200, {}, env);
 }
 
@@ -113,6 +116,10 @@ function validateSyncRequest(body) {
 
 	if (!body.version || typeof body.version !== 'number' || body.version < 1) {
 		return { valid: false, error: 'version must be a number >= 1' };
+	}
+
+	if (body.force !== undefined && typeof body.force !== 'boolean') {
+		return { valid: false, error: 'force must be a boolean when provided' };
 	}
 
 	// Validate timestamp is not too far in the future (prevent clock skew attacks)

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.13.2
+// @version      2.14.0
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -2915,7 +2915,7 @@ function buildBucketDetailGoalRow(goal) {
     /**
      * Upload config to server
      */
-    async function uploadConfig(config) {
+    async function uploadConfig(config, options = {}) {
         const serverUrl = getStoredServerUrl(SYNC_DEFAULTS.serverUrl);
         const userId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
 
@@ -2939,6 +2939,9 @@ function buildBucketDetailGoalRow(goal) {
             version: config.version,
             userId
         };
+        if (options.force === true) {
+            payload.force = true;
+        }
 
         // Upload to server (POST /sync)
         const response = await requestJson(`${serverUrl}/sync`, {
@@ -3214,9 +3217,32 @@ function buildBucketDetailGoalRow(goal) {
 
             if (resolution === 'local') {
                 // Upload local, overwrite server
-                await uploadConfig(conflict.local);
-                Storage.set(SYNC_STORAGE_KEYS.lastSync, conflict.localTimestamp);
-                const hash = await hashConfigData(conflict.local);
+                const forcedTimestamp = Date.now();
+                const forcedConfig = {
+                    ...conflict.local,
+                    timestamp: forcedTimestamp,
+                    platforms: {
+                        ...conflict.local.platforms,
+                        endowus: {
+                            ...conflict.local.platforms?.endowus,
+                            timestamp: forcedTimestamp
+                        },
+                        fsm: {
+                            ...conflict.local.platforms?.fsm,
+                            timestamp: forcedTimestamp
+                        }
+                    },
+                    metadata: {
+                        ...conflict.local.metadata,
+                        lastModified: forcedTimestamp
+                    }
+                };
+                const response = await uploadConfig(forcedConfig, { force: true });
+                const responseTimestamp = typeof response?.timestamp === 'number'
+                    ? response.timestamp
+                    : forcedTimestamp;
+                Storage.set(SYNC_STORAGE_KEYS.lastSync, responseTimestamp);
+                const hash = await hashConfigData(forcedConfig);
                 Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, hash);
             } else if (resolution === 'remote') {
                 // Apply remote, keep server

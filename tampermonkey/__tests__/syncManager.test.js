@@ -303,6 +303,91 @@ describe('SyncManager', () => {
     });
 
     describe('multi-device reconciliation', () => {
+        test('resolveConflict(local) forces overwrite and stores server timestamp', async () => {
+            seedConfiguredState();
+            seedRememberedKey();
+            global.GM_xmlhttpRequest = undefined;
+            const { SyncManager } = loadModule();
+
+            const serverTimestamp = 2_000_000_000_000;
+            const now = serverTimestamp + 5000;
+            Date.now = jest.fn(() => now);
+            storage.set('sync_refresh_token_expiry', now + 120_000);
+
+            const responsePayload = { success: true, timestamp: serverTimestamp };
+            fetchMock = jest.fn((url, options = {}) => {
+                if (url.includes('/auth/refresh')) {
+                    return Promise.resolve({
+                        status: 200,
+                        ok: true,
+                        json: () => Promise.resolve({
+                            success: true,
+                            tokens: {
+                                accessToken: 'access-token',
+                                refreshToken: 'refresh-token',
+                                accessExpiresAt: now + 60_000,
+                                refreshExpiresAt: now + 120_000
+                            }
+                        }),
+                        text: () => Promise.resolve('{"success":true}'),
+                        headers: { get: () => null }
+                    });
+                }
+                if (url.includes('/sync') && options.method === 'POST') {
+                    const body = JSON.parse(options.body);
+                    expect(body.force).toBe(true);
+                    expect(body.timestamp).toBe(now);
+                    return Promise.resolve({
+                        status: 200,
+                        ok: true,
+                        json: () => Promise.resolve(responsePayload),
+                        text: () => Promise.resolve(JSON.stringify(responsePayload)),
+                        headers: { get: () => null }
+                    });
+                }
+                return Promise.resolve({
+                    status: 200,
+                    ok: true,
+                    json: () => Promise.resolve({}),
+                    text: () => Promise.resolve('{}'),
+                    headers: { get: () => null }
+                });
+            });
+            global.fetch = fetchMock;
+            window.fetch = fetchMock;
+            document.dispatchEvent = jest.fn();
+
+            const conflict = {
+                local: {
+                    version: 2,
+                    platforms: {
+                        endowus: { goalTargets: { 'goal-1': 25 }, goalFixed: {}, timestamp: now - 10_000 },
+                        fsm: { targetsByCode: {}, fixedByCode: {}, tagsByCode: {}, tagCatalog: [], portfolios: [], assignmentByCode: {}, driftSettings: {}, timestamp: now - 10_000 }
+                    },
+                    metadata: { lastModified: now - 10_000 },
+                    timestamp: now - 10_000
+                },
+                remote: {
+                    version: 2,
+                    platforms: {
+                        endowus: { goalTargets: { 'goal-1': 50 }, goalFixed: {}, timestamp: now - 5_000 },
+                        fsm: { targetsByCode: {}, fixedByCode: {}, tagsByCode: {}, tagCatalog: [], portfolios: [], assignmentByCode: {}, driftSettings: {}, timestamp: now - 5_000 }
+                    },
+                    metadata: { lastModified: now - 5_000 },
+                    timestamp: now - 5_000
+                },
+                localTimestamp: now - 10_000,
+                remoteTimestamp: now - 5_000
+            };
+
+            await expect(SyncManager.resolveConflict('local', conflict)).resolves.toBeUndefined();
+
+            expect(document.dispatchEvent).toHaveBeenCalled();
+
+            expect(storage.get('sync_last_sync')).toBe(serverTimestamp);
+            expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
+        });
+
         test('performSync(both) treats identical content from another device as up to date', async () => {
             seedConfiguredState();
             storage.set('sync_access_token_expiry', Date.now() - 1_000);

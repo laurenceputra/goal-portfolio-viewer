@@ -85,6 +85,35 @@ test('handleSync returns conflict when server data is newer', async () => {
   assert.equal(parsed.body.error, 'CONFLICT');
 });
 
+test('handleSync allows force overwrite when server data is newer', async () => {
+  const env = { SYNC_KV: createKvMock({ timestamp: 200, encryptedData: 'v2', deviceId: 'd2', version: 1 }) };
+  const now = Date.now();
+  const originalDateNow = Date.now;
+  Date.now = () => now + 1000;
+
+  const response = await handleSync(
+    {
+      userId: 'user-1',
+      deviceId: 'd1',
+      encryptedData: 'v1',
+      timestamp: 100,
+      version: 1,
+      force: true
+    },
+    env
+  );
+
+  const parsed = await parseResponse(response);
+  assert.equal(parsed.status, 200);
+  assert.equal(parsed.body.success, true);
+  assert.equal(parsed.body.timestamp, now + 1000);
+  assert.equal(env.SYNC_KV.store.has('sync_user:user-1'), true);
+  const stored = JSON.parse(env.SYNC_KV.store.get('sync_user:user-1'));
+  assert.equal(stored.timestamp, now + 1000);
+
+  Date.now = originalDateNow;
+});
+
 test('handleSync stores payload when validation succeeds', async () => {
   const env = { SYNC_KV: createKvMock() };
 
