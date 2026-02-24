@@ -71,6 +71,22 @@ describe('sync settings UI', () => {
         expect(document.body.textContent).toContain('Locked (enter password to unlock this device)');
     });
 
+    test('uses styled sync button classes in settings actions', () => {
+        const { createSyncSettingsHTML } = exportsModule;
+        seedStatus();
+
+        document.body.innerHTML = createSyncSettingsHTML();
+
+        expect(document.getElementById('gpv-sync-save-btn').className).toContain('gpv-sync-btn');
+        expect(document.getElementById('gpv-sync-save-btn').className).toContain('gpv-sync-btn-primary');
+        expect(document.getElementById('gpv-sync-test-btn').className).toContain('gpv-sync-btn');
+        expect(document.getElementById('gpv-sync-test-btn').className).toContain('gpv-sync-btn-secondary');
+        expect(document.getElementById('gpv-sync-now-btn').className).toContain('gpv-sync-btn');
+        expect(document.getElementById('gpv-sync-now-btn').className).toContain('gpv-sync-btn-secondary');
+        expect(document.getElementById('gpv-sync-clear-btn').className).toContain('gpv-sync-btn');
+        expect(document.getElementById('gpv-sync-clear-btn').className).toContain('gpv-sync-btn-danger');
+    });
+
     test('shows remember-key toggle after valid password input', () => {
         const { createSyncSettingsHTML, setupSyncSettingsListeners } = exportsModule;
         seedStatus();

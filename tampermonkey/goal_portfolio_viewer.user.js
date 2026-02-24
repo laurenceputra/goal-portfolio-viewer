@@ -6580,16 +6580,16 @@ function withButtonState(button, busyText, action) {
     function renderSyncActionButtons({ isEnabled, cryptoSupported, syncStatus }) {
         return `
             <div class="gpv-sync-actions">
-                <button class="gpv-sync-action" id="gpv-sync-save-btn" ${!cryptoSupported ? 'disabled' : ''}>
+                <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-sync-save-btn" ${!cryptoSupported ? 'disabled' : ''}>
                     Save Settings
                 </button>
-                <button class="gpv-sync-action" id="gpv-sync-test-btn" ${!isEnabled || !cryptoSupported ? 'disabled' : ''}>
+                <button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-test-btn" ${!isEnabled || !cryptoSupported ? 'disabled' : ''}>
                     Test Connection
                 </button>
-                <button class="gpv-sync-action" id="gpv-sync-now-btn" ${!isEnabled || !syncStatus.isConfigured || !syncStatus.hasSessionKey || !cryptoSupported ? 'disabled' : ''}>
+                <button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-now-btn" ${!isEnabled || !syncStatus.isConfigured || !syncStatus.hasSessionKey || !cryptoSupported ? 'disabled' : ''}>
                     Sync Now
                 </button>
-                <button class="gpv-sync-action gpv-sync-danger" id="gpv-sync-clear-btn" ${!cryptoSupported ? 'disabled' : ''}>
+                <button class="gpv-sync-btn gpv-sync-btn-danger" id="gpv-sync-clear-btn" ${!cryptoSupported ? 'disabled' : ''}>
                     Logout
                 </button>
             </div>
@@ -8753,6 +8753,13 @@ syncUi.update = function updateSyncUI() {
                     margin-top: 10px;
                 }
 
+                .gpv-sync-auth-buttons {
+                    display: flex;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                    justify-content: center;
+                }
+
                 .gpv-sync-btn {
                     padding: 10px 20px;
                     border: none;
@@ -8805,6 +8812,31 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-btn-danger:hover:not(:disabled) {
+                    background-color: #c82333;
+                }
+
+                /* Backward-compatible aliases for legacy class names */
+                .gpv-sync-action {
+                    padding: 10px 20px;
+                    border: none;
+                    border-radius: 4px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+
+                .gpv-sync-action:disabled {
+                    opacity: 0.6;
+                    cursor: not-allowed;
+                }
+
+                .gpv-sync-danger {
+                    background-color: #dc3545;
+                    color: white;
+                }
+
+                .gpv-sync-danger:hover:not(:disabled) {
                     background-color: #c82333;
                 }
 
