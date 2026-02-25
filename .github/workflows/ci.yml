@@ -227,8 +227,8 @@ jobs:
       - name: Run E2E demo tests
         id: e2e
         env:
-          E2E_SCREENSHOT_DIR: demo/screenshots
-          E2E_SUMMARY_PATH: demo/screenshots/e2e-summary.json
+          E2E_SCREENSHOT_DIR: screenshots
+          E2E_SUMMARY_PATH: screenshots/e2e-summary.json
         run: pnpm --filter ./demo test:e2e
 
       - name: Upload E2E screenshots
