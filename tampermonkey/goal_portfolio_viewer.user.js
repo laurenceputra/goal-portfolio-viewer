@@ -3359,6 +3359,11 @@ function buildBucketDetailGoalRow(goal) {
         }
 
         const intervalMs = intervalMinutes * 60 * 1000;
+
+        performSync({ direction: 'both' }).catch(error => {
+            console.error('[Goal Portfolio Viewer] Initial auto-sync failed:', error);
+        });
+
         autoSyncTimer = setInterval(() => {
             performSync({ direction: 'both' }).catch(error => {
                 console.error('[Goal Portfolio Viewer] Auto-sync failed:', error);
