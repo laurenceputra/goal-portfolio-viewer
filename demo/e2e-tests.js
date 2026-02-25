@@ -36,19 +36,21 @@ async function runE2ETests() {
         flowsTested: [],
         screenshots: []
     };
+    let server;
+    let browser;
 
     if (!fs.existsSync(outputDir)) {
         fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    const server = await startDemoServer({ port });
-    const browser = await playwright.chromium.launch({ headless: true });
-    const context = await browser.newContext({
-        viewport: { width: 1280, height: 800 }
-    });
-    const page = await context.newPage();
-
     try {
+        server = await startDemoServer({ port });
+        browser = await playwright.chromium.launch({ headless: true });
+        const context = await browser.newContext({
+            viewport: { width: 1280, height: 800 }
+        });
+        const page = await context.newPage();
+
         await page.goto(demoUrl, { waitUntil: 'networkidle' });
         await page.waitForFunction(() => window.__GPV_E2E_READY__ === true, null, { timeout: 20000 });
 
@@ -133,8 +135,12 @@ async function runE2ETests() {
         throw error;
     } finally {
         fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
-        await browser.close();
-        server.close();
+        if (browser) {
+            await browser.close();
+        }
+        if (server) {
+            server.close();
+        }
     }
 }
 
