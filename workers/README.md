@@ -386,7 +386,7 @@ GET /health
 Response (200):
 {
   "status": "ok",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "timestamp": 1234567890000
 }
 ```
@@ -405,7 +405,8 @@ Body:
   "deviceId": "string (uuid)",
   "encryptedData": "string (base64)",
   "timestamp": number,
-  "version": number
+  "version": number,
+  "force": boolean
 }
 
 Response (200):
@@ -420,6 +421,8 @@ Response (409 Conflict):
   "error": "CONFLICT",
   "serverData": { ... }
 }
+
+When `force` is `true`, the upload overwrites server data even if the incoming timestamp is older, and the server returns a fresh timestamp.
 ```
 
 #### Download Config

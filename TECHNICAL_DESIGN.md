@@ -36,6 +36,8 @@ tampermonkey/
 
 The sync feature is opt-in and encrypts configuration data client-side before upload. Authentication is handled with JWT access/refresh tokens issued after password login (legacy password-hash headers are no longer supported). After login or sign up, sync saves settings and enables encryption by default, storing a **derived encryption key** on the current device unless the user disables the remember-key option. After activation, auto-sync runs by default with a configurable interval and buffered sync-on-change to avoid excessive requests; if a sync is already running, change-triggered sync retries after a short delay. Fixed goals only sync their fixed state (target percentages are ignored), and conflict resolution is presented inside the sync settings overlay.
 
+When a sync conflict occurs, choosing "Keep This Device" forces an overwrite upload. The client sends `force: true` in the POST `/sync` payload and updates local sync metadata using the server-returned timestamp to keep device ordering consistent.
+
 ---
 
 ## API Interception

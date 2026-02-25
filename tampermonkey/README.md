@@ -160,6 +160,7 @@ If you want to sync your goal configurations across devices:
 - Only encrypted goal targets + fixed flags are synced; holdings, balances, and transactions never leave your browser
 - Auto-sync is enabled by default after activation; you can disable it or tune the interval in Sync Settings
 - Conflict dialogs include a goal-level diff preview to help choose Local vs Remote
+- Choosing "Keep This Device" forces the local config to overwrite the server, even if the server timestamp is newer
 
 For detailed sync setup instructions, see `QUICK_START.md`.
 
@@ -299,6 +300,9 @@ Contributions are welcome! To contribute:
 5. Submit a pull request
 
 ## Changelog
+
+### Version 2.14.0
+- Forced local conflict resolution now overwrites the server on request
 
 ### Version 2.13.2
 - Hardened sync error handling and performance request timeouts

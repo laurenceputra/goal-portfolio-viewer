@@ -32,6 +32,14 @@ if (typeof global.window === 'undefined') {
     global.window.location.href = 'https://app.sg.endowus.com/dashboard';
 }
 
+if (typeof global.CustomEvent === 'undefined' && global.window?.CustomEvent) {
+    global.CustomEvent = global.window.CustomEvent;
+}
+
+if (global.window?.CustomEvent && typeof global.CustomEvent === 'function') {
+    global.CustomEvent = (...args) => new global.window.CustomEvent(...args);
+}
+
 if (!global.window.__GPV_DISABLE_AUTO_INIT) {
     global.window.__GPV_DISABLE_AUTO_INIT = true;
 }
