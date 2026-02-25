@@ -247,6 +247,26 @@ async function openBucket(page, bucketName) {
     );
 }
 
+async function clickButtonByRole(page, name, { timeout = 5000, retries = 1 } = {}) {
+    let attempt = 0;
+    while (attempt <= retries) {
+        try {
+            const button = page.getByRole('button', { name }).first();
+            await button.waitFor({ state: 'visible', timeout });
+            await button.click({ timeout });
+            return;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const detached = message.includes('not attached to the DOM');
+            if (!detached || attempt === retries) {
+                throw error;
+            }
+            attempt += 1;
+            await page.waitForTimeout(50);
+        }
+    }
+}
+
 async function captureScreenshot(page, summary, outputDir, flowName) {
     const normalizedFlowName = normalizeName(flowName);
     const screenshotName = `e2e-${normalizedFlowName}.png`;
@@ -422,13 +442,14 @@ async function captureFsmFlow(page, summary, outputDir) {
     recordAssertion(summary, 'fsm-overlay', 'toolbar', true, 'FSM toolbar rendered.');
     await captureScreenshot(page, summary, outputDir, 'fsm-overlay');
 
-    const managerToggle = await page.$('.gpv-fsm-toolbar button');
-    if (managerToggle) {
-        await managerToggle.click();
+    const managerToggle = page.getByRole('button', { name: /manage portfolios|hide portfolio manager/i }).first();
+    if (await managerToggle.count() > 0) {
+        await clickButtonByRole(page, /manage portfolios|hide portfolio manager/i);
         await page.waitForSelector('.gpv-fsm-manager', { timeout: 5000 });
         recordAssertion(summary, 'fsm-manager', 'manager-panel', true, 'FSM manager panel rendered.');
         await captureScreenshot(page, summary, outputDir, 'fsm-manager');
-        await managerToggle.click();
+        await clickButtonByRole(page, /hide portfolio manager/i);
+        await page.waitForSelector('.gpv-fsm-manager', { state: 'detached', timeout: 5000 });
     }
 
     const summaryCards = await page.$$eval('.gpv-summary-row .gpv-summary-card', nodes => nodes.length);
