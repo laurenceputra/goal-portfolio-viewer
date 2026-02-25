@@ -1,6 +1,6 @@
 {
   "name": "goal-portfolio-viewer",
-  "version": "2.14.0",
+  "version": "2.15.0",
   "description": "Goal Portfolio Viewer workspace",
   "private": true,
   "packageManager": "pnpm@9.12.3",
