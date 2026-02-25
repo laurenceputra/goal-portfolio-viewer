@@ -47,6 +47,8 @@ This directory contains tools and files for demonstrating the Goal Portfolio Vie
 
 - **`index.html`** - Full-featured demo page with info panel
 - **`demo.html`** - Alternative demo page (kept for reference)
+- **`fsm/index.html`** - FSM E2E demo page (served at `/fsmone/holdings/investments`)
+  - Loads FSM mock holdings and seeds portfolio/assignment targets for FSM flows
 
 ### Generated Files (gitignored)
 - **`goal_portfolio_viewer_demo.user.js`** - Modified userscript with demo mode patch
@@ -81,7 +83,7 @@ This creates `mock-data.json` with randomized investment amounts and returns.
 The E2E smoke test uses Playwright to validate the demo flow and capture screenshots.
 
 ```bash
-pnpm run test:e2e
+pnpm --filter ./demo test:e2e:smoke
 ```
 
 Screenshots are saved to `demo/screenshots/` by default (override with `E2E_SCREENSHOT_DIR`):
@@ -91,12 +93,36 @@ Screenshots are saved to `demo/screenshots/` by default (override with `E2E_SCRE
 - `e2e-sync-unconfigured.png`
 - `e2e-sync-configured.png`
 - `e2e-sync-conflict.png`
+- `e2e-fsm-overlay.png`
+- `e2e-fsm-manager.png`
+- `e2e-fsm-conflict.png`
 
 If Playwright is missing system dependencies on Linux, run:
 
 ```bash
 npx playwright install --with-deps
 ```
+
+### Run E2E Regression Tests
+
+Regression mode captures screenshots, compares them with baselines, and adds data assertions.
+
+```bash
+pnpm --filter ./demo test:e2e:regression
+```
+
+Regression artifacts live under:
+- `demo/regression/baseline/`
+- `demo/regression/actual/`
+- `demo/regression/diff/`
+
+To update baselines:
+
+```bash
+pnpm --filter ./demo test:e2e:update-baseline
+```
+
+Baseline files are gitignored by default. Only update baselines intentionally.
 
 ### Take Screenshots
 

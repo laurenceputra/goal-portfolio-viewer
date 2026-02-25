@@ -224,12 +224,13 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm --filter ./demo exec playwright install --with-deps
 
-      - name: Run E2E demo tests
+      - name: Run E2E demo regression tests
         id: e2e
         env:
-          E2E_SCREENSHOT_DIR: demo/screenshots
-          E2E_SUMMARY_PATH: demo/screenshots/e2e-summary.json
-        run: pnpm --filter ./demo test:e2e
+          E2E_SCREENSHOT_DIR: screenshots
+          E2E_SUMMARY_PATH: screenshots/e2e-summary.json
+          E2E_MODE: regression
+        run: pnpm --filter ./demo test:e2e:regression
 
       - name: Upload E2E screenshots
         if: always()
@@ -237,6 +238,17 @@ jobs:
         with:
           name: e2e-screenshots
           path: demo/screenshots
+          if-no-files-found: warn
+
+      - name: Upload E2E regression artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-regression
+          path: |
+            demo/regression/actual
+            demo/regression/diff
+            demo/screenshots/e2e-summary.json
           if-no-files-found: warn
 
       - name: Post E2E summary comment
@@ -254,6 +266,20 @@ jobs:
             }
             const flows = summary?.flowsTested ?? [];
             const screenshots = summary?.screenshots ?? [];
+            const diffs = summary?.diffs ?? [];
+            const assertions = summary?.assertions ?? {};
+            const failedDiffs = diffs.filter(diff => diff.status === 'failed');
+            const missingBaselines = diffs.filter(diff => diff.status === 'baseline-missing');
+            const assertionTotals = Object.values(assertions).reduce((acc, items) => {
+              const safeItems = Array.isArray(items) ? items : [];
+              safeItems.forEach(item => {
+                acc.total += 1;
+                if (item && item.passed === false) {
+                  acc.failed += 1;
+                }
+              });
+              return acc;
+            }, { total: 0, failed: 0 });
             const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
               ...context.repo,
               run_id: context.runId
@@ -270,6 +296,14 @@ jobs:
               `- Status: **${status}**`,
               `- Flows tested: **${flows.length}**${flows.length ? ` (${flows.join(', ')})` : ''}`,
               `- Screenshots: ${screenshots.length ? screenshots.map(name => `\`${name}\``).join(', ') : 'None'}`,
+              `- Assertions: **${assertionTotals.total}** total, **${assertionTotals.failed}** failed`,
+              `- Visual diffs: **${diffs.length}** checked, **${failedDiffs.length}** failed${missingBaselines.length ? `, **${missingBaselines.length}** missing baseline` : ''}`,
+              failedDiffs.length
+                ? `- Failed diffs: ${failedDiffs.map(diff => `\`${diff.screenshot}\` (${(diff.mismatchRatio * 100).toFixed(2)}%)`).join(', ')}`
+                : null,
+              missingBaselines.length
+                ? `- Missing baselines: ${missingBaselines.map(diff => `\`${diff.screenshot}\``).join(', ')}`
+                : null,
               '',
               artifactUrl
                 ? `- Screenshots artifact: ${artifactUrl}`
