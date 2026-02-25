@@ -301,7 +301,7 @@ Contributions are welcome! To contribute:
 
 ## Changelog
 
-### Version 2.15.0
+### Version 2.14.1
 - Improved FSM sync conflict assignment readability with instrument names and richer assignment context
 
 ### Version 2.14.0
