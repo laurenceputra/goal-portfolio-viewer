@@ -228,8 +228,8 @@ describe('conflict diff helpers', () => {
                         fixedByCode: { BBB: false },
                         tagsByCode: { BBB: 'growth' },
                         tagCatalog: ['growth'],
-                        portfolios: [{ id: 'core', name: 'Core', archived: false }],
-                        assignmentByCode: { BBB: 'core' },
+                        portfolios: [{ id: 'income', name: 'Income', archived: false }],
+                        assignmentByCode: { BBB: 'income' },
                         driftSettings: {}
                     }
                 }
@@ -240,7 +240,7 @@ describe('conflict diff helpers', () => {
         const assignmentRow = fsmItems.find(item => item.section === 'assignment');
         expect(assignmentRow.settingName).toBe('BBB');
         expect(assignmentRow.localDisplay).toBe('Core (core) · Target 5.00% · Fixed No · Tag growth');
-        expect(assignmentRow.remoteDisplay).toBe('Core (core) · Target 10.00% · Fixed No · Tag growth');
+        expect(assignmentRow.remoteDisplay).toBe('Income (income) · Target 10.00% · Fixed No · Tag growth');
     });
 
     it('formats FSM assignment rows with readable labels', () => {
