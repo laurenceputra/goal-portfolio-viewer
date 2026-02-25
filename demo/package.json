@@ -4,9 +4,14 @@
   "description": "Goal Portfolio Viewer demo tooling",
   "private": true,
   "scripts": {
-    "test:e2e": "node e2e-tests.js"
+    "test:e2e": "node e2e-tests.js",
+    "test:e2e:smoke": "node e2e-tests.js",
+    "test:e2e:regression": "E2E_MODE=regression node e2e-tests.js",
+    "test:e2e:update-baseline": "E2E_MODE=update-baseline node e2e-tests.js"
   },
   "dependencies": {
-    "playwright": "^1.57.0"
+    "pixelmatch": "^5.3.0",
+    "playwright": "^1.57.0",
+    "pngjs": "^7.0.0"
   }
 }

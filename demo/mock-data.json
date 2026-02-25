@@ -22410,5 +22410,35 @@
       "annualReturnRate": -0.04989359528320915,
       "cumulativeInvested": 7027.63
     }
+  },
+  "fsmHoldings": {
+    "data": [
+      {
+        "groupName": "FSM Demo Holdings",
+        "holdings": [
+          {
+            "code": "ESG001",
+            "subcode": "ESG1",
+            "name": "ESG Equity Fund",
+            "productType": "Unit Trust",
+            "currentValueLcy": 12450.25
+          },
+          {
+            "code": "ESG002",
+            "subcode": "ESG2",
+            "name": "Green Bond Fund",
+            "productType": "Unit Trust",
+            "currentValueLcy": 8032.1
+          },
+          {
+            "code": "ESG003",
+            "subcode": "ESG3",
+            "name": "Sustainable Growth",
+            "productType": "Unit Trust",
+            "currentValueLcy": 14220.78
+          }
+        ]
+      }
+    ]
   }
 }

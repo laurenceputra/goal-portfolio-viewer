@@ -50,6 +50,10 @@ function resolveStaticFile(demoDir, repoRoot, requestPath) {
         return path.join(demoDir, 'dashboard', 'index.html');
     }
 
+    if (requestPath === '/fsmone/holdings/investments') {
+        return path.join(demoDir, 'fsm', 'index.html');
+    }
+
     if (requestPath === '/') {
         return path.join(demoDir, 'index.html');
     }
@@ -98,6 +102,10 @@ function startDemoServer({
                 return sendText(res, 'Not found', 404);
             }
             return sendJson(res, series);
+        }
+
+        if (pathname === '/fsmone/rest/holding/client/protected/find-holdings-with-pnl') {
+            return sendJson(res, mockData.fsmHoldings || { data: [] });
         }
 
         const filePath = resolveStaticFile(demoDir, repoRoot, pathname);

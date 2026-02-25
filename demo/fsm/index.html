@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Goal Portfolio Viewer - E2E Dashboard</title>
+    <title>Goal Portfolio Viewer - FSM Demo</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             margin: 0;
             padding: 0;
-            background: #f3f4f6;
+            background: #f8fafc;
         }
 
         .demo-shell {
@@ -23,28 +23,28 @@
             background: #ffffff;
             padding: 32px;
             border-radius: 16px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
-            max-width: 520px;
+            box-shadow: 0 10px 40px rgba(15, 23, 42, 0.12);
+            max-width: 540px;
             text-align: center;
         }
 
         .demo-card h1 {
             margin: 0 0 8px;
-            color: #111827;
+            color: #0f172a;
             font-size: 28px;
         }
 
         .demo-card p {
-            margin: 0;
-            color: #4b5563;
+            margin: 0 0 16px;
+            color: #475569;
         }
 
         .demo-status {
-            margin-top: 20px;
+            margin-top: 12px;
             padding: 12px 16px;
             border-radius: 8px;
-            background: #eef2ff;
-            color: #3730a3;
+            background: #e0f2fe;
+            color: #0369a1;
             font-weight: 600;
         }
     </style>
@@ -52,15 +52,11 @@
 <body>
     <div class="demo-shell">
         <div class="demo-card">
-            <h1>Goal Portfolio Viewer</h1>
-            <p>Mock Endowus dashboard for E2E tests.</p>
-            <div class="demo-status" id="demoStatus">Loading demo data…</div>
+            <h1>Goal Portfolio Viewer (FSM)</h1>
+            <p>Mock FSM holdings page for E2E regression tests.</p>
+            <div class="demo-status" id="demoStatus">Loading FSM demo data…</div>
         </div>
     </div>
-
-    <script>
-        window.__GPV_DEMO_MODE__ = true;
-    </script>
 
     <script>
         const mockStorage = {};
@@ -85,30 +81,6 @@
     </script>
 
     <script>
-        (function() {
-            const PERFORMANCE_ENDPOINT = 'https://bff.prod.silver.endowus.com/v1/performance';
-            const originalFetch = window.fetch.bind(window);
-
-            window.fetch = function(resource, options) {
-                const url = typeof resource === 'string' ? resource : resource?.url;
-                if (url && url.startsWith(PERFORMANCE_ENDPOINT)) {
-                    const originalUrl = new URL(url);
-                    const localUrl = new URL('/v1/performance', window.location.origin);
-                    originalUrl.searchParams.forEach((value, key) => {
-                        localUrl.searchParams.set(key, value);
-                    });
-                    if (resource instanceof Request) {
-                        resource = new Request(localUrl.toString(), resource);
-                    } else {
-                        resource = localUrl.toString();
-                    }
-                }
-                return originalFetch(resource, options);
-            };
-        })();
-    </script>
-
-    <script>
         function updateStatus(message, isError = false) {
             const status = document.getElementById('demoStatus');
             status.textContent = message;
@@ -116,8 +88,8 @@
                 status.style.background = '#fee2e2';
                 status.style.color = '#991b1b';
             } else {
-                status.style.background = '#ecfdf3';
-                status.style.color = '#065f46';
+                status.style.background = '#dcfce7';
+                status.style.color = '#166534';
             }
         }
 
@@ -128,6 +100,43 @@
                 script.onload = () => resolve();
                 script.onerror = () => reject(new Error('Failed to load userscript'));
                 document.head.appendChild(script);
+            });
+        }
+
+        async function bootstrapMockData() {
+            const response = await fetch('/fsmone/rest/holding/client/protected/find-holdings-with-pnl');
+            const payload = await response.json();
+            const rows = Array.isArray(payload?.data)
+                ? payload.data.flatMap(group => Array.isArray(group?.holdings) ? group.holdings : [])
+                : [];
+            if (rows.length > 0) {
+                GM_setValue('fsm_target_pct_ESG001', 35.5);
+                GM_setValue('fsm_fixed_ESG002', true);
+                GM_setValue('fsm_tag_ESG003', 'Core');
+                GM_setValue('fsm_tag_catalog', ['Core', 'Satellite']);
+                GM_setValue('fsm_portfolios', [
+                    { id: 'demo-fsm-core', name: 'Core Portfolio', archived: false },
+                    { id: 'demo-fsm-growth', name: 'Growth Portfolio', archived: false }
+                ]);
+                GM_setValue('fsm_assignment_by_code', {
+                    ESG001: 'demo-fsm-core',
+                    ESG002: 'demo-fsm-growth',
+                    ESG003: 'demo-fsm-core'
+                });
+            }
+            return payload;
+        }
+
+        function waitForButton() {
+            return new Promise(resolve => {
+                const check = () => {
+                    if (document.querySelector('.gpv-trigger-btn')) {
+                        resolve();
+                        return;
+                    }
+                    setTimeout(check, 100);
+                };
+                check();
             });
         }
 
@@ -144,36 +153,6 @@
             });
         }
 
-        async function bootstrapMockData() {
-            const responses = await Promise.all([
-                fetch('/v1/goals/performance'),
-                fetch('/v2/goals/investible'),
-                fetch('/v1/goals')
-            ]);
-            const payloads = await Promise.all(responses.map(response => response.json()));
-            const investible = payloads[1];
-            const fixedGoalId = Array.isArray(investible)
-                ? investible.find(goal => goal && goal.goalName && goal.goalName.startsWith('House Purchase'))?.goalId
-                : null;
-            if (fixedGoalId) {
-                GM_setValue(`goal_fixed_${fixedGoalId}`, true);
-            }
-            return payloads;
-        }
-
-        function waitForButton() {
-            return new Promise(resolve => {
-                const check = () => {
-                    if (document.querySelector('.gpv-trigger-btn')) {
-                        resolve();
-                        return;
-                    }
-                    setTimeout(check, 100);
-                };
-                check();
-            });
-        }
-
         function signalReady() {
             window.__GPV_E2E_READY__ = true;
             window.dispatchEvent(new Event('gpv:e2e-ready'));
@@ -184,12 +163,12 @@
             .then(waitForButton)
             .then(waitForSyncUiExports)
             .then(() => {
-                updateStatus('Demo data loaded. Ready for E2E tests.');
+                updateStatus('FSM demo data loaded. Ready for E2E tests.');
                 signalReady();
             })
             .catch(error => {
-                console.error('[Demo] Failed to initialize E2E demo:', error);
-                updateStatus('Failed to initialize demo environment.', true);
+                console.error('[FSM Demo] Failed to initialize:', error);
+                updateStatus('Failed to initialize FSM demo environment.', true);
             });
     </script>
 </body>
