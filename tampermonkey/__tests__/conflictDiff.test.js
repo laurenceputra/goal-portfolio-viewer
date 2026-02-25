@@ -198,7 +198,91 @@ describe('conflict diff helpers', () => {
         };
 
         const fsmItems = buildFsmConflictDiffItems(conflict);
-        expect(fsmItems.some(item => item.settingName === 'Portfolio Definitions')).toBe(true);
-        expect(fsmItems.some(item => item.settingName === 'Assignment AAA')).toBe(true);
+        expect(fsmItems.some(item => item.section === 'definition')).toBe(true);
+        expect(fsmItems.some(item => item.section === 'assignment' && item.settingName === 'AAA')).toBe(true);
+    });
+
+    it('falls back to code when holdings metadata missing', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: {
+                        targetsByCode: { BBB: 5 },
+                        fixedByCode: { BBB: false },
+                        tagsByCode: { BBB: 'growth' },
+                        tagCatalog: ['growth'],
+                        portfolios: [{ id: 'core', name: 'Core', archived: false }],
+                        assignmentByCode: { BBB: 'core' },
+                        driftSettings: {}
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: {
+                        targetsByCode: { BBB: 10 },
+                        fixedByCode: { BBB: false },
+                        tagsByCode: { BBB: 'growth' },
+                        tagCatalog: ['growth'],
+                        portfolios: [{ id: 'core', name: 'Core', archived: false }],
+                        assignmentByCode: { BBB: 'core' },
+                        driftSettings: {}
+                    }
+                }
+            }
+        };
+
+        const fsmItems = buildFsmConflictDiffItems(conflict, { fsmHoldings: [] });
+        const assignmentRow = fsmItems.find(item => item.section === 'assignment');
+        expect(assignmentRow.settingName).toBe('BBB');
+        expect(assignmentRow.localDisplay).toBe('Core (core) · Target 5.00% · Fixed No · Tag growth');
+        expect(assignmentRow.remoteDisplay).toBe('Core (core) · Target 10.00% · Fixed No · Tag growth');
+    });
+
+    it('formats FSM assignment rows with readable labels', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: {
+                        targetsByCode: { AAA: 12 },
+                        fixedByCode: { AAA: true },
+                        tagsByCode: { AAA: 'income' },
+                        tagCatalog: ['income'],
+                        portfolios: [{ id: 'core', name: 'Core', archived: false }],
+                        assignmentByCode: { AAA: 'core' },
+                        driftSettings: {}
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: {
+                        targetsByCode: { AAA: 20 },
+                        fixedByCode: { AAA: false },
+                        tagsByCode: {},
+                        tagCatalog: [],
+                        portfolios: [{ id: 'income', name: 'Income', archived: false }],
+                        assignmentByCode: { AAA: 'income' },
+                        driftSettings: {}
+                    }
+                }
+            }
+        };
+
+        const fsmItems = buildFsmConflictDiffItems(conflict, {
+            fsmHoldings: [{ code: 'AAA', name: 'Global Equity Fund' }]
+        });
+        const assignmentRow = fsmItems.find(item => item.section === 'assignment');
+        expect(assignmentRow.settingName).toBe('Global Equity Fund (AAA)');
+        expect(assignmentRow.localDisplay).toBe('Core (core) · Target 12.00% · Fixed Yes · Tag income');
+        expect(assignmentRow.remoteDisplay).toBe('Income (income) · Target 20.00% · Fixed No · Tag -');
     });
 });

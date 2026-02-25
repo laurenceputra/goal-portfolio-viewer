@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.0
+// @version      2.15.0
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -3668,12 +3668,83 @@ function formatSyncValue(value) {
     return JSON.stringify(value);
 }
 
-function buildFsmConflictDiffItems(conflict) {
+function getFsmHoldingsFromStorage() {
+    return Storage.readJson(
+        STORAGE_KEYS.fsmHoldings,
+        data => Array.isArray(data),
+        'Error reading FSM holdings'
+    ) || [];
+}
+
+function buildFsmHoldingsNameMap(fsmHoldings) {
+    const rows = Array.isArray(fsmHoldings) ? fsmHoldings : [];
+    return rows.reduce((acc, row) => {
+        const code = utils.normalizeString(row?.code, '');
+        if (!code) {
+            return acc;
+        }
+        const name = utils.normalizeString(row?.name, '');
+        if (name) {
+            acc[code] = name;
+        }
+        return acc;
+    }, {});
+}
+
+function buildFsmPortfolioNameMap(portfolios) {
+    const rows = Array.isArray(portfolios) ? portfolios : [];
+    return rows.reduce((acc, portfolio) => {
+        const id = utils.normalizeString(portfolio?.id, '');
+        const name = utils.normalizeString(portfolio?.name, '');
+        if (id && name) {
+            acc[id] = name;
+        }
+        return acc;
+    }, {});
+}
+
+function formatFsmPortfolioLabel(portfolioId, portfolioNameMap) {
+    const normalizedId = utils.normalizeString(portfolioId, '');
+    if (!normalizedId || normalizedId === FSM_UNASSIGNED_PORTFOLIO_ID) {
+        return 'Unassigned';
+    }
+    const name = portfolioNameMap?.[normalizedId];
+    if (name) {
+        return `${name} (${normalizedId})`;
+    }
+    return normalizedId;
+}
+
+function formatFsmInstrumentLabel(code, holdingsByCode) {
+    const normalizedCode = utils.normalizeString(code, '');
+    if (!normalizedCode) {
+        return '-';
+    }
+    const name = utils.normalizeString(holdingsByCode?.[normalizedCode], '');
+    if (name) {
+        return `${name} (${normalizedCode})`;
+    }
+    return normalizedCode;
+}
+
+function formatFsmAssignmentDisplay({ portfolioId, target, fixed, tag }, portfolioNameMap) {
+    const portfolioLabel = formatFsmPortfolioLabel(portfolioId, portfolioNameMap);
+    const tagLabel = utils.normalizeString(tag, '') || '-';
+    return `${portfolioLabel} · Target ${formatSyncTarget(target)} · Fixed ${formatSyncFixed(fixed === true)} · Tag ${tagLabel}`;
+}
+
+function buildFsmConflictDiffItems(conflict, options = {}) {
     if (!conflict || !conflict.local || !conflict.remote) {
         return [];
     }
     const localFsm = getFsmSyncView(conflict.local);
     const remoteFsm = getFsmSyncView(conflict.remote);
+    const fsmHoldings = Array.isArray(options.fsmHoldings) ? options.fsmHoldings : null;
+    const holdingsByCode = options.holdingsByCode && typeof options.holdingsByCode === 'object'
+        ? options.holdingsByCode
+        : buildFsmHoldingsNameMap(fsmHoldings || getFsmHoldingsFromStorage());
+    const localPortfolioNameById = buildFsmPortfolioNameMap(localFsm.portfolios || []);
+    const remotePortfolioNameById = buildFsmPortfolioNameMap(remoteFsm.portfolios || []);
 
     const rows = [];
     const codes = new Set([
@@ -3699,6 +3770,7 @@ function buildFsmConflictDiffItems(conflict) {
             return;
         }
         rows.push({
+            section: 'instrument',
             settingName: `Instrument ${code}`,
             localDisplay: `Target ${formatSyncTarget(localTarget)} · Fixed ${formatSyncFixed(localFixed)} · Tag ${localTag}`,
             remoteDisplay: `Target ${formatSyncTarget(remoteTarget)} · Fixed ${formatSyncFixed(remoteFixed)} · Tag ${remoteTag}`
@@ -3709,6 +3781,7 @@ function buildFsmConflictDiffItems(conflict) {
     const remoteCatalog = Array.isArray(remoteFsm.tagCatalog) ? [...remoteFsm.tagCatalog].sort() : [];
     if (JSON.stringify(localCatalog) !== JSON.stringify(remoteCatalog)) {
         rows.push({
+            section: 'tag-catalog',
             settingName: 'Tag Catalog',
             localDisplay: formatSyncValue(localCatalog),
             remoteDisplay: formatSyncValue(remoteCatalog)
@@ -3726,6 +3799,7 @@ function buildFsmConflictDiffItems(conflict) {
             return;
         }
         rows.push({
+            section: 'drift-setting',
             settingName: `Drift Setting: ${key}`,
             localDisplay: formatSyncValue(localValue),
             remoteDisplay: formatSyncValue(remoteValue)
@@ -3736,6 +3810,7 @@ function buildFsmConflictDiffItems(conflict) {
     const remotePortfolios = normalizeFsmPortfolios(remoteFsm.portfolios || []).map(item => `${item.name} (${item.id})`).sort();
     if (JSON.stringify(localPortfolios) !== JSON.stringify(remotePortfolios)) {
         rows.push({
+            section: 'definition',
             settingName: 'Portfolio Definitions',
             localDisplay: formatSyncValue(localPortfolios),
             remoteDisplay: formatSyncValue(remotePortfolios)
@@ -3752,20 +3827,43 @@ function buildFsmConflictDiffItems(conflict) {
         if (localPortfolio === remotePortfolio) {
             return;
         }
+        const localTarget = localFsm.targetsByCode?.[code];
+        const remoteTarget = remoteFsm.targetsByCode?.[code];
+        const localFixed = localFsm.fixedByCode?.[code] === true;
+        const remoteFixed = remoteFsm.fixedByCode?.[code] === true;
+        const localTag = localFsm.tagsByCode?.[code];
+        const remoteTag = remoteFsm.tagsByCode?.[code];
         rows.push({
-            settingName: `Assignment ${code}`,
-            localDisplay: localPortfolio,
-            remoteDisplay: remotePortfolio
+            section: 'assignment',
+            settingName: formatFsmInstrumentLabel(code, holdingsByCode),
+            localDisplay: formatFsmAssignmentDisplay(
+                {
+                    portfolioId: localPortfolio,
+                    target: localTarget,
+                    fixed: localFixed,
+                    tag: localTag
+                },
+                localPortfolioNameById
+            ),
+            remoteDisplay: formatFsmAssignmentDisplay(
+                {
+                    portfolioId: remotePortfolio,
+                    target: remoteTarget,
+                    fixed: remoteFixed,
+                    tag: remoteTag
+                },
+                remotePortfolioNameById
+            )
         });
     });
 
     return rows;
 }
 
-function buildConflictDiffSections(conflict, nameMapOverride = {}) {
+function buildConflictDiffSections(conflict, nameMapOverride = {}, fsmOptions = {}) {
     return {
         endowus: buildConflictDiffItemsForMap(conflict, nameMapOverride),
-        fsm: buildFsmConflictDiffItems(conflict)
+        fsm: buildFsmConflictDiffItems(conflict, fsmOptions)
     };
 }
 
@@ -7152,7 +7250,7 @@ function createConflictDialogHTML(conflict) {
     `).join('');
 
     const fsmDefinitionRows = diffSections.fsm
-        .filter(item => item.settingName === 'Portfolio Definitions')
+        .filter(item => item.section === 'definition')
         .map(item => `
             <tr>
                 <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
@@ -7161,7 +7259,7 @@ function createConflictDialogHTML(conflict) {
             </tr>
         `).join('');
     const fsmAssignmentRows = diffSections.fsm
-        .filter(item => item.settingName.startsWith('Assignment '))
+        .filter(item => item.section === 'assignment')
         .map(item => `
             <tr>
                 <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
@@ -7262,7 +7360,10 @@ function buildGoalNameMap() {
 }
 
 function _buildConflictDiffItems(conflict) {
-    return buildConflictDiffSections(conflict, buildGoalNameMap());
+    const fsmHoldings = Array.isArray(state?.apiData?.fsmHoldings)
+        ? state.apiData.fsmHoldings
+        : getFsmHoldingsFromStorage();
+    return buildConflictDiffSections(conflict, buildGoalNameMap(), { fsmHoldings });
 }
 
 /**
