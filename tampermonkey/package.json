@@ -1,6 +1,6 @@
 {
   "name": "tampermonkey",
-  "version": "2.14.0",
+  "version": "2.14.1",
   "description": "Goal Portfolio Viewer userscript tooling",
   "private": true,
   "main": "goal_portfolio_viewer.user.js",

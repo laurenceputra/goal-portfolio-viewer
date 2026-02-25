@@ -338,6 +338,15 @@ The UI consists of:
 
 The modal overlay traps keyboard focus while open, supports `Esc` to close, restores focus to the triggering button, and applies dialog ARIA attributes to improve accessibility.
 
+### Sync Conflict Review
+
+For FSM sync conflicts, the assignment step renders instrument-aware rows rather than opaque assignment IDs. The UI:
+
+- Uses cached FSM holdings metadata (if available) to show instrument names with code fallback.
+- Formats assignment values as `Portfolio Name (id)` plus target, fixed, and tag context.
+- Falls back to `Unassigned` or raw portfolio IDs when metadata is missing.
+- Keeps assignment rows isolated in step 3 using explicit section metadata, so definition changes remain in step 2.
+
 ### Styling System
 
 #### Modern Gradient Design

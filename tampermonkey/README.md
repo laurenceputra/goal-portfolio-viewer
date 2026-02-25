@@ -301,6 +301,9 @@ Contributions are welcome! To contribute:
 
 ## Changelog
 
+### Version 2.14.1
+- Improved FSM sync conflict assignment readability with instrument names and richer assignment context
+
 ### Version 2.14.0
 - Forced local conflict resolution now overwrites the server on request
 
