@@ -161,6 +161,7 @@ pnpm run test:watch    # Development mode
 ### Documentation
 
 - **[Development Guide](.github/copilot-instructions.md)** - Comprehensive instructions with workflow
+- **[Codebase Improvement Audit](docs/codebase-improvement-ideas.md)** - Prioritized backlog of the next maintenance, refactor, and documentation opportunities
 - **[Technical Design](TECHNICAL_DESIGN.md)** - Architecture details
 - **[Agent Roles](.github/agents/)** - Individual agent documentation
 
