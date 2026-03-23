@@ -38,7 +38,7 @@ This document is a documentation-first audit for maintainers. It turns the curre
 4. **Contributor-facing docs have drifted.**
    - `TESTING.md` still describes a much smaller test surface than the current `11` Tampermonkey suites.
    - `tampermonkey/README.md` and `tampermonkey/QUICK_START.md` still reference integration files that are not present.
-   - `docs/sync-setup.md` contradicts the current auto-sync default by saying both that background auto-sync is the default and that auto-sync is disabled by default.
+   - Sync setup, privacy, and self-hosting guidance is duplicated across `README.md`, `docs/sync-setup.md`, `tampermonkey/README.md`, and `workers/README.md`, which makes drift in defaults and support claims more likely.
 5. **Self-hosted sync support needs validation against the actual userscript permissions model.** The userscript metadata currently whitelists `goal-portfolio-sync.laurenceputra.workers.dev`, `localhost`, and `127.0.0.1` via `@connect`, while docs describe arbitrary self-hosted Workers URLs.
 6. **Docs-only PRs can avoid meaningful verification.** `.github/workflows/ci.yml` path filters are code-centric, so prose changes about setup, privacy, or sync behavior can bypass the checks that would validate those claims.
 
@@ -131,7 +131,7 @@ Unless the project intentionally changes its distribution model first, userscrip
   - `TESTING.md`
   - `README.md`
   - potential new docs-consistency script under `tampermonkey/scripts/` or a repo-level `scripts/` directory
-- **Expected value:** Better local reproducibility, fewer “works in CI only” surprises, and automated detection of stale file references or contradictory defaults.
+- **Expected value:** Better local reproducibility, fewer “works in CI only” surprises, and automated detection of stale file references or drifting default-setting claims.
 - **Risk if ignored:** Maintainers keep losing time to environment-specific command failures and doc drift lands without guardrails.
 - **Rough effort:** Small to medium
 - **Suggested first step:** Normalize contributor commands around `corepack pnpm` and add a lightweight docs-consistency check for referenced files, commands, and default-setting claims.
@@ -168,8 +168,8 @@ Unless the project intentionally changes its distribution model first, userscrip
 
 1. **`refactor(sync): separate transport/auth/state/conflict seams within SyncManager`**
    - Highest long-term leverage because it reduces change risk across the biggest hotspot in the repo.
-2. **`docs(sync): reconcile auto-sync defaults, self-host support, and local-storage/privacy claims`**
-   - Highest trust/value doc fix because several current docs disagree with each other or with the userscript metadata.
+2. **`docs(sync): audit auto-sync defaults, self-host support, and local-storage/privacy claims`**
+   - Highest trust/value doc fix because sync setup guidance is duplicated across several docs and should be verified against the userscript metadata and implementation.
 3. **`test(harness): centralize Tampermonkey mocks and fix Jest open-handle leakage`**
    - Best QA multiplier because it reduces future test friction while addressing a concrete signal from the current baseline.
 
