@@ -1,0 +1,143 @@
+# Changelog
+
+Range: `v1.0.3..HEAD`
+
+### Features
+
+- clarify FSM assignment conflicts (#129) (`2ed31c3`)
+- allow forced local overwrite on conflict (#127) (`b65a14e`)
+- add FSM holdings interception and migrate sync payload to v2 namespaced schema (#122) (`0379820`)
+- add per-goal TWR window row in bucket detail (#119) (`4a64244`)
+- enable default auto-sync with buffered sync-on-change and docs reflow (#93) (`89edb19`)
+- clarify performance return metrics (#84) (`4357041`)
+- highlight high remaining target percent (#56) (`50cd785`)
+- add per-goal fixed toggles and remaining target percent (#53) (`21b2008`)
+- add goal-type performance charts, sequential fetching and 7-day cache (#33) (`ddb7fad`)
+- show diff in dollar amount with 5% threshold for red color (`8c6bb17`)
+- add target percentage feature for goal types per bucket (`1542e6f`)
+- Add GitHub Copilot agents and instructions (`f078844`)
+
+### Fixes
+
+- align demo E2E summary artifact paths (#128) (`c42ef71`)
+- address code audit findings (#126) (`c0e7efc`)
+- auto-expand performance panels and refresh rows (#123) (`90bf605`)
+- reduce false multi-device sync conflicts (#121) (`fc11177`)
+- render conflicts in sync settings overlay and ignore fixed-goal targets (#104) (`d9e22c8`)
+- apply remaining-target to missing goal diff and add allocation drift model (#94) (`5099eea`)
+- use Number.isFinite and adjust fallback returns for net flows (#63) (`a3094eb`)
+- sort bucket detail goals alphabetically (#62) (`54e8d5c`)
+- harden routing and allocation logic (#60) (`e859e88`)
+- include pending processing in ending balance (#59) (`1cf756e`)
+- move bucket metadata to _meta (#58) (`61e500e`)
+- correct growth % calculations and streamline goal rows (#57) (`7cd9156`)
+- refine bucket parsing and logging (#54) (`838c98b`)
+- teardown performance chart observers on overlay close (#45) (`4256edb`)
+- scope projected diff recalculation to goal table (#44) (`aa1f8b8`)
+- improve error handling and eliminate remaining code duplication (`370f707`)
+- properly handle clearing target percentage and add GM_deleteValue grant (`a93f28f`)
+- Restructure GitHub Copilot configuration to follow best practices (`b1a0a50`)
+
+### Documentation
+
+- allow autonomous execution for clear specs (#125) (`ed07f41`)
+- consolidate planning docs into skills (#124) (`d4d1e31`)
+- format skills list as table (#113) (`e777863`)
+- add explicit user journey for manual rebalance userscript flow (#101) (`cf9bc06`)
+- trim agents overview to avoid overlap (#91) (`f337d99`)
+- clarify template hygiene and iteration (#88) (`c3705a8`)
+- add alignment gates and Devil's Advocate agent (#85) (`4028960`)
+- clarify agent interaction model (#65) (`7bc96a4`)
+- align AGENTS with role guides (#50) (`a0acef3`)
+- clarify fund visualization gap (#43) (`77f5162`)
+- rename to Goal Portfolio Viewer and apply reviewer feedback (#42) (`59f80e4`)
+- refocus on core-satellite portfolio tracking (#34) (`d200342`)
+
+### Refactors
+
+- modal accessibility, sync helpers, worker utilities (#120) (`8dfcbba`)
+- simplify helpers and remove legacy auth (#111) (`74f8466`)
+- consolidate percent formatting and goal model helpers (#89) (`687f570`)
+- remove demo-only performance fallback and add E2E demo tooling (#86) (`dca47f6`)
+- simplify refresh gating (#52) (`47618c0`)
+- move target % to individual goal rows per user feedback (`1ef7e0f`)
+- extract helper functions to reduce code duplication (`41e372b`)
+- improve storage key handling, add user feedback for validation (`8befaf7`)
+
+### Tests
+
+- consolidate low-value unit checks (#110) (`5b3efd1`)
+- cover auth helpers (#106) (`04651ca`)
+- add storage kv coverage (#107) (`13e388c`)
+- expand auth and sync route coverage (#108) (`4a711d9`)
+- cover token refresh helpers (#109) (`59eac40`)
+- add worker unit tests and path-scoped CI (#100) (`72d987a`)
+- expand userscript coverage and document skills (#99) (`a2c26ff`)
+
+### Chores
+
+- skip draft pull request workflow jobs (#117) (`2750485`)
+- adopt pnpm workspaces and move userscript tooling into tampermonkey package (#105) (`b0b41e4`)
+- refresh skill set and update alignment (#98) (`239fdd3`)
+- render production wrangler config (`98dc3ef`)
+- align stats markup, move screenshots to docs, and bump version (#69) (`bbd298d`)
+- skip tests for draft pull requests (#64) (`0439bde`)
+
+### Security
+
+- gate stale cache fallback to demo mode only (#82) (`91cff43`)
+- add HTML escaping for data attributes to prevent XSS (`b7aee20`)
+
+### Other
+
+- Chore/unify sync kv binding (#118) (`4036b39`)
+- Fix preview KV selection and add spec execution gate (#116) (`748f936`)
+- Add cross-device sync with password-based auth, two-stage key derivation, hardened password storage, polished UI, critical security fixes, repository cleanup, code simplification, and code review response (#90) (`4e0b9e1`)
+- agent improvements (#87) (`82478b8`)
+- Update demo screenshots with automated capture tooling (#81) (`ebe23b9`)
+- Fix demo mock data structure, complete performance metrics, and correct demo data generation (#80) (`b6b87f5`)
+- Add memoization to sortGoalsByName() with 1-week cache expiration for O(n log n) → O(1) on repeated renders (#78) (`ef968f3`)
+- Update demo with time-series performance data, cache fallback, and working charts (#76) (`b97299a`)
+- cleanupv2 (#73) (`58fc8fa`)
+- clean up (#72) (`892369a`)
+- Code debt payoff (#71) (`4da979f`)
+- Updated testing and linting (#68) (`e68cff8`)
+- Add mock data generator and screenshots for Personal and Holiday buckets (#55) (`a9e9de8`)
+- Refactor UI view models and add unit tests (#49) (`b8c96bb`)
+- Rebrand from "Endowus Portfolio Viewer" to "Goal Portfolio Viewer" (#41) (`c30eb4e`)
+- Reference GitHub agent guidance in AGENTS.md (#32) (`4b78a13`)
+- Add test infrastructure and CI with zero code duplication (#30) (`e513a9b`)
+- Revise README for clarity and structure (#31) (`399b9db`)
+- Add capital allocation guidance (#27) (`5a37891`)
+- Refactor data flow for portfolio viewer logic (#26) (`87f5b7d`)
+- Align styles section with UI layer (#25) (`34dd6bb`)
+- Create assets folder and move endowus_view_enhancer_screenshot.png into it. (`35a3e9b`)
+- Update README.md with improved documentation and add screenshot placeholder (`5a9d016`)
+- Address feedback: neutral colors, allow negative values, revert version to 2.2.0 (`2c58e75`)
+- Add projected investment input feature for goal type diff calculation (`1d2ba88`)
+- Initial plan (`4dceee9`)
+- Rename 'Diff (%)' header to 'Diff' (`7ba9bea`)
+- Initial plan (`36a03ed`)
+- Update documentation to reflect bottom-right button location (`18f9932`)
+- Initial plan (`692d567`)
+- removed firefox addon and updated readme files (`d98a7a5`)
+- Fix TypeError when navigating between pages by validating array data (`a92e29f`)
+- Initial plan (`cf26545`)
+- updated the readme (`890847c`)
+- Make tampermonkey/README.md self-contained without external links (`47f4ac1`)
+- Address code review feedback: update date format and remove duplicate features (`0a5839b`)
+- Refactor documentation: user-focused README and consolidated technical docs (`ae04381`)
+- Initial plan (`9e75743`)
+- Add debouncing to MutationObserver for better performance (`6dc2b9e`)
+- Replace setInterval with MutationObserver for URL change detection (`364b9a8`)
+- Initial plan (`63f1ab6`)
+- Update goal type sorting and rename Passive Income to Income (`410c032`)
+- Add URL monitoring every 2 seconds for SPA navigation support (`047dedb`)
+- Add passive income support, optimize spacing, and enable click-outside to close (`19167fe`)
+- Implement storage, conditional button display, and improve UI readability (`612d804`)
+- Add quick installation guide for users (`226e059`)
+- Improve error handling and add JSDoc documentation (`897b820`)
+- Fix URL matching logic and add clarifying comments (`293215b`)
+- Add feature comparison documentation with UI screenshots (`4ab222b`)
+- Add Tampermonkey script with modern UI and API interception (`75a6e2b`)
+- Initial plan (`0fd0926`)

@@ -152,11 +152,21 @@ Our project uses specialized AI agents for different aspects of development:
 ```bash
 # Development
 pnpm test              # Run tests
+pnpm test:changelog    # Run changelog CLI tests
+pnpm changelog         # Preview changelog markdown for latest-tag..HEAD
+pnpm changelog:write   # Regenerate CHANGELOG.md
 pnpm run lint          # Check code quality
 pnpm run test:watch    # Development mode
 ```
 
 `pnpm-lock.yaml` is committed to keep workspace installs reproducible across contributors and CI.
+
+### Release Notes and Changelog Maintenance
+
+- `pnpm changelog` prints markdown for commits between the latest reachable tag and `HEAD`.
+- `pnpm changelog:write` writes the same synthesized output to `CHANGELOG.md`.
+- Override stale or missing tags with explicit refs, for example `node scripts/generate-changelog.mjs --from v1.0.3.1 --to HEAD --write CHANGELOG.md`.
+- Conventional commit subjects produce the cleanest section grouping; non-conventional subjects are still included under `Other`.
 
 ### Documentation
 
