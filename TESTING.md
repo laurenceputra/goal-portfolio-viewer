@@ -58,7 +58,11 @@ pnpm run test:watch
 # Run tests with coverage report
 pnpm run test:coverage
 
-# Run layered coverage (userscript vs overall)
+# Run documentation drift detector tests
+pnpm run test:docs
+
+# Verify markdown links, documented commands, and version touchpoints
+pnpm run doc:drift
 ```
 
 ### Test Output
@@ -202,7 +206,7 @@ Draft pull requests are intentionally skipped by job conditions. When a draft PR
 1. Checkout code
 2. Setup Node.js (20.x)
 3. Install dependencies (`pnpm install`)
-4. Run affected jobs based on changed paths (lint, userscript tests, worker unit tests, e2e)
+4. Run affected jobs based on changed paths (lint, userscript tests, doc drift, worker unit tests, e2e)
 5. Post coverage/comments and upload artifacts for relevant jobs
 
 ### CI Requirements
@@ -211,6 +215,7 @@ Draft pull requests are intentionally skipped by job conditions. When a draft PR
 - No test failures allowed
 - Draft PRs should show CI jobs as skipped
 - Ready/non-draft PRs should run eligible jobs based on path filters
+- Documentation changes should trigger the doc drift job when relevant files change
 
 ### Viewing CI Results
 
@@ -296,7 +301,7 @@ Create initial automated test coverage for the Cloudflare Worker backend using *
      - `workers/src/**/*.js` (only if needed for test-friendly exports)
      - `workers/__tests__/` (new unit test files)
    - Changes:
-     - Add a dedicated `test:unit` script for workers.
+      - Use the dedicated `test:unit` script for workers.
      - Add unit tests for pure/mostly-pure behavior with mocked `env`, `Request`, and KV methods.
 
 2. **Unit test coverage for high-risk worker modules**
@@ -344,7 +349,9 @@ Create initial automated test coverage for the Cloudflare Worker backend using *
 - Local verification commands (during implementation):
   - `pnpm run test`
   - `pnpm run test:coverage`
-  - `pnpm --filter ./workers test:unit` (once added)
+  - `pnpm --filter ./workers test:unit`
+  - `pnpm run test:docs`
+  - `pnpm run doc:drift`
 - CI verification:
   - Open one PR that changes only `workers/src/**` and confirm only worker unit test path executes.
   - Open one PR that changes only `tampermonkey/**` and confirm worker unit test path is skipped.

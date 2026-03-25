@@ -153,13 +153,17 @@ Our project uses specialized AI agents for different aspects of development:
 # Development
 pnpm test              # Run tests
 pnpm test:changelog    # Run changelog CLI tests
+pnpm test:docs         # Run doc drift detector tests
 pnpm changelog         # Preview changelog markdown for latest-tag..HEAD
 pnpm changelog:write   # Regenerate CHANGELOG.md
+pnpm doc:drift         # Validate markdown links, documented scripts, and version touchpoints
 pnpm run lint          # Check code quality
 pnpm run test:watch    # Development mode
 ```
 
 `pnpm-lock.yaml` is committed to keep workspace installs reproducible across contributors and CI.
+
+Run `pnpm run doc:drift` whenever you touch documentation, package scripts, CI manifests, or userscript version metadata so docs and release touchpoints stay aligned with the repo.
 
 ### Release Notes and Changelog Maintenance
 
@@ -178,6 +182,7 @@ pnpm run test:watch    # Development mode
 
 - ✅ All tests must pass
 - ✅ ESLint checks clean
+- ✅ Doc drift checks clean when docs/tooling/version touchpoints change
 - ✅ Financial calculations manually verified
 - ✅ Documentation updated for behavior changes
 - ✅ Version bumped appropriately

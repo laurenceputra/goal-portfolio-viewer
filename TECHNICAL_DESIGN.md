@@ -493,6 +493,8 @@ When shipping a release, update every version touchpoint to keep them aligned:
 
 If any of these are missed, Tampermonkey auto-updates or release notes can drift from the actual code.
 
+Before merging documentation, manifest, or userscript metadata changes, run `pnpm run doc:drift` to verify relative markdown links, documented package scripts, and version touchpoints still match the repository state.
+
 **Key Sections to Modify:**
 
 ```javascript

@@ -19,6 +19,7 @@ jobs:
     outputs:
       userscript: ${{ steps.filter.outputs.userscript }}
       workers: ${{ steps.filter.outputs.workers }}
+      docdrift: ${{ steps.filter.outputs.docdrift }}
       e2e: ${{ steps.filter.outputs.e2e }}
     steps:
       - name: Checkout code
@@ -40,6 +41,23 @@ jobs:
               - 'workers/**'
               - 'pnpm-workspace.yaml'
               - 'pnpm-lock.yaml'
+            docdrift:
+              - '*.md'
+              - '.github/**/*.md'
+              - '.github/workflows/ci.yml'
+              - 'demo/**/*.md'
+              - 'demo/package.json'
+              - 'docs/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'scripts/check-doc-drift.mjs'
+              - 'scripts/__tests__/check-doc-drift.test.mjs'
+              - 'tampermonkey/**/*.md'
+              - 'tampermonkey/goal_portfolio_viewer.user.js'
+              - 'tampermonkey/package.json'
+              - 'workers/**/*.md'
+              - 'workers/package.json'
             e2e:
               - 'demo/**'
               - 'tampermonkey/**'
@@ -72,6 +90,34 @@ jobs:
 
       - name: Run ESLint
         run: pnpm --filter ./tampermonkey lint
+
+  doc-drift:
+    name: Documentation Drift
+    runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.changes.outputs.docdrift == 'true' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.3
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run doc drift tests
+        run: pnpm run test:docs
+
+      - name: Run doc drift detector
+        run: pnpm run doc:drift
 
   test:
     name: Test on Node.js ${{ matrix.node-version }}

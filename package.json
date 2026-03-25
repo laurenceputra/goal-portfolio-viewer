@@ -14,9 +14,11 @@
   "scripts": {
     "changelog": "node scripts/generate-changelog.mjs",
     "changelog:write": "node scripts/generate-changelog.mjs --write CHANGELOG.md",
+    "doc:drift": "node scripts/check-doc-drift.mjs",
     "lint": "pnpm --filter ./tampermonkey lint",
     "test": "pnpm --filter ./tampermonkey test",
     "test:changelog": "node --test scripts/__tests__/generate-changelog.test.mjs",
+    "test:docs": "node --test scripts/__tests__/check-doc-drift.test.mjs",
     "test:watch": "pnpm --filter ./tampermonkey test:watch",
     "test:coverage": "pnpm --filter ./tampermonkey test:coverage",
     "test:e2e": "pnpm --filter ./demo test:e2e"
