@@ -43,6 +43,7 @@ jobs:
               - 'pnpm-lock.yaml'
             docdrift:
               - '*.md'
+              - '.agents/**/*.md'
               - '.github/**/*.md'
               - '.github/workflows/ci.yml'
               - 'demo/**/*.md'

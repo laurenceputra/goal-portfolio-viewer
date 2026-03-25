@@ -8,6 +8,7 @@ import {
     checkDocDrift,
     extractDocumentedCommands,
     extractMarkdownTargets,
+    parseDocumentedCommands,
     parseDocumentedCommand
 } from '../check-doc-drift.mjs';
 
@@ -40,16 +41,20 @@ async function createWorkspaceFixture(overrides = {}) {
             '```bash',
             'pnpm test',
             'pnpm run lint',
+            'cd workers && pnpm install --frozen-lockfile',
             'pnpm --filter ./workers test:unit',
             '```',
             '',
             '`pnpm run doc:drift`',
+            '`cd tampermonkey && npm run lint`',
             '',
             '[External](https://example.com)',
             '[Section](#local-anchor)'
         ].join('\n'),
         'docs/guide.md': '# Guide\n',
         'docs/diagram.png': 'png',
+        '.agents/skills/example/SKILL.md': '# Example\n\n[Guide](references/guide.md)\n',
+        '.agents/skills/example/references/guide.md': '# Example Guide\n',
         'tampermonkey/package.json': JSON.stringify({
             name: 'tampermonkey',
             version: '1.0.0',
@@ -105,13 +110,16 @@ test('extract helpers keep command and target parsing deterministic', () => {
     assert.deepEqual(
         extractDocumentedCommands([
             '```bash',
+            'cd tampermonkey && npm run lint',
             'pnpm test # comment',
             '```',
-            'Use `pnpm run lint` after changes.'
+            'Use `pnpm run lint` and `cd workers && pnpm test:unit` after changes.'
         ].join('\n')),
         [
-            { command: 'pnpm test', line: 2 },
-            { command: 'pnpm run lint', line: 4 }
+            { command: 'cd tampermonkey && npm run lint', line: 2 },
+            { command: 'pnpm test', line: 3 },
+            { command: 'pnpm run lint', line: 5 },
+            { command: 'cd workers && pnpm test:unit', line: 5 }
         ]
     );
 
@@ -127,6 +135,11 @@ test('extract helpers keep command and target parsing deterministic', () => {
         parseDocumentedCommand('pnpm --filter ./workers test:unit', 'root'),
         { packageKey: 'workers', scriptName: 'test:unit' }
     );
+
+    assert.deepEqual(
+        parseDocumentedCommands('cd tampermonkey && npm run lint', 'root'),
+        [{ packageKey: 'tampermonkey', scriptName: 'lint' }]
+    );
 });
 
 test('checkDocDrift passes for valid links, commands, versions, and ignored paths', async () => {
@@ -134,6 +147,7 @@ test('checkDocDrift passes for valid links, commands, versions, and ignored path
     const result = await checkDocDrift({ rootDir });
 
     assert.equal(result.issues.length, 0);
+    assert.ok(result.files.includes('.agents/skills/example/SKILL.md'));
     assert.ok(result.files.includes('README.md'));
     assert.ok(result.files.includes('workers/README.md'));
     assert.ok(!result.files.some(file => file.startsWith('.review-audit-branch/')));
@@ -154,7 +168,7 @@ test('checkDocDrift reports broken markdown targets', async () => {
 
 test('checkDocDrift reports missing documented scripts in the resolved workspace', async () => {
     const rootDir = await createWorkspaceFixture({
-        'README.md': '# Workspace\n\n`pnpm run missing-script`\n'
+        'README.md': '# Workspace\n\n`cd tampermonkey && npm run missing-script`\n'
     });
     const result = await checkDocDrift({ rootDir });
 
@@ -162,7 +176,8 @@ test('checkDocDrift reports missing documented scripts in the resolved workspace
         result.issues.map(issue => issue.kind),
         ['missing-script']
     );
-    assert.match(result.issues[0].message, /missing script "missing-script" in package\.json/);
+    assert.equal(result.issues[0].file, 'README.md');
+    assert.match(result.issues[0].message, /missing script "missing-script" in tampermonkey\/package\.json/);
 });
 
 test('checkDocDrift reports version mismatches across release touchpoints', async () => {
@@ -204,4 +219,18 @@ test('ignored paths and external URLs do not produce findings', async () => {
     const result = await checkDocDrift({ rootDir });
 
     assert.equal(result.issues.length, 0);
+});
+
+test('checkDocDrift scans .agents markdown for broken relative links', async () => {
+    const rootDir = await createWorkspaceFixture({
+        '.agents/skills/example/SKILL.md': '# Example\n\n[Broken](references/missing.md)\n'
+    });
+    const result = await checkDocDrift({ rootDir });
+
+    assert.deepEqual(
+        result.issues.map(issue => issue.kind),
+        ['broken-link']
+    );
+    assert.equal(result.issues[0].file, '.agents/skills/example/SKILL.md');
+    assert.match(result.issues[0].message, /references\/missing\.md/);
 });

@@ -4,7 +4,7 @@ import { access, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const ROOT_MARKDOWN_DIRECTORIES = ['.github', 'demo', 'docs', 'tampermonkey', 'workers'];
+const ROOT_MARKDOWN_DIRECTORIES = ['.agents', '.github', 'demo', 'docs', 'tampermonkey', 'workers'];
 const IGNORED_DIRECTORIES = new Set([
     '.git',
     '.review-audit-branch',
@@ -17,6 +17,12 @@ const WORKSPACE_PACKAGE_PATHS = {
     demo: 'demo/package.json',
     tampermonkey: 'tampermonkey/package.json',
     workers: 'workers/package.json'
+};
+const WORKSPACE_DIRECTORIES = {
+    root: '',
+    demo: 'demo',
+    tampermonkey: 'tampermonkey',
+    workers: 'workers'
 };
 const NON_SCRIPT_PNPM_COMMANDS = new Set([
     'add',
@@ -186,6 +192,42 @@ function stripCommandComment(command) {
     return command.replace(/\s+#.*$/, '').trim();
 }
 
+function normalizeShellToken(token) {
+    if (
+        (token.startsWith('"') && token.endsWith('"')) ||
+        (token.startsWith('\'') && token.endsWith('\''))
+    ) {
+        return token.slice(1, -1);
+    }
+
+    return token;
+}
+
+function tokenizeShellCommand(command) {
+    return (command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || []).map(normalizeShellToken);
+}
+
+function splitShellChain(command) {
+    return stripCommandComment(command)
+        .split(/\s*(?:&&|;)\s*/)
+        .map(segment => segment.trim())
+        .filter(Boolean);
+}
+
+function resolveWorkspaceDirectory(directoryValue, currentPackageKey) {
+    if (!directoryValue) {
+        return currentPackageKey;
+    }
+
+    const currentDirectory = WORKSPACE_DIRECTORIES[currentPackageKey] || '.';
+    const normalizedPath = path.posix
+        .normalize(path.posix.join(currentDirectory, directoryValue))
+        .replace(/\/+$/, '')
+        .replace(/^\.\//, '');
+
+    return resolveWorkspaceFilter(normalizedPath) || currentPackageKey;
+}
+
 function parsePnpmCommand(tokens, defaultPackageKey) {
     let packageKey = defaultPackageKey;
     let index = 1;
@@ -257,58 +299,103 @@ function parseNpmCommand(tokens, defaultPackageKey) {
 }
 
 export function parseDocumentedCommand(command, defaultPackageKey) {
+    return parseDocumentedCommands(command, defaultPackageKey)[0] || null;
+}
+
+export function parseDocumentedCommands(command, defaultPackageKey) {
+    const parsedCommands = [];
+    let activePackageKey = defaultPackageKey;
+
+    for (const segment of splitShellChain(command)) {
+        const tokens = tokenizeShellCommand(segment);
+
+        if (tokens.length === 0) {
+            continue;
+        }
+
+        if (tokens[0] === 'cd') {
+            activePackageKey = resolveWorkspaceDirectory(tokens[1], activePackageKey);
+            continue;
+        }
+
+        if (tokens[0] === 'pnpm') {
+            const parsed = parsePnpmCommand(tokens, activePackageKey);
+
+            if (parsed) {
+                parsedCommands.push(parsed);
+            }
+
+            continue;
+        }
+
+        if (tokens[0] === 'npm') {
+            const parsed = parseNpmCommand(tokens, activePackageKey);
+
+            if (parsed) {
+                parsedCommands.push(parsed);
+            }
+        }
+    }
+
+    return parsedCommands;
+}
+
+function addDocumentedCommand(commands, seen, command, line) {
     const normalizedCommand = stripCommandComment(command);
 
     if (!normalizedCommand) {
-        return null;
+        return;
     }
 
-    const tokens = normalizedCommand.split(/\s+/);
+    const key = `${line}:${normalizedCommand}`;
 
-    if (tokens[0] === 'pnpm') {
-        return parsePnpmCommand(tokens, defaultPackageKey);
+    if (seen.has(key)) {
+        return;
     }
 
-    if (tokens[0] === 'npm') {
-        return parseNpmCommand(tokens, defaultPackageKey);
-    }
-
-    return null;
+    seen.add(key);
+    commands.push({ command: normalizedCommand, line });
 }
 
 export function extractDocumentedCommands(content) {
     const commands = [];
     const seen = new Set();
     const lines = content.split(/\r?\n/);
+    let activeFence = null;
 
     lines.forEach((line, lineIndex) => {
         const trimmed = line.trim();
 
-        if (/^(pnpm|npm)\b/.test(trimmed)) {
-            const command = stripCommandComment(trimmed);
-            const key = `${lineIndex + 1}:${command}`;
+        const fenceMatch = trimmed.match(/^(```+|~~~+)/);
 
-            if (!seen.has(key)) {
-                seen.add(key);
-                commands.push({ command, line: lineIndex + 1 });
+        if (fenceMatch) {
+            const fenceMarker = fenceMatch[1];
+
+            if (!activeFence) {
+                activeFence = fenceMarker;
+            } else if (trimmed.startsWith(activeFence)) {
+                activeFence = null;
             }
+
+            return;
+        }
+
+        if (activeFence && /\b(?:pnpm|npm)\b/.test(trimmed)) {
+            addDocumentedCommand(commands, seen, trimmed, lineIndex + 1);
+        }
+
+        if (/^(?:pnpm|npm|cd)\b/.test(trimmed) && /\b(?:pnpm|npm)\b/.test(trimmed)) {
+            addDocumentedCommand(commands, seen, trimmed, lineIndex + 1);
         }
 
         for (const match of line.matchAll(/`([^`\n]+)`/g)) {
-            const command = stripCommandComment(match[1].trim());
+            const command = match[1].trim();
 
-            if (!/^(pnpm|npm)\b/.test(command)) {
+            if (!/\b(?:pnpm|npm)\b/.test(command)) {
                 continue;
             }
 
-            const key = `${lineIndex + 1}:${command}`;
-
-            if (seen.has(key)) {
-                continue;
-            }
-
-            seen.add(key);
-            commands.push({ command, line: lineIndex + 1 });
+            addDocumentedCommand(commands, seen, command, lineIndex + 1);
         }
     });
 
@@ -440,34 +527,30 @@ function checkCommandsInDocument(docPath, content, packages) {
     const defaultPackageKey = inferPackageKey(docPath);
 
     for (const entry of extractDocumentedCommands(content)) {
-        const parsed = parseDocumentedCommand(entry.command, defaultPackageKey);
+        for (const parsed of parseDocumentedCommands(entry.command, defaultPackageKey)) {
+            const packageState = packages[parsed.packageKey];
 
-        if (!parsed) {
-            continue;
-        }
+            if (!packageState) {
+                issues.push({
+                    kind: 'missing-script',
+                    file: docPath,
+                    line: entry.line,
+                    message: `Command "${entry.command}" targets unknown workspace "${parsed.packageKey}".`
+                });
+                continue;
+            }
 
-        const packageState = packages[parsed.packageKey];
+            if (packageState.scripts[parsed.scriptName]) {
+                continue;
+            }
 
-        if (!packageState) {
             issues.push({
                 kind: 'missing-script',
                 file: docPath,
                 line: entry.line,
-                message: `Command "${entry.command}" targets unknown workspace "${parsed.packageKey}".`
+                message: `Command "${entry.command}" references missing script "${parsed.scriptName}" in ${packageState.path}.`
             });
-            continue;
         }
-
-        if (packageState.scripts[parsed.scriptName]) {
-            continue;
-        }
-
-        issues.push({
-            kind: 'missing-script',
-            file: docPath,
-            line: entry.line,
-            message: `Command "${entry.command}" references missing script "${parsed.scriptName}" in ${packageState.path}.`
-        });
     }
 
     return issues;
