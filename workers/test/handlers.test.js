@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { handleSync, handleGetSync, handleDeleteSync } from '../src/handlers.js';
+import { METRIC_POINTS } from '../src/metrics.js';
 
 function createKvMock(initialSyncData = null) {
   const store = new Map();
@@ -37,13 +38,14 @@ async function parseResponse(response) {
 }
 
 test('handleSync rejects invalid request body', async () => {
-  const env = { SYNC_KV: createKvMock() };
+  const env = { SYNC_KV: createKvMock(), __metrics: [] };
 
   const response = await handleSync(null, env);
   const parsed = await parseResponse(response);
 
   assert.equal(parsed.status, 400);
   assert.equal(parsed.body.error, 'BAD_REQUEST');
+  assert.equal(env.__metrics[0].pointId, METRIC_POINTS.badRequestOutcome.id);
 });
 
 test('handleSync rejects invalid userId format', async () => {
@@ -67,7 +69,7 @@ test('handleSync rejects invalid userId format', async () => {
 });
 
 test('handleSync returns conflict when server data is newer', async () => {
-  const env = { SYNC_KV: createKvMock({ timestamp: 200, encryptedData: 'v2', deviceId: 'd2', version: 1 }) };
+  const env = { SYNC_KV: createKvMock({ timestamp: 200, encryptedData: 'v2', deviceId: 'd2', version: 1 }), __metrics: [] };
 
   const response = await handleSync(
     {
@@ -83,6 +85,7 @@ test('handleSync returns conflict when server data is newer', async () => {
   const parsed = await parseResponse(response);
   assert.equal(parsed.status, 409);
   assert.equal(parsed.body.error, 'CONFLICT');
+  assert.equal(env.__metrics[0].pointId, METRIC_POINTS.conflictOutcome.id);
 });
 
 test('handleSync allows force overwrite when server data is newer', async () => {
@@ -135,13 +138,14 @@ test('handleSync stores payload when validation succeeds', async () => {
 });
 
 test('handleGetSync returns 404 when data is missing', async () => {
-  const env = { SYNC_KV: createKvMock() };
+  const env = { SYNC_KV: createKvMock(), __metrics: [] };
 
   const response = await handleGetSync('user-1', env);
   const parsed = await parseResponse(response);
 
   assert.equal(parsed.status, 404);
   assert.equal(parsed.body.error, 'NOT_FOUND');
+  assert.equal(env.__metrics[0].pointId, METRIC_POINTS.notFoundOutcome.id);
 });
 
 test('handleDeleteSync removes user config', async () => {

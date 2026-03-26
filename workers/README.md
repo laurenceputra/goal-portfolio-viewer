@@ -355,7 +355,42 @@ curl http://localhost:8787/sync/test@example.com \
 # Run unit test suite
 node --test test/*.test.js
 ```
+
+### Metrics Coverage Analyzer
+
+The worker backend includes a metrics coverage contract plus an analyzer that validates every documented route and critical backend outcome is still instrumented.
+
+Coverage is intentionally limited to privacy-safe operational metadata:
+- normalized route + method
+- status/outcome classification
+- latency
+- payload size accounting for sync uploads
+- token usage events
+- rate-limit hits
+
+It does **not** log plaintext config data, `userId`, `deviceId`, authorization headers, or encrypted payload contents.
+
+Run it locally from the repository root:
+
+```bash
+pnpm --filter ./workers analyze:metrics-coverage
 ```
+
+Or from `workers/` directly:
+
+```bash
+node scripts/analyze-metrics-coverage.mjs
+```
+
+If the analyzer fails, it prints:
+- which route is missing coverage
+- whether the gap is a base metric, outcome, or feature
+- the overall coverage percentage
+
+Typical fixes are:
+- add the missing instrumentation hook in `workers/src/index.js`, `workers/src/handlers.js`, or `workers/src/ratelimit.js`
+- extend the worker metrics contract in `workers/src/metrics.js`
+- add/update a worker test that exercises the outcome
 
 ### View Logs
 
@@ -610,6 +645,18 @@ Setup alerts in Cloudflare dashboard:
    - Error rate > 5%
    - Response time > 2s
    - Request volume spikes
+
+### Instrumentation Coverage Contract
+
+`SYNC_ARCHITECTURE.md` documents the backend observability goals, while `workers/src/metrics.js` defines the worker-owned coverage contract that the analyzer enforces.
+
+For this backend, instrumentation coverage means:
+- every documented route has request count, latency, and route outcome metrics
+- critical outcomes remain explicitly instrumented (`BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `PAYLOAD_TOO_LARGE`, `CONFLICT`, `RATE_LIMIT_EXCEEDED`, `NOT_FOUND`, `INTERNAL_ERROR`)
+- the sync upload path records payload size accounting
+- token issuance/verification and rate-limit hits stay measurable
+
+This check is static + unit-test backed. It helps prevent observability drift in code review and CI, but it does not replace production dashboard validation.
 
 ## 🐛 Troubleshooting
 

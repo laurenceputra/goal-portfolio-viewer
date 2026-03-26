@@ -199,6 +199,9 @@ jobs:
       - name: Run worker unit tests with coverage
         run: pnpm --filter ./workers test:unit:coverage
 
+      - name: Run worker metrics coverage analyzer
+        run: pnpm --filter ./workers analyze:metrics-coverage
+
       - name: Post worker coverage comment
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7

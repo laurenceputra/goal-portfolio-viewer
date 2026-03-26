@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { rateLimit, getRateLimitStatus, resetRateLimit } from '../src/ratelimit.js';
+import { METRIC_POINTS } from '../src/metrics.js';
 
 function createKvMock() {
   const store = new Map();
@@ -47,7 +48,7 @@ test('rateLimit allows first request and stores counter', async () => {
 
 test('rateLimit blocks when limit is exceeded', async () => {
   const kv = createKvMock();
-  const env = { SYNC_KV: kv };
+  const env = { SYNC_KV: kv, __metrics: [] };
   const now = Date.now();
   kv.store.set(
     'ratelimit:1.2.3.4:/sync:POST',
@@ -59,11 +60,13 @@ test('rateLimit blocks when limit is exceeded', async () => {
 
   assert.equal(result.allowed, false);
   assert.ok(result.retryAfter > 0);
+  assert.equal(env.__metrics[0].pointId, METRIC_POINTS.rateLimitOutcome.id);
+  assert.equal(env.__metrics[1].pointId, METRIC_POINTS.rateLimitHitFeature.id);
 });
 
 test('rateLimit normalizes /sync/:userId path config', async () => {
   const kv = createKvMock();
-  const env = { SYNC_KV: kv };
+  const env = { SYNC_KV: kv, __metrics: [] };
   const request = createRequest('GET', { 'CF-Connecting-IP': '1.2.3.4' });
 
   const result = await rateLimit(request, env, '/sync/alice');
@@ -72,6 +75,23 @@ test('rateLimit normalizes /sync/:userId path config', async () => {
   assert.equal(kv.store.size, 1);
   const [key] = [...kv.store.keys()];
   assert.ok(key.includes('/sync/:userId:GET'));
+});
+
+test('rateLimit records normalized route metadata when /sync/:userId is throttled', async () => {
+  const kv = createKvMock();
+  const env = { SYNC_KV: kv, __metrics: [] };
+  const now = Date.now();
+  kv.store.set(
+    'ratelimit:1.2.3.4:/sync/:userId:GET',
+    JSON.stringify({ count: 60, resetAt: now + 30_000 })
+  );
+
+  const request = createRequest('GET', { 'CF-Connecting-IP': '1.2.3.4' });
+  const result = await rateLimit(request, env, '/sync/alice');
+
+  assert.equal(result.allowed, false);
+  assert.equal(env.__metrics[0].routeId, 'sync-download');
+  assert.equal(env.__metrics[1].normalizedPath, '/sync/:userId');
 });
 
 test('rateLimit uses minimum KV TTL when remaining window is short', async () => {

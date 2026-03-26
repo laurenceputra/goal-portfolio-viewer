@@ -1632,6 +1632,18 @@ const { tokens } = await response.json();
 - Token usage
 - Rate limit hits
 
+**Instrumentation coverage contract**:
+- Keep the worker route inventory centralized in `workers/src/metrics.js`.
+- Treat `GET /health`, `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /sync`, `GET /sync/:userId`, and `DELETE /sync/:userId` as the canonical backend surface for observability coverage.
+- Require request count, route outcome totals, and latency for every documented route.
+- Require explicit instrumentation for high-value outcomes: `BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `PAYLOAD_TOO_LARGE`, `CONFLICT`, `RATE_LIMIT_EXCEEDED`, `NOT_FOUND`, and `INTERNAL_ERROR` where applicable.
+- Require privacy-safe feature instrumentation for sync upload payload sizing, token issuance/verification, and rate-limit hits.
+
+**Coverage enforcement**:
+- Run `pnpm --filter ./workers analyze:metrics-coverage` locally or in CI to compare the metrics contract against the runtime instrumentation manifest.
+- The analyzer reports covered routes, missing route metrics, missing outcomes/features, and the overall coverage percentage.
+- A green analyzer result means the required worker instrumentation points are present and unit-testable; it does not replace live Cloudflare dashboard validation.
+
 **Alerts to configure**:
 - Error rate > 5%
 - Response time > 2s

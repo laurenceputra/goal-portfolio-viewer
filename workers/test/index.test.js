@@ -4,6 +4,7 @@ import { webcrypto } from 'node:crypto';
 
 import worker from '../src/index.js';
 import { tokens } from '../src/auth.js';
+import { METRIC_POINTS } from '../src/metrics.js';
 
 if (!globalThis.crypto) {
   globalThis.crypto = webcrypto;
@@ -57,8 +58,13 @@ function createEnv(kvOverrides = {}) {
   return {
     SYNC_KV: createKv(),
     JWT_SECRET: 'test-secret',
+    __metrics: [],
     ...kvOverrides
   };
+}
+
+function getMetrics(env, pointId) {
+  return env.__metrics.filter((event) => event.pointId === pointId);
 }
 
 test('OPTIONS request returns CORS preflight response for allowed origin', async () => {
@@ -92,8 +98,9 @@ test('OPTIONS request omits allow-origin header for disallowed origin', async ()
 });
 
 test('GET /health returns status payload', async () => {
+  const env = createEnv();
   const request = new Request('https://worker.example/health', { method: 'GET', headers: { Origin: 'https://secure.fundsupermart.com' } });
-  const response = await worker.fetch(request, {}, {});
+  const response = await worker.fetch(request, env, {});
   const parsed = await parseJsonResponse(response);
 
   assert.equal(parsed.status, 200);
@@ -102,9 +109,14 @@ test('GET /health returns status payload', async () => {
   assert.equal(parsed.headers['access-control-allow-origin'], 'https://secure.fundsupermart.com');
   assert.equal(parsed.headers['cache-control'], 'no-store');
   assert.equal(parsed.headers['pragma'], 'no-cache');
+  assert.equal(getMetrics(env, METRIC_POINTS.routeRequestCount.id).length, 1);
+  assert.equal(getMetrics(env, METRIC_POINTS.routeOutcomeTotal.id)[0].outcome, 'success');
+  assert.equal(getMetrics(env, METRIC_POINTS.successOutcome.id)[0].routeId, 'health');
+  assert.ok(getMetrics(env, METRIC_POINTS.routeLatency.id)[0].durationMs >= 0);
 });
 
 test('POST /auth/login with invalid json returns bad request', async () => {
+  const env = createEnv();
   const request = new Request('https://worker.example/auth/login', {
     method: 'POST',
     body: '{not-json',
@@ -113,11 +125,13 @@ test('POST /auth/login with invalid json returns bad request', async () => {
     }
   });
 
-  const response = await worker.fetch(request, { SYNC_KV: { get: async () => null, put: async () => {} } }, {});
+  const response = await worker.fetch(request, env, {});
   const parsed = await parseJsonResponse(response);
 
   assert.equal(parsed.status, 400);
   assert.equal(parsed.body.error, 'BAD_REQUEST');
+  assert.equal(getMetrics(env, METRIC_POINTS.badRequestOutcome.id)[0].routeId, 'auth-login');
+  assert.equal(getMetrics(env, METRIC_POINTS.routeOutcomeTotal.id)[0].outcome, 'bad_request');
 });
 
 test('POST /auth/register supports success and validation failures', async () => {
@@ -176,6 +190,8 @@ test('POST /auth/login returns tokens on success', async () => {
   assert.equal(loginParsed.status, 200);
   assert.ok(loginParsed.body.tokens.accessToken);
   assert.ok(loginParsed.body.tokens.refreshToken);
+  assert.equal(getMetrics(env, METRIC_POINTS.tokenIssueFeature.id).length, 1);
+  assert.equal(getMetrics(env, METRIC_POINTS.tokenIssueFeature.id)[0].routeId, 'auth-login');
 });
 
 test('POST /auth/refresh handles missing, invalid, and valid tokens', async () => {
@@ -189,6 +205,7 @@ test('POST /auth/refresh handles missing, invalid, and valid tokens', async () =
 
   assert.equal(missingParsed.status, 401);
   assert.equal(missingParsed.body.error, 'UNAUTHORIZED');
+  assert.equal(getMetrics(env, METRIC_POINTS.unauthorizedOutcome.id)[0].routeId, 'auth-refresh');
 
   const invalidRequest = new Request('https://worker.example/auth/refresh', {
     method: 'POST',
@@ -215,6 +232,7 @@ test('POST /auth/refresh handles missing, invalid, and valid tokens', async () =
 
   assert.equal(validParsed.status, 200);
   assert.ok(validParsed.body.tokens.accessToken);
+  assert.equal(getMetrics(env, METRIC_POINTS.tokenIssueFeature.id)[0].routeId, 'auth-refresh');
 });
 
 test('POST /sync rejects payloads larger than MAX_PAYLOAD_SIZE', async () => {
@@ -235,6 +253,8 @@ test('POST /sync rejects payloads larger than MAX_PAYLOAD_SIZE', async () => {
 
   assert.equal(parsed.status, 413);
   assert.equal(parsed.body.error, 'PAYLOAD_TOO_LARGE');
+  assert.equal(getMetrics(env, METRIC_POINTS.payloadTooLargeOutcome.id)[0].routeId, 'sync-upload');
+  assert.equal(getMetrics(env, METRIC_POINTS.payloadSizeFeature.id)[0].bytes, 10 * 1024 + 1);
 });
 
 test('POST /sync rejects oversized payload without Content-Length', async () => {
@@ -254,6 +274,8 @@ test('POST /sync rejects oversized payload without Content-Length', async () => 
 
   assert.equal(parsed.status, 413);
   assert.equal(parsed.body.error, 'PAYLOAD_TOO_LARGE');
+  assert.equal(getMetrics(env, METRIC_POINTS.payloadTooLargeOutcome.id)[0].routeId, 'sync-upload');
+  assert.equal(getMetrics(env, METRIC_POINTS.payloadSizeFeature.id)[0].normalizedPath, '/sync');
 });
 
 test('GET/DELETE /sync/:userId blocks access for mismatched authenticated user', async () => {
@@ -283,6 +305,9 @@ test('GET/DELETE /sync/:userId blocks access for mismatched authenticated user',
   const deleteParsed = await parseJsonResponse(deleteResponse);
 
   assert.equal(deleteParsed.status, 403);
+  assert.equal(getMetrics(env, METRIC_POINTS.tokenVerifyFeature.id).length, 2);
+  assert.equal(getMetrics(env, METRIC_POINTS.forbiddenOutcome.id).length, 2);
+  assert.ok(env.__metrics.every((event) => JSON.stringify(event).includes('other-user') === false));
 });
 
 test('unknown authenticated route returns 404', async () => {
@@ -321,13 +346,38 @@ test('rate limit is enforced for authenticated requests', async () => {
 
   assert.equal(parsed.status, 429);
   assert.equal(parsed.body.error, 'RATE_LIMIT_EXCEEDED');
+  assert.equal(getMetrics(env, METRIC_POINTS.rateLimitOutcome.id)[0].routeId, 'sync-download');
+  assert.equal(getMetrics(env, METRIC_POINTS.rateLimitHitFeature.id)[0].normalizedPath, '/sync/:userId');
 });
 
 test('unauthenticated sync request returns unauthorized', async () => {
+  const env = createEnv();
   const request = new Request('https://worker.example/sync', { method: 'POST', body: '{}' });
-  const response = await worker.fetch(request, {}, {});
+  const response = await worker.fetch(request, env, {});
   const parsed = await parseJsonResponse(response);
 
   assert.equal(parsed.status, 401);
   assert.equal(parsed.body.error, 'UNAUTHORIZED');
+  assert.equal(getMetrics(env, METRIC_POINTS.unauthorizedOutcome.id)[0].routeId, 'sync-upload');
+});
+
+test('POST /auth/refresh records internal errors without leaking secrets', async () => {
+  const env = {
+    SYNC_KV: createKv(),
+    __metrics: []
+  };
+  const request = new Request('https://worker.example/auth/refresh', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer token-value'
+    }
+  });
+
+  const response = await worker.fetch(request, env, {});
+  const parsed = await parseJsonResponse(response);
+
+  assert.equal(parsed.status, 500);
+  assert.equal(parsed.body.error, 'INTERNAL_ERROR');
+  assert.equal(getMetrics(env, METRIC_POINTS.internalErrorOutcome.id)[0].routeId, 'auth-refresh');
+  assert.ok(env.__metrics.every((event) => JSON.stringify(event).includes('token-value') === false));
 });
