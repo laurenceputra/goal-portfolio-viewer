@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.1
+// @version      2.14.2
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -4114,6 +4114,9 @@ function formatSyncFixed(isFixed) {
             const code = utils.normalizeString(row?.code, '');
             const portfolioId = utils.normalizeString(assignmentByCode?.[code], FSM_UNASSIGNED_PORTFOLIO_ID);
             const portfolioLabel = formatFsmPortfolioLabel(portfolioId, portfolioNameMap);
+            const storedTarget = Storage.get(storageKeys.fsmTarget(code), null);
+            const targetPercent = Number.isFinite(Number(storedTarget)) ? Number(storedTarget) : null;
+            const fixed = Storage.get(storageKeys.fsmFixed(code), false) === true;
             return {
                 kind: 'holding',
                 source: 'fsm',
@@ -4122,7 +4125,13 @@ function formatSyncFixed(isFixed) {
                 subtitle: `${utils.normalizeString(row?.name, '-')} · ${utils.normalizeString(row?.productType, '-')}`,
                 detail: `${portfolioLabel} · ${formatMoney(Number(row?.currentValueLcy) || 0)}`,
                 searchText: [code, row?.displayTicker, row?.name, row?.productType, portfolioLabel, holdingsByCode[code]].filter(Boolean).join(' ').toLowerCase(),
-                payload: { ...row, portfolioId }
+                payload: {
+                    ...row,
+                    portfolioId,
+                    targetPercent,
+                    fixed,
+                    targetDisplay: Number.isFinite(targetPercent) ? targetPercent.toFixed(2) : ''
+                }
             };
         });
     }
@@ -4460,7 +4469,7 @@ let GoalTargetStore;
             data => Array.isArray(data),
             'Error loading FSM holdings data'
         );
-        if (fsmHoldings) {
+        if (Array.isArray(fsmHoldings)) {
             apiDataState.fsmHoldings = fsmHoldings;
             logDebug('[Goal Portfolio Viewer] Loaded FSM holdings data from storage');
         }
@@ -4507,12 +4516,90 @@ let GoalTargetStore;
             return;
         }
         const current = Array.isArray(state.ui.shellCompareSelection) ? state.ui.shellCompareSelection : [];
-        const exists = current.some(entry => entry.id === item.id && entry.kind === item.kind);
+        const exists = current.some(entry => entry.id === item.id && entry.kind === item.kind && entry.source === item.source);
+        if (!exists && current.length >= 4) {
+            showInfoMessage('Compare supports up to 4 items. Remove one before adding another.');
+            return;
+        }
         const next = exists
-            ? current.filter(entry => !(entry.id === item.id && entry.kind === item.kind))
+            ? current.filter(entry => !(entry.id === item.id && entry.kind === item.kind && entry.source === item.source))
             : [...current, item];
-        state.ui.shellCompareSelection = next.slice(0, 4);
+        state.ui.shellCompareSelection = next;
         persistShellUiState();
+    }
+
+    function buildDiscoveryIdentity(item) {
+        if (!item || !item.id) {
+            return '';
+        }
+        return [
+            utils.normalizeString(item.source, ''),
+            utils.normalizeString(item.kind, ''),
+            utils.normalizeString(item.id, '')
+        ].join('::');
+    }
+
+    function normalizeShellSourceFilterForRoute(sourceFilter, isFsmRoute) {
+        const normalized = utils.normalizeString(sourceFilter, 'all');
+        const allowed = isFsmRoute
+            ? new Set(['all', 'fsm'])
+            : new Set(['all', 'endowus']);
+        return allowed.has(normalized) ? normalized : 'all';
+    }
+
+    function getLiveCompareSelection(compareSelection, currentItems) {
+        const byIdentity = new Map((Array.isArray(currentItems) ? currentItems : []).map(item => [
+            buildDiscoveryIdentity(item),
+            item
+        ]));
+        const seen = new Set();
+        return (Array.isArray(compareSelection) ? compareSelection : []).reduce((acc, item) => {
+            if (acc.length >= 4) {
+                return acc;
+            }
+            const identity = buildDiscoveryIdentity(item);
+            if (identity && seen.has(identity)) {
+                return acc;
+            }
+            const liveItem = byIdentity.get(buildDiscoveryIdentity(item));
+            if (identity) {
+                seen.add(identity);
+            }
+            if (liveItem) {
+                acc.push(liveItem);
+                return acc;
+            }
+            acc.push(item);
+            return acc;
+        }, []);
+    }
+
+    function serializeCompareSelectionItem(item) {
+        if (!item || !item.id) {
+            return '';
+        }
+        const source = utils.normalizeString(item.source, '');
+        const kind = utils.normalizeString(item.kind, '');
+        const id = utils.normalizeString(item.id, '');
+        const title = utils.normalizeString(item.title, '');
+        const subtitle = utils.normalizeString(item.subtitle, '');
+        const detail = utils.normalizeString(item.detail, '');
+        const payload = item.payload && typeof item.payload === 'object' ? item.payload : null;
+        return JSON.stringify({ source, kind, id, title, subtitle, detail, payload });
+    }
+
+    function compareSelectionsEqual(left, right) {
+        const a = Array.isArray(left) ? left : [];
+        const b = Array.isArray(right) ? right : [];
+        if (a.length !== b.length) {
+            return false;
+        }
+        return a.every((item, index) => serializeCompareSelectionItem(item) === serializeCompareSelectionItem(b[index]));
+    }
+
+    function normalizeShellActiveTab(activeTab, availableTabIds = []) {
+        const normalized = utils.normalizeString(activeTab, 'overview');
+        return availableTabIds.includes(normalized) ? normalized : 'overview';
     }
 
 
@@ -9625,89 +9712,6 @@ syncUi.update = function updateSyncUI() {
         render: renderPortfolioView
     };
 
-    function buildEndowusDiscoveryItems(mergedInvestmentDataState, projectedInvestmentsState) {
-        if (!mergedInvestmentDataState || typeof mergedInvestmentDataState !== 'object') {
-            return [];
-        }
-        const items = [];
-        Object.entries(mergedInvestmentDataState).forEach(([bucketName, bucketObj]) => {
-            const goalIds = collectGoalIds(bucketObj);
-            const goalTargetById = buildGoalTargetById(goalIds, GoalTargetStore.getTarget);
-            const goalFixedById = buildGoalFixedById(goalIds, GoalTargetStore.getFixed);
-            const bucketViewModel = ViewModels.buildBucketDetailViewModel({
-                bucketName,
-                bucketMap: mergedInvestmentDataState,
-                projectedInvestmentsState,
-                goalTargetById,
-                goalFixedById
-            });
-            if (!bucketViewModel) {
-                return;
-            }
-            items.push({
-                kind: 'bucket',
-                source: 'endowus',
-                id: bucketName,
-                title: bucketName,
-                subtitle: `${bucketViewModel.goalTypes.length} goal type(s) · ${formatMoney(bucketViewModel.endingBalanceAmount)}`,
-                detail: bucketViewModel.returnDisplay,
-                searchText: [bucketName, bucketViewModel.returnDisplay, bucketViewModel.growthDisplay].join(' ').toLowerCase(),
-                payload: bucketViewModel
-            });
-            bucketViewModel.goalTypes.forEach(goalTypeModel => {
-                goalTypeModel.goals.forEach(goalModel => {
-                    items.push({
-                        kind: 'goal',
-                        source: 'endowus',
-                        id: goalModel.goalId,
-                        title: goalModel.goalName,
-                        subtitle: `${bucketName} · ${goalTypeModel.displayName}`,
-                        detail: `${goalModel.returnDisplay} · target ${goalModel.targetDisplay || '-'}%`,
-                        bucketName,
-                        goalType: goalTypeModel.goalType,
-                        searchText: [goalModel.goalName, bucketName, goalTypeModel.displayName, goalModel.returnDisplay, goalModel.diffDisplay].join(' ').toLowerCase(),
-                        payload: goalModel
-                    });
-                });
-            });
-        });
-        return items;
-    }
-
-    function buildFsmDiscoveryItems(fsmHoldings, portfolios, assignmentByCode) {
-        const portfolioNameMap = buildFsmPortfolioNameMap(portfolios);
-        const holdingsByCode = buildFsmHoldingsNameMap(fsmHoldings);
-        return (Array.isArray(fsmHoldings) ? fsmHoldings : []).map(row => {
-            const code = utils.normalizeString(row?.code, '');
-            const portfolioId = utils.normalizeString(assignmentByCode?.[code], FSM_UNASSIGNED_PORTFOLIO_ID);
-            const portfolioLabel = formatFsmPortfolioLabel(portfolioId, portfolioNameMap);
-            return {
-                kind: 'holding',
-                source: 'fsm',
-                id: code,
-                title: row?.displayTicker || row?.subcode || code,
-                subtitle: `${utils.normalizeString(row?.name, '-')} · ${utils.normalizeString(row?.productType, '-')}`,
-                detail: `${portfolioLabel} · ${formatMoney(Number(row?.currentValueLcy) || 0)}`,
-                searchText: [code, row?.displayTicker, row?.name, row?.productType, portfolioLabel, holdingsByCode[code]].filter(Boolean).join(' ').toLowerCase(),
-                payload: { ...row, portfolioId }
-            };
-        });
-    }
-
-    function filterDiscoveryItems(items, query, sourceFilter = 'all') {
-        const normalizedQuery = utils.normalizeString(query, '').toLowerCase();
-        const normalizedSource = utils.normalizeString(sourceFilter, 'all');
-        return (Array.isArray(items) ? items : []).filter(item => {
-            if (normalizedSource !== 'all' && item.source !== normalizedSource) {
-                return false;
-            }
-            if (!normalizedQuery) {
-                return true;
-            }
-            return item.searchText.includes(normalizedQuery);
-        });
-    }
-
     // ============================================
     // Controller
     // ============================================
@@ -9723,14 +9727,26 @@ syncUi.update = function updateSyncUI() {
         ) || {};
         const validPortfolioIds = new Set(portfolios.filter(item => item.archived !== true).map(item => item.id));
         const sanitizedAssignments = {};
-        (Array.isArray(fsmHoldings) ? fsmHoldings : []).forEach(row => {
-            const code = utils.normalizeString(row?.code, '');
-            if (!code) {
+
+        Object.entries(assignmentByCode).forEach(([code, portfolioId]) => {
+            const normalizedCode = utils.normalizeString(code, '');
+            if (!normalizedCode) {
                 return;
             }
-            const assigned = utils.normalizeString(assignmentByCode[code], '');
-            sanitizedAssignments[code] = validPortfolioIds.has(assigned) ? assigned : FSM_UNASSIGNED_PORTFOLIO_ID;
+            const normalizedPortfolioId = utils.normalizeString(portfolioId, '');
+            sanitizedAssignments[normalizedCode] = validPortfolioIds.has(normalizedPortfolioId)
+                ? normalizedPortfolioId
+                : FSM_UNASSIGNED_PORTFOLIO_ID;
         });
+
+        (Array.isArray(fsmHoldings) ? fsmHoldings : []).forEach(row => {
+            const code = utils.normalizeString(row?.code, '');
+            if (!code || sanitizedAssignments[code]) {
+                return;
+            }
+            sanitizedAssignments[code] = FSM_UNASSIGNED_PORTFOLIO_ID;
+        });
+
         return {
             portfolios,
             assignmentByCode: sanitizedAssignments
@@ -9739,8 +9755,20 @@ syncUi.update = function updateSyncUI() {
 
     function saveFsmPortfolioConfig(portfolios, assignmentByCode) {
         const safePortfolios = normalizeFsmPortfolios(portfolios);
+        const validPortfolioIds = new Set(safePortfolios.filter(item => item.archived !== true).map(item => item.id));
+        const safeAssignments = {};
+        Object.entries(assignmentByCode && typeof assignmentByCode === 'object' ? assignmentByCode : {}).forEach(([code, portfolioId]) => {
+            const normalizedCode = utils.normalizeString(code, '');
+            if (!normalizedCode) {
+                return;
+            }
+            const normalizedPortfolioId = utils.normalizeString(portfolioId, '');
+            safeAssignments[normalizedCode] = validPortfolioIds.has(normalizedPortfolioId)
+                ? normalizedPortfolioId
+                : FSM_UNASSIGNED_PORTFOLIO_ID;
+        });
         Storage.writeJson(STORAGE_KEYS.fsmPortfolios, safePortfolios, 'Error saving FSM portfolios');
-        Storage.writeJson(STORAGE_KEYS.fsmAssignmentByCode, assignmentByCode || {}, 'Error saving FSM assignments');
+        Storage.writeJson(STORAGE_KEYS.fsmAssignmentByCode, safeAssignments, 'Error saving FSM assignments');
     }
 
     function getFsmTarget(code) {
@@ -9786,7 +9814,7 @@ syncUi.update = function updateSyncUI() {
         };
     }
 
-    function buildFsmHeader({ overlay, cleanupCallbacks }) {
+    function _buildFsmHeader({ overlay, cleanupCallbacks }) {
         const header = createElement('div', 'gpv-header');
         const title = createElement('h1', null, 'Portfolio Viewer (FSM)');
         const titleId = 'gpv-portfolio-title';
@@ -10162,32 +10190,17 @@ syncUi.update = function updateSyncUI() {
         return table;
     }
 
-    function renderFsmOverlay(fsmHoldings) {
-        const overlay = createElement('div', 'gpv-overlay');
-        overlay.id = 'gpv-overlay';
-
-        const container = createElement('div', 'gpv-container gpv-container--expanded');
-        const cleanupCallbacks = [];
-        container.gpvCleanupCallbacks = cleanupCallbacks;
-        overlay.gpvCleanupCallbacks = cleanupCallbacks;
-
-        const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({ overlay, cleanupCallbacks });
-        container.appendChild(header);
-
-        const contentDiv = createElement('div', 'gpv-content');
-        container.appendChild(contentDiv);
-        overlay.appendChild(container);
-
+    function renderFsmWorkspace(contentDiv, fsmHoldings, onStateChange = null) {
         const config = loadFsmPortfolioConfig(fsmHoldings);
         let portfolios = config.portfolios;
         let assignmentByCode = { ...config.assignmentByCode };
         let selectedScope = FSM_ALL_PORTFOLIO_ID;
         let filterTerm = '';
         let bulkPortfolioId = FSM_UNASSIGNED_PORTFOLIO_ID;
-        let selectAllFiltered = false;
         let isPortfolioManagerExpanded = false;
         let editingPortfolioId = null;
         const targetErrorsByCode = {};
+        const selectedCodes = new Set();
 
         const activePortfolios = () => portfolios.filter(item => item.archived !== true);
 
@@ -10224,7 +10237,16 @@ syncUi.update = function updateSyncUI() {
                     || row.productType.toLowerCase().includes(normalizedFilter);
             });
 
-            const selectedCodes = new Set(selectAllFiltered ? filteredRows.map(row => row.code).filter(Boolean) : []);
+            const allVisibleCodes = new Set(rows.map(row => row.code).filter(Boolean));
+            Array.from(selectedCodes).forEach(code => {
+                if (!allVisibleCodes.has(code)) {
+                    selectedCodes.delete(code);
+                }
+            });
+
+            const filteredCodes = filteredRows.map(row => row.code).filter(Boolean);
+            const selectedFilteredCount = filteredCodes.reduce((count, code) => count + (selectedCodes.has(code) ? 1 : 0), 0);
+            const selectAllFiltered = filteredCodes.length > 0 && selectedFilteredCount === filteredCodes.length;
             const summary = buildFsmScopedSummary(filteredRows);
             const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
 
@@ -10289,6 +10311,18 @@ syncUi.update = function updateSyncUI() {
 
             contentDiv.appendChild(buildFsmSummaryRow(summary));
 
+            if (!rows.length) {
+                contentDiv.appendChild(createElement(
+                    'div',
+                    'gpv-shell-empty',
+                    'No FSM holdings found yet. Once holdings load, assign them to portfolios here.'
+                ));
+                if (typeof onStateChange === 'function') {
+                    onStateChange();
+                }
+                return;
+            }
+
             const scopeOptions = [
                 { id: FSM_ALL_PORTFOLIO_ID, label: 'All' },
                 ...activePortfolios().map(item => ({ id: item.id, label: item.name })),
@@ -10317,14 +10351,20 @@ syncUi.update = function updateSyncUI() {
                 bulkPortfolioId,
                 filteredCount: filteredRows.length,
                 onSelectAllChange: value => {
-                    selectAllFiltered = value;
+                    filteredCodes.forEach(code => {
+                        if (value) {
+                            selectedCodes.add(code);
+                            return;
+                        }
+                        selectedCodes.delete(code);
+                    });
                     rerender();
                 },
                 onBulkPortfolioChange: value => {
                     bulkPortfolioId = value;
                 },
                 onApplyBulk: () => {
-                    const targetCodes = Array.from(selectedCodes);
+                    const targetCodes = filteredCodes.filter(code => selectedCodes.has(code));
                     targetCodes.forEach(code => {
                         assignmentByCode[code] = bulkPortfolioId;
                     });
@@ -10340,16 +10380,22 @@ syncUi.update = function updateSyncUI() {
                 activePortfolios: activePortfolios(),
                 targetErrorsByCode,
                 onSelectAllChange: value => {
-                    selectAllFiltered = value;
+                    filteredCodes.forEach(code => {
+                        if (value) {
+                            selectedCodes.add(code);
+                            return;
+                        }
+                        selectedCodes.delete(code);
+                    });
                     rerender();
                 },
                 onRowSelectChange: (code, checked) => {
                     if (checked) {
                         selectedCodes.add(code);
-                        return;
+                    } else {
+                        selectedCodes.delete(code);
                     }
-                    selectedCodes.delete(code);
-                    selectAllFiltered = false;
+                    rerender();
                 },
                 onTargetChange: (row, rawValue) => {
                     if (!rawValue) {
@@ -10383,28 +10429,12 @@ syncUi.update = function updateSyncUI() {
                 }
             });
             contentDiv.appendChild(table);
-        };
-
-        rerender();
-
-        overlay.onclick = (e) => {
-            if (e.target === overlay) {
-                closeOverlay();
+            if (typeof onStateChange === 'function') {
+                onStateChange();
             }
         };
 
-        document.body.appendChild(overlay);
-
-        const modalCleanup = setupModalAccessibility({
-            overlay,
-            container,
-            titleId,
-            onClose: closeOverlay,
-            initialFocus: closeBtn
-        });
-        if (typeof modalCleanup === 'function') {
-            cleanupCallbacks.push(modalCleanup);
-        }
+        rerender();
     }
 
     function showOverlay() {
@@ -10423,14 +10453,11 @@ syncUi.update = function updateSyncUI() {
         }
 
         const isFsmRoute = isFsmInvestmentsRoute(window.location.href, window.location.origin);
-        if (isFsmRoute) {
-            const fsmHoldings = Array.isArray(state.apiData.fsmHoldings) ? state.apiData.fsmHoldings : [];
-            if (fsmHoldings.length === 0) {
-                logDebug('[Goal Portfolio Viewer] FSM holdings not available yet');
-                showErrorMessage('FSM holdings are still loading. Try again after the holdings request completes.');
-                return;
-            }
-            renderFsmOverlay(fsmHoldings);
+        const hasFsmHoldingsSnapshot = Array.isArray(state.apiData.fsmHoldings);
+        const fsmHoldings = hasFsmHoldingsSnapshot ? state.apiData.fsmHoldings : [];
+        if (isFsmRoute && !hasFsmHoldingsSnapshot) {
+            logDebug('[Goal Portfolio Viewer] FSM holdings not available yet');
+            showErrorMessage('FSM holdings are still loading. Try again after the holdings request completes.');
             return;
         }
 
@@ -10439,7 +10466,7 @@ syncUi.update = function updateSyncUI() {
             state.apiData.investible,
             state.apiData.summary
         );
-        if (!mergedInvestmentDataState) {
+        if (!isFsmRoute && !mergedInvestmentDataState) {
             logDebug('[Goal Portfolio Viewer] Not all API data available yet');
             showErrorMessage('Portfolio data is still loading. Open the viewer again after the data arrives.');
             return;
@@ -10455,7 +10482,7 @@ syncUi.update = function updateSyncUI() {
         overlay.gpvCleanupCallbacks = cleanupCallbacks;
 
         const header = createElement('div', 'gpv-header');
-        const title = createElement('h1', null, 'Portfolio Viewer');
+        const title = createElement('h1', null, isFsmRoute ? 'Portfolio Viewer (FSM)' : 'Portfolio Viewer');
         const titleId = 'gpv-portfolio-title';
         title.id = titleId;
         
@@ -10561,6 +10588,8 @@ syncUi.update = function updateSyncUI() {
             button.type = 'button';
             button.dataset.tab = tabId;
             button.setAttribute('role', 'tab');
+            button.id = `gpv-shell-tab-${tabId}`;
+            button.setAttribute('aria-controls', `gpv-shell-panel-${tabId}`);
             button.addEventListener('click', () => {
                 state.ui.shellActiveTab = tabId;
                 Storage.set(SHELL_STATE_KEYS.activeTab, tabId);
@@ -10568,6 +10597,36 @@ syncUi.update = function updateSyncUI() {
             });
             shellTabButtons[tabId] = button;
             shellTabs.appendChild(button);
+        });
+        shellTabs.addEventListener('keydown', event => {
+            const horizontalKeys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+            if (!horizontalKeys.includes(event.key)) {
+                return;
+            }
+            const currentIndex = shellTabIds.indexOf(state.ui.shellActiveTab);
+            if (currentIndex < 0) {
+                return;
+            }
+            let nextIndex = currentIndex;
+            if (event.key === 'ArrowRight') {
+                nextIndex = (currentIndex + 1) % shellTabIds.length;
+            } else if (event.key === 'ArrowLeft') {
+                nextIndex = (currentIndex - 1 + shellTabIds.length) % shellTabIds.length;
+            } else if (event.key === 'Home') {
+                nextIndex = 0;
+            } else if (event.key === 'End') {
+                nextIndex = shellTabIds.length - 1;
+            }
+            event.preventDefault();
+            const nextTabId = shellTabIds[nextIndex];
+            const nextButton = shellTabButtons[nextTabId];
+            if (!nextButton) {
+                return;
+            }
+            state.ui.shellActiveTab = nextTabId;
+            Storage.set(SHELL_STATE_KEYS.activeTab, nextTabId);
+            updateShellPanels();
+            nextButton.focus();
         });
         shellChrome.appendChild(shellTabs);
 
@@ -10577,11 +10636,25 @@ syncUi.update = function updateSyncUI() {
         const shellCompare = createElement('div', 'gpv-shell-compare');
         const shellMappings = createElement('div', 'gpv-shell-mappings');
         const shellSettings = createElement('div', 'gpv-shell-settings');
-        shellPanels.overview = shellMessages;
-        shellPanels.explore = shellSearch;
-        shellPanels.compare = shellCompare;
-        shellPanels.mappings = shellMappings;
-        shellPanels.settings = shellSettings;
+        const shellSearchRefs = {
+            initialized: false,
+            input: null,
+            filters: null,
+            results: null
+        };
+        const shellPanelNodes = {
+            overview: shellMessages,
+            explore: shellSearch,
+            compare: shellCompare,
+            mappings: shellMappings,
+            settings: shellSettings
+        };
+        Object.entries(shellPanelNodes).forEach(([tabId, panel]) => {
+            panel.id = `gpv-shell-panel-${tabId}`;
+            panel.setAttribute('role', 'tabpanel');
+            panel.setAttribute('aria-labelledby', `gpv-shell-tab-${tabId}`);
+            shellPanels[tabId] = panel;
+        });
 
         shellChrome.appendChild(shellMessages);
         shellChrome.appendChild(shellOnboarding);
@@ -10603,9 +10676,32 @@ syncUi.update = function updateSyncUI() {
             return buildEndowusDiscoveryItems(mergedInvestmentDataState, state.projectedInvestments);
         }
 
+        function handleDiscoveryOpen(item) {
+            if (!item) {
+                return;
+            }
+            if (!isFsmRoute && item.source === 'endowus' && item.kind === 'bucket' && select) {
+                select.value = item.id;
+                renderView(item.id, { scrollToTop: true });
+                state.ui.shellActiveTab = 'overview';
+                Storage.set(SHELL_STATE_KEYS.activeTab, 'overview');
+                updateShellPanels();
+                return;
+            }
+            if (!isFsmRoute && item.source === 'endowus' && item.kind === 'goal') {
+                state.ui.shellActiveTab = 'mappings';
+                Storage.set(SHELL_STATE_KEYS.activeTab, 'mappings');
+                updateShellPanels();
+                return;
+            }
+            state.ui.shellActiveTab = 'compare';
+            Storage.set(SHELL_STATE_KEYS.activeTab, 'compare');
+            updateShellPanels();
+        }
+
         function renderShellOverview() {
             const loadedState = isFsmRoute
-                ? Boolean(state.apiData.fsmHoldings && state.apiData.fsmHoldings.length)
+                ? Array.isArray(state.apiData.fsmHoldings)
                 : Boolean(mergedInvestmentDataState);
             const freshness = isFsmRoute
                 ? (state.apiData.fsmHoldings ? 'Holdings loaded' : 'Waiting for holdings data')
@@ -10639,50 +10735,82 @@ syncUi.update = function updateSyncUI() {
         }
 
         function renderShellSearch() {
-            const items = filterDiscoveryItems(getCurrentDiscoveryItems(), state.ui.shellSearchQuery, state.ui.shellSourceFilter);
+            const normalizedRouteSourceFilter = normalizeShellSourceFilterForRoute(state.ui.shellSourceFilter, isFsmRoute);
+            if (normalizedRouteSourceFilter !== state.ui.shellSourceFilter) {
+                state.ui.shellSourceFilter = normalizedRouteSourceFilter;
+                Storage.set(SHELL_STATE_KEYS.sourceFilter, normalizedRouteSourceFilter);
+            }
+            const currentDiscoveryItems = getCurrentDiscoveryItems();
+            const liveSelection = getLiveCompareSelection(state.ui.shellCompareSelection, currentDiscoveryItems);
+            if (!compareSelectionsEqual(state.ui.shellCompareSelection, liveSelection)) {
+                state.ui.shellCompareSelection = liveSelection;
+                persistShellUiState();
+            }
+            const items = filterDiscoveryItems(currentDiscoveryItems, state.ui.shellSearchQuery, state.ui.shellSourceFilter);
             const sourceButtons = [
                 { id: 'all', label: 'All' },
                 { id: 'endowus', label: 'Endowus' },
                 { id: 'fsm', label: 'FSM' }
             ].map(option => `<button type="button" class="gpv-sync-btn ${state.ui.shellSourceFilter === option.id ? 'gpv-sync-btn-primary' : 'gpv-sync-btn-secondary'}" data-source-filter="${option.id}">${option.label}</button>`).join('');
-            shellSearch.innerHTML = `
-                <div class="gpv-shell-card">
-                    <strong>Discovery</strong>
-                    <div class="gpv-shell-search-row">
-                        <input type="search" class="gpv-target-input" id="gpv-shell-search-input" placeholder="Search goals, buckets, holdings, tags" value="${escapeHtml(state.ui.shellSearchQuery || '')}" />
-                        <div class="gpv-shell-source-filters">${sourceButtons}</div>
+            if (!shellSearchRefs.initialized) {
+                shellSearch.innerHTML = `
+                    <div class="gpv-shell-card">
+                        <strong>Discovery</strong>
+                        <div class="gpv-shell-search-row">
+                            <input type="search" class="gpv-target-input" id="gpv-shell-search-input" placeholder="Search goals, buckets, holdings, tags" aria-label="Search discovery items" />
+                            <div class="gpv-shell-source-filters"></div>
+                        </div>
+                        <div class="gpv-shell-results" role="list" aria-live="polite" aria-label="Discovery results"></div>
                     </div>
-                    <div class="gpv-shell-results"></div>
-                </div>
-            `;
-            const input = shellSearch.querySelector('#gpv-shell-search-input');
-            if (input) {
+                `;
+                shellSearchRefs.input = shellSearch.querySelector('#gpv-shell-search-input');
+                shellSearchRefs.filters = shellSearch.querySelector('.gpv-shell-source-filters');
+                shellSearchRefs.results = shellSearch.querySelector('.gpv-shell-results');
+                shellSearchRefs.initialized = true;
+            }
+            const input = shellSearchRefs.input;
+            if (input && input.value !== (state.ui.shellSearchQuery || '')) {
+                input.value = state.ui.shellSearchQuery || '';
+            }
+            if (input && !input.dataset.bound) {
+                input.dataset.bound = 'true';
                 input.oninput = () => {
                     state.ui.shellSearchQuery = input.value;
                     Storage.set(SHELL_STATE_KEYS.searchQuery, state.ui.shellSearchQuery);
                     renderShellSearch();
                 };
             }
-            shellSearch.querySelectorAll('[data-source-filter]').forEach(button => {
+            shellSearchRefs.filters.innerHTML = sourceButtons;
+            shellSearchRefs.filters.querySelectorAll('[data-source-filter]').forEach(button => {
                 button.onclick = () => {
                     state.ui.shellSourceFilter = button.dataset.sourceFilter || 'all';
                     Storage.set(SHELL_STATE_KEYS.sourceFilter, state.ui.shellSourceFilter);
                     renderShellSearch();
                 };
             });
-            const results = shellSearch.querySelector('.gpv-shell-results');
+            const results = shellSearchRefs.results;
             if (results) {
                 if (!items.length) {
                     results.innerHTML = '<div class="gpv-shell-empty">No matches yet.</div>';
                 } else {
-                    results.innerHTML = items.slice(0, 20).map(item => `
-                        <div class="gpv-shell-result" data-kind="${escapeHtml(item.kind)}" data-id="${escapeHtml(item.id)}" data-source="${escapeHtml(item.source)}">
-                            <div><strong>${escapeHtml(item.title)}</strong></div>
-                            <div>${escapeHtml(item.subtitle)}</div>
-                            <div>${escapeHtml(item.detail)}</div>
-                            <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-compare-add="true">Add to compare</button>
-                        </div>
-                    `).join('');
+                    results.innerHTML = items.slice(0, 20).map(item => {
+                        const identity = buildDiscoveryIdentity(item);
+                        const isSelected = liveSelection.some(entry => buildDiscoveryIdentity(entry) === identity);
+                        const openLabel = !isFsmRoute && item.source === 'endowus' && item.kind === 'bucket'
+                            ? 'Open bucket'
+                            : (item.kind === 'goal' ? 'Open mappings' : 'Open compare');
+                        return `
+                            <div class="gpv-shell-result" role="listitem" data-kind="${escapeHtml(item.kind)}" data-id="${escapeHtml(item.id)}" data-source="${escapeHtml(item.source)}" tabindex="0">
+                                <div><strong>${escapeHtml(item.title)}</strong></div>
+                                <div>${escapeHtml(item.subtitle)}</div>
+                                <div>${escapeHtml(item.detail)}</div>
+                                <div>
+                                    <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-compare-add="true" aria-pressed="${isSelected ? 'true' : 'false'}">${isSelected ? 'Remove from compare' : 'Add to compare'}</button>
+                                    <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-discovery-open="true">${openLabel}</button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
                     results.querySelectorAll('[data-compare-add="true"]').forEach(button => {
                         button.onclick = () => {
                             const card = button.closest('.gpv-shell-result');
@@ -10694,18 +10822,30 @@ syncUi.update = function updateSyncUI() {
                             }
                         };
                     });
+                    results.querySelectorAll('[data-discovery-open="true"]').forEach(button => {
+                        button.onclick = () => {
+                            const card = button.closest('.gpv-shell-result');
+                            if (!card) return;
+                            const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
+                            handleDiscoveryOpen(match);
+                        };
+                    });
                     results.querySelectorAll('.gpv-shell-result').forEach(card => {
                         card.onclick = event => {
                             if (event.target && event.target.closest && event.target.closest('button')) {
                                 return;
                             }
                             const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
-                            if (match && match.source === 'endowus' && match.kind === 'bucket') {
-                                select.value = match.id;
-                                renderView(match.id, { scrollToTop: true });
-                                state.ui.shellActiveTab = 'overview';
-                                Storage.set(SHELL_STATE_KEYS.activeTab, 'overview');
-                                updateShellPanels();
+                            handleDiscoveryOpen(match);
+                        };
+                        card.onkeydown = event => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                                if (event.target && event.target.closest && event.target.closest('button, input, select, textarea, a[href]')) {
+                                    return;
+                                }
+                                event.preventDefault();
+                                const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
+                                handleDiscoveryOpen(match);
                             }
                         };
                     });
@@ -10714,21 +10854,97 @@ syncUi.update = function updateSyncUI() {
         }
 
         function renderShellCompare() {
-            const compareSelection = Array.isArray(state.ui.shellCompareSelection) ? state.ui.shellCompareSelection : [];
-            shellCompare.innerHTML = compareSelection.length
-                ? compareSelection.map(item => `
+            const discoveryItems = getCurrentDiscoveryItems();
+            const compareSelection = getLiveCompareSelection(state.ui.shellCompareSelection, discoveryItems);
+            if (!compareSelectionsEqual(state.ui.shellCompareSelection, compareSelection)) {
+                state.ui.shellCompareSelection = compareSelection;
+                persistShellUiState();
+            }
+            const fsmPortfolioNameMap = buildFsmPortfolioNameMap(
+                loadFsmPortfolioConfig(state.apiData.fsmHoldings || []).portfolios || []
+            );
+            if (!compareSelection.length) {
+                shellCompare.innerHTML = '<div class="gpv-shell-empty">Pick up to four items from Discovery.</div>';
+            } else {
+                const rows = [
+                    { label: 'Source', getValue: item => item.source || '-' },
+                    { label: 'Type', getValue: item => item.kind || '-' },
+                    { label: 'Context', getValue: item => item.subtitle || '-' },
+                    { label: 'Snapshot', getValue: item => item.detail || '-' },
+                    {
+                        label: 'Value',
+                        getValue: item => {
+                            const amount = item?.payload?.endingBalanceAmount
+                                ?? item?.payload?.currentValueLcy
+                                ?? item?.payload?.totalInvestmentAmount;
+                            return Number.isFinite(Number(amount)) ? formatMoney(Number(amount)) : '-';
+                        }
+                    },
+                    {
+                        label: 'Return',
+                        getValue: item => item?.payload?.returnDisplay || '-'
+                    },
+                    {
+                        label: 'Target',
+                        getValue: item => item?.payload?.targetDisplay
+                            ? `${item.payload.targetDisplay}%`
+                            : (Number.isFinite(Number(item?.payload?.targetPercent)) ? `${Number(item.payload.targetPercent).toFixed(2)}%` : '-')
+                    },
+                    {
+                        label: 'Fixed',
+                        getValue: item => (item?.payload?.fixed === true ? 'Yes' : 'No')
+                    },
+                    {
+                        label: 'Portfolio',
+                        getValue: item => {
+                            const portfolioId = utils.normalizeString(item?.payload?.portfolioId, '');
+                            if (!portfolioId) {
+                                return '-';
+                            }
+                            if (item?.source === 'fsm') {
+                                return formatFsmPortfolioLabel(portfolioId, fsmPortfolioNameMap);
+                            }
+                            return portfolioId;
+                        }
+                    }
+                ];
+                shellCompare.innerHTML = `
                     <div class="gpv-shell-card">
-                        <strong>${escapeHtml(item.title || item.id)}</strong>
-                        <div>${escapeHtml(item.subtitle || '')}</div>
-                        <div>${escapeHtml(item.detail || '')}</div>
-                        <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-remove-compare="${escapeHtml(item.id)}">Remove</button>
+                        <strong>Compare</strong>
+                        <div>Side-by-side view for ${compareSelection.length} selected item(s).</div>
+                        <table class="gpv-shell-compare-grid">
+                            <thead>
+                                <tr class="gpv-shell-compare-row gpv-shell-compare-row--header">
+                                    <th scope="col" class="gpv-shell-compare-label">Field</th>
+                                ${compareSelection.map(item => `
+                                    <th scope="col" class="gpv-shell-compare-cell">
+                                        <strong>${escapeHtml(item.title || item.id)}</strong>
+                                        <div>${escapeHtml(item.subtitle || '')}</div>
+                                        <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-remove-compare="${escapeHtml(item.id)}" data-remove-compare-kind="${escapeHtml(item.kind || '')}" data-remove-compare-source="${escapeHtml(item.source || '')}">Remove</button>
+                                    </th>
+                                `).join('')}
+                                </tr>
+                            </thead>
+                            <tbody>
+                            ${rows.map(row => `
+                                <tr class="gpv-shell-compare-row">
+                                    <th scope="row" class="gpv-shell-compare-label">${escapeHtml(row.label)}</th>
+                                    ${compareSelection.map(item => `<td class="gpv-shell-compare-cell">${escapeHtml(row.getValue(item))}</td>`).join('')}
+                                </tr>
+                            `).join('')}
+                            </tbody>
+                        </table>
                     </div>
-                `).join('')
-                : '<div class="gpv-shell-empty">Pick up to four items from Discovery.</div>';
+                `;
+            }
             shellCompare.querySelectorAll('[data-remove-compare]').forEach(button => {
                 button.onclick = () => {
                     const id = button.dataset.removeCompare;
-                    state.ui.shellCompareSelection = compareSelection.filter(item => item.id !== id);
+                    const kind = button.dataset.removeCompareKind;
+                    const source = button.dataset.removeCompareSource;
+                    state.ui.shellCompareSelection = compareSelection.filter(item => !(
+                        item.id === id && item.kind === kind && item.source === source
+                    ));
                     persistShellUiState();
                     updateShellPanels();
                 };
@@ -10737,7 +10953,7 @@ syncUi.update = function updateSyncUI() {
 
         function renderShellMappings() {
             if (isFsmRoute) {
-                shellMappings.innerHTML = '<div class="gpv-shell-card"><strong>FSM mappings</strong><div>Assignments are shown in the workspace below.</div></div>';
+                shellMappings.innerHTML = '<div class="gpv-shell-card"><strong>FSM mappings</strong><div>Assignments and portfolio controls are available in the workspace below.</div></div>';
                 return;
             }
             const assignments = readEndowusBucketAssignments();
@@ -10824,6 +11040,11 @@ syncUi.update = function updateSyncUI() {
         }
 
         function updateShellPanels() {
+            const normalizedActiveTab = normalizeShellActiveTab(state.ui.shellActiveTab, shellTabIds);
+            if (normalizedActiveTab !== state.ui.shellActiveTab) {
+                state.ui.shellActiveTab = normalizedActiveTab;
+                Storage.set(SHELL_STATE_KEYS.activeTab, normalizedActiveTab);
+            }
             renderShellOverview();
             renderShellSearch();
             renderShellCompare();
@@ -10833,51 +11054,74 @@ syncUi.update = function updateSyncUI() {
                 if (!panel) {
                     return;
                 }
-                panel.style.display = state.ui.shellActiveTab === tabId ? 'block' : 'none';
+                const active = state.ui.shellActiveTab === tabId;
+                panel.style.display = active ? 'block' : 'none';
+                panel.hidden = !active;
             });
             Object.entries(shellTabButtons).forEach(([tabId, button]) => {
-                button.classList.toggle('is-active', state.ui.shellActiveTab === tabId);
-                button.setAttribute('aria-selected', String(state.ui.shellActiveTab === tabId));
+                const active = state.ui.shellActiveTab === tabId;
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-selected', String(active));
+                button.setAttribute('tabindex', active ? '0' : '-1');
             });
         }
 
         updateShellPanels();
 
-        const controls = createElement('div', 'gpv-controls');
-        const selectLabel = createElement('label', 'gpv-select-label', 'View:');
-        const select = createElement('select', 'gpv-select');
-        const summaryOption = createElement('option', null, '📊 Summary View');
-        summaryOption.value = 'SUMMARY';
-        select.appendChild(summaryOption);
+        let select = null;
+        let contentDiv = null;
+        let modeToggle = null;
+        let allocationButton = null;
+        let performanceButton = null;
+        if (!isFsmRoute) {
+            const controls = createElement('div', 'gpv-controls');
+            const selectLabel = createElement('label', 'gpv-select-label', 'View:');
+            select = createElement('select', 'gpv-select');
+            const summaryOption = createElement('option', null, '📊 Summary View');
+            summaryOption.value = 'SUMMARY';
+            select.appendChild(summaryOption);
 
-        Object.keys(mergedInvestmentDataState).filter(Boolean).sort().forEach(bucket => {
-            const opt = createElement('option', null, `📁 ${bucket}`);
-            opt.value = bucket;
-            select.appendChild(opt);
-        });
+            Object.keys(mergedInvestmentDataState).filter(Boolean).sort().forEach(bucket => {
+                const opt = createElement('option', null, `📁 ${bucket}`);
+                opt.value = bucket;
+                select.appendChild(opt);
+            });
 
-        controls.appendChild(selectLabel);
-        controls.appendChild(select);
+            controls.appendChild(selectLabel);
+            controls.appendChild(select);
 
-        const modeToggle = createElement('div', 'gpv-mode-toggle');
-        modeToggle.setAttribute('role', 'group');
-        modeToggle.setAttribute('aria-label', 'Detail mode');
-        const modeLabel = createElement('span', 'gpv-mode-label', 'Mode:');
-        const allocationButton = createElement('button', 'gpv-mode-btn', 'Allocation');
-        allocationButton.type = 'button';
-        allocationButton.dataset.mode = BUCKET_VIEW_MODES.allocation;
-        const performanceButton = createElement('button', 'gpv-mode-btn', 'Performance');
-        performanceButton.type = 'button';
-        performanceButton.dataset.mode = BUCKET_VIEW_MODES.performance;
-        modeToggle.appendChild(modeLabel);
-        modeToggle.appendChild(allocationButton);
-        modeToggle.appendChild(performanceButton);
+            modeToggle = createElement('div', 'gpv-mode-toggle');
+            modeToggle.setAttribute('role', 'group');
+            modeToggle.setAttribute('aria-label', 'Detail mode');
+            const modeLabel = createElement('span', 'gpv-mode-label', 'Mode:');
+            allocationButton = createElement('button', 'gpv-mode-btn', 'Allocation');
+            allocationButton.type = 'button';
+            allocationButton.dataset.mode = BUCKET_VIEW_MODES.allocation;
+            performanceButton = createElement('button', 'gpv-mode-btn', 'Performance');
+            performanceButton.type = 'button';
+            performanceButton.dataset.mode = BUCKET_VIEW_MODES.performance;
+            modeToggle.appendChild(modeLabel);
+            modeToggle.appendChild(allocationButton);
+            modeToggle.appendChild(performanceButton);
 
-        controls.appendChild(modeToggle);
-        container.appendChild(controls);
+            controls.appendChild(modeToggle);
+            container.appendChild(controls);
 
-        const contentDiv = createElement('div', 'gpv-content');
-        container.appendChild(contentDiv);
+            contentDiv = createElement('div', 'gpv-content');
+            container.appendChild(contentDiv);
+        } else {
+            contentDiv = createElement('div', 'gpv-content');
+            container.appendChild(contentDiv);
+            renderFsmWorkspace(contentDiv, fsmHoldings, () => {
+                updateShellPanels();
+            });
+        }
+
+        const normalizedRouteSourceFilter = normalizeShellSourceFilterForRoute(state.ui.shellSourceFilter, isFsmRoute);
+        if (normalizedRouteSourceFilter !== state.ui.shellSourceFilter) {
+            state.ui.shellSourceFilter = normalizedRouteSourceFilter;
+            Storage.set(SHELL_STATE_KEYS.sourceFilter, normalizedRouteSourceFilter);
+        }
 
         function refreshMergedInvestmentDataState() {
             mergedInvestmentDataState = buildMergedInvestmentData(
@@ -10914,31 +11158,20 @@ syncUi.update = function updateSyncUI() {
         }
 
         function refreshEndowusViewAfterMappingChange() {
+            if (isFsmRoute || !select) {
+                return;
+            }
             refreshMergedInvestmentDataState();
             rebuildSelectionOptions();
+            renderView(select.value || 'SUMMARY', { scrollToTop: false });
             updateShellPanels();
-            const wasExpanded = container.classList.contains('gpv-container--expanded');
-            const currentBucketView = select.value || 'SUMMARY';
-            closeOverlay();
-            showOverlay();
-            const refreshedOverlay = document.getElementById('gpv-overlay');
-            if (wasExpanded && refreshedOverlay) {
-                const refreshedContainer = refreshedOverlay.querySelector('.gpv-container');
-                if (refreshedContainer) {
-                    refreshedContainer.classList.add('gpv-container--expanded');
-                }
-            }
-            if (currentBucketView !== 'SUMMARY') {
-                const refreshedSelect = refreshedOverlay?.querySelector('.gpv-select');
-                if (refreshedSelect && Array.from(refreshedSelect.options).some(option => option.value === currentBucketView)) {
-                    refreshedSelect.value = currentBucketView;
-                    refreshedSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-                }
-            }
         }
 
         let currentBucketMode = getBucketViewModePreference();
         function updateModeToggle(mode) {
+            if (!allocationButton || !performanceButton) {
+                return;
+            }
             const normalized = normalizeBucketViewMode(mode);
             allocationButton.classList.toggle('is-active', normalized === BUCKET_VIEW_MODES.allocation);
             allocationButton.setAttribute('aria-pressed', String(normalized === BUCKET_VIEW_MODES.allocation));
@@ -10979,21 +11212,23 @@ syncUi.update = function updateSyncUI() {
             });
         }
 
-        allocationButton.addEventListener('click', () => {
-            if (currentBucketMode === BUCKET_VIEW_MODES.allocation) {
-                return;
-            }
-            currentBucketMode = setBucketViewModePreference(BUCKET_VIEW_MODES.allocation);
-            applyBucketMode(currentBucketMode);
-        });
+        if (allocationButton && performanceButton) {
+            allocationButton.addEventListener('click', () => {
+                if (currentBucketMode === BUCKET_VIEW_MODES.allocation) {
+                    return;
+                }
+                currentBucketMode = setBucketViewModePreference(BUCKET_VIEW_MODES.allocation);
+                applyBucketMode(currentBucketMode);
+            });
 
-        performanceButton.addEventListener('click', () => {
-            if (currentBucketMode === BUCKET_VIEW_MODES.performance) {
-                return;
-            }
-            currentBucketMode = setBucketViewModePreference(BUCKET_VIEW_MODES.performance);
-            applyBucketMode(currentBucketMode);
-        });
+            performanceButton.addEventListener('click', () => {
+                if (currentBucketMode === BUCKET_VIEW_MODES.performance) {
+                    return;
+                }
+                currentBucketMode = setBucketViewModePreference(BUCKET_VIEW_MODES.performance);
+                applyBucketMode(currentBucketMode);
+            });
+        }
 
         let performanceRefreshToken = 0;
 
@@ -11055,11 +11290,13 @@ syncUi.update = function updateSyncUI() {
             renderView(bucket, { scrollToTop: true });
         }
 
-        renderView('SUMMARY');
+        if (!isFsmRoute && select) {
+            renderView('SUMMARY');
 
-        select.onchange = function() {
-            renderView(select.value, { scrollToTop: true });
-        };
+            select.onchange = function() {
+                renderView(select.value, { scrollToTop: true });
+            };
+        }
 
         overlay.appendChild(container);
         
