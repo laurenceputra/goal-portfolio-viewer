@@ -301,6 +301,9 @@ Contributions are welcome! To contribute:
 
 ## Changelog
 
+### Version 2.14.4
+- Cleared stale Endowus and FSM per-item sync keys before applying pulled config payloads, so remote sync state fully replaces old local namespaced values
+
 ### Version 2.14.3
 - Open the workflow shell in readiness mode even before Endowus or FSM data finishes loading
 - Show a non-blocking empty state instead of bailing out before the shell can explain what is missing

@@ -237,6 +237,103 @@ describe('SyncManager', () => {
         expect(storage.get(fixedKey)).toBe(true);
     });
 
+    test('applyConfigData clears stale namespaced sync keys before applying payload', () => {
+        const { SyncManager, storageKeys } = loadModule();
+        const staleEndowusTarget = storageKeys.goalTarget('goal-stale');
+        const staleEndowusFixed = storageKeys.goalFixed('goal-stale');
+        const staleFsmTarget = storageKeys.fsmTarget('OLD');
+        const staleFsmFixed = storageKeys.fsmFixed('OLD');
+        const staleFsmTag = storageKeys.fsmTag('OLD');
+        const staleFsmDrift = storageKeys.fsmDriftSetting('warningPct');
+        const untouchedKey = 'non_sync_key';
+
+        storage.set(staleEndowusTarget, 10);
+        storage.set(staleEndowusFixed, true);
+        storage.set(staleFsmTarget, 20);
+        storage.set(staleFsmFixed, true);
+        storage.set(staleFsmTag, 'income');
+        storage.set(staleFsmDrift, 9);
+        storage.set(untouchedKey, 'keep');
+
+        global.GM_listValues = () => Array.from(storage.keys());
+
+        SyncManager.applyConfigData({
+            version: 2,
+            platforms: {
+                endowus: {
+                    goalTargets: { 'goal-fresh': 35 },
+                    goalFixed: {},
+                    bucketAssignments: {},
+                    timestamp: Date.now()
+                },
+                fsm: {
+                    targetsByCode: { NEW: 15 },
+                    fixedByCode: {},
+                    tagsByCode: { NEW: 'growth' },
+                    tagCatalog: ['growth'],
+                    portfolios: [],
+                    assignmentByCode: {},
+                    driftSettings: {},
+                    timestamp: Date.now()
+                }
+            },
+            timestamp: Date.now()
+        });
+
+        expect(storage.has(staleEndowusTarget)).toBe(false);
+        expect(storage.has(staleEndowusFixed)).toBe(false);
+        expect(storage.has(staleFsmTarget)).toBe(false);
+        expect(storage.has(staleFsmFixed)).toBe(false);
+        expect(storage.has(staleFsmTag)).toBe(false);
+        expect(storage.has(staleFsmDrift)).toBe(false);
+
+        expect(storage.get(storageKeys.goalTarget('goal-fresh'))).toBe(35);
+        expect(storage.get(storageKeys.fsmTarget('NEW'))).toBe(15);
+        expect(storage.get(storageKeys.fsmTag('NEW'))).toBe('growth');
+        expect(storage.get(untouchedKey)).toBe('keep');
+    });
+
+    test('applyConfigData still writes payload when GM_listValues fails', () => {
+        const { SyncManager, storageKeys } = loadModule();
+        const staleEndowusTarget = storageKeys.goalTarget('goal-stale');
+        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        storage.set(staleEndowusTarget, 10);
+        global.GM_listValues = () => {
+            throw new Error('listing failed');
+        };
+
+        try {
+            SyncManager.applyConfigData({
+                version: 2,
+                platforms: {
+                    endowus: {
+                        goalTargets: { 'goal-fresh': 40 },
+                        goalFixed: {},
+                        bucketAssignments: {},
+                        timestamp: Date.now()
+                    },
+                    fsm: {
+                        targetsByCode: {},
+                        fixedByCode: {},
+                        tagsByCode: {},
+                        tagCatalog: [],
+                        portfolios: [],
+                        assignmentByCode: {},
+                        driftSettings: {},
+                        timestamp: Date.now()
+                    }
+                },
+                timestamp: Date.now()
+            });
+
+            expect(consoleErrorSpy).toHaveBeenCalled();
+            expect(storage.get(storageKeys.goalTarget('goal-fresh'))).toBe(40);
+            expect(storage.get(staleEndowusTarget)).toBe(10);
+        } finally {
+            consoleErrorSpy.mockRestore();
+        }
+    });
 
     test('applyConfigData migrates legacy v1 payload to Endowus keys', () => {
         const { SyncManager, storageKeys } = loadModule();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.3
+// @version      2.14.4
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -2610,6 +2610,31 @@ function buildBucketDetailGoalRow(goal) {
         };
     }
 
+    function clearStorageKeysByPrefixes(prefixes = []) {
+        if (typeof GM_listValues !== 'function' || !Array.isArray(prefixes) || !prefixes.length) {
+            return;
+        }
+        const activePrefixes = prefixes.filter(prefix => typeof prefix === 'string' && prefix.length > 0);
+        if (!activePrefixes.length) {
+            return;
+        }
+        let keys = [];
+        try {
+            keys = GM_listValues() || [];
+        } catch (error) {
+            console.error('[Goal Portfolio Viewer] Error listing storage keys for sync cleanup:', error);
+            return;
+        }
+        keys.forEach(key => {
+            if (typeof key !== 'string') {
+                return;
+            }
+            if (activePrefixes.some(prefix => key.startsWith(prefix))) {
+                Storage.remove(key, 'Error clearing stale sync key');
+            }
+        });
+    }
+
     /**
      * Apply config data to local storage
      */
@@ -2618,6 +2643,15 @@ function buildBucketDetailGoalRow(goal) {
         if (!normalized) {
             throw new Error('Invalid config data');
         }
+
+        clearStorageKeysByPrefixes([
+            STORAGE_KEY_PREFIXES.goalTarget,
+            STORAGE_KEY_PREFIXES.goalFixed,
+            STORAGE_KEY_PREFIXES.fsmTarget,
+            STORAGE_KEY_PREFIXES.fsmFixed,
+            STORAGE_KEY_PREFIXES.fsmTag,
+            STORAGE_KEY_PREFIXES.fsmDriftSetting
+        ]);
 
         const endowus = normalized.platforms.endowus || {};
         const endowusTargets = endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {};
