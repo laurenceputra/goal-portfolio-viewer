@@ -10434,7 +10434,7 @@ syncUi.update = function updateSyncUI() {
             return;
         }
 
-        const mergedInvestmentDataState = buildMergedInvestmentData(
+        let mergedInvestmentDataState = buildMergedInvestmentData(
             state.apiData.performance,
             state.apiData.investible,
             state.apiData.summary
@@ -10787,7 +10787,7 @@ syncUi.update = function updateSyncUI() {
                         }
                         writeEndowusBucketAssignments(nextAssignments);
                         showInfoMessage('Bucket mapping updated. Refreshing view.');
-                        updateShellPanels();
+                        refreshEndowusViewAfterMappingChange();
                     };
                 });
             }
@@ -10804,12 +10804,12 @@ syncUi.update = function updateSyncUI() {
                 });
                 writeEndowusBucketAssignments(nextAssignments);
                 showSuccessMessage('Applied bucket suggestions.');
-                updateShellPanels();
+                refreshEndowusViewAfterMappingChange();
             });
             shellMappings.querySelector('[data-action="clear-overrides"]')?.addEventListener('click', () => {
                 writeEndowusBucketAssignments({});
                 showInfoMessage('Cleared explicit bucket overrides.');
-                updateShellPanels();
+                refreshEndowusViewAfterMappingChange();
             });
         }
 
@@ -10878,6 +10878,64 @@ syncUi.update = function updateSyncUI() {
 
         const contentDiv = createElement('div', 'gpv-content');
         container.appendChild(contentDiv);
+
+        function refreshMergedInvestmentDataState() {
+            mergedInvestmentDataState = buildMergedInvestmentData(
+                state.apiData.performance,
+                state.apiData.investible,
+                state.apiData.summary
+            );
+            return mergedInvestmentDataState;
+        }
+
+        function rebuildSelectionOptions() {
+            if (!select) {
+                return;
+            }
+            const previousValue = select.value || 'SUMMARY';
+            const bucketNames = Object.keys(mergedInvestmentDataState || {})
+                .filter(Boolean)
+                .sort();
+
+            select.innerHTML = '';
+
+            const summaryOptionNode = createElement('option', null, '📊 Summary View');
+            summaryOptionNode.value = 'SUMMARY';
+            select.appendChild(summaryOptionNode);
+
+            bucketNames.forEach(bucket => {
+                const opt = createElement('option', null, `📁 ${bucket}`);
+                opt.value = bucket;
+                select.appendChild(opt);
+            });
+
+            const availableValues = new Set(['SUMMARY', ...bucketNames]);
+            select.value = availableValues.has(previousValue) ? previousValue : 'SUMMARY';
+        }
+
+        function refreshEndowusViewAfterMappingChange() {
+            refreshMergedInvestmentDataState();
+            rebuildSelectionOptions();
+            updateShellPanels();
+            const wasExpanded = container.classList.contains('gpv-container--expanded');
+            const currentBucketView = select.value || 'SUMMARY';
+            closeOverlay();
+            showOverlay();
+            const refreshedOverlay = document.getElementById('gpv-overlay');
+            if (wasExpanded && refreshedOverlay) {
+                const refreshedContainer = refreshedOverlay.querySelector('.gpv-container');
+                if (refreshedContainer) {
+                    refreshedContainer.classList.add('gpv-container--expanded');
+                }
+            }
+            if (currentBucketView !== 'SUMMARY') {
+                const refreshedSelect = refreshedOverlay?.querySelector('.gpv-select');
+                if (refreshedSelect && Array.from(refreshedSelect.options).some(option => option.value === currentBucketView)) {
+                    refreshedSelect.value = currentBucketView;
+                    refreshedSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+                }
+            }
+        }
 
         let currentBucketMode = getBucketViewModePreference();
         function updateModeToggle(mode) {

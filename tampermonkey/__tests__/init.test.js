@@ -423,6 +423,78 @@ describe('initialization and URL monitoring', () => {
         expect(indicator.getAttribute('role')).toBe('button');
         expect(indicator.getAttribute('tabindex')).toBe('0');
     });
+
+    test('changing an Endowus mapping refreshes the summary view without reopening', () => {
+        const performanceData = [
+            {
+                goalId: 'g1',
+                totalInvestmentValue: { amount: 1200 },
+                totalCumulativeReturn: { amount: 120 },
+                simpleRateOfReturnPercent: 0.1
+            },
+            {
+                goalId: 'g2',
+                totalInvestmentValue: { amount: 800 },
+                totalCumulativeReturn: { amount: 80 },
+                simpleRateOfReturnPercent: 0.1
+            },
+            {
+                goalId: 'g3',
+                totalInvestmentValue: { amount: 1000 },
+                totalCumulativeReturn: { amount: -50 },
+                simpleRateOfReturnPercent: -0.05
+            }
+        ];
+        const investibleData = [
+            {
+                goalId: 'g1',
+                goalName: 'Retirement - Core',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 1200 } }
+            },
+            {
+                goalId: 'g2',
+                goalName: 'Education - Growth',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 800 } }
+            },
+            {
+                goalId: 'g3',
+                goalName: 'Retirement - Cash',
+                investmentGoalType: 'CASH_MANAGEMENT',
+                totalInvestmentAmount: { display: { amount: 1000 } }
+            }
+        ];
+        const summaryData = investibleData.map(goal => ({
+            goalId: goal.goalId,
+            goalName: goal.goalName,
+            investmentGoalType: goal.investmentGoalType
+        }));
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        global.alert = jest.fn();
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const retirementCardBefore = overlay?.querySelector('.gpv-bucket-card[data-bucket="Retirement"]');
+        expect(retirementCardBefore?.textContent).toMatch(/2,200\.00/);
+
+        const mappingSelect = overlay?.querySelector('.gpv-shell-mappings select[data-goal-id="g1"]');
+        expect(mappingSelect).toBeTruthy();
+        mappingSelect.value = 'Education';
+        mappingSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const refreshedOverlay = document.querySelector('#gpv-overlay');
+        expect(refreshedOverlay?.textContent).toMatch(/2,000\.00/);
+        expect(refreshedOverlay?.textContent).toMatch(/1,000\.00/);
+        expect(refreshedOverlay?.textContent).not.toMatch(/2,200\.00/);
+    });
+
     test('showOverlay renders FSM overlay on FSM route using FSM holdings only', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
