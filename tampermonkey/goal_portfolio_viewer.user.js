@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.4
+// @version      2.14.5
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -4241,6 +4241,7 @@ let GoalTargetStore;
             urlMonitorCleanup: null,
             urlCheckTimeout: null,
             observer: null,
+            overlayRefresh: null,
             shellActiveTab: Storage.get(SHELL_STATE_KEYS.activeTab, 'overview'),
             shellSearchQuery: Storage.get(SHELL_STATE_KEYS.searchQuery, ''),
             shellSourceFilter: Storage.get(SHELL_STATE_KEYS.sourceFilter, 'all'),
@@ -4253,16 +4254,29 @@ let GoalTargetStore;
         }
     };
 
+    function refreshOpenOverlay() {
+        if (typeof state.ui.overlayRefresh !== 'function') {
+            return;
+        }
+        try {
+            state.ui.overlayRefresh();
+        } catch (error) {
+            console.error('[Goal Portfolio Viewer] Failed to refresh open overlay:', error);
+        }
+    }
+
     const ENDPOINT_HANDLERS = {
         performance: data => {
             state.apiData.performance = data;
             Storage.writeJson(STORAGE_KEYS.performance, data, 'Error saving performance data');
             logDebug('[Goal Portfolio Viewer] Intercepted performance data');
+            refreshOpenOverlay();
         },
         investible: data => {
             state.apiData.investible = data;
             Storage.writeJson(STORAGE_KEYS.investible, data, 'Error saving investible data');
             logDebug('[Goal Portfolio Viewer] Intercepted investible data');
+            refreshOpenOverlay();
         },
         summary: data => {
             if (!Array.isArray(data)) {
@@ -4271,6 +4285,7 @@ let GoalTargetStore;
             state.apiData.summary = data;
             Storage.writeJson(STORAGE_KEYS.summary, data, 'Error saving summary data');
             logDebug('[Goal Portfolio Viewer] Intercepted summary data');
+            refreshOpenOverlay();
         },
         fsmHoldings: data => {
             const rows = Array.isArray(data?.data)
@@ -4280,6 +4295,7 @@ let GoalTargetStore;
             state.apiData.fsmHoldings = filteredRows;
             Storage.writeJson(STORAGE_KEYS.fsmHoldings, filteredRows, 'Error saving FSM holdings data');
             logDebug('[Goal Portfolio Viewer] Intercepted FSM holdings data', { rows: filteredRows.length });
+            refreshOpenOverlay();
         }
     };
 
@@ -10501,6 +10517,7 @@ syncUi.update = function updateSyncUI() {
 
     function showOverlay() {
 
+        state.ui.overlayRefresh = null;
         let old = document.getElementById('gpv-overlay');
         if (old) {
             if (Array.isArray(old.gpvCleanupCallbacks)) {
@@ -10600,6 +10617,7 @@ syncUi.update = function updateSyncUI() {
             if (!overlay.isConnected) {
                 return;
             }
+            state.ui.overlayRefresh = null;
             clearSyncMessage();
             if (!Array.isArray(cleanupCallbacks)) {
                 return;
@@ -11210,9 +11228,38 @@ syncUi.update = function updateSyncUI() {
             contentDiv.appendChild(createElement(
                 'div',
                 'gpv-shell-empty',
-                'Endowus data is still loading. Keep the shell open for readiness, then reopen the viewer after the portfolio requests complete.'
+                'Endowus data is still loading. The viewer will refresh automatically once the portfolio requests complete.'
             ));
         }
+
+        function refreshOverlayFromState() {
+            if (!overlay.isConnected) {
+                return;
+            }
+            if (isFsmRoute) {
+                contentDiv.innerHTML = '';
+                renderFsmWorkspace(contentDiv, Array.isArray(state.apiData.fsmHoldings) ? state.apiData.fsmHoldings : [], () => {
+                    updateShellPanels();
+                });
+                updateShellPanels();
+                return;
+            }
+            const previousSelection = select?.value || 'SUMMARY';
+            refreshMergedInvestmentDataState();
+            if (!mergedInvestmentDataState) {
+                renderEndowusPendingState();
+                updateShellPanels();
+                return;
+            }
+            rebuildSelectionOptions();
+            renderView(select?.value || previousSelection || 'SUMMARY', {
+                scrollToTop: false,
+                useCacheOnly: true
+            });
+            updateShellPanels();
+        }
+
+        state.ui.overlayRefresh = refreshOverlayFromState;
 
         function rebuildSelectionOptions() {
             if (!select) {

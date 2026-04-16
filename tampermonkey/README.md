@@ -301,6 +301,9 @@ Contributions are welcome! To contribute:
 
 ## Changelog
 
+### Version 2.14.5
+- Refreshed the open readiness overlay automatically as Endowus and FSM payloads arrived, so users no longer need to close and reopen the viewer after initial load
+
 ### Version 2.14.4
 - Cleared stale Endowus and FSM per-item sync keys before applying pulled config payloads, so remote sync state fully replaces old local namespaced values
 

@@ -54,6 +54,10 @@ describe('initialization and URL monitoring', () => {
         delete global.history;
     });
 
+    function flushPromises() {
+        return new Promise(resolve => setTimeout(resolve, 0));
+    }
+
     test('auto-init stays disabled when flag is set', () => {
         window.__GPV_DISABLE_AUTO_INIT = true;
         require('../goal_portfolio_viewer.user.js');
@@ -220,8 +224,73 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Readiness');
         expect(overlay.textContent).toContain('Not ready yet');
         expect(overlay.textContent).toContain('Waiting for Endowus data');
-        expect(overlay.textContent).toContain('Endowus data is still loading. Keep the shell open for readiness');
+        expect(overlay.textContent).toContain('Endowus data is still loading. The viewer will refresh automatically once the portfolio requests complete.');
         expect(overlay.querySelectorAll('.gpv-select option')).toHaveLength(1);
+    });
+
+    test('showOverlay refreshes automatically when Endowus data arrives after opening in readiness mode', async () => {
+        global.alert = jest.fn();
+
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1,
+            totalInvestmentValue: { amount: 1000 }
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        global.fetch = jest.fn(url => {
+            if (url.includes('/v1/goals/performance')) {
+                return Promise.resolve(responseFactory(performanceData));
+            }
+            if (url.includes('/v2/goals/investible')) {
+                return Promise.resolve(responseFactory(investibleData));
+            }
+            if (url.match(/\/v1\/goals(?:[?#]|$)/)) {
+                return Promise.resolve(responseFactory(summaryData));
+            }
+            return Promise.resolve(responseFactory({}));
+        });
+        window.fetch = global.fetch;
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        expect(overlay?.textContent).toContain('Not ready yet');
+        expect(overlay?.textContent).toContain('Waiting for Endowus data');
+
+        await window.fetch('https://app.sg.endowus.com/v1/goals/performance');
+        await flushPromises();
+        await window.fetch('https://app.sg.endowus.com/v2/goals/investible');
+        await flushPromises();
+        await window.fetch('https://app.sg.endowus.com/v1/goals');
+        await flushPromises();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay?.textContent).toContain('Ready');
+        expect(overlay?.textContent).toContain('Endowus data loaded');
+        expect(overlay?.textContent).toContain('Retirement');
+        expect(overlay?.querySelectorAll('.gpv-select option')).toHaveLength(2);
+        expect(overlay?.textContent).not.toContain('Not ready yet');
+        expect(overlay?.textContent).not.toContain('Waiting for Endowus data');
     });
 
     test('showOverlay opens readiness shell on FSM route before holdings snapshot exists', () => {
@@ -275,6 +344,81 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Not ready yet');
         expect(overlay.textContent).toContain('Waiting for holdings data');
         expect(overlay.textContent).toContain('No FSM holdings found yet. Once holdings load, assign them to portfolios here.');
+    });
+
+    test('showOverlay refreshes automatically when FSM holdings arrive after opening in readiness mode', async () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+
+        const holdingsPayload = {
+            data: [
+                {
+                    holdings: [
+                        { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 },
+                        { code: 'HEADER', productType: 'DPMS_HEADER' }
+                    ]
+                }
+            ]
+        };
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        global.fetch = jest.fn(url => {
+            if (url.includes('/fsmone/rest/holding/client/protected/find-holdings-with-pnl')) {
+                return Promise.resolve(responseFactory(holdingsPayload));
+            }
+            return Promise.resolve(responseFactory({}));
+        });
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        expect(overlay?.textContent).toContain('Not ready yet');
+        expect(overlay?.textContent).toContain('Waiting for holdings data');
+
+        await window.fetch('https://secure.fundsupermart.com/fsmone/rest/holding/client/protected/find-holdings-with-pnl');
+        await flushPromises();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay?.textContent).toContain('Ready');
+        expect(overlay?.textContent).toContain('Holdings loaded');
+        expect(overlay?.textContent).toContain('Fund A');
+        expect(overlay?.textContent).toContain('AAPL');
+        expect(overlay?.textContent).not.toContain('Waiting for holdings data');
+        expect(overlay?.textContent).not.toContain('No FSM holdings found yet');
     });
 
     test('showOverlay renders FSM workspace with product type and bulk assignment controls', () => {
