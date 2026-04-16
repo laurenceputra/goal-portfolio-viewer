@@ -301,6 +301,12 @@ Contributions are welcome! To contribute:
 
 ## Changelog
 
+### Version 2.14.2
+- Added the unified workflow shell with Readiness, Discovery, Compare, Mappings, and Sync tabs
+- Preserved explicit Endowus bucket assignments and refreshed the viewer immediately after mapping changes
+- Hardened shell state persistence and accessibility, including route-aware filters, durable compare selections, and tab ARIA wiring
+- Detached transient UI timers so test runs and teardown do not leak open handles
+
 ### Version 2.14.1
 - Improved FSM sync conflict assignment readability with instrument names and richer assignment context
 

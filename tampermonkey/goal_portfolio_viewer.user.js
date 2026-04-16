@@ -1744,7 +1744,12 @@ function buildBucketDetailGoalRow(goal) {
 
     function createSequentialRequestQueue({ delayMs, waitFn }) {
         const delay = Number(delayMs) || 0;
-        const wait = waitFn || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+        const wait = waitFn || (ms => new Promise(resolve => {
+            const timer = setTimeout(resolve, ms);
+            if (timer && typeof timer.unref === 'function') {
+                timer.unref();
+            }
+        }));
 
         return async function runSequential(items, requestFn) {
             const results = [];
@@ -2883,6 +2888,9 @@ function buildBucketDetailGoalRow(goal) {
             let timeoutId = null;
             if (controller && Number.isFinite(timeoutMs) && timeoutMs > 0) {
                 timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+                if (timeoutId && typeof timeoutId.unref === 'function') {
+                    timeoutId.unref();
+                }
             }
             return fetchImpl(url, { method, headers, body, signal: controller ? controller.signal : undefined })
                 .then(async response => {
@@ -3362,6 +3370,9 @@ function buildBucketDetailGoalRow(goal) {
                         syncOnChangeRetryTimer = null;
                         await attemptSync();
                     }, retryDelayMs);
+                    if (syncOnChangeRetryTimer && typeof syncOnChangeRetryTimer.unref === 'function') {
+                        syncOnChangeRetryTimer.unref();
+                    }
                 }
                 return;
             }
@@ -3374,6 +3385,9 @@ function buildBucketDetailGoalRow(goal) {
         };
 
         syncOnChangeTimer = setTimeout(attemptSync, SYNC_ON_CHANGE_BUFFER_MS);
+        if (syncOnChangeTimer && typeof syncOnChangeTimer.unref === 'function') {
+            syncOnChangeTimer.unref();
+        }
 
         logDebug(`[Goal Portfolio Viewer] Scheduled sync (${reason}) in ${Math.round(SYNC_ON_CHANGE_BUFFER_MS / 1000)}s`);
     }
@@ -4857,6 +4871,9 @@ let GoalTargetStore;
         let timeoutId = null;
         if (controller) {
             timeoutId = setTimeout(() => controller.abort(), PERFORMANCE_REQUEST_TIMEOUT_MS);
+            if (timeoutId && typeof timeoutId.unref === 'function') {
+                timeoutId.unref();
+            }
         }
 
         const response = await fetch(url, {
@@ -5108,6 +5125,9 @@ let GoalTargetStore;
                     height: Math.max(PERFORMANCE_CHART_MIN_HEIGHT, Math.round(targetHeight))
                 });
             }, CHART_RESIZE_DEBOUNCE_MS);
+            if (resizeTimer && typeof resizeTimer.unref === 'function') {
+                resizeTimer.unref();
+            }
         });
 
         observer.observe(chartWrapper);
@@ -5412,7 +5432,7 @@ let GoalTargetStore;
             requestAnimationFrame(callback);
             return;
         }
-        setTimeout(callback, 0);
+        detachTimerHandle(setTimeout(callback, 0));
     }
 
     function renderGoalTypePerformance(typeSection, goalIds, cleanupCallbacks, options = {}) {
@@ -6597,20 +6617,37 @@ let GoalTargetStore;
         document.body.appendChild(notification);
         
         // Fade in
-        setTimeout(() => {
+        const showTimer = setTimeout(() => {
             notification.classList.add('gpv-notification-show');
         }, 10);
+        detachTimerHandle(showTimer);
         
         // Fade out and remove
-        setTimeout(() => {
+        const hideTimer = setTimeout(() => {
             notification.classList.remove('gpv-notification-show');
-            setTimeout(() => {
+            const removeTimer = setTimeout(() => {
                 notification.remove();
             }, 300);
+            detachTimerHandle(removeTimer);
         }, 3000);
+        detachTimerHandle(hideTimer);
+    }
+
+    function detachTimerHandle(timerHandle) {
+        if (timerHandle && typeof timerHandle.unref === 'function') {
+            timerHandle.unref();
+        }
+        return timerHandle;
     }
 
     let syncToastTimer = null;
+
+    function clearSyncToastTimer() {
+        if (syncToastTimer) {
+            clearTimeout(syncToastTimer);
+            syncToastTimer = null;
+        }
+    }
 
     function getSyncToastContainer() {
         if (typeof document === 'undefined') {
@@ -6647,20 +6684,15 @@ let GoalTargetStore;
         container.textContent = message;
         container.classList.remove('gpv-sync-toast-success', 'gpv-sync-toast-error', 'gpv-sync-toast-info');
         container.classList.add(`gpv-sync-toast-${type}`, 'gpv-sync-toast-visible');
-        if (syncToastTimer) {
-            clearTimeout(syncToastTimer);
-        }
-        syncToastTimer = setTimeout(() => {
+        clearSyncToastTimer();
+        syncToastTimer = detachTimerHandle(setTimeout(() => {
             clearSyncMessage();
-        }, 10000);
+        }, 10000));
     }
 
     function clearSyncMessage() {
+        clearSyncToastTimer();
         if (typeof document === 'undefined') {
-            if (syncToastTimer) {
-                clearTimeout(syncToastTimer);
-                syncToastTimer = null;
-            }
             return;
         }
         const container = getSyncToastContainer();
@@ -6669,10 +6701,6 @@ let GoalTargetStore;
         }
         container.textContent = '';
         container.classList.remove('gpv-sync-toast-success', 'gpv-sync-toast-error', 'gpv-sync-toast-info', 'gpv-sync-toast-visible');
-        if (syncToastTimer) {
-            clearTimeout(syncToastTimer);
-            syncToastTimer = null;
-        }
     }
 
     function showSuccessMessage(message) {
@@ -6779,9 +6807,9 @@ function scrollOverlayContentToTop(sourceNode = null) {
                 requestAnimationFrame(enforceTop);
             });
         } else {
-            setTimeout(enforceTop, 32);
+            detachTimerHandle(setTimeout(enforceTop, 32));
         }
-        content.gpvEnforceTopTimer = setTimeout(enforceTop, 220);
+        content.gpvEnforceTopTimer = detachTimerHandle(setTimeout(enforceTop, 220));
         return;
     }
     content.scrollTop = 0;
@@ -6799,7 +6827,7 @@ function rerenderSyncSettingsPanel({ message, type = 'success', delay = 300 } = 
         scrollOverlayContentToTop();
     };
     if (delay > 0) {
-        setTimeout(refresh, delay);
+        detachTimerHandle(setTimeout(refresh, delay));
     } else {
         refresh();
     }
@@ -10538,6 +10566,7 @@ syncUi.update = function updateSyncUI() {
             if (!overlay.isConnected) {
                 return;
             }
+            clearSyncMessage();
             if (!Array.isArray(cleanupCallbacks)) {
                 return;
             }
@@ -11403,7 +11432,7 @@ syncUi.update = function updateSyncUI() {
             if (state.ui.urlCheckTimeout) {
                 clearTimeout(state.ui.urlCheckTimeout);
             }
-            state.ui.urlCheckTimeout = setTimeout(handleUrlChange, 100);
+            state.ui.urlCheckTimeout = detachTimerHandle(setTimeout(handleUrlChange, 100));
         };
 
         // Listen to popstate event for browser back/forward navigation
@@ -11489,7 +11518,7 @@ syncUi.update = function updateSyncUI() {
                 showOverlay();
             });
         } else {
-            setTimeout(init, 100);
+            detachTimerHandle(setTimeout(init, 100));
         }
     }
 
