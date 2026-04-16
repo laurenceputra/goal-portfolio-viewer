@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.2
+// @version      2.14.3
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -10483,23 +10483,23 @@ syncUi.update = function updateSyncUI() {
         const isFsmRoute = isFsmInvestmentsRoute(window.location.href, window.location.origin);
         const hasFsmHoldingsSnapshot = Array.isArray(state.apiData.fsmHoldings);
         const fsmHoldings = hasFsmHoldingsSnapshot ? state.apiData.fsmHoldings : [];
-        if (isFsmRoute && !hasFsmHoldingsSnapshot) {
-            logDebug('[Goal Portfolio Viewer] FSM holdings not available yet');
-            showErrorMessage('FSM holdings are still loading. Try again after the holdings request completes.');
-            return;
-        }
 
         let mergedInvestmentDataState = buildMergedInvestmentData(
             state.apiData.performance,
             state.apiData.investible,
             state.apiData.summary
         );
-        if (!isFsmRoute && !mergedInvestmentDataState) {
-            logDebug('[Goal Portfolio Viewer] Not all API data available yet');
-            showErrorMessage('Portfolio data is still loading. Open the viewer again after the data arrives.');
-            return;
+        if (isFsmRoute) {
+            if (hasFsmHoldingsSnapshot) {
+                logDebug('[Goal Portfolio Viewer] FSM holdings loaded');
+            } else {
+                logDebug('[Goal Portfolio Viewer] FSM holdings not available yet; opening shell in readiness mode');
+            }
+        } else if (mergedInvestmentDataState) {
+            logDebug('[Goal Portfolio Viewer] Data merged successfully');
+        } else {
+            logDebug('[Goal Portfolio Viewer] Endowus data not available yet; opening shell in readiness mode');
         }
-        logDebug('[Goal Portfolio Viewer] Data merged successfully');
 
         const overlay = createElement('div', 'gpv-overlay');
         overlay.id = 'gpv-overlay';
@@ -11110,7 +11110,7 @@ syncUi.update = function updateSyncUI() {
             summaryOption.value = 'SUMMARY';
             select.appendChild(summaryOption);
 
-            Object.keys(mergedInvestmentDataState).filter(Boolean).sort().forEach(bucket => {
+            Object.keys(mergedInvestmentDataState || {}).filter(Boolean).sort().forEach(bucket => {
                 const opt = createElement('option', null, `📁 ${bucket}`);
                 opt.value = bucket;
                 select.appendChild(opt);
@@ -11159,6 +11159,18 @@ syncUi.update = function updateSyncUI() {
                 state.apiData.summary
             );
             return mergedInvestmentDataState;
+        }
+
+        function renderEndowusPendingState() {
+            if (!contentDiv) {
+                return;
+            }
+            contentDiv.innerHTML = '';
+            contentDiv.appendChild(createElement(
+                'div',
+                'gpv-shell-empty',
+                'Endowus data is still loading. Keep the shell open for readiness, then reopen the viewer after the portfolio requests complete.'
+            ));
         }
 
         function rebuildSelectionOptions() {
@@ -11320,9 +11332,18 @@ syncUi.update = function updateSyncUI() {
         }
 
         if (!isFsmRoute && select) {
-            renderView('SUMMARY');
+            if (mergedInvestmentDataState) {
+                renderView('SUMMARY');
+            } else {
+                modeToggle.classList.add('gpv-mode-toggle--hidden');
+                renderEndowusPendingState();
+            }
 
             select.onchange = function() {
+                if (!mergedInvestmentDataState) {
+                    renderEndowusPendingState();
+                    return;
+                }
                 renderView(select.value, { scrollToTop: true });
             };
         }

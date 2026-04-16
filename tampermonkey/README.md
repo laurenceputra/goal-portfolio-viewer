@@ -301,6 +301,10 @@ Contributions are welcome! To contribute:
 
 ## Changelog
 
+### Version 2.14.3
+- Open the workflow shell in readiness mode even before Endowus or FSM data finishes loading
+- Show a non-blocking empty state instead of bailing out before the shell can explain what is missing
+
 ### Version 2.14.2
 - Added the unified workflow shell with Readiness, Discovery, Compare, Mappings, and Sync tabs
 - Preserved explicit Endowus bucket assignments and refreshed the viewer immediately after mapping changes

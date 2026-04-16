@@ -208,6 +208,75 @@ describe('initialization and URL monitoring', () => {
         expect(document.querySelector('#gpv-overlay')).toBeNull();
     });
 
+    test('showOverlay opens readiness shell when Endowus data is not loaded yet', () => {
+        global.alert = jest.fn();
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        expect(overlay).toBeTruthy();
+        expect(overlay.textContent).toContain('Readiness');
+        expect(overlay.textContent).toContain('Not ready yet');
+        expect(overlay.textContent).toContain('Waiting for Endowus data');
+        expect(overlay.textContent).toContain('Endowus data is still loading. Keep the shell open for readiness');
+        expect(overlay.querySelectorAll('.gpv-select option')).toHaveLength(1);
+    });
+
+    test('showOverlay opens readiness shell on FSM route before holdings snapshot exists', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        global.fetch = jest.fn(() => Promise.resolve(responseFactory({})));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        expect(overlay).toBeTruthy();
+        expect(overlay.textContent).toContain('Portfolio Viewer (FSM)');
+        expect(overlay.textContent).toContain('Readiness');
+        expect(overlay.textContent).toContain('Not ready yet');
+        expect(overlay.textContent).toContain('Waiting for holdings data');
+        expect(overlay.textContent).toContain('No FSM holdings found yet. Once holdings load, assign them to portfolios here.');
+    });
+
     test('showOverlay renders FSM workspace with product type and bulk assignment controls', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
@@ -1402,7 +1471,7 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Product Type');
     });
 
-    test('showOverlay on FSM route alerts when FSM holdings are unavailable', () => {
+    test('showOverlay on FSM route opens readiness shell when FSM holdings are unavailable', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
@@ -1438,9 +1507,11 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const notification = document.querySelector('.gpv-notification');
-        expect(notification).toBeTruthy();
-        expect(notification.textContent).toContain('FSM holdings are still loading');
+        const overlay = document.querySelector('#gpv-overlay');
+        expect(overlay).toBeTruthy();
+        expect(overlay.textContent).toContain('Readiness');
+        expect(overlay.textContent).toContain('Waiting for holdings data');
+        expect(overlay.textContent).toContain('No FSM holdings found yet. Once holdings load, assign them to portfolios here.');
     });
 
     test('FSM portfolio manager supports create, rename, archive and unassigns holdings', () => {
