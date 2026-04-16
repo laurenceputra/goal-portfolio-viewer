@@ -519,13 +519,13 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.alert = jest.fn();
-
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
         exportsModule.showOverlay();
 
-        expect(global.alert).toHaveBeenCalledWith('Please wait for FSM holdings data to load, then try again.');
+        const notification = document.querySelector('.gpv-notification');
+        expect(notification).toBeTruthy();
+        expect(notification.textContent).toContain('FSM holdings are still loading');
     });
 
     test('FSM portfolio manager supports create, rename, archive and unassigns holdings', () => {

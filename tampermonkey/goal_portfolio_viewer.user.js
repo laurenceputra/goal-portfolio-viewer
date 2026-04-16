@@ -53,7 +53,9 @@
         summary: 'api_summary',
         fsmHoldings: 'api_fsm_holdings',
         fsmPortfolios: 'fsm_portfolios',
-        fsmAssignmentByCode: 'fsm_assignment_by_code'
+        fsmAssignmentByCode: 'fsm_assignment_by_code',
+        endowusBucketAssignments: 'endowus_bucket_assignments',
+        shellState: 'gpv_shell_state'
     };
     const STORAGE_KEY_PREFIXES = {
         goalTarget: 'goal_target_pct_',
@@ -68,6 +70,13 @@
     };
     const VIEW_STATE_KEYS = {
         bucketMode: 'gpv_bucket_mode'
+    };
+    const SHELL_STATE_KEYS = {
+        activeTab: 'gpv_shell_active_tab',
+        searchQuery: 'gpv_shell_search_query',
+        compareSelection: 'gpv_shell_compare_selection',
+        onboardingDismissed: 'gpv_shell_onboarding_dismissed',
+        sourceFilter: 'gpv_shell_source_filter'
     };
     const BUCKET_VIEW_MODES = {
         allocation: 'allocation',
@@ -1051,6 +1060,7 @@ function buildBucketDetailGoalRow(goal) {
 
         const investibleMap = utils.indexBy(investibleData, item => item?.goalId);
         const summaryMap = utils.indexBy(summaryData, item => item?.goalId);
+        const endowusAssignments = readEndowusBucketAssignments();
 
         const bucketMap = {};
 
@@ -1058,8 +1068,10 @@ function buildBucketDetailGoalRow(goal) {
             const invest = investibleMap[perf.goalId] || {};
             const summary = summaryMap[perf.goalId] || {};
             const goalName = utils.normalizeString(invest.goalName || summary.goalName || '', '');
-            // Extract bucket name using "Bucket Name - Goal Description" convention
-            const goalBucket = utils.extractBucketName(goalName);
+            const assignment = deriveEndowusBucketAssignment(perf.goalId, goalName, endowusAssignments);
+            // Extract bucket name using explicit assignment when available, otherwise fall back to
+            // the historic "Bucket Name - Goal Description" convention.
+            const goalBucket = assignment?.bucketName || utils.extractBucketName(goalName);
             // Note: investible API `totalInvestmentAmount` is misnamed and represents ending balance.
             // We map it internally to endingBalanceAmount to avoid confusing it with principal invested.
             const performanceEndingBalance = extractAmount(perf.totalInvestmentValue);
@@ -1078,6 +1090,7 @@ function buildBucketDetailGoalRow(goal) {
                 goalId: perf.goalId,
                 goalName: goalName,
                 goalBucket: goalBucket,
+                bucketAssignment: assignment,
                 goalType: utils.normalizeString(
                     invest.investmentGoalType || summary.investmentGoalType || '',
                     UNKNOWN_GOAL_TYPE
@@ -2394,7 +2407,8 @@ function buildBucketDetailGoalRow(goal) {
     function collectLegacyEndowusConfig() {
         const config = {
             goalTargets: {},
-            goalFixed: {}
+            goalFixed: {},
+            bucketAssignments: {}
         };
         const allKeys = GM_listValues ? GM_listValues() : [];
         for (const key of allKeys) {
@@ -2408,6 +2422,13 @@ function buildBucketDetailGoalRow(goal) {
                 const goalId = key.substring(STORAGE_KEY_PREFIXES.goalFixed.length);
                 const value = Storage.get(key, false);
                 config.goalFixed[goalId] = value;
+            } else if (key === STORAGE_KEYS.endowusBucketAssignments) {
+                const assignments = readEndowusBucketAssignments();
+                Object.entries(assignments).forEach(([goalId, record]) => {
+                    if (record && record.bucketName) {
+                        config.bucketAssignments[goalId] = record;
+                    }
+                });
             }
         }
         Object.entries(config.goalFixed).forEach(([goalId, isFixed]) => {
@@ -2515,6 +2536,7 @@ function buildBucketDetailGoalRow(goal) {
                     endowus: {
                         goalTargets: endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {},
                         goalFixed: endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {},
+                        bucketAssignments: endowus.bucketAssignments && typeof endowus.bucketAssignments === 'object' ? endowus.bucketAssignments : {},
                         timestamp: typeof endowus.timestamp === 'number' ? endowus.timestamp : (config.timestamp || Date.now())
                     },
                     fsm: {
@@ -2538,6 +2560,7 @@ function buildBucketDetailGoalRow(goal) {
                 endowus: {
                     goalTargets: config.goalTargets && typeof config.goalTargets === 'object' ? config.goalTargets : {},
                     goalFixed: config.goalFixed && typeof config.goalFixed === 'object' ? config.goalFixed : {},
+                    bucketAssignments: config.bucketAssignments && typeof config.bucketAssignments === 'object' ? config.bucketAssignments : {},
                     timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
                 },
                 fsm: {
@@ -2594,6 +2617,7 @@ function buildBucketDetailGoalRow(goal) {
         const endowus = normalized.platforms.endowus || {};
         const endowusTargets = endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {};
         const endowusFixed = endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {};
+        const endowusAssignments = endowus.bucketAssignments && typeof endowus.bucketAssignments === 'object' ? endowus.bucketAssignments : {};
 
         for (const [goalId, value] of Object.entries(endowusTargets)) {
             if (endowusFixed[goalId] === true) {
@@ -2605,6 +2629,19 @@ function buildBucketDetailGoalRow(goal) {
         for (const [goalId, value] of Object.entries(endowusFixed)) {
             Storage.set(storageKeys.goalFixed(goalId), value === true);
         }
+
+        const normalizedEndowusAssignments = {};
+        Object.entries(endowusAssignments).forEach(([goalId, record]) => {
+            const normalizedGoalId = utils.normalizeString(goalId, '');
+            if (!normalizedGoalId) {
+                return;
+            }
+            const normalizedRecord = normalizeAssignmentRecord(record);
+            if (normalizedRecord) {
+                normalizedEndowusAssignments[normalizedGoalId] = normalizedRecord;
+            }
+        });
+        writeEndowusBucketAssignments(normalizedEndowusAssignments);
 
         const fsm = normalized.platforms.fsm || {};
         const fsmTargets = fsm.targetsByCode && typeof fsm.targetsByCode === 'object' ? fsm.targetsByCode : {};
@@ -2658,6 +2695,7 @@ function buildBucketDetailGoalRow(goal) {
         logDebug('[Goal Portfolio Viewer] Applied sync config data', {
             endowusTargets: Object.keys(endowusTargets).length,
             endowusFixed: Object.keys(endowusFixed).length,
+            endowusAssignments: Object.keys(normalizedEndowusAssignments).length,
             fsmTargets: Object.keys(fsmTargets).length,
             fsmFixed: Object.keys(fsmFixed).length,
             fsmTags: Object.keys(fsmTags).length,
@@ -3614,7 +3652,7 @@ function buildBucketDetailGoalRow(goal) {
 
 function getEndowusSyncView(config) {
     if (!config || typeof config !== 'object') {
-        return { goalTargets: {}, goalFixed: {} };
+        return { goalTargets: {}, goalFixed: {}, bucketAssignments: {} };
     }
     if (config.platforms && typeof config.platforms === 'object') {
         const endowus = config.platforms.endowus && typeof config.platforms.endowus === 'object'
@@ -3622,12 +3660,14 @@ function getEndowusSyncView(config) {
             : {};
         return {
             goalTargets: endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {},
-            goalFixed: endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {}
+            goalFixed: endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {},
+            bucketAssignments: endowus.bucketAssignments && typeof endowus.bucketAssignments === 'object' ? endowus.bucketAssignments : {}
         };
     }
     return {
         goalTargets: config.goalTargets && typeof config.goalTargets === 'object' ? config.goalTargets : {},
-        goalFixed: config.goalFixed && typeof config.goalFixed === 'object' ? config.goalFixed : {}
+        goalFixed: config.goalFixed && typeof config.goalFixed === 'object' ? config.goalFixed : {},
+        bucketAssignments: config.bucketAssignments && typeof config.bucketAssignments === 'object' ? config.bucketAssignments : {}
     };
 }
 
@@ -3739,6 +3779,8 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
     }
     const localFsm = getFsmSyncView(conflict.local);
     const remoteFsm = getFsmSyncView(conflict.remote);
+    const localEndowus = getEndowusSyncView(conflict.local);
+    const remoteEndowus = getEndowusSyncView(conflict.remote);
     const fsmHoldings = Array.isArray(options.fsmHoldings) ? options.fsmHoldings : null;
     const holdingsByCode = options.holdingsByCode && typeof options.holdingsByCode === 'object'
         ? options.holdingsByCode
@@ -3753,7 +3795,9 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
         ...Object.keys(localFsm.fixedByCode || {}),
         ...Object.keys(remoteFsm.fixedByCode || {}),
         ...Object.keys(localFsm.tagsByCode || {}),
-        ...Object.keys(remoteFsm.tagsByCode || {})
+        ...Object.keys(remoteFsm.tagsByCode || {}),
+        ...Object.keys(localEndowus.bucketAssignments || {}),
+        ...Object.keys(remoteEndowus.bucketAssignments || {})
     ]);
 
     Array.from(codes).sort().forEach(code => {
@@ -3774,6 +3818,28 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
             settingName: `Instrument ${code}`,
             localDisplay: `Target ${formatSyncTarget(localTarget)} · Fixed ${formatSyncFixed(localFixed)} · Tag ${localTag}`,
             remoteDisplay: `Target ${formatSyncTarget(remoteTarget)} · Fixed ${formatSyncFixed(remoteFixed)} · Tag ${remoteTag}`
+        });
+    });
+
+    const bucketAssignmentCodes = new Set([
+        ...Object.keys(localEndowus.bucketAssignments || {}),
+        ...Object.keys(remoteEndowus.bucketAssignments || {})
+    ]);
+    Array.from(bucketAssignmentCodes).sort().forEach(goalId => {
+        const localRecord = localEndowus.bucketAssignments?.[goalId];
+        const remoteRecord = remoteEndowus.bucketAssignments?.[goalId];
+        const localBucket = localRecord?.bucketName || '-';
+        const remoteBucket = remoteRecord?.bucketName || '-';
+        const localProvenance = localRecord?.provenance || '-';
+        const remoteProvenance = remoteRecord?.provenance || '-';
+        if (localBucket === remoteBucket && localProvenance === remoteProvenance) {
+            return;
+        }
+        rows.push({
+            section: 'assignment',
+            settingName: `Bucket assignment ${goalId}`,
+            localDisplay: `${localBucket} (${localProvenance})`,
+            remoteDisplay: `${remoteBucket} (${remoteProvenance})`
         });
     });
 
@@ -3924,9 +3990,156 @@ function formatSyncFixed(isFixed) {
     return isFixed ? 'Yes' : 'No';
 }
 
-function countSyncedTargets(targets = {}, fixed = {}) {
-    return Object.keys(targets || {}).filter(goalId => fixed?.[goalId] !== true).length;
-}
+    function countSyncedTargets(targets = {}, fixed = {}) {
+        return Object.keys(targets || {}).filter(goalId => fixed?.[goalId] !== true).length;
+    }
+
+    function normalizeAssignmentRecord(record, fallbackBucket = '') {
+        if (!record || typeof record !== 'object') {
+            return null;
+        }
+        const bucketName = utils.normalizeString(record.bucketName, fallbackBucket);
+        if (!bucketName) {
+            return null;
+        }
+        const provenance = utils.normalizeString(record.provenance, 'heuristic');
+        const note = utils.normalizeString(record.note, '');
+        const timestamp = Number(record.timestamp);
+        return {
+            bucketName,
+            provenance,
+            note,
+            timestamp: Number.isFinite(timestamp) ? timestamp : Date.now()
+        };
+    }
+
+    function readEndowusBucketAssignments() {
+        const assignments = Storage.readJson(
+            STORAGE_KEYS.endowusBucketAssignments,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error reading Endowus bucket assignments'
+        ) || {};
+        return Object.entries(assignments).reduce((acc, [goalId, record]) => {
+            const normalizedGoalId = utils.normalizeString(goalId, '');
+            const normalizedRecord = normalizeAssignmentRecord(record);
+            if (normalizedGoalId && normalizedRecord) {
+                acc[normalizedGoalId] = normalizedRecord;
+            }
+            return acc;
+        }, {});
+    }
+
+    function writeEndowusBucketAssignments(assignments) {
+        const safeAssignments = assignments && typeof assignments === 'object' ? assignments : {};
+        Storage.writeJson(STORAGE_KEYS.endowusBucketAssignments, safeAssignments, 'Error saving Endowus bucket assignments');
+    }
+
+    function deriveEndowusBucketAssignment(goalId, goalName, assignments = null) {
+        const normalizedGoalId = utils.normalizeString(goalId, '');
+        if (!normalizedGoalId) {
+            return null;
+        }
+        const existingAssignments = assignments && typeof assignments === 'object' ? assignments : readEndowusBucketAssignments();
+        const record = existingAssignments[normalizedGoalId];
+        if (record && record.bucketName) {
+            return record;
+        }
+        const bucketName = utils.extractBucketName(goalName);
+        return normalizeAssignmentRecord({
+            bucketName,
+            provenance: 'heuristic',
+            note: 'Derived from goal name'
+        }, bucketName);
+    }
+
+    function buildEndowusDiscoveryItems(mergedInvestmentDataState, projectedInvestmentsState) {
+        if (!mergedInvestmentDataState || typeof mergedInvestmentDataState !== 'object') {
+            return [];
+        }
+        const goalStore = typeof GoalTargetStore !== 'undefined' && GoalTargetStore
+            ? GoalTargetStore
+            : { getTarget: () => null, getFixed: () => false };
+        const items = [];
+        Object.entries(mergedInvestmentDataState).forEach(([bucketName, bucketObj]) => {
+            if (!bucketName || bucketName === '_meta') {
+                return;
+            }
+            const goalIds = collectGoalIds(bucketObj);
+            const goalTargetById = buildGoalTargetById(goalIds, goalStore.getTarget);
+            const goalFixedById = buildGoalFixedById(goalIds, goalStore.getFixed);
+            const bucketViewModel = ViewModels.buildBucketDetailViewModel({
+                bucketName,
+                bucketMap: mergedInvestmentDataState,
+                projectedInvestmentsState,
+                goalTargetById,
+                goalFixedById
+            });
+            if (!bucketViewModel) {
+                return;
+            }
+            items.push({
+                kind: 'bucket',
+                source: 'endowus',
+                id: bucketName,
+                title: bucketName,
+                subtitle: `${bucketViewModel.goalTypes.length} goal type(s) · ${formatMoney(bucketViewModel.endingBalanceAmount)}`,
+                detail: bucketViewModel.returnDisplay,
+                searchText: [bucketName, bucketViewModel.returnDisplay, bucketViewModel.growthDisplay].join(' ').toLowerCase(),
+                payload: bucketViewModel
+            });
+            bucketViewModel.goalTypes.forEach(goalTypeModel => {
+                goalTypeModel.goals.forEach(goalModel => {
+                    items.push({
+                        kind: 'goal',
+                        source: 'endowus',
+                        id: goalModel.goalId,
+                        title: goalModel.goalName,
+                        subtitle: `${bucketName} · ${goalTypeModel.displayName}`,
+                        detail: `${goalModel.returnDisplay} · target ${goalModel.targetDisplay || '-'}%`,
+                        bucketName,
+                        goalType: goalTypeModel.goalType,
+                        searchText: [goalModel.goalName, bucketName, goalTypeModel.displayName, goalModel.returnDisplay, goalModel.diffDisplay].join(' ').toLowerCase(),
+                        payload: goalModel
+                    });
+                });
+            });
+        });
+        return items;
+    }
+
+    function buildFsmDiscoveryItems(fsmHoldings, portfolios, assignmentByCode) {
+        const portfolioNameMap = buildFsmPortfolioNameMap(portfolios);
+        const holdingsByCode = buildFsmHoldingsNameMap(fsmHoldings);
+        return (Array.isArray(fsmHoldings) ? fsmHoldings : []).map(row => {
+            const code = utils.normalizeString(row?.code, '');
+            const portfolioId = utils.normalizeString(assignmentByCode?.[code], FSM_UNASSIGNED_PORTFOLIO_ID);
+            const portfolioLabel = formatFsmPortfolioLabel(portfolioId, portfolioNameMap);
+            return {
+                kind: 'holding',
+                source: 'fsm',
+                id: code,
+                title: row?.displayTicker || row?.subcode || code,
+                subtitle: `${utils.normalizeString(row?.name, '-')} · ${utils.normalizeString(row?.productType, '-')}`,
+                detail: `${portfolioLabel} · ${formatMoney(Number(row?.currentValueLcy) || 0)}`,
+                searchText: [code, row?.displayTicker, row?.name, row?.productType, portfolioLabel, holdingsByCode[code]].filter(Boolean).join(' ').toLowerCase(),
+                payload: { ...row, portfolioId }
+            };
+        });
+    }
+
+    function filterDiscoveryItems(items, query, sourceFilter = 'all') {
+        const normalizedQuery = utils.normalizeString(query, '').toLowerCase();
+        const normalizedSource = utils.normalizeString(sourceFilter, 'all');
+        return (Array.isArray(items) ? items : []).filter(item => {
+            if (normalizedSource !== 'all' && item.source !== normalizedSource) {
+                return false;
+            }
+            if (!normalizedQuery) {
+                return true;
+            }
+            return item.searchText.includes(normalizedQuery);
+        });
+    }
 
 let GoalTargetStore;
 
@@ -3970,7 +4183,16 @@ let GoalTargetStore;
             lastUrl: window.location.href,
             urlMonitorCleanup: null,
             urlCheckTimeout: null,
-            observer: null
+            observer: null,
+            shellActiveTab: Storage.get(SHELL_STATE_KEYS.activeTab, 'overview'),
+            shellSearchQuery: Storage.get(SHELL_STATE_KEYS.searchQuery, ''),
+            shellSourceFilter: Storage.get(SHELL_STATE_KEYS.sourceFilter, 'all'),
+            shellCompareSelection: Storage.readJson(
+                SHELL_STATE_KEYS.compareSelection,
+                data => Array.isArray(data),
+                'Error reading shell compare selection'
+            ) || [],
+            shellOnboardingDismissed: Storage.get(SHELL_STATE_KEYS.onboardingDismissed, false) === true
         }
     };
 
@@ -4266,6 +4488,31 @@ let GoalTargetStore;
         const key = storageKeys.projectedInvestment(bucket, goalType);
         delete projectedInvestmentsState[key];
         logDebug(`[Goal Portfolio Viewer] Cleared projected investment for ${bucket}|${goalType}`);
+    }
+
+    function persistShellUiState() {
+        Storage.set(SHELL_STATE_KEYS.activeTab, state.ui.shellActiveTab);
+        Storage.set(SHELL_STATE_KEYS.searchQuery, state.ui.shellSearchQuery || '');
+        Storage.set(SHELL_STATE_KEYS.sourceFilter, state.ui.shellSourceFilter || 'all');
+        Storage.writeJson(
+            SHELL_STATE_KEYS.compareSelection,
+            Array.isArray(state.ui.shellCompareSelection) ? state.ui.shellCompareSelection : [],
+            'Error saving shell compare selection'
+        );
+        Storage.set(SHELL_STATE_KEYS.onboardingDismissed, state.ui.shellOnboardingDismissed === true);
+    }
+
+    function toggleShellCompareSelection(item) {
+        if (!item || !item.id) {
+            return;
+        }
+        const current = Array.isArray(state.ui.shellCompareSelection) ? state.ui.shellCompareSelection : [];
+        const exists = current.some(entry => entry.id === item.id && entry.kind === item.kind);
+        const next = exists
+            ? current.filter(entry => !(entry.id === item.id && entry.kind === item.kind))
+            : [...current, item];
+        state.ui.shellCompareSelection = next.slice(0, 4);
+        persistShellUiState();
     }
 
 
@@ -6250,6 +6497,9 @@ let GoalTargetStore;
      * Show notification (toast)
      */
     function showNotification(message, type = 'info') {
+        if (typeof document === 'undefined' || !document.body) {
+            return;
+        }
         const notification = createElement('div');
         notification.className = `gpv-notification gpv-notification-${type}`;
         notification.textContent = message;
@@ -6276,6 +6526,9 @@ let GoalTargetStore;
     let syncToastTimer = null;
 
     function getSyncToastContainer() {
+        if (typeof document === 'undefined') {
+            return null;
+        }
         const overlay = document.getElementById('gpv-overlay');
         if (!overlay) {
             return null;
@@ -6316,6 +6569,13 @@ let GoalTargetStore;
     }
 
     function clearSyncMessage() {
+        if (typeof document === 'undefined') {
+            if (syncToastTimer) {
+                clearTimeout(syncToastTimer);
+                syncToastTimer = null;
+            }
+            return;
+        }
         const container = getSyncToastContainer();
         if (!container) {
             return;
@@ -9365,6 +9625,89 @@ syncUi.update = function updateSyncUI() {
         render: renderPortfolioView
     };
 
+    function buildEndowusDiscoveryItems(mergedInvestmentDataState, projectedInvestmentsState) {
+        if (!mergedInvestmentDataState || typeof mergedInvestmentDataState !== 'object') {
+            return [];
+        }
+        const items = [];
+        Object.entries(mergedInvestmentDataState).forEach(([bucketName, bucketObj]) => {
+            const goalIds = collectGoalIds(bucketObj);
+            const goalTargetById = buildGoalTargetById(goalIds, GoalTargetStore.getTarget);
+            const goalFixedById = buildGoalFixedById(goalIds, GoalTargetStore.getFixed);
+            const bucketViewModel = ViewModels.buildBucketDetailViewModel({
+                bucketName,
+                bucketMap: mergedInvestmentDataState,
+                projectedInvestmentsState,
+                goalTargetById,
+                goalFixedById
+            });
+            if (!bucketViewModel) {
+                return;
+            }
+            items.push({
+                kind: 'bucket',
+                source: 'endowus',
+                id: bucketName,
+                title: bucketName,
+                subtitle: `${bucketViewModel.goalTypes.length} goal type(s) · ${formatMoney(bucketViewModel.endingBalanceAmount)}`,
+                detail: bucketViewModel.returnDisplay,
+                searchText: [bucketName, bucketViewModel.returnDisplay, bucketViewModel.growthDisplay].join(' ').toLowerCase(),
+                payload: bucketViewModel
+            });
+            bucketViewModel.goalTypes.forEach(goalTypeModel => {
+                goalTypeModel.goals.forEach(goalModel => {
+                    items.push({
+                        kind: 'goal',
+                        source: 'endowus',
+                        id: goalModel.goalId,
+                        title: goalModel.goalName,
+                        subtitle: `${bucketName} · ${goalTypeModel.displayName}`,
+                        detail: `${goalModel.returnDisplay} · target ${goalModel.targetDisplay || '-'}%`,
+                        bucketName,
+                        goalType: goalTypeModel.goalType,
+                        searchText: [goalModel.goalName, bucketName, goalTypeModel.displayName, goalModel.returnDisplay, goalModel.diffDisplay].join(' ').toLowerCase(),
+                        payload: goalModel
+                    });
+                });
+            });
+        });
+        return items;
+    }
+
+    function buildFsmDiscoveryItems(fsmHoldings, portfolios, assignmentByCode) {
+        const portfolioNameMap = buildFsmPortfolioNameMap(portfolios);
+        const holdingsByCode = buildFsmHoldingsNameMap(fsmHoldings);
+        return (Array.isArray(fsmHoldings) ? fsmHoldings : []).map(row => {
+            const code = utils.normalizeString(row?.code, '');
+            const portfolioId = utils.normalizeString(assignmentByCode?.[code], FSM_UNASSIGNED_PORTFOLIO_ID);
+            const portfolioLabel = formatFsmPortfolioLabel(portfolioId, portfolioNameMap);
+            return {
+                kind: 'holding',
+                source: 'fsm',
+                id: code,
+                title: row?.displayTicker || row?.subcode || code,
+                subtitle: `${utils.normalizeString(row?.name, '-')} · ${utils.normalizeString(row?.productType, '-')}`,
+                detail: `${portfolioLabel} · ${formatMoney(Number(row?.currentValueLcy) || 0)}`,
+                searchText: [code, row?.displayTicker, row?.name, row?.productType, portfolioLabel, holdingsByCode[code]].filter(Boolean).join(' ').toLowerCase(),
+                payload: { ...row, portfolioId }
+            };
+        });
+    }
+
+    function filterDiscoveryItems(items, query, sourceFilter = 'all') {
+        const normalizedQuery = utils.normalizeString(query, '').toLowerCase();
+        const normalizedSource = utils.normalizeString(sourceFilter, 'all');
+        return (Array.isArray(items) ? items : []).filter(item => {
+            if (normalizedSource !== 'all' && item.source !== normalizedSource) {
+                return false;
+            }
+            if (!normalizedQuery) {
+                return true;
+            }
+            return item.searchText.includes(normalizedQuery);
+        });
+    }
+
     // ============================================
     // Controller
     // ============================================
@@ -10084,7 +10427,7 @@ syncUi.update = function updateSyncUI() {
             const fsmHoldings = Array.isArray(state.apiData.fsmHoldings) ? state.apiData.fsmHoldings : [];
             if (fsmHoldings.length === 0) {
                 logDebug('[Goal Portfolio Viewer] FSM holdings not available yet');
-                alert('Please wait for FSM holdings data to load, then try again.');
+                showErrorMessage('FSM holdings are still loading. Try again after the holdings request completes.');
                 return;
             }
             renderFsmOverlay(fsmHoldings);
@@ -10098,7 +10441,7 @@ syncUi.update = function updateSyncUI() {
         );
         if (!mergedInvestmentDataState) {
             logDebug('[Goal Portfolio Viewer] Not all API data available yet');
-            alert('Please wait for portfolio data to load, then try again.');
+            showErrorMessage('Portfolio data is still loading. Open the viewer again after the data arrives.');
             return;
         }
         logDebug('[Goal Portfolio Viewer] Data merged successfully');
@@ -10140,7 +10483,7 @@ syncUi.update = function updateSyncUI() {
                 showSyncSettings();
             } else {
                 console.error('[Goal Portfolio Viewer] showSyncSettings is not a function!');
-                alert('Sync settings are not available. Please ensure the sync module is loaded.');
+                showErrorMessage('Sync settings are unavailable right now. Reload the viewer and try again.');
             }
         };
 
@@ -10198,6 +10541,308 @@ syncUi.update = function updateSyncUI() {
         header.appendChild(buttonContainer);
         container.appendChild(header);
 
+        const shellChrome = createElement('div', 'gpv-shell');
+        const shellTabs = createElement('div', 'gpv-shell-tabs');
+        shellTabs.setAttribute('role', 'tablist');
+        const shellTabIds = ['overview', 'explore', 'compare', 'mappings', 'settings'];
+        const shellTabButtons = {};
+        const shellPanels = {};
+
+        const shellPanelDefinitions = {
+            overview: 'Readiness',
+            explore: 'Discovery',
+            compare: 'Compare',
+            mappings: 'Mappings',
+            settings: 'Sync'
+        };
+
+        shellTabIds.forEach(tabId => {
+            const button = createElement('button', 'gpv-shell-tab', shellPanelDefinitions[tabId]);
+            button.type = 'button';
+            button.dataset.tab = tabId;
+            button.setAttribute('role', 'tab');
+            button.addEventListener('click', () => {
+                state.ui.shellActiveTab = tabId;
+                Storage.set(SHELL_STATE_KEYS.activeTab, tabId);
+                updateShellPanels();
+            });
+            shellTabButtons[tabId] = button;
+            shellTabs.appendChild(button);
+        });
+        shellChrome.appendChild(shellTabs);
+
+        const shellMessages = createElement('div', 'gpv-shell-messages');
+        const shellOnboarding = createElement('div', 'gpv-shell-onboarding');
+        const shellSearch = createElement('div', 'gpv-shell-search');
+        const shellCompare = createElement('div', 'gpv-shell-compare');
+        const shellMappings = createElement('div', 'gpv-shell-mappings');
+        const shellSettings = createElement('div', 'gpv-shell-settings');
+        shellPanels.overview = shellMessages;
+        shellPanels.explore = shellSearch;
+        shellPanels.compare = shellCompare;
+        shellPanels.mappings = shellMappings;
+        shellPanels.settings = shellSettings;
+
+        shellChrome.appendChild(shellMessages);
+        shellChrome.appendChild(shellOnboarding);
+        shellChrome.appendChild(shellSearch);
+        shellChrome.appendChild(shellCompare);
+        shellChrome.appendChild(shellMappings);
+        shellChrome.appendChild(shellSettings);
+        container.appendChild(shellChrome);
+
+        function getCurrentDiscoveryItems() {
+            if (isFsmRoute) {
+                const fsmConfig = loadFsmPortfolioConfig(state.apiData.fsmHoldings || []);
+                return buildFsmDiscoveryItems(
+                    state.apiData.fsmHoldings || [],
+                    fsmConfig.portfolios || [],
+                    fsmConfig.assignmentByCode || {}
+                );
+            }
+            return buildEndowusDiscoveryItems(mergedInvestmentDataState, state.projectedInvestments);
+        }
+
+        function renderShellOverview() {
+            const loadedState = isFsmRoute
+                ? Boolean(state.apiData.fsmHoldings && state.apiData.fsmHoldings.length)
+                : Boolean(mergedInvestmentDataState);
+            const freshness = isFsmRoute
+                ? (state.apiData.fsmHoldings ? 'Holdings loaded' : 'Waiting for holdings data')
+                : (mergedInvestmentDataState ? 'Endowus data loaded' : 'Waiting for Endowus data');
+            const syncStatusSummary = SyncManager.getStatus();
+            shellMessages.innerHTML = `
+                <div class="gpv-shell-card">
+                    <strong>Readiness</strong>
+                    <div>${loadedState ? 'Ready' : 'Not ready yet'}</div>
+                    <div>${escapeHtml(freshness)}</div>
+                </div>
+                <div class="gpv-shell-card">
+                    <strong>Sync</strong>
+                    <div>Status: ${escapeHtml(syncStatusSummary.status)}</div>
+                    <div>Last sync: ${escapeHtml(buildSyncSettingsState().lastSyncText)}</div>
+                </div>
+                <div class="gpv-shell-card">
+                    <strong>Quick actions</strong>
+                    <div>Use the tabs to search, compare, and review mappings.</div>
+                    ${state.ui.shellOnboardingDismissed ? '' : '<button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-shell-action="dismiss-onboarding">Dismiss onboarding</button>'}
+                </div>
+            `;
+            const dismissButton = shellMessages.querySelector('[data-shell-action="dismiss-onboarding"]');
+            if (dismissButton) {
+                dismissButton.onclick = () => {
+                    state.ui.shellOnboardingDismissed = true;
+                    Storage.set(SHELL_STATE_KEYS.onboardingDismissed, true);
+                    updateShellPanels();
+                };
+            }
+        }
+
+        function renderShellSearch() {
+            const items = filterDiscoveryItems(getCurrentDiscoveryItems(), state.ui.shellSearchQuery, state.ui.shellSourceFilter);
+            const sourceButtons = [
+                { id: 'all', label: 'All' },
+                { id: 'endowus', label: 'Endowus' },
+                { id: 'fsm', label: 'FSM' }
+            ].map(option => `<button type="button" class="gpv-sync-btn ${state.ui.shellSourceFilter === option.id ? 'gpv-sync-btn-primary' : 'gpv-sync-btn-secondary'}" data-source-filter="${option.id}">${option.label}</button>`).join('');
+            shellSearch.innerHTML = `
+                <div class="gpv-shell-card">
+                    <strong>Discovery</strong>
+                    <div class="gpv-shell-search-row">
+                        <input type="search" class="gpv-target-input" id="gpv-shell-search-input" placeholder="Search goals, buckets, holdings, tags" value="${escapeHtml(state.ui.shellSearchQuery || '')}" />
+                        <div class="gpv-shell-source-filters">${sourceButtons}</div>
+                    </div>
+                    <div class="gpv-shell-results"></div>
+                </div>
+            `;
+            const input = shellSearch.querySelector('#gpv-shell-search-input');
+            if (input) {
+                input.oninput = () => {
+                    state.ui.shellSearchQuery = input.value;
+                    Storage.set(SHELL_STATE_KEYS.searchQuery, state.ui.shellSearchQuery);
+                    renderShellSearch();
+                };
+            }
+            shellSearch.querySelectorAll('[data-source-filter]').forEach(button => {
+                button.onclick = () => {
+                    state.ui.shellSourceFilter = button.dataset.sourceFilter || 'all';
+                    Storage.set(SHELL_STATE_KEYS.sourceFilter, state.ui.shellSourceFilter);
+                    renderShellSearch();
+                };
+            });
+            const results = shellSearch.querySelector('.gpv-shell-results');
+            if (results) {
+                if (!items.length) {
+                    results.innerHTML = '<div class="gpv-shell-empty">No matches yet.</div>';
+                } else {
+                    results.innerHTML = items.slice(0, 20).map(item => `
+                        <div class="gpv-shell-result" data-kind="${escapeHtml(item.kind)}" data-id="${escapeHtml(item.id)}" data-source="${escapeHtml(item.source)}">
+                            <div><strong>${escapeHtml(item.title)}</strong></div>
+                            <div>${escapeHtml(item.subtitle)}</div>
+                            <div>${escapeHtml(item.detail)}</div>
+                            <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-compare-add="true">Add to compare</button>
+                        </div>
+                    `).join('');
+                    results.querySelectorAll('[data-compare-add="true"]').forEach(button => {
+                        button.onclick = () => {
+                            const card = button.closest('.gpv-shell-result');
+                            if (!card) return;
+                            const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
+                            if (match) {
+                                toggleShellCompareSelection(match);
+                                updateShellPanels();
+                            }
+                        };
+                    });
+                    results.querySelectorAll('.gpv-shell-result').forEach(card => {
+                        card.onclick = event => {
+                            if (event.target && event.target.closest && event.target.closest('button')) {
+                                return;
+                            }
+                            const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
+                            if (match && match.source === 'endowus' && match.kind === 'bucket') {
+                                select.value = match.id;
+                                renderView(match.id, { scrollToTop: true });
+                                state.ui.shellActiveTab = 'overview';
+                                Storage.set(SHELL_STATE_KEYS.activeTab, 'overview');
+                                updateShellPanels();
+                            }
+                        };
+                    });
+                }
+            }
+        }
+
+        function renderShellCompare() {
+            const compareSelection = Array.isArray(state.ui.shellCompareSelection) ? state.ui.shellCompareSelection : [];
+            shellCompare.innerHTML = compareSelection.length
+                ? compareSelection.map(item => `
+                    <div class="gpv-shell-card">
+                        <strong>${escapeHtml(item.title || item.id)}</strong>
+                        <div>${escapeHtml(item.subtitle || '')}</div>
+                        <div>${escapeHtml(item.detail || '')}</div>
+                        <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-remove-compare="${escapeHtml(item.id)}">Remove</button>
+                    </div>
+                `).join('')
+                : '<div class="gpv-shell-empty">Pick up to four items from Discovery.</div>';
+            shellCompare.querySelectorAll('[data-remove-compare]').forEach(button => {
+                button.onclick = () => {
+                    const id = button.dataset.removeCompare;
+                    state.ui.shellCompareSelection = compareSelection.filter(item => item.id !== id);
+                    persistShellUiState();
+                    updateShellPanels();
+                };
+            });
+        }
+
+        function renderShellMappings() {
+            if (isFsmRoute) {
+                shellMappings.innerHTML = '<div class="gpv-shell-card"><strong>FSM mappings</strong><div>Assignments are shown in the workspace below.</div></div>';
+                return;
+            }
+            const assignments = readEndowusBucketAssignments();
+            const items = getCurrentDiscoveryItems().filter(item => item.kind === 'goal');
+            shellMappings.innerHTML = `
+                <div class="gpv-shell-card">
+                    <strong>Bucket mappings</strong>
+                    <div>Goal names still seed bucket suggestions, but explicit assignments now win.</div>
+                    <div class="gpv-shell-mapping-actions">
+                        <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-action="accept-suggestions">Accept suggestions</button>
+                        <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-action="clear-overrides">Clear overrides</button>
+                    </div>
+                    <div class="gpv-shell-mapping-list"></div>
+                </div>
+            `;
+            const list = shellMappings.querySelector('.gpv-shell-mapping-list');
+            if (list) {
+                const bucketNames = Array.from(new Set([
+                    ...Object.keys(mergedInvestmentDataState || {}),
+                    ...Object.values(assignments).map(record => record.bucketName).filter(Boolean)
+                ])).sort();
+                list.innerHTML = items.map(item => {
+                    const assigned = assignments[item.id]?.bucketName || item.bucketName || '';
+                    return `
+                        <div class="gpv-shell-mapping-row">
+                            <div><strong>${escapeHtml(item.title)}</strong><div>${escapeHtml(item.subtitle)}</div></div>
+                            <select class="gpv-shell-select" data-goal-id="${escapeHtml(item.id)}">
+                                <option value="">Unassigned</option>
+                                ${bucketNames.map(bucket => `<option value="${escapeHtml(bucket)}" ${bucket === assigned ? 'selected' : ''}>${escapeHtml(bucket)}</option>`).join('')}
+                            </select>
+                        </div>
+                    `;
+                }).join('');
+                list.querySelectorAll('select[data-goal-id]').forEach(selectEl => {
+                    selectEl.onchange = () => {
+                        const goalId = selectEl.dataset.goalId;
+                        const bucketName = utils.normalizeString(selectEl.value, '');
+                        const nextAssignments = readEndowusBucketAssignments();
+                        if (bucketName) {
+                            nextAssignments[goalId] = normalizeAssignmentRecord({
+                                bucketName,
+                                provenance: 'manual',
+                                note: 'Updated from shell mappings'
+                            }, bucketName);
+                        } else {
+                            delete nextAssignments[goalId];
+                        }
+                        writeEndowusBucketAssignments(nextAssignments);
+                        showInfoMessage('Bucket mapping updated. Refreshing view.');
+                        updateShellPanels();
+                    };
+                });
+            }
+            shellMappings.querySelector('[data-action="accept-suggestions"]')?.addEventListener('click', () => {
+                const nextAssignments = readEndowusBucketAssignments();
+                items.forEach(item => {
+                    if (!nextAssignments[item.id]) {
+                        nextAssignments[item.id] = normalizeAssignmentRecord({
+                            bucketName: item.bucketName,
+                            provenance: 'heuristic',
+                            note: 'Accepted suggestion'
+                        }, item.bucketName);
+                    }
+                });
+                writeEndowusBucketAssignments(nextAssignments);
+                showSuccessMessage('Applied bucket suggestions.');
+                updateShellPanels();
+            });
+            shellMappings.querySelector('[data-action="clear-overrides"]')?.addEventListener('click', () => {
+                writeEndowusBucketAssignments({});
+                showInfoMessage('Cleared explicit bucket overrides.');
+                updateShellPanels();
+            });
+        }
+
+        function renderShellSettings() {
+            shellSettings.innerHTML = `
+                <div class="gpv-shell-card">
+                    <strong>Sync and freshness</strong>
+                    <div>Use the workspace controls below for the full sync panel.</div>
+                    <div>Search and compare selections are remembered locally.</div>
+                </div>
+            `;
+        }
+
+        function updateShellPanels() {
+            renderShellOverview();
+            renderShellSearch();
+            renderShellCompare();
+            renderShellMappings();
+            renderShellSettings();
+            Object.entries(shellPanels).forEach(([tabId, panel]) => {
+                if (!panel) {
+                    return;
+                }
+                panel.style.display = state.ui.shellActiveTab === tabId ? 'block' : 'none';
+            });
+            Object.entries(shellTabButtons).forEach(([tabId, button]) => {
+                button.classList.toggle('is-active', state.ui.shellActiveTab === tabId);
+                button.setAttribute('aria-selected', String(state.ui.shellActiveTab === tabId));
+            });
+        }
+
+        updateShellPanels();
+
         const controls = createElement('div', 'gpv-controls');
         const selectLabel = createElement('label', 'gpv-select-label', 'View:');
         const select = createElement('select', 'gpv-select');
@@ -10205,7 +10850,7 @@ syncUi.update = function updateSyncUI() {
         summaryOption.value = 'SUMMARY';
         select.appendChild(summaryOption);
 
-        Object.keys(mergedInvestmentDataState).sort().forEach(bucket => {
+        Object.keys(mergedInvestmentDataState).filter(Boolean).sort().forEach(bucket => {
             const opt = createElement('option', null, `📁 ${bucket}`);
             opt.value = bucket;
             select.appendChild(opt);
@@ -10567,7 +11212,14 @@ syncUi.update = function updateSyncUI() {
             injectStyles,
             showOverlay,
             startUrlMonitoring,
-            init
+            init,
+            buildEndowusDiscoveryItems,
+            buildFsmDiscoveryItems,
+            filterDiscoveryItems,
+            deriveEndowusBucketAssignment,
+            readEndowusBucketAssignments,
+            writeEndowusBucketAssignments,
+            normalizeAssignmentRecord
         };
     }
 
@@ -10659,6 +11311,13 @@ syncUi.update = function updateSyncUI() {
             buildFsmConflictDiffItems,
             formatSyncTarget,
             formatSyncFixed,
+            normalizeAssignmentRecord,
+            readEndowusBucketAssignments,
+            writeEndowusBucketAssignments,
+            deriveEndowusBucketAssignment,
+            buildEndowusDiscoveryItems,
+            buildFsmDiscoveryItems,
+            filterDiscoveryItems,
             clearSortCacheIfExpired,
             injectStyles: testingHooks?.injectStyles,
             showOverlay: testingHooks?.showOverlay,

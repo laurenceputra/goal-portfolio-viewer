@@ -19,6 +19,9 @@ const {
     collectAllGoalIds,
     buildGoalTargetById,
     buildGoalFixedById,
+    deriveEndowusBucketAssignment,
+    buildEndowusDiscoveryItems,
+    filterDiscoveryItems,
     getPerformanceCacheKey,
     getBucketViewModePreference,
     setBucketViewModePreference,
@@ -343,6 +346,31 @@ describe('view model builders', () => {
             goalTargetById: {},
             goalFixedById: {}
         })).toBeNull();
+    });
+
+    test('should honor explicit Endowus bucket assignments over name heuristics', () => {
+        const bucketMap = createBucketMapFixture();
+        const assignments = {
+            g1: {
+                bucketName: 'Retirement Plus',
+                provenance: 'manual',
+                timestamp: Date.now()
+            }
+        };
+        const firstGoal = bucketMap.Retirement.GENERAL_WEALTH_ACCUMULATION.goals.find(goal => goal.goalId === 'g1');
+        expect(deriveEndowusBucketAssignment(firstGoal.goalId, firstGoal.goalName, assignments)).toMatchObject({
+            bucketName: 'Retirement Plus',
+            provenance: 'manual'
+        });
+    });
+
+    test('should build and filter discovery items for search', () => {
+        const bucketMap = createBucketMapFixture();
+        const projected = createProjectedInvestmentFixture();
+        const goals = buildEndowusDiscoveryItems(bucketMap, projected);
+        expect(goals.some(item => item.kind === 'bucket' && item.title === 'Retirement')).toBe(true);
+        const results = filterDiscoveryItems(goals, 'growth', 'endowus');
+        expect(results.some(item => item.title.includes('Growth'))).toBe(true);
     });
 });
 
