@@ -10810,11 +10810,18 @@ syncUi.update = function updateSyncUI() {
                 persistShellUiState();
             }
             const items = filterDiscoveryItems(currentDiscoveryItems, state.ui.shellSearchQuery, state.ui.shellSourceFilter);
-            const sourceButtons = [
-                { id: 'all', label: 'All' },
-                { id: 'endowus', label: 'Endowus' },
-                { id: 'fsm', label: 'FSM' }
-            ].map(option => `<button type="button" class="gpv-sync-btn ${state.ui.shellSourceFilter === option.id ? 'gpv-sync-btn-primary' : 'gpv-sync-btn-secondary'}" data-source-filter="${option.id}">${option.label}</button>`).join('');
+            const sourceOptions = isFsmRoute
+                ? [
+                    { id: 'all', label: 'All' },
+                    { id: 'fsm', label: 'FSM' }
+                ]
+                : [
+                    { id: 'all', label: 'All' },
+                    { id: 'endowus', label: 'Endowus' }
+                ];
+            const sourceButtons = sourceOptions
+                .map(option => `<button type="button" class="gpv-sync-btn ${state.ui.shellSourceFilter === option.id ? 'gpv-sync-btn-primary' : 'gpv-sync-btn-secondary'}" data-source-filter="${option.id}">${option.label}</button>`)
+                .join('');
             if (!shellSearchRefs.initialized) {
                 shellSearch.innerHTML = `
                     <div class="gpv-shell-card">

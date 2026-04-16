@@ -997,6 +997,10 @@ describe('initialization and URL monitoring', () => {
 
         expect(storage.get('gpv_shell_source_filter')).toBe('all');
         expect(overlay.querySelector('.gpv-shell-results').textContent).toContain('Fund A');
+
+        const sourceFilters = Array.from(overlay.querySelectorAll('.gpv-shell-source-filters [data-source-filter]'))
+            .map(button => button.dataset.sourceFilter);
+        expect(sourceFilters).toEqual(['all', 'fsm']);
     });
 
     test('Discovery source filter normalizes when opening on Endowus route with persisted FSM filter', () => {
@@ -1032,6 +1036,10 @@ describe('initialization and URL monitoring', () => {
 
         expect(storage.get('gpv_shell_source_filter')).toBe('all');
         expect(overlay.querySelector('.gpv-shell-results').textContent).toContain('Retirement - Core Portfolio');
+
+        const sourceFilters = Array.from(overlay.querySelectorAll('.gpv-shell-source-filters [data-source-filter]'))
+            .map(button => button.dataset.sourceFilter);
+        expect(sourceFilters).toEqual(['all', 'endowus']);
     });
 
     test('shell active tab normalizes invalid stored values to overview', () => {
