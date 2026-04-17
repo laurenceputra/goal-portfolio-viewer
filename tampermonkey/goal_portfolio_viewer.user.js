@@ -1069,9 +1069,14 @@ function buildBucketDetailGoalRow(goal) {
             const summary = summaryMap[perf.goalId] || {};
             const goalName = utils.normalizeString(invest.goalName || summary.goalName || '', '');
             const assignment = deriveEndowusBucketAssignment(perf.goalId, goalName, endowusAssignments);
+            const hasExplicitBucketAssignment = Boolean(
+                assignment && typeof assignment === 'object' && Object.prototype.hasOwnProperty.call(assignment, 'bucketName')
+            );
             // Extract bucket name using explicit assignment when available, otherwise fall back to
             // the historic "Bucket Name - Goal Description" convention.
-            const goalBucket = assignment?.bucketName || utils.extractBucketName(goalName);
+            const goalBucket = hasExplicitBucketAssignment
+                ? (utils.normalizeString(assignment.bucketName, '') || 'Uncategorized')
+                : utils.extractBucketName(goalName);
             // Note: investible API `totalInvestmentAmount` is misnamed and represents ending balance.
             // We map it internally to endingBalanceAmount to avoid confusing it with principal invested.
             const performanceEndingBalance = extractAmount(perf.totalInvestmentValue);
@@ -2430,7 +2435,7 @@ function buildBucketDetailGoalRow(goal) {
             } else if (key === STORAGE_KEYS.endowusBucketAssignments) {
                 const assignments = readEndowusBucketAssignments();
                 Object.entries(assignments).forEach(([goalId, record]) => {
-                    if (record && record.bucketName) {
+                    if (record?.bucketName || isExplicitUnassignedEndowusAssignment(record)) {
                         config.bucketAssignments[goalId] = record;
                     }
                 });
@@ -4046,11 +4051,12 @@ function formatSyncFixed(isFixed) {
         if (!record || typeof record !== 'object') {
             return null;
         }
-        const bucketName = utils.normalizeString(record.bucketName, fallbackBucket);
-        if (!bucketName) {
+        const bucketName = utils.normalizeString(record.bucketName, utils.normalizeString(fallbackBucket, ''));
+        const provenance = utils.normalizeString(record.provenance, 'heuristic');
+        const isExplicitUnassigned = !bucketName && provenance === 'manual';
+        if (!bucketName && !isExplicitUnassigned) {
             return null;
         }
-        const provenance = utils.normalizeString(record.provenance, 'heuristic');
         const note = utils.normalizeString(record.note, '');
         const timestamp = Number(record.timestamp);
         return {
@@ -4059,6 +4065,15 @@ function formatSyncFixed(isFixed) {
             note,
             timestamp: Number.isFinite(timestamp) ? timestamp : Date.now()
         };
+    }
+
+    function isExplicitUnassignedEndowusAssignment(record) {
+        return Boolean(
+            record
+            && typeof record === 'object'
+            && utils.normalizeString(record.provenance, '') === 'manual'
+            && !utils.normalizeString(record.bucketName, '')
+        );
     }
 
     function readEndowusBucketAssignments() {
@@ -4088,8 +4103,11 @@ function formatSyncFixed(isFixed) {
             return null;
         }
         const existingAssignments = assignments && typeof assignments === 'object' ? assignments : readEndowusBucketAssignments();
-        const record = existingAssignments[normalizedGoalId];
-        if (record && record.bucketName) {
+        const record = normalizeAssignmentRecord(existingAssignments[normalizedGoalId]);
+        if (record?.bucketName) {
+            return record;
+        }
+        if (isExplicitUnassignedEndowusAssignment(record)) {
             return record;
         }
         const bucketName = utils.extractBucketName(goalName);
@@ -11064,7 +11082,8 @@ syncUi.update = function updateSyncUI() {
                     ...Object.values(assignments).map(record => record.bucketName).filter(Boolean)
                 ])).sort();
                 list.innerHTML = items.map(item => {
-                    const assigned = assignments[item.id]?.bucketName || item.bucketName || '';
+                    const existingAssignment = assignments[item.id];
+                    const assigned = existingAssignment ? existingAssignment.bucketName : (item.bucketName || '');
                     return `
                         <div class="gpv-shell-mapping-row">
                             <div><strong>${escapeHtml(item.title)}</strong><div>${escapeHtml(item.subtitle)}</div></div>
@@ -11080,15 +11099,11 @@ syncUi.update = function updateSyncUI() {
                         const goalId = selectEl.dataset.goalId;
                         const bucketName = utils.normalizeString(selectEl.value, '');
                         const nextAssignments = readEndowusBucketAssignments();
-                        if (bucketName) {
-                            nextAssignments[goalId] = normalizeAssignmentRecord({
-                                bucketName,
-                                provenance: 'manual',
-                                note: 'Updated from shell mappings'
-                            }, bucketName);
-                        } else {
-                            delete nextAssignments[goalId];
-                        }
+                        nextAssignments[goalId] = normalizeAssignmentRecord({
+                            bucketName,
+                            provenance: 'manual',
+                            note: bucketName ? 'Updated from shell mappings' : 'Explicitly marked unassigned from shell mappings'
+                        }, bucketName);
                         writeEndowusBucketAssignments(nextAssignments);
                         showInfoMessage('Bucket mapping updated. Refreshing view.');
                         refreshEndowusViewAfterMappingChange();
@@ -11098,7 +11113,7 @@ syncUi.update = function updateSyncUI() {
             shellMappings.querySelector('[data-action="accept-suggestions"]')?.addEventListener('click', () => {
                 const nextAssignments = readEndowusBucketAssignments();
                 items.forEach(item => {
-                    if (!nextAssignments[item.id]) {
+                    if (!nextAssignments[item.id] || isExplicitUnassignedEndowusAssignment(nextAssignments[item.id])) {
                         nextAssignments[item.id] = normalizeAssignmentRecord({
                             bucketName: item.bucketName,
                             provenance: 'heuristic',

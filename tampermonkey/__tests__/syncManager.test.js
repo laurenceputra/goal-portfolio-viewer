@@ -375,6 +375,27 @@ describe('SyncManager', () => {
         expect(config.platforms.fsm.assignmentByCode).toEqual({ AAA: 'core', BBB: 'unassigned' });
     });
 
+    test('collectConfigData keeps explicit manual Endowus unassigned mapping records', () => {
+        const { SyncManager } = loadModule();
+
+        storage.set('endowus_bucket_assignments', JSON.stringify({
+            goalA: {
+                bucketName: '',
+                provenance: 'manual',
+                note: 'Explicitly unassigned from shell mappings',
+                timestamp: Date.now()
+            }
+        }));
+        global.GM_listValues = () => ['endowus_bucket_assignments'];
+
+        const config = SyncManager.collectConfigData();
+
+        expect(config.platforms.endowus.bucketAssignments.goalA).toMatchObject({
+            bucketName: '',
+            provenance: 'manual'
+        });
+    });
+
     test('applyConfigData stores FSM portfolio definitions and assignments', () => {
         const { SyncManager } = loadModule();
         SyncManager.applyConfigData({
