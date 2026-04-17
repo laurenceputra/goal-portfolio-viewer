@@ -54,8 +54,7 @@
         fsmHoldings: 'api_fsm_holdings',
         fsmPortfolios: 'fsm_portfolios',
         fsmAssignmentByCode: 'fsm_assignment_by_code',
-        endowusBucketAssignments: 'endowus_bucket_assignments',
-        shellState: 'gpv_shell_state'
+        endowusBucketAssignments: 'endowus_bucket_assignments'
     };
     const STORAGE_KEY_PREFIXES = {
         goalTarget: 'goal_target_pct_',
@@ -4263,11 +4262,13 @@ let GoalTargetStore;
             shellActiveTab: Storage.get(SHELL_STATE_KEYS.activeTab, 'overview'),
             shellSearchQuery: Storage.get(SHELL_STATE_KEYS.searchQuery, ''),
             shellSourceFilter: Storage.get(SHELL_STATE_KEYS.sourceFilter, 'all'),
-            shellCompareSelection: Storage.readJson(
-                SHELL_STATE_KEYS.compareSelection,
-                data => Array.isArray(data),
-                'Error reading shell compare selection'
-            ) || [],
+            shellCompareSelection: normalizeStoredCompareSelection(
+                Storage.readJson(
+                    SHELL_STATE_KEYS.compareSelection,
+                    data => Array.isArray(data),
+                    'Error reading shell compare selection'
+                ) || []
+            ),
             shellOnboardingDismissed: Storage.get(SHELL_STATE_KEYS.onboardingDismissed, false) === true
         }
     };
@@ -4581,13 +4582,53 @@ let GoalTargetStore;
         logDebug(`[Goal Portfolio Viewer] Cleared projected investment for ${bucket}|${goalType}`);
     }
 
+    function normalizeCompareSelectionItem(item) {
+        if (!item || !item.id) {
+            return null;
+        }
+        const source = utils.normalizeString(item.source, '');
+        const kind = utils.normalizeString(item.kind, '');
+        const id = utils.normalizeString(item.id, '');
+        if (!source || !kind || !id) {
+            return null;
+        }
+        return {
+            source,
+            kind,
+            id,
+            title: utils.normalizeString(item.title, ''),
+            subtitle: utils.normalizeString(item.subtitle, ''),
+            detail: utils.normalizeString(item.detail, '')
+        };
+    }
+
+    function normalizeStoredCompareSelection(compareSelection) {
+        const seen = new Set();
+        return (Array.isArray(compareSelection) ? compareSelection : []).reduce((acc, item) => {
+            if (acc.length >= 4) {
+                return acc;
+            }
+            const normalizedItem = normalizeCompareSelectionItem(item);
+            if (!normalizedItem) {
+                return acc;
+            }
+            const identity = buildDiscoveryIdentity(normalizedItem);
+            if (!identity || seen.has(identity)) {
+                return acc;
+            }
+            seen.add(identity);
+            acc.push(normalizedItem);
+            return acc;
+        }, []);
+    }
+
     function persistShellUiState() {
         Storage.set(SHELL_STATE_KEYS.activeTab, state.ui.shellActiveTab);
         Storage.set(SHELL_STATE_KEYS.searchQuery, state.ui.shellSearchQuery || '');
         Storage.set(SHELL_STATE_KEYS.sourceFilter, state.ui.shellSourceFilter || 'all');
         Storage.writeJson(
             SHELL_STATE_KEYS.compareSelection,
-            Array.isArray(state.ui.shellCompareSelection) ? state.ui.shellCompareSelection : [],
+            normalizeStoredCompareSelection(state.ui.shellCompareSelection),
             'Error saving shell compare selection'
         );
         Storage.set(SHELL_STATE_KEYS.onboardingDismissed, state.ui.shellOnboardingDismissed === true);
@@ -4651,28 +4692,25 @@ let GoalTargetStore;
                 acc.push(liveItem);
                 return acc;
             }
-            acc.push(item);
+            const normalizedFallbackItem = normalizeCompareSelectionItem(item);
+            if (normalizedFallbackItem) {
+                acc.push(normalizedFallbackItem);
+            }
             return acc;
         }, []);
     }
 
     function serializeCompareSelectionItem(item) {
-        if (!item || !item.id) {
+        const normalizedItem = normalizeCompareSelectionItem(item);
+        if (!normalizedItem) {
             return '';
         }
-        const source = utils.normalizeString(item.source, '');
-        const kind = utils.normalizeString(item.kind, '');
-        const id = utils.normalizeString(item.id, '');
-        const title = utils.normalizeString(item.title, '');
-        const subtitle = utils.normalizeString(item.subtitle, '');
-        const detail = utils.normalizeString(item.detail, '');
-        const payload = item.payload && typeof item.payload === 'object' ? item.payload : null;
-        return JSON.stringify({ source, kind, id, title, subtitle, detail, payload });
+        return JSON.stringify(normalizedItem);
     }
 
     function compareSelectionsEqual(left, right) {
-        const a = Array.isArray(left) ? left : [];
-        const b = Array.isArray(right) ? right : [];
+        const a = normalizeStoredCompareSelection(left);
+        const b = normalizeStoredCompareSelection(right);
         if (a.length !== b.length) {
             return false;
         }

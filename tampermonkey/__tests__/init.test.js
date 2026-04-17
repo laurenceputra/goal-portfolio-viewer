@@ -1430,6 +1430,64 @@ describe('initialization and URL monitoring', () => {
         expect(savedSelection[0].detail).not.toBe('Stale detail');
     });
 
+    test('compare persistence stores lightweight identity fields only', () => {
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1,
+            totalInvestmentValue: { amount: 1000 }
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        global.GM_setValue('gpv_shell_compare_selection', JSON.stringify([
+            {
+                id: 'goal1',
+                kind: 'goal',
+                source: 'endowus',
+                title: 'Legacy title',
+                subtitle: 'Legacy subtitle',
+                detail: 'Legacy detail',
+                payload: { nested: { amount: 9999 } }
+            }
+        ]));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        overlay.querySelector('[data-tab="compare"]').click();
+
+        const removeButton = overlay.querySelector('[data-remove-compare]');
+        removeButton.click();
+        overlay.querySelector('[data-tab="explore"]').click();
+        const goalResultCard = overlay.querySelector('.gpv-shell-result[data-kind="goal"][data-id="goal1"][data-source="endowus"]');
+        expect(goalResultCard).toBeTruthy();
+        goalResultCard.querySelector('[data-compare-add="true"]').click();
+
+        const savedSelection = JSON.parse(storage.get('gpv_shell_compare_selection'));
+        expect(savedSelection).toHaveLength(1);
+        expect(savedSelection[0]).toEqual(expect.objectContaining({
+            id: 'goal1',
+            kind: 'goal',
+            source: 'endowus'
+        }));
+        expect(savedSelection[0]).not.toHaveProperty('payload');
+    });
+
     test('FSM route renders overlay for empty holdings snapshot and shows an empty-state workspace', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
