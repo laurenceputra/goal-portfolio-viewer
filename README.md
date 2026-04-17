@@ -147,6 +147,9 @@ Our project uses specialized AI agents for different aspects of development:
 5. **QA** → Test thoroughly (QA Engineer)
 6. **Review** → Final approval (Code Reviewer)
 
+For the project-local harness and the exact validation order, see [WORKFLOW.md](WORKFLOW.md).
+It documents the repo-specific checks for release metadata, open handles, and route-aware smoke testing.
+
 ### Development Commands
 
 ```bash
@@ -154,6 +157,7 @@ Our project uses specialized AI agents for different aspects of development:
 pnpm test              # Run tests
 pnpm run lint          # Check code quality
 pnpm run test:watch    # Development mode
+pnpm run check:harness  # Release metadata + open-handle checks
 ```
 
 `pnpm-lock.yaml` is committed to keep workspace installs reproducible across contributors and CI.
