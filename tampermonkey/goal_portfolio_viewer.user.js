@@ -11057,6 +11057,12 @@ syncUi.update = function updateSyncUI() {
             });
         }
 
+        function scheduleSyncForBucketMappingChange(reason = 'bucket-mapping-update') {
+            if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
+                SyncManager.scheduleSyncOnChange(reason);
+            }
+        }
+
         function renderShellMappings() {
             if (isFsmRoute) {
                 shellMappings.innerHTML = '<div class="gpv-shell-card"><strong>FSM mappings</strong><div>Assignments and portfolio controls are available in the workspace below.</div></div>';
@@ -11105,6 +11111,7 @@ syncUi.update = function updateSyncUI() {
                             note: bucketName ? 'Updated from shell mappings' : 'Explicitly marked unassigned from shell mappings'
                         }, bucketName);
                         writeEndowusBucketAssignments(nextAssignments);
+                        scheduleSyncForBucketMappingChange('bucket-mapping-update');
                         showInfoMessage('Bucket mapping updated. Refreshing view.');
                         refreshEndowusViewAfterMappingChange();
                     };
@@ -11122,11 +11129,13 @@ syncUi.update = function updateSyncUI() {
                     }
                 });
                 writeEndowusBucketAssignments(nextAssignments);
+                scheduleSyncForBucketMappingChange('bucket-mapping-accept-suggestions');
                 showSuccessMessage('Applied bucket suggestions.');
                 refreshEndowusViewAfterMappingChange();
             });
             shellMappings.querySelector('[data-action="clear-overrides"]')?.addEventListener('click', () => {
                 writeEndowusBucketAssignments({});
+                scheduleSyncForBucketMappingChange('bucket-mapping-clear-overrides');
                 showInfoMessage('Cleared explicit bucket overrides.');
                 refreshEndowusViewAfterMappingChange();
             });

@@ -708,6 +708,48 @@ describe('initialization and URL monitoring', () => {
         expect(refreshedOverlay?.textContent).not.toMatch(/2,200\.00/);
     });
 
+    test('changing an Endowus mapping schedules buffered sync-on-change', () => {
+        const performanceData = [
+            {
+                goalId: 'g1',
+                totalInvestmentValue: { amount: 1200 },
+                totalCumulativeReturn: { amount: 120 },
+                simpleRateOfReturnPercent: 0.1
+            }
+        ];
+        const investibleData = [
+            {
+                goalId: 'g1',
+                goalName: 'Retirement - Core',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 1200 } }
+            }
+        ];
+        const summaryData = investibleData.map(goal => ({
+            goalId: goal.goalId,
+            goalName: goal.goalName,
+            investmentGoalType: goal.investmentGoalType
+        }));
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        const scheduleSpy = jest.spyOn(exportsModule.SyncManager, 'scheduleSyncOnChange').mockImplementation(() => {});
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const mappingSelect = overlay?.querySelector('.gpv-shell-mappings select[data-goal-id="g1"]');
+        expect(mappingSelect).toBeTruthy();
+
+        mappingSelect.value = 'Education';
+        mappingSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(scheduleSpy).toHaveBeenCalledWith('bucket-mapping-update');
+    });
+
     test('explicit Endowus Unassigned mapping persists instead of reverting to heuristic bucket', () => {
         const performanceData = [
             {
