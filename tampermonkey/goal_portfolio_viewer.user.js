@@ -71,11 +71,7 @@
         bucketMode: 'gpv_bucket_mode'
     };
     const SHELL_STATE_KEYS = {
-        activeTab: 'gpv_shell_active_tab',
-        searchQuery: 'gpv_shell_search_query',
-        compareSelection: 'gpv_shell_compare_selection',
-        onboardingDismissed: 'gpv_shell_onboarding_dismissed',
-        sourceFilter: 'gpv_shell_source_filter'
+        searchQuery: 'gpv_shell_search_query'
     };
     const BUCKET_VIEW_MODES = {
         allocation: 'allocation',
@@ -4352,17 +4348,7 @@ let GoalTargetStore;
             urlCheckTimeout: null,
             observer: null,
             overlayRefresh: null,
-            shellActiveTab: Storage.get(SHELL_STATE_KEYS.activeTab, 'overview'),
-            shellSearchQuery: Storage.get(SHELL_STATE_KEYS.searchQuery, ''),
-            shellSourceFilter: Storage.get(SHELL_STATE_KEYS.sourceFilter, 'all'),
-            shellCompareSelection: normalizeStoredCompareSelection(
-                Storage.readJson(
-                    SHELL_STATE_KEYS.compareSelection,
-                    data => Array.isArray(data),
-                    'Error reading shell compare selection'
-                ) || []
-            ),
-            shellOnboardingDismissed: Storage.get(SHELL_STATE_KEYS.onboardingDismissed, false) === true
+            shellSearchQuery: Storage.get(SHELL_STATE_KEYS.searchQuery, '')
         }
     };
 
@@ -4673,146 +4659,6 @@ let GoalTargetStore;
         const key = storageKeys.projectedInvestment(bucket, goalType);
         delete projectedInvestmentsState[key];
         logDebug(`[Goal Portfolio Viewer] Cleared projected investment for ${bucket}|${goalType}`);
-    }
-
-    function normalizeCompareSelectionItem(item) {
-        if (!item || !item.id) {
-            return null;
-        }
-        const source = utils.normalizeString(item.source, '');
-        const kind = utils.normalizeString(item.kind, '');
-        const id = utils.normalizeString(item.id, '');
-        if (!source || !kind || !id) {
-            return null;
-        }
-        return {
-            source,
-            kind,
-            id,
-            title: utils.normalizeString(item.title, ''),
-            subtitle: utils.normalizeString(item.subtitle, ''),
-            detail: utils.normalizeString(item.detail, '')
-        };
-    }
-
-    function normalizeStoredCompareSelection(compareSelection) {
-        const seen = new Set();
-        return (Array.isArray(compareSelection) ? compareSelection : []).reduce((acc, item) => {
-            if (acc.length >= 4) {
-                return acc;
-            }
-            const normalizedItem = normalizeCompareSelectionItem(item);
-            if (!normalizedItem) {
-                return acc;
-            }
-            const identity = buildDiscoveryIdentity(normalizedItem);
-            if (!identity || seen.has(identity)) {
-                return acc;
-            }
-            seen.add(identity);
-            acc.push(normalizedItem);
-            return acc;
-        }, []);
-    }
-
-    function persistShellUiState() {
-        Storage.set(SHELL_STATE_KEYS.activeTab, state.ui.shellActiveTab);
-        Storage.set(SHELL_STATE_KEYS.searchQuery, state.ui.shellSearchQuery || '');
-        Storage.set(SHELL_STATE_KEYS.sourceFilter, state.ui.shellSourceFilter || 'all');
-        Storage.writeJson(
-            SHELL_STATE_KEYS.compareSelection,
-            normalizeStoredCompareSelection(state.ui.shellCompareSelection),
-            'Error saving shell compare selection'
-        );
-        Storage.set(SHELL_STATE_KEYS.onboardingDismissed, state.ui.shellOnboardingDismissed === true);
-    }
-
-    function toggleShellCompareSelection(item) {
-        if (!item || !item.id) {
-            return;
-        }
-        const current = Array.isArray(state.ui.shellCompareSelection) ? state.ui.shellCompareSelection : [];
-        const exists = current.some(entry => entry.id === item.id && entry.kind === item.kind && entry.source === item.source);
-        if (!exists && current.length >= 4) {
-            showInfoMessage('Compare supports up to 4 items. Remove one before adding another.');
-            return;
-        }
-        const next = exists
-            ? current.filter(entry => !(entry.id === item.id && entry.kind === item.kind && entry.source === item.source))
-            : [...current, item];
-        state.ui.shellCompareSelection = next;
-        persistShellUiState();
-    }
-
-    function buildDiscoveryIdentity(item) {
-        if (!item || !item.id) {
-            return '';
-        }
-        return [
-            utils.normalizeString(item.source, ''),
-            utils.normalizeString(item.kind, ''),
-            utils.normalizeString(item.id, '')
-        ].join('::');
-    }
-
-    function normalizeShellSourceFilterForRoute(sourceFilter, isFsmRoute) {
-        const normalized = utils.normalizeString(sourceFilter, 'all');
-        const allowed = isFsmRoute
-            ? new Set(['all', 'fsm'])
-            : new Set(['all', 'endowus']);
-        return allowed.has(normalized) ? normalized : 'all';
-    }
-
-    function getLiveCompareSelection(compareSelection, currentItems) {
-        const byIdentity = new Map((Array.isArray(currentItems) ? currentItems : []).map(item => [
-            buildDiscoveryIdentity(item),
-            item
-        ]));
-        const seen = new Set();
-        return (Array.isArray(compareSelection) ? compareSelection : []).reduce((acc, item) => {
-            if (acc.length >= 4) {
-                return acc;
-            }
-            const identity = buildDiscoveryIdentity(item);
-            if (identity && seen.has(identity)) {
-                return acc;
-            }
-            const liveItem = byIdentity.get(buildDiscoveryIdentity(item));
-            if (identity) {
-                seen.add(identity);
-            }
-            if (liveItem) {
-                acc.push(liveItem);
-                return acc;
-            }
-            const normalizedFallbackItem = normalizeCompareSelectionItem(item);
-            if (normalizedFallbackItem) {
-                acc.push(normalizedFallbackItem);
-            }
-            return acc;
-        }, []);
-    }
-
-    function serializeCompareSelectionItem(item) {
-        const normalizedItem = normalizeCompareSelectionItem(item);
-        if (!normalizedItem) {
-            return '';
-        }
-        return JSON.stringify(normalizedItem);
-    }
-
-    function compareSelectionsEqual(left, right) {
-        const a = normalizeStoredCompareSelection(left);
-        const b = normalizeStoredCompareSelection(right);
-        if (a.length !== b.length) {
-            return false;
-        }
-        return a.every((item, index) => serializeCompareSelectionItem(item) === serializeCompareSelectionItem(b[index]));
-    }
-
-    function normalizeShellActiveTab(activeTab, availableTabIds = []) {
-        const normalized = utils.normalizeString(activeTab, 'overview');
-        return availableTabIds.includes(normalized) ? normalized : 'overview';
     }
 
 
@@ -8251,8 +8097,8 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-shell {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                font-size: 13px;
-                line-height: 1.45;
+                font-size: 14px;
+                line-height: 1.5;
                 color: #1f2937;
                 display: grid;
                 gap: 12px;
@@ -8274,52 +8120,14 @@ syncUi.update = function updateSyncUI() {
                 font: inherit;
             }
 
-            .gpv-shell-tabs {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 8px;
-                align-items: center;
-            }
-
-            .gpv-shell-tab {
-                appearance: none;
-                border: 1px solid #dbe3f2;
-                background: #ffffff;
-                color: #475569;
-                border-radius: 999px;
-                padding: 6px 10px;
-                font-size: 12px;
-                font-weight: 600;
-                line-height: 1.25;
-                cursor: pointer;
-                transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
-            }
-
-            .gpv-shell-tab:hover {
-                border-color: #c7d2fe;
-                background: #f8fafc;
-                color: #3730a3;
-            }
-
-            .gpv-shell-tab.is-active,
-            .gpv-shell-tab[aria-selected="true"] {
-                border-color: #c7d2fe;
-                background: #eef2ff;
-                color: #3730a3;
-            }
-
-            .gpv-shell-tab:focus-visible {
-                outline: 2px solid rgba(99, 102, 241, 0.35);
-                outline-offset: 2px;
-            }
-
-            .gpv-shell [role="tabpanel"] {
+            .gpv-shell-summary,
+            .gpv-shell-search {
                 min-width: 0;
             }
 
             .gpv-shell-overview {
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
                 gap: 10px;
                 align-items: start;
             }
@@ -8335,30 +8143,24 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-shell-card-label {
-                font-size: 10px;
+                font-size: 11px;
                 font-weight: 700;
-                letter-spacing: 0.08em;
+                letter-spacing: 0.06em;
                 text-transform: uppercase;
                 color: #6b7280;
             }
 
             .gpv-shell-card-value {
-                font-size: 13px;
+                font-size: 14px;
                 font-weight: 700;
                 color: #111827;
                 line-height: 1.3;
             }
 
             .gpv-shell-card-meta {
-                font-size: 12px;
+                font-size: 13px;
                 line-height: 1.35;
                 color: #4b5563;
-            }
-
-            .gpv-shell-card-meta-compact {
-                font-size: 11px;
-                line-height: 1.25;
-                color: #6b7280;
             }
 
             .gpv-shell-card-actions {
@@ -8371,22 +8173,42 @@ syncUi.update = function updateSyncUI() {
             .gpv-shell-card-actions .gpv-sync-btn,
             .gpv-shell-card-actions .gpv-sync-btn-secondary {
                 padding: 6px 12px;
-                font-size: 12px;
+                font-size: 13px;
             }
 
-            .gpv-shell-select {
-                min-width: 180px;
-                padding: 7px 10px;
-                border: 1px solid #d1d5db;
-                border-radius: 8px;
+            .gpv-shell-search-row {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .gpv-shell-results {
+                display: grid;
+                gap: 8px;
+                margin-top: 6px;
+            }
+
+            .gpv-shell-result {
+                border: 1px solid #e5e7eb;
+                border-radius: 10px;
                 background: #ffffff;
-                color: #111827;
+                padding: 8px 10px;
+                display: grid;
+                gap: 4px;
             }
 
-            .gpv-shell-select:focus {
-                outline: none;
-                border-color: #a5b4fc;
-                box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+            .gpv-shell-result:focus-visible {
+                outline: 2px solid rgba(79, 70, 229, 0.45);
+                outline-offset: 2px;
+            }
+
+            .gpv-shell-empty {
+                color: #6b7280;
+            }
+
+            .gpv-shell-reveal {
+                background: #eef2ff;
+                transition: background-color 0.2s ease;
             }
 
             .gpv-header {
@@ -10536,6 +10358,7 @@ syncUi.update = function updateSyncUI() {
         const tbody = table.querySelector('tbody');
         filteredRows.forEach(row => {
             const tr = document.createElement('tr');
+            tr.dataset.holdingCode = row.code || '';
             const checked = selectedCodes.has(row.code);
             tr.innerHTML = `
                 <td><input type="checkbox" ${checked ? 'checked' : ''} aria-label="Select holding ${escapeHtml(row.displayTicker || row.code)}" /></td>
@@ -10989,99 +10812,16 @@ syncUi.update = function updateSyncUI() {
         container.appendChild(header);
 
         const shellChrome = createElement('div', 'gpv-shell');
-        const shellTabs = createElement('div', 'gpv-shell-tabs');
-        shellTabs.setAttribute('role', 'tablist');
-        const shellTabIds = ['overview', 'explore', 'compare', 'mappings', 'settings'];
-        const shellTabButtons = {};
-        const shellPanels = {};
-
-        const shellPanelDefinitions = {
-            overview: 'Readiness',
-            explore: 'Discovery',
-            compare: 'Compare',
-            mappings: 'Mappings',
-            settings: 'Sync'
-        };
-
-        shellTabIds.forEach(tabId => {
-            const button = createElement('button', 'gpv-shell-tab', shellPanelDefinitions[tabId]);
-            button.type = 'button';
-            button.dataset.tab = tabId;
-            button.setAttribute('role', 'tab');
-            button.id = `gpv-shell-tab-${tabId}`;
-            button.setAttribute('aria-controls', `gpv-shell-panel-${tabId}`);
-            button.addEventListener('click', () => {
-                state.ui.shellActiveTab = tabId;
-                Storage.set(SHELL_STATE_KEYS.activeTab, tabId);
-                updateShellPanels();
-            });
-            shellTabButtons[tabId] = button;
-            shellTabs.appendChild(button);
-        });
-        shellTabs.addEventListener('keydown', event => {
-            const horizontalKeys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
-            if (!horizontalKeys.includes(event.key)) {
-                return;
-            }
-            const currentIndex = shellTabIds.indexOf(state.ui.shellActiveTab);
-            if (currentIndex < 0) {
-                return;
-            }
-            let nextIndex = currentIndex;
-            if (event.key === 'ArrowRight') {
-                nextIndex = (currentIndex + 1) % shellTabIds.length;
-            } else if (event.key === 'ArrowLeft') {
-                nextIndex = (currentIndex - 1 + shellTabIds.length) % shellTabIds.length;
-            } else if (event.key === 'Home') {
-                nextIndex = 0;
-            } else if (event.key === 'End') {
-                nextIndex = shellTabIds.length - 1;
-            }
-            event.preventDefault();
-            const nextTabId = shellTabIds[nextIndex];
-            const nextButton = shellTabButtons[nextTabId];
-            if (!nextButton) {
-                return;
-            }
-            state.ui.shellActiveTab = nextTabId;
-            Storage.set(SHELL_STATE_KEYS.activeTab, nextTabId);
-            updateShellPanels();
-            nextButton.focus();
-        });
-        shellChrome.appendChild(shellTabs);
-
-        const shellMessages = createElement('div', 'gpv-shell-messages');
-        const shellOnboarding = createElement('div', 'gpv-shell-onboarding');
+        const shellSummary = createElement('div', 'gpv-shell-summary');
         const shellSearch = createElement('div', 'gpv-shell-search');
-        const shellCompare = createElement('div', 'gpv-shell-compare');
-        const shellMappings = createElement('div', 'gpv-shell-mappings');
-        const shellSettings = createElement('div', 'gpv-shell-settings');
         const shellSearchRefs = {
             initialized: false,
             input: null,
-            filters: null,
             results: null
         };
-        const shellPanelNodes = {
-            overview: shellMessages,
-            explore: shellSearch,
-            compare: shellCompare,
-            mappings: shellMappings,
-            settings: shellSettings
-        };
-        Object.entries(shellPanelNodes).forEach(([tabId, panel]) => {
-            panel.id = `gpv-shell-panel-${tabId}`;
-            panel.setAttribute('role', 'tabpanel');
-            panel.setAttribute('aria-labelledby', `gpv-shell-tab-${tabId}`);
-            shellPanels[tabId] = panel;
-        });
 
-        shellChrome.appendChild(shellMessages);
-        shellChrome.appendChild(shellOnboarding);
+        shellChrome.appendChild(shellSummary);
         shellChrome.appendChild(shellSearch);
-        shellChrome.appendChild(shellCompare);
-        shellChrome.appendChild(shellMappings);
-        shellChrome.appendChild(shellSettings);
         container.appendChild(shellChrome);
 
         function getCurrentDiscoveryItems() {
@@ -11096,30 +10836,88 @@ syncUi.update = function updateSyncUI() {
             return buildEndowusDiscoveryItems(mergedInvestmentDataState, state.projectedInvestments);
         }
 
+        function flashShellRevealRow(row) {
+            if (!row) {
+                return;
+            }
+            row.classList.add('gpv-shell-reveal');
+            detachTimerHandle(setTimeout(() => {
+                row.classList.remove('gpv-shell-reveal');
+            }, 1200));
+        }
+
+        function revealEndowusGoalInWorkspace(goalId) {
+            if (!contentDiv || !goalId) {
+                return false;
+            }
+            const goalRow = Array.from(contentDiv.querySelectorAll('tr.gpv-goal-row[data-goal-id]'))
+                .find(row => row.dataset.goalId === goalId);
+            if (!goalRow) {
+                return false;
+            }
+            if (typeof goalRow.scrollIntoView === 'function') {
+                goalRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }
+            flashShellRevealRow(goalRow);
+            const targetInput = goalRow.querySelector('input.gpv-target-input');
+            if (targetInput && typeof targetInput.focus === 'function') {
+                targetInput.focus();
+            }
+            return true;
+        }
+
+        function revealFsmHoldingInWorkspace(code) {
+            if (!contentDiv || !code) {
+                return false;
+            }
+            const holdingRow = Array.from(contentDiv.querySelectorAll('tr[data-holding-code]'))
+                .find(row => row.dataset.holdingCode === code);
+            if (!holdingRow) {
+                return false;
+            }
+            if (typeof holdingRow.scrollIntoView === 'function') {
+                holdingRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }
+            flashShellRevealRow(holdingRow);
+            const targetInput = holdingRow.querySelector('input.gpv-target-input');
+            if (targetInput && typeof targetInput.focus === 'function') {
+                targetInput.focus();
+            }
+            return true;
+        }
+
         function handleDiscoveryOpen(item) {
             if (!item) {
                 return;
             }
-            if (!isFsmRoute && item.source === 'endowus' && item.kind === 'bucket' && select) {
+            if (isFsmRoute && item.source === 'fsm' && item.kind === 'holding') {
+                revealFsmHoldingInWorkspace(item.id);
+                return;
+            }
+            if (isFsmRoute || !select) {
+                return;
+            }
+            if (item.source !== 'endowus') {
+                return;
+            }
+            if (item.kind === 'bucket') {
                 select.value = item.id;
                 renderView(item.id, { scrollToTop: true });
-                state.ui.shellActiveTab = 'overview';
-                Storage.set(SHELL_STATE_KEYS.activeTab, 'overview');
-                updateShellPanels();
                 return;
             }
-            if (!isFsmRoute && item.source === 'endowus' && item.kind === 'goal') {
-                state.ui.shellActiveTab = 'mappings';
-                Storage.set(SHELL_STATE_KEYS.activeTab, 'mappings');
-                updateShellPanels();
-                return;
+            if (item.kind === 'goal') {
+                const bucketName = utils.normalizeString(item.bucketName, '');
+                if (bucketName && mergedInvestmentDataState?.[bucketName]) {
+                    select.value = bucketName;
+                    renderView(bucketName, { scrollToTop: true });
+                    revealEndowusGoalInWorkspace(item.id);
+                    return;
+                }
+                renderView('SUMMARY', { scrollToTop: true });
             }
-            state.ui.shellActiveTab = 'compare';
-            Storage.set(SHELL_STATE_KEYS.activeTab, 'compare');
-            updateShellPanels();
         }
 
-        function renderShellOverview() {
+        function renderShellSummary() {
             const loadedState = isFsmRoute
                 ? Array.isArray(state.apiData.fsmHoldings)
                 : Boolean(mergedInvestmentDataState);
@@ -11140,76 +10938,47 @@ syncUi.update = function updateSyncUI() {
                 });
                 fsmDriftCard = buildFsmOverviewDriftCardHtml(driftModel);
             }
-            shellMessages.innerHTML = `
+            shellSummary.innerHTML = `
                 <div class="gpv-shell-overview">
-                    <div class="gpv-shell-card">
-                        <div class="gpv-shell-card-label">Readiness</div>
+                    <div class="gpv-shell-card" data-shell-section="status">
+                        <div class="gpv-shell-card-label">Status</div>
                         <div class="gpv-shell-card-value">${loadedState ? 'Ready' : 'Not ready yet'}</div>
                         <div class="gpv-shell-card-meta">${escapeHtml(freshness)}</div>
                     </div>
-                    <div class="gpv-shell-card">
+                    <div class="gpv-shell-card" data-shell-section="sync">
                         <div class="gpv-shell-card-label">Sync</div>
                         <div class="gpv-shell-card-value">${escapeHtml(syncStatusSummary.status)}</div>
                         <div class="gpv-shell-card-meta">Last sync ${escapeHtml(buildSyncSettingsState().lastSyncText)}</div>
-                    </div>
-                    ${fsmDriftCard}
-                    <div class="gpv-shell-card">
-                        <div class="gpv-shell-card-label">Quick actions</div>
                         <div class="gpv-shell-card-actions">
-                            <span class="gpv-shell-card-meta">Search, compare, mappings.</span>
-                            ${state.ui.shellOnboardingDismissed ? '' : '<button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-shell-action="dismiss-onboarding">Dismiss onboarding</button>'}
+                            <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-shell-action="open-sync">Open sync settings</button>
                         </div>
                     </div>
+                    ${fsmDriftCard}
                 </div>
             `;
-            const dismissButton = shellMessages.querySelector('[data-shell-action="dismiss-onboarding"]');
-            if (dismissButton) {
-                dismissButton.onclick = () => {
-                    state.ui.shellOnboardingDismissed = true;
-                    Storage.set(SHELL_STATE_KEYS.onboardingDismissed, true);
-                    updateShellPanels();
+            const openSyncButton = shellSummary.querySelector('[data-shell-action="open-sync"]');
+            if (openSyncButton) {
+                openSyncButton.onclick = () => {
+                    if (typeof showSyncSettings === 'function') {
+                        showSyncSettings();
+                    }
                 };
             }
         }
 
         function renderShellSearch() {
-            const normalizedRouteSourceFilter = normalizeShellSourceFilterForRoute(state.ui.shellSourceFilter, isFsmRoute);
-            if (normalizedRouteSourceFilter !== state.ui.shellSourceFilter) {
-                state.ui.shellSourceFilter = normalizedRouteSourceFilter;
-                Storage.set(SHELL_STATE_KEYS.sourceFilter, normalizedRouteSourceFilter);
-            }
-            const currentDiscoveryItems = getCurrentDiscoveryItems();
-            const liveSelection = getLiveCompareSelection(state.ui.shellCompareSelection, currentDiscoveryItems);
-            if (!compareSelectionsEqual(state.ui.shellCompareSelection, liveSelection)) {
-                state.ui.shellCompareSelection = liveSelection;
-                persistShellUiState();
-            }
-            const items = filterDiscoveryItems(currentDiscoveryItems, state.ui.shellSearchQuery, state.ui.shellSourceFilter);
-            const sourceOptions = isFsmRoute
-                ? [
-                    { id: 'all', label: 'All' },
-                    { id: 'fsm', label: 'FSM' }
-                ]
-                : [
-                    { id: 'all', label: 'All' },
-                    { id: 'endowus', label: 'Endowus' }
-                ];
-            const sourceButtons = sourceOptions
-                .map(option => `<button type="button" class="gpv-sync-btn ${state.ui.shellSourceFilter === option.id ? 'gpv-sync-btn-primary' : 'gpv-sync-btn-secondary'}" data-source-filter="${option.id}">${option.label}</button>`)
-                .join('');
+            const items = filterDiscoveryItems(getCurrentDiscoveryItems(), state.ui.shellSearchQuery);
             if (!shellSearchRefs.initialized) {
                 shellSearch.innerHTML = `
-                    <div class="gpv-shell-card">
-                        <strong>Discovery</strong>
+                    <div class="gpv-shell-card" data-shell-section="find">
+                        <div class="gpv-shell-card-label">Find</div>
                         <div class="gpv-shell-search-row">
-                            <input type="search" class="gpv-target-input" id="gpv-shell-search-input" placeholder="Search goals, buckets, holdings, tags" aria-label="Search discovery items" />
-                            <div class="gpv-shell-source-filters"></div>
+                            <input type="search" class="gpv-target-input" id="gpv-shell-search-input" placeholder="Search goals, buckets, holdings, tags" aria-label="Search workspace items" />
                         </div>
-                        <div class="gpv-shell-results" role="list" aria-live="polite" aria-label="Discovery results"></div>
+                        <div class="gpv-shell-results" role="list" aria-live="polite" aria-label="Search results"></div>
                     </div>
                 `;
                 shellSearchRefs.input = shellSearch.querySelector('#gpv-shell-search-input');
-                shellSearchRefs.filters = shellSearch.querySelector('.gpv-shell-source-filters');
                 shellSearchRefs.results = shellSearch.querySelector('.gpv-shell-results');
                 shellSearchRefs.initialized = true;
             }
@@ -11225,296 +10994,66 @@ syncUi.update = function updateSyncUI() {
                     renderShellSearch();
                 };
             }
-            shellSearchRefs.filters.innerHTML = sourceButtons;
-            shellSearchRefs.filters.querySelectorAll('[data-source-filter]').forEach(button => {
-                button.onclick = () => {
-                    state.ui.shellSourceFilter = button.dataset.sourceFilter || 'all';
-                    Storage.set(SHELL_STATE_KEYS.sourceFilter, state.ui.shellSourceFilter);
-                    renderShellSearch();
-                };
-            });
+
             const results = shellSearchRefs.results;
-            if (results) {
-                if (!items.length) {
-                    results.innerHTML = '<div class="gpv-shell-empty">No matches yet.</div>';
-                } else {
-                    results.innerHTML = items.slice(0, 20).map(item => {
-                        const identity = buildDiscoveryIdentity(item);
-                        const isSelected = liveSelection.some(entry => buildDiscoveryIdentity(entry) === identity);
-                        const openLabel = !isFsmRoute && item.source === 'endowus' && item.kind === 'bucket'
-                            ? 'Open bucket'
-                            : (item.kind === 'goal' ? 'Open mappings' : 'Open compare');
-                        return `
-                            <div class="gpv-shell-result" role="listitem" data-kind="${escapeHtml(item.kind)}" data-id="${escapeHtml(item.id)}" data-source="${escapeHtml(item.source)}" tabindex="0">
-                                <div><strong>${escapeHtml(item.title)}</strong></div>
-                                <div>${escapeHtml(item.subtitle)}</div>
-                                <div>${escapeHtml(item.detail)}</div>
-                                <div>
-                                    <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-compare-add="true" aria-pressed="${isSelected ? 'true' : 'false'}">${isSelected ? 'Remove from compare' : 'Add to compare'}</button>
-                                    <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-discovery-open="true">${openLabel}</button>
-                                </div>
-                            </div>
-                        `;
-                    }).join('');
-                    results.querySelectorAll('[data-compare-add="true"]').forEach(button => {
-                        button.onclick = () => {
-                            const card = button.closest('.gpv-shell-result');
-                            if (!card) return;
-                            const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
-                            if (match) {
-                                toggleShellCompareSelection(match);
-                                updateShellPanels();
-                            }
-                        };
-                    });
-                    results.querySelectorAll('[data-discovery-open="true"]').forEach(button => {
-                        button.onclick = () => {
-                            const card = button.closest('.gpv-shell-result');
-                            if (!card) return;
-                            const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
-                            handleDiscoveryOpen(match);
-                        };
-                    });
-                    results.querySelectorAll('.gpv-shell-result').forEach(card => {
-                        card.onclick = event => {
-                            if (event.target && event.target.closest && event.target.closest('button')) {
-                                return;
-                            }
-                            const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
-                            handleDiscoveryOpen(match);
-                        };
-                        card.onkeydown = event => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                                if (event.target && event.target.closest && event.target.closest('button, input, select, textarea, a[href]')) {
-                                    return;
-                                }
-                                event.preventDefault();
-                                const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
-                                handleDiscoveryOpen(match);
-                            }
-                        };
-                    });
-                }
-            }
-        }
-
-        function renderShellCompare() {
-            const discoveryItems = getCurrentDiscoveryItems();
-            const compareSelection = getLiveCompareSelection(state.ui.shellCompareSelection, discoveryItems);
-            if (!compareSelectionsEqual(state.ui.shellCompareSelection, compareSelection)) {
-                state.ui.shellCompareSelection = compareSelection;
-                persistShellUiState();
-            }
-            const fsmPortfolioNameMap = buildFsmPortfolioNameMap(
-                loadFsmPortfolioConfig(state.apiData.fsmHoldings || []).portfolios || []
-            );
-            if (!compareSelection.length) {
-                shellCompare.innerHTML = '<div class="gpv-shell-empty">Pick up to four items from Discovery.</div>';
-            } else {
-                const rows = [
-                    { label: 'Source', getValue: item => item.source || '-' },
-                    { label: 'Type', getValue: item => item.kind || '-' },
-                    { label: 'Context', getValue: item => item.subtitle || '-' },
-                    { label: 'Snapshot', getValue: item => item.detail || '-' },
-                    {
-                        label: 'Value',
-                        getValue: item => {
-                            const amount = item?.payload?.endingBalanceAmount
-                                ?? item?.payload?.currentValueLcy
-                                ?? item?.payload?.totalInvestmentAmount;
-                            return Number.isFinite(Number(amount)) ? formatMoney(Number(amount)) : '-';
-                        }
-                    },
-                    {
-                        label: 'Return',
-                        getValue: item => item?.payload?.returnDisplay || '-'
-                    },
-                    {
-                        label: 'Target',
-                        getValue: item => item?.payload?.targetDisplay
-                            ? `${item.payload.targetDisplay}%`
-                            : (Number.isFinite(Number(item?.payload?.targetPercent)) ? `${Number(item.payload.targetPercent).toFixed(2)}%` : '-')
-                    },
-                    {
-                        label: 'Fixed',
-                        getValue: item => (item?.payload?.fixed === true ? 'Yes' : 'No')
-                    },
-                    {
-                        label: 'Portfolio',
-                        getValue: item => {
-                            const portfolioId = utils.normalizeString(item?.payload?.portfolioId, '');
-                            if (!portfolioId) {
-                                return '-';
-                            }
-                            if (item?.source === 'fsm') {
-                                return formatFsmPortfolioLabel(portfolioId, fsmPortfolioNameMap);
-                            }
-                            return portfolioId;
-                        }
-                    }
-                ];
-                shellCompare.innerHTML = `
-                    <div class="gpv-shell-card">
-                        <strong>Compare</strong>
-                        <div>Side-by-side view for ${compareSelection.length} selected item(s).</div>
-                        <table class="gpv-shell-compare-grid">
-                            <thead>
-                                <tr class="gpv-shell-compare-row gpv-shell-compare-row--header">
-                                    <th scope="col" class="gpv-shell-compare-label">Field</th>
-                                ${compareSelection.map(item => `
-                                    <th scope="col" class="gpv-shell-compare-cell">
-                                        <strong>${escapeHtml(item.title || item.id)}</strong>
-                                        <div>${escapeHtml(item.subtitle || '')}</div>
-                                        <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-remove-compare="${escapeHtml(item.id)}" data-remove-compare-kind="${escapeHtml(item.kind || '')}" data-remove-compare-source="${escapeHtml(item.source || '')}">Remove</button>
-                                    </th>
-                                `).join('')}
-                                </tr>
-                            </thead>
-                            <tbody>
-                            ${rows.map(row => `
-                                <tr class="gpv-shell-compare-row">
-                                    <th scope="row" class="gpv-shell-compare-label">${escapeHtml(row.label)}</th>
-                                    ${compareSelection.map(item => `<td class="gpv-shell-compare-cell">${escapeHtml(row.getValue(item))}</td>`).join('')}
-                                </tr>
-                            `).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-                `;
-            }
-            shellCompare.querySelectorAll('[data-remove-compare]').forEach(button => {
-                button.onclick = () => {
-                    const id = button.dataset.removeCompare;
-                    const kind = button.dataset.removeCompareKind;
-                    const source = button.dataset.removeCompareSource;
-                    state.ui.shellCompareSelection = compareSelection.filter(item => !(
-                        item.id === id && item.kind === kind && item.source === source
-                    ));
-                    persistShellUiState();
-                    updateShellPanels();
-                };
-            });
-        }
-
-        function scheduleSyncForBucketMappingChange(reason = 'bucket-mapping-update') {
-            if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
-                SyncManager.scheduleSyncOnChange(reason);
-            }
-        }
-
-        function renderShellMappings() {
-            if (isFsmRoute) {
-                shellMappings.innerHTML = '<div class="gpv-shell-card"><strong>FSM mappings</strong><div>Assignments and portfolio controls are available in the workspace below.</div></div>';
+            if (!results) {
                 return;
             }
-            const assignments = readEndowusBucketAssignments();
-            const items = getCurrentDiscoveryItems().filter(item => item.kind === 'goal');
-            shellMappings.innerHTML = `
-                <div class="gpv-shell-card">
-                    <strong>Bucket mappings</strong>
-                    <div>Goal names still seed bucket suggestions, but explicit assignments now win.</div>
-                    <div class="gpv-shell-mapping-actions">
-                        <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-action="accept-suggestions">Accept suggestions</button>
-                        <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-action="clear-overrides">Clear overrides</button>
-                    </div>
-                    <div class="gpv-shell-mapping-list"></div>
-                </div>
-            `;
-            const list = shellMappings.querySelector('.gpv-shell-mapping-list');
-            if (list) {
-                const bucketNames = Array.from(new Set([
-                    ...Object.keys(mergedInvestmentDataState || {}),
-                    ...Object.values(assignments).map(record => record.bucketName).filter(Boolean)
-                ])).sort();
-                list.innerHTML = items.map(item => {
-                    const existingAssignment = assignments[item.id];
-                    const assigned = existingAssignment ? existingAssignment.bucketName : (item.bucketName || '');
-                    return `
-                        <div class="gpv-shell-mapping-row">
-                            <div><strong>${escapeHtml(item.title)}</strong><div>${escapeHtml(item.subtitle)}</div></div>
-                            <select class="gpv-shell-select" data-goal-id="${escapeHtml(item.id)}">
-                                <option value="">Unassigned</option>
-                                ${bucketNames.map(bucket => `<option value="${escapeHtml(bucket)}" ${bucket === assigned ? 'selected' : ''}>${escapeHtml(bucket)}</option>`).join('')}
-                            </select>
-                        </div>
-                    `;
-                }).join('');
-                list.querySelectorAll('select[data-goal-id]').forEach(selectEl => {
-                    selectEl.onchange = () => {
-                        const goalId = selectEl.dataset.goalId;
-                        const bucketName = utils.normalizeString(selectEl.value, '');
-                        const nextAssignments = readEndowusBucketAssignments();
-                        nextAssignments[goalId] = normalizeAssignmentRecord({
-                            bucketName,
-                            provenance: 'manual',
-                            note: bucketName ? 'Updated from shell mappings' : 'Explicitly marked unassigned from shell mappings'
-                        }, bucketName);
-                        writeEndowusBucketAssignments(nextAssignments);
-                        scheduleSyncForBucketMappingChange('bucket-mapping-update');
-                        showInfoMessage('Bucket mapping updated. Refreshing view.');
-                        refreshEndowusViewAfterMappingChange();
-                    };
-                });
+            if (!items.length) {
+                results.innerHTML = '<div class="gpv-shell-empty">No matches yet.</div>';
+                return;
             }
-            shellMappings.querySelector('[data-action="accept-suggestions"]')?.addEventListener('click', () => {
-                const nextAssignments = readEndowusBucketAssignments();
-                items.forEach(item => {
-                    if (!nextAssignments[item.id] || isExplicitUnassignedEndowusAssignment(nextAssignments[item.id])) {
-                        nextAssignments[item.id] = normalizeAssignmentRecord({
-                            bucketName: item.bucketName,
-                            provenance: 'heuristic',
-                            note: 'Accepted suggestion'
-                        }, item.bucketName);
-                    }
-                });
-                writeEndowusBucketAssignments(nextAssignments);
-                scheduleSyncForBucketMappingChange('bucket-mapping-accept-suggestions');
-                showSuccessMessage('Applied bucket suggestions.');
-                refreshEndowusViewAfterMappingChange();
-            });
-            shellMappings.querySelector('[data-action="clear-overrides"]')?.addEventListener('click', () => {
-                writeEndowusBucketAssignments({});
-                scheduleSyncForBucketMappingChange('bucket-mapping-clear-overrides');
-                showInfoMessage('Cleared explicit bucket overrides.');
-                refreshEndowusViewAfterMappingChange();
-            });
-        }
 
-        function renderShellSettings() {
-            shellSettings.innerHTML = `
-                <div class="gpv-shell-card">
-                    <strong>Sync and freshness</strong>
-                    <div>Use the workspace controls below for the full sync panel.</div>
-                    <div>Search and compare selections are remembered locally.</div>
-                </div>
-            `;
+            results.innerHTML = items.slice(0, 6).map(item => {
+                const openLabel = item.kind === 'bucket'
+                    ? 'Open bucket'
+                    : (item.kind === 'goal' ? 'Open goal' : 'Open holding');
+                return `
+                    <div class="gpv-shell-result" role="listitem" data-kind="${escapeHtml(item.kind)}" data-id="${escapeHtml(item.id)}" data-source="${escapeHtml(item.source)}" tabindex="0">
+                        <div><strong>${escapeHtml(item.title)}</strong></div>
+                        <div>${escapeHtml(item.subtitle)}</div>
+                        <div>${escapeHtml(item.detail)}</div>
+                        <div>
+                            <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-discovery-open="true">${openLabel}</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            results.querySelectorAll('[data-discovery-open="true"]').forEach(button => {
+                button.onclick = () => {
+                    const card = button.closest('.gpv-shell-result');
+                    if (!card) {
+                        return;
+                    }
+                    const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
+                    handleDiscoveryOpen(match);
+                };
+            });
+            results.querySelectorAll('.gpv-shell-result').forEach(card => {
+                card.onclick = event => {
+                    if (event.target && event.target.closest && event.target.closest('button')) {
+                        return;
+                    }
+                    const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
+                    handleDiscoveryOpen(match);
+                };
+                card.onkeydown = event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        if (event.target && event.target.closest && event.target.closest('button, input, select, textarea, a[href]')) {
+                            return;
+                        }
+                        event.preventDefault();
+                        const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
+                        handleDiscoveryOpen(match);
+                    }
+                };
+            });
         }
 
         function updateShellPanels() {
-            const normalizedActiveTab = normalizeShellActiveTab(state.ui.shellActiveTab, shellTabIds);
-            if (normalizedActiveTab !== state.ui.shellActiveTab) {
-                state.ui.shellActiveTab = normalizedActiveTab;
-                Storage.set(SHELL_STATE_KEYS.activeTab, normalizedActiveTab);
-            }
-            renderShellOverview();
+            renderShellSummary();
             renderShellSearch();
-            renderShellCompare();
-            renderShellMappings();
-            renderShellSettings();
-            Object.entries(shellPanels).forEach(([tabId, panel]) => {
-                if (!panel) {
-                    return;
-                }
-                const active = state.ui.shellActiveTab === tabId;
-                panel.style.display = active ? 'block' : 'none';
-                panel.hidden = !active;
-            });
-            Object.entries(shellTabButtons).forEach(([tabId, button]) => {
-                const active = state.ui.shellActiveTab === tabId;
-                button.classList.toggle('is-active', active);
-                button.setAttribute('aria-selected', String(active));
-                button.setAttribute('tabindex', active ? '0' : '-1');
-            });
         }
 
         updateShellPanels();
@@ -11568,11 +11107,6 @@ syncUi.update = function updateSyncUI() {
             });
         }
 
-        const normalizedRouteSourceFilter = normalizeShellSourceFilterForRoute(state.ui.shellSourceFilter, isFsmRoute);
-        if (normalizedRouteSourceFilter !== state.ui.shellSourceFilter) {
-            state.ui.shellSourceFilter = normalizedRouteSourceFilter;
-            Storage.set(SHELL_STATE_KEYS.sourceFilter, normalizedRouteSourceFilter);
-        }
 
         function refreshMergedInvestmentDataState() {
             mergedInvestmentDataState = buildMergedInvestmentData(
@@ -11647,16 +11181,6 @@ syncUi.update = function updateSyncUI() {
 
             const availableValues = new Set(['SUMMARY', ...bucketNames]);
             select.value = availableValues.has(previousValue) ? previousValue : 'SUMMARY';
-        }
-
-        function refreshEndowusViewAfterMappingChange() {
-            if (isFsmRoute || !select) {
-                return;
-            }
-            refreshMergedInvestmentDataState();
-            rebuildSelectionOptions();
-            renderView(select.value || 'SUMMARY', { scrollToTop: false });
-            updateShellPanels();
         }
 
         let currentBucketMode = getBucketViewModePreference();

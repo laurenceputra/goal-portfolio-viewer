@@ -221,7 +221,7 @@ describe('initialization and URL monitoring', () => {
 
         const overlay = document.querySelector('#gpv-overlay');
         expect(overlay).toBeTruthy();
-        expect(overlay.textContent).toContain('Readiness');
+        expect(overlay.textContent).toContain('Status');
         expect(overlay.textContent).toContain('Not ready yet');
         expect(overlay.textContent).toContain('Waiting for Endowus data');
         expect(overlay.textContent).toContain('Endowus data is still loading. The viewer will refresh automatically once the portfolio requests complete.');
@@ -340,7 +340,7 @@ describe('initialization and URL monitoring', () => {
         const overlay = document.querySelector('#gpv-overlay');
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Portfolio Viewer (FSM)');
-        expect(overlay.textContent).toContain('Readiness');
+        expect(overlay.textContent).toContain('Status');
         expect(overlay.textContent).toContain('Not ready yet');
         expect(overlay.textContent).toContain('Waiting for holdings data');
         expect(overlay.textContent).toContain('No FSM holdings found yet. Once holdings load, assign them to portfolios here.');
@@ -637,287 +637,7 @@ describe('initialization and URL monitoring', () => {
         expect(indicator.getAttribute('tabindex')).toBe('0');
     });
 
-    test('changing an Endowus mapping refreshes the summary view without reopening', () => {
-        const performanceData = [
-            {
-                goalId: 'g1',
-                totalInvestmentValue: { amount: 1200 },
-                totalCumulativeReturn: { amount: 120 },
-                simpleRateOfReturnPercent: 0.1
-            },
-            {
-                goalId: 'g2',
-                totalInvestmentValue: { amount: 800 },
-                totalCumulativeReturn: { amount: 80 },
-                simpleRateOfReturnPercent: 0.1
-            },
-            {
-                goalId: 'g3',
-                totalInvestmentValue: { amount: 1000 },
-                totalCumulativeReturn: { amount: -50 },
-                simpleRateOfReturnPercent: -0.05
-            }
-        ];
-        const investibleData = [
-            {
-                goalId: 'g1',
-                goalName: 'Retirement - Core',
-                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-                totalInvestmentAmount: { display: { amount: 1200 } }
-            },
-            {
-                goalId: 'g2',
-                goalName: 'Education - Growth',
-                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-                totalInvestmentAmount: { display: { amount: 800 } }
-            },
-            {
-                goalId: 'g3',
-                goalName: 'Retirement - Cash',
-                investmentGoalType: 'CASH_MANAGEMENT',
-                totalInvestmentAmount: { display: { amount: 1000 } }
-            }
-        ];
-        const summaryData = investibleData.map(goal => ({
-            goalId: goal.goalId,
-            goalName: goal.goalName,
-            investmentGoalType: goal.investmentGoalType
-        }));
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.alert = jest.fn();
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        const retirementCardBefore = overlay?.querySelector('.gpv-bucket-card[data-bucket="Retirement"]');
-        expect(retirementCardBefore?.textContent).toMatch(/2,200\.00/);
-
-        const mappingSelect = overlay?.querySelector('.gpv-shell-mappings select[data-goal-id="g1"]');
-        expect(mappingSelect).toBeTruthy();
-        mappingSelect.value = 'Education';
-        mappingSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-
-        const refreshedOverlay = document.querySelector('#gpv-overlay');
-        expect(refreshedOverlay?.textContent).toMatch(/2,000\.00/);
-        expect(refreshedOverlay?.textContent).toMatch(/1,000\.00/);
-        expect(refreshedOverlay?.textContent).not.toMatch(/2,200\.00/);
-    });
-
-    test('changing an Endowus mapping schedules buffered sync-on-change', () => {
-        const performanceData = [
-            {
-                goalId: 'g1',
-                totalInvestmentValue: { amount: 1200 },
-                totalCumulativeReturn: { amount: 120 },
-                simpleRateOfReturnPercent: 0.1
-            }
-        ];
-        const investibleData = [
-            {
-                goalId: 'g1',
-                goalName: 'Retirement - Core',
-                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-                totalInvestmentAmount: { display: { amount: 1200 } }
-            }
-        ];
-        const summaryData = investibleData.map(goal => ({
-            goalId: goal.goalId,
-            goalName: goal.goalName,
-            investmentGoalType: goal.investmentGoalType
-        }));
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        const scheduleSpy = jest.spyOn(exportsModule.SyncManager, 'scheduleSyncOnChange').mockImplementation(() => {});
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        const mappingSelect = overlay?.querySelector('.gpv-shell-mappings select[data-goal-id="g1"]');
-        expect(mappingSelect).toBeTruthy();
-
-        mappingSelect.value = 'Education';
-        mappingSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-
-        expect(scheduleSpy).toHaveBeenCalledWith('bucket-mapping-update');
-    });
-
-    test('explicit Endowus Unassigned mapping persists instead of reverting to heuristic bucket', () => {
-        const performanceData = [
-            {
-                goalId: 'g1',
-                totalInvestmentValue: { amount: 1200 },
-                totalCumulativeReturn: { amount: 120 },
-                simpleRateOfReturnPercent: 0.1
-            },
-            {
-                goalId: 'g2',
-                totalInvestmentValue: { amount: 800 },
-                totalCumulativeReturn: { amount: 80 },
-                simpleRateOfReturnPercent: 0.1
-            }
-        ];
-        const investibleData = [
-            {
-                goalId: 'g1',
-                goalName: 'Retirement - Core',
-                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-                totalInvestmentAmount: { display: { amount: 1200 } }
-            },
-            {
-                goalId: 'g2',
-                goalName: 'Education - Growth',
-                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-                totalInvestmentAmount: { display: { amount: 800 } }
-            }
-        ];
-        const summaryData = investibleData.map(goal => ({
-            goalId: goal.goalId,
-            goalName: goal.goalName,
-            investmentGoalType: goal.investmentGoalType
-        }));
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        const mappingSelect = overlay?.querySelector('.gpv-shell-mappings select[data-goal-id="g1"]');
-        expect(mappingSelect).toBeTruthy();
-
-        mappingSelect.value = '';
-        mappingSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-
-        const storedAssignments = JSON.parse(storage.get('endowus_bucket_assignments'));
-        expect(storedAssignments.g1).toMatchObject({
-            bucketName: '',
-            provenance: 'manual'
-        });
-
-        const refreshedOverlay = document.querySelector('#gpv-overlay');
-        const refreshedSelect = refreshedOverlay?.querySelector('.gpv-shell-mappings select[data-goal-id="g1"]');
-        expect(refreshedSelect?.value).toBe('');
-
-        const uncategorizedCard = refreshedOverlay?.querySelector('.gpv-bucket-card[data-bucket="Uncategorized"]');
-        const retirementCard = refreshedOverlay?.querySelector('.gpv-bucket-card[data-bucket="Retirement"]');
-        expect(uncategorizedCard?.textContent).toMatch(/1,200\.00/);
-        expect(retirementCard).toBeNull();
-    });
-
-    test('compare preserves off-route selections instead of pruning them during render', () => {
-        const performanceData = [{
-            goalId: 'goal1',
-            totalCumulativeReturn: { amount: 100 },
-            simpleRateOfReturnPercent: 0.1
-        }];
-        const investibleData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-            totalInvestmentAmount: { display: { amount: 1000 } }
-        }];
-        const summaryData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
-        }];
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.GM_setValue('gpv_shell_compare_selection', JSON.stringify([
-            { id: 'dup', kind: 'goal', source: 'endowus', title: 'Endowus Goal', subtitle: 'Endowus', detail: 'A' },
-            { id: 'dup', kind: 'goal', source: 'fsm', title: 'FSM Goal', subtitle: 'FSM', detail: 'B' }
-        ]));
-        global.alert = jest.fn();
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        overlay.querySelector('[data-tab="compare"]').click();
-
-        expect(overlay.textContent).toContain('Side-by-side view for 2 selected item(s).');
-        expect(JSON.parse(storage.get('gpv_shell_compare_selection'))).toEqual([
-            expect.objectContaining({ id: 'dup', kind: 'goal', source: 'endowus' }),
-            expect.objectContaining({ id: 'dup', kind: 'goal', source: 'fsm' })
-        ]);
-    });
-
-    test('compare renders a semantic table and rejects a fifth selection explicitly', () => {
-        const performanceData = [
-            { goalId: 'g1', totalCumulativeReturn: { amount: 100 }, simpleRateOfReturnPercent: 0.1, totalInvestmentValue: { amount: 1000 } },
-            { goalId: 'g2', totalCumulativeReturn: { amount: 200 }, simpleRateOfReturnPercent: 0.2, totalInvestmentValue: { amount: 2000 } },
-            { goalId: 'g3', totalCumulativeReturn: { amount: 300 }, simpleRateOfReturnPercent: 0.3, totalInvestmentValue: { amount: 3000 } },
-            { goalId: 'g4', totalCumulativeReturn: { amount: 400 }, simpleRateOfReturnPercent: 0.4, totalInvestmentValue: { amount: 4000 } }
-        ];
-        const investibleData = [
-            { goalId: 'g1', goalName: 'Retirement - Alpha', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 1000 } } },
-            { goalId: 'g2', goalName: 'Retirement - Beta', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 2000 } } },
-            { goalId: 'g3', goalName: 'Retirement - Gamma', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 3000 } } },
-            { goalId: 'g4', goalName: 'Retirement - Delta', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 4000 } } }
-        ];
-        const summaryData = [
-            { goalId: 'g1', goalName: 'Retirement - Alpha', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
-            { goalId: 'g2', goalName: 'Retirement - Beta', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
-            { goalId: 'g3', goalName: 'Retirement - Gamma', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
-            { goalId: 'g4', goalName: 'Retirement - Delta', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }
-        ];
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.GM_setValue('gpv_shell_compare_selection', JSON.stringify([
-            { id: 'g1', kind: 'goal', source: 'endowus' },
-            { id: 'g2', kind: 'goal', source: 'endowus' },
-            { id: 'g3', kind: 'goal', source: 'endowus' },
-            { id: 'g4', kind: 'goal', source: 'endowus' }
-        ]));
-        global.alert = jest.fn();
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        overlay.querySelector('[data-tab="compare"]').click();
-
-        const compareTable = overlay.querySelector('table.gpv-shell-compare-grid');
-        expect(compareTable).toBeTruthy();
-        expect(compareTable.querySelector('thead')).toBeTruthy();
-        expect(compareTable.querySelector('tbody')).toBeTruthy();
-        expect(compareTable.querySelector('th[scope="col"]')?.textContent).toContain('Field');
-        expect(compareTable.querySelector('th[scope="row"]')).toBeTruthy();
-        expect(overlay.textContent).toContain('Side-by-side view for 4 selected item(s).');
-        expect(overlay.textContent).toContain('Target');
-        expect(overlay.textContent).toContain('Fixed');
-
-        const addButtons = Array.from(overlay.querySelectorAll('[data-compare-add="true"]'));
-        expect(addButtons.length).toBeGreaterThan(0);
-        const addAnotherButton = addButtons.find(button => button.textContent.includes('Add to compare'));
-        expect(addAnotherButton).toBeTruthy();
-        addAnotherButton.click();
-
-        const notification = overlay.querySelector('#gpv-sync-toast');
-        expect(notification).toBeTruthy();
-        expect(notification.textContent).toContain('Compare supports up to 4 items');
-        expect(JSON.parse(storage.get('gpv_shell_compare_selection'))).toHaveLength(4);
-    });
-
-    test('discovery search preserves the input node across keystrokes', () => {
+    test('shell is compact and does not render shell tabs', () => {
         const performanceData = [{
             goalId: 'goal1',
             totalCumulativeReturn: { amount: 100 },
@@ -939,139 +659,88 @@ describe('initialization and URL monitoring', () => {
         global.GM_setValue('api_performance', JSON.stringify(performanceData));
         global.GM_setValue('api_investible', JSON.stringify(investibleData));
         global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
         exportsModule.showOverlay();
 
         const overlay = document.querySelector('#gpv-overlay');
-        overlay.querySelector('[data-tab="explore"]').click();
+        expect(overlay.querySelector('.gpv-shell-tabs')).toBeNull();
+        expect(overlay.querySelectorAll('[data-tab]').length).toBe(0);
+        expect(overlay.querySelector('[data-shell-section="status"]')).toBeTruthy();
+        expect(overlay.querySelector('[data-shell-section="sync"]')).toBeTruthy();
+        expect(overlay.querySelector('[data-shell-section="find"]')).toBeTruthy();
+        expect(overlay.querySelectorAll('.gpv-shell-results .gpv-shell-result').length).toBeLessThanOrEqual(6);
+    });
 
+    test('discovery search preserves input node and opens Endowus bucket/goal in the main workspace', () => {
+        const performanceData = [
+            {
+                goalId: 'g1',
+                totalInvestmentValue: { amount: 1200 },
+                totalCumulativeReturn: { amount: 120 },
+                simpleRateOfReturnPercent: 0.1
+            },
+            {
+                goalId: 'g2',
+                totalInvestmentValue: { amount: 800 },
+                totalCumulativeReturn: { amount: 80 },
+                simpleRateOfReturnPercent: 0.1
+            }
+        ];
+        const investibleData = [
+            {
+                goalId: 'g1',
+                goalName: 'Retirement - Core',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 1200 } }
+            },
+            {
+                goalId: 'g2',
+                goalName: 'Education - Growth',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 800 } }
+            }
+        ];
+        const summaryData = investibleData.map(goal => ({
+            goalId: goal.goalId,
+            goalName: goal.goalName,
+            investmentGoalType: goal.investmentGoalType
+        }));
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
         const inputBefore = overlay.querySelector('#gpv-shell-search-input');
-        inputBefore.value = 'ret';
+        inputBefore.value = 'Education';
         inputBefore.dispatchEvent(new window.Event('input', { bubbles: true }));
         const inputAfter = overlay.querySelector('#gpv-shell-search-input');
-
         expect(inputAfter).toBe(inputBefore);
-        expect(inputAfter.value).toBe('ret');
-    });
+        expect(overlay.querySelector('[data-compare-add="true"]')).toBeNull();
 
-    test('discovery keyboard Enter on nested action button does not trigger card open handler', () => {
-        const performanceData = [{
-            goalId: 'goal1',
-            totalCumulativeReturn: { amount: 100 },
-            simpleRateOfReturnPercent: 0.1,
-            totalInvestmentValue: { amount: 1000 }
-        }];
-        const investibleData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-            totalInvestmentAmount: { display: { amount: 1000 } }
-        }];
-        const summaryData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
-        }];
+        const educationBucketResult = overlay.querySelector('.gpv-shell-result[data-kind="bucket"][data-id="Education"][data-source="endowus"]');
+        expect(educationBucketResult).toBeTruthy();
+        educationBucketResult.querySelector('[data-discovery-open="true"]').click();
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.alert = jest.fn();
+        const bucketSelect = overlay.querySelector('.gpv-select');
+        expect(bucketSelect?.value).toBe('Education');
 
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
+        inputAfter.value = 'Retirement - Core';
+        inputAfter.dispatchEvent(new window.Event('input', { bubbles: true }));
+        const goalResult = overlay.querySelector('.gpv-shell-result[data-kind="goal"][data-id="g1"][data-source="endowus"]');
+        expect(goalResult).toBeTruthy();
+        goalResult.querySelector('[data-discovery-open="true"]').click();
 
-        const overlay = document.querySelector('#gpv-overlay');
-        overlay.querySelector('[data-tab="explore"]').click();
-
-        const addButton = overlay.querySelector('[data-compare-add="true"]');
-        expect(addButton).toBeTruthy();
-        addButton.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-        addButton.click();
-
-        const activeTab = overlay.querySelector('.gpv-shell-tab[data-tab="explore"]');
-        expect(activeTab?.getAttribute('aria-selected')).toBe('true');
-        const savedSelection = JSON.parse(storage.get('gpv_shell_compare_selection'));
-        expect(savedSelection).toHaveLength(1);
-        expect(savedSelection[0]).toEqual(expect.objectContaining({ source: 'endowus' }));
-    });
-
-    test('mapping refresh keeps expand state and button state aligned', () => {
-        const performanceData = [
-            {
-                goalId: 'g1',
-                totalInvestmentValue: { amount: 1200 },
-                totalCumulativeReturn: { amount: 120 },
-                simpleRateOfReturnPercent: 0.1
-            },
-            {
-                goalId: 'g2',
-                totalInvestmentValue: { amount: 800 },
-                totalCumulativeReturn: { amount: 80 },
-                simpleRateOfReturnPercent: 0.1
-            },
-            {
-                goalId: 'g3',
-                totalInvestmentValue: { amount: 1000 },
-                totalCumulativeReturn: { amount: -50 },
-                simpleRateOfReturnPercent: -0.05
-            }
-        ];
-        const investibleData = [
-            {
-                goalId: 'g1',
-                goalName: 'Retirement - Core',
-                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-                totalInvestmentAmount: { display: { amount: 1200 } }
-            },
-            {
-                goalId: 'g2',
-                goalName: 'Education - Growth',
-                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-                totalInvestmentAmount: { display: { amount: 800 } }
-            },
-            {
-                goalId: 'g3',
-                goalName: 'Retirement - Cash',
-                investmentGoalType: 'CASH_MANAGEMENT',
-                totalInvestmentAmount: { display: { amount: 1000 } }
-            }
-        ];
-        const summaryData = investibleData.map(goal => ({
-            goalId: goal.goalId,
-            goalName: goal.goalName,
-            investmentGoalType: goal.investmentGoalType
-        }));
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.alert = jest.fn();
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        const expandButton = overlay.querySelector('.gpv-expand-btn');
-        expandButton.click();
-        expect(expandButton.textContent).toBe('Shrink');
-        expect(expandButton.getAttribute('aria-pressed')).toBe('true');
-        expect(overlay.querySelector('.gpv-container').classList.contains('gpv-container--expanded')).toBe(true);
-
-        const mappingSelect = overlay.querySelector('.gpv-shell-mappings select[data-goal-id="g1"]');
-        mappingSelect.value = 'Education';
-        mappingSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-
-        const refreshedOverlay = document.querySelector('#gpv-overlay');
-        const refreshedExpandButton = refreshedOverlay.querySelector('.gpv-expand-btn');
-        expect(refreshedExpandButton.textContent).toBe('Shrink');
-        expect(refreshedExpandButton.getAttribute('aria-pressed')).toBe('true');
-        expect(refreshedOverlay.querySelector('.gpv-container').classList.contains('gpv-container--expanded')).toBe(true);
+        expect(bucketSelect?.value).toBe('Retirement');
+        const goalRow = overlay.querySelector('tr.gpv-goal-row[data-goal-id="g1"]');
+        expect(goalRow).toBeTruthy();
+        expect(goalRow?.classList.contains('gpv-shell-reveal')).toBe(true);
     });
 
     test('FSM discovery panel updates immediately after workspace assignment edits', () => {
@@ -1116,7 +785,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        overlay.querySelector('[data-tab="explore"]').click();
         expect(overlay.querySelector('.gpv-shell-results').textContent).toContain('Unassigned');
 
         const manageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage portfolios'));
@@ -1206,72 +874,7 @@ describe('initialization and URL monitoring', () => {
         expect(getDriftCard()?.textContent).toContain('1 in range');
     });
 
-    test('compare uses live item data after Endowus mapping changes', () => {
-        const performanceData = [
-            {
-                goalId: 'g1',
-                totalInvestmentValue: { amount: 1200 },
-                totalCumulativeReturn: { amount: 120 },
-                simpleRateOfReturnPercent: 0.1
-            },
-            {
-                goalId: 'g2',
-                totalInvestmentValue: { amount: 800 },
-                totalCumulativeReturn: { amount: 80 },
-                simpleRateOfReturnPercent: 0.1
-            }
-        ];
-        const investibleData = [
-            {
-                goalId: 'g1',
-                goalName: 'Alpha - Core',
-                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-                totalInvestmentAmount: { display: { amount: 1200 } }
-            },
-            {
-                goalId: 'g2',
-                goalName: 'Beta - Growth',
-                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-                totalInvestmentAmount: { display: { amount: 800 } }
-            }
-        ];
-        const summaryData = investibleData.map(goal => ({
-            goalId: goal.goalId,
-            goalName: goal.goalName,
-            investmentGoalType: goal.investmentGoalType
-        }));
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.alert = jest.fn();
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        overlay.querySelector('[data-tab="explore"]').click();
-        const goalCard = overlay.querySelector('.gpv-shell-result[data-kind="goal"][data-id="g1"][data-source="endowus"]');
-        expect(goalCard).toBeTruthy();
-        goalCard.querySelector('[data-compare-add="true"]').click();
-
-        overlay.querySelector('[data-tab="compare"]').click();
-        expect(overlay.textContent).toContain('Alpha');
-
-        overlay.querySelector('[data-tab="mappings"]').click();
-        const mappingSelect = overlay.querySelector('.gpv-shell-mappings select[data-goal-id="g1"]');
-        mappingSelect.value = 'Beta';
-        mappingSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-
-        const refreshedOverlay = document.querySelector('#gpv-overlay');
-        refreshedOverlay.querySelector('[data-tab="compare"]').click();
-        const contextRows = Array.from(refreshedOverlay.querySelectorAll('.gpv-shell-compare-row'));
-        const contextRow = contextRows.find(row => row.textContent.includes('Context'));
-        expect(contextRow?.textContent).toContain('Beta');
-    });
-
-    test('Discovery source filter normalizes when opening on FSM route with persisted Endowus filter', () => {
+    test('FSM search open action reveals the holding in the main workspace table', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
@@ -1282,7 +885,6 @@ describe('initialization and URL monitoring', () => {
         ));
         global.GM_deleteValue = jest.fn(key => storage.delete(key));
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
-        global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
         global.history = window.history;
@@ -1304,7 +906,6 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('gpv_shell_source_filter', 'endowus');
         storage.set('api_fsm_holdings', JSON.stringify([
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
         ]));
@@ -1314,143 +915,20 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         const overlay = document.querySelector('#gpv-overlay');
-        overlay.querySelector('[data-tab="explore"]').click();
+        const searchInput = overlay.querySelector('#gpv-shell-search-input');
+        searchInput.value = 'AAA';
+        searchInput.dispatchEvent(new window.Event('input', { bubbles: true }));
 
-        expect(storage.get('gpv_shell_source_filter')).toBe('all');
-        expect(overlay.querySelector('.gpv-shell-results').textContent).toContain('Fund A');
+        const holdingCard = overlay.querySelector('.gpv-shell-result[data-kind="holding"][data-id="AAA"][data-source="fsm"]');
+        expect(holdingCard).toBeTruthy();
+        holdingCard.querySelector('[data-discovery-open="true"]').click();
 
-        const sourceFilters = Array.from(overlay.querySelectorAll('.gpv-shell-source-filters [data-source-filter]'))
-            .map(button => button.dataset.sourceFilter);
-        expect(sourceFilters).toEqual(['all', 'fsm']);
+        const holdingRow = overlay.querySelector('tr[data-holding-code="AAA"]');
+        expect(holdingRow).toBeTruthy();
+        expect(holdingRow?.classList.contains('gpv-shell-reveal')).toBe(true);
     });
 
-    test('Discovery source filter normalizes when opening on Endowus route with persisted FSM filter', () => {
-        const performanceData = [{
-            goalId: 'goal1',
-            totalCumulativeReturn: { amount: 100 },
-            simpleRateOfReturnPercent: 0.1,
-            totalInvestmentValue: { amount: 1000 }
-        }];
-        const investibleData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-            totalInvestmentAmount: { display: { amount: 1000 } }
-        }];
-        const summaryData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
-        }];
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.GM_setValue('gpv_shell_source_filter', 'fsm');
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        overlay.querySelector('[data-tab="explore"]').click();
-
-        expect(storage.get('gpv_shell_source_filter')).toBe('all');
-        expect(overlay.querySelector('.gpv-shell-results').textContent).toContain('Retirement - Core Portfolio');
-
-        const sourceFilters = Array.from(overlay.querySelectorAll('.gpv-shell-source-filters [data-source-filter]'))
-            .map(button => button.dataset.sourceFilter);
-        expect(sourceFilters).toEqual(['all', 'endowus']);
-    });
-
-    test('shell active tab normalizes invalid stored values to overview', () => {
-        const performanceData = [{
-            goalId: 'goal1',
-            totalCumulativeReturn: { amount: 100 },
-            simpleRateOfReturnPercent: 0.1,
-            totalInvestmentValue: { amount: 1000 }
-        }];
-        const investibleData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-            totalInvestmentAmount: { display: { amount: 1000 } }
-        }];
-        const summaryData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
-        }];
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.GM_setValue('gpv_shell_active_tab', 'legacy-shell-tab');
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        const overviewTab = overlay.querySelector('.gpv-shell-tab[data-tab="overview"]');
-        const overviewPanel = overlay.querySelector('#gpv-shell-panel-overview');
-
-        expect(storage.get('gpv_shell_active_tab')).toBe('overview');
-        expect(overviewTab.getAttribute('aria-selected')).toBe('true');
-        expect(overviewPanel.hidden).toBe(false);
-        expect(overviewPanel.style.display).toBe('block');
-    });
-
-    test('shell tabs expose aria relationships and support keyboard navigation', () => {
-        const performanceData = [{
-            goalId: 'goal1',
-            totalCumulativeReturn: { amount: 100 },
-            simpleRateOfReturnPercent: 0.1,
-            totalInvestmentValue: { amount: 1000 }
-        }];
-        const investibleData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-            totalInvestmentAmount: { display: { amount: 1000 } }
-        }];
-        const summaryData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
-        }];
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        const tablist = overlay.querySelector('.gpv-shell-tabs');
-        const overviewTab = overlay.querySelector('.gpv-shell-tab[data-tab="overview"]');
-        const overviewPanel = overlay.querySelector('#gpv-shell-panel-overview');
-
-        expect(overviewTab.getAttribute('role')).toBe('tab');
-        expect(overviewTab.getAttribute('aria-controls')).toBe('gpv-shell-panel-overview');
-        expect(overviewPanel.getAttribute('role')).toBe('tabpanel');
-        expect(overviewPanel.getAttribute('aria-labelledby')).toBe(overviewTab.id);
-
-        tablist.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-        const exploreTab = overlay.querySelector('.gpv-shell-tab[data-tab="explore"]');
-        const explorePanel = overlay.querySelector('#gpv-shell-panel-explore');
-
-        expect(storage.get('gpv_shell_active_tab')).toBe('explore');
-        expect(exploreTab.getAttribute('aria-selected')).toBe('true');
-        expect(exploreTab.getAttribute('tabindex')).toBe('0');
-        expect(overviewTab.getAttribute('tabindex')).toBe('-1');
-        expect(explorePanel.hidden).toBe(false);
-        expect(overviewPanel.hidden).toBe(true);
-    });
-
-    test('shell overview uses the shared shell font and compact layout rules', () => {
+    test('shell overview uses normalized shell typography and compact sections', () => {
         const performanceData = [{
             goalId: 'goal1',
             totalCumulativeReturn: { amount: 100 },
@@ -1479,119 +957,14 @@ describe('initialization and URL monitoring', () => {
 
         const styles = document.querySelector('#gpv-styles');
         const overlay = document.querySelector('#gpv-overlay');
-        const overviewPanel = overlay.querySelector('#gpv-shell-panel-overview');
 
         expect(styles.textContent).toContain('.gpv-shell {');
+        expect(styles.textContent).toContain('font-size: 14px;');
         expect(styles.textContent).toContain('.gpv-shell-overview {');
-        expect(overviewPanel.querySelector('.gpv-shell-overview')).not.toBeNull();
-        expect(overviewPanel.textContent).toContain('Last sync');
-    });
-
-    test('compare selection refresh writes latest live fields to storage for off-route durability', () => {
-        const performanceData = [{
-            goalId: 'goal1',
-            totalCumulativeReturn: { amount: 100 },
-            simpleRateOfReturnPercent: 0.1,
-            totalInvestmentValue: { amount: 1000 }
-        }];
-        const investibleData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-            totalInvestmentAmount: { display: { amount: 1000 } }
-        }];
-        const summaryData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
-        }];
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.GM_setValue('gpv_shell_compare_selection', JSON.stringify([
-            {
-                id: 'goal1',
-                kind: 'goal',
-                source: 'endowus',
-                title: 'Stale title',
-                subtitle: 'Stale subtitle',
-                detail: 'Stale detail'
-            }
-        ]));
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const savedSelection = JSON.parse(storage.get('gpv_shell_compare_selection'));
-        expect(savedSelection).toHaveLength(1);
-        expect(savedSelection[0]).toEqual(expect.objectContaining({
-            id: 'goal1',
-            kind: 'goal',
-            source: 'endowus',
-            title: 'Retirement - Core Portfolio'
-        }));
-        expect(savedSelection[0].subtitle).not.toBe('Stale subtitle');
-        expect(savedSelection[0].detail).not.toBe('Stale detail');
-    });
-
-    test('compare persistence stores lightweight identity fields only', () => {
-        const performanceData = [{
-            goalId: 'goal1',
-            totalCumulativeReturn: { amount: 100 },
-            simpleRateOfReturnPercent: 0.1,
-            totalInvestmentValue: { amount: 1000 }
-        }];
-        const investibleData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-            totalInvestmentAmount: { display: { amount: 1000 } }
-        }];
-        const summaryData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
-        }];
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.GM_setValue('gpv_shell_compare_selection', JSON.stringify([
-            {
-                id: 'goal1',
-                kind: 'goal',
-                source: 'endowus',
-                title: 'Legacy title',
-                subtitle: 'Legacy subtitle',
-                detail: 'Legacy detail',
-                payload: { nested: { amount: 9999 } }
-            }
-        ]));
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        overlay.querySelector('[data-tab="compare"]').click();
-
-        const removeButton = overlay.querySelector('[data-remove-compare]');
-        removeButton.click();
-        overlay.querySelector('[data-tab="explore"]').click();
-        const goalResultCard = overlay.querySelector('.gpv-shell-result[data-kind="goal"][data-id="goal1"][data-source="endowus"]');
-        expect(goalResultCard).toBeTruthy();
-        goalResultCard.querySelector('[data-compare-add="true"]').click();
-
-        const savedSelection = JSON.parse(storage.get('gpv_shell_compare_selection'));
-        expect(savedSelection).toHaveLength(1);
-        expect(savedSelection[0]).toEqual(expect.objectContaining({
-            id: 'goal1',
-            kind: 'goal',
-            source: 'endowus'
-        }));
-        expect(savedSelection[0]).not.toHaveProperty('payload');
+        expect(styles.textContent).toContain('.gpv-shell-search-row {');
+        expect(overlay.querySelector('[data-shell-section="status"]')).toBeTruthy();
+        expect(overlay.querySelector('[data-shell-section="find"]')).toBeTruthy();
+        expect(overlay.textContent).toContain('Last sync');
     });
 
     test('FSM route renders overlay for empty holdings snapshot and shows an empty-state workspace', () => {
@@ -1690,133 +1063,6 @@ describe('initialization and URL monitoring', () => {
         expect(assignments.LEGACY).toBe('core');
     });
 
-    test('compare keeps off-route items while showing live FSM portfolio labels', () => {
-        teardownDom();
-        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
-
-        storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
-        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
-        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
-        window.fetch = global.fetch;
-        global.history = window.history;
-
-        class FakeXHR {
-            constructor() {
-                this._headers = {};
-                this.responseText = '{}';
-            }
-            open(method, url) {
-                this._url = url;
-                return true;
-            }
-            setRequestHeader(header, value) {
-                this._headers[header] = value;
-            }
-            addEventListener() {}
-            send() {}
-        }
-        global.XMLHttpRequest = FakeXHR;
-
-        storage.set('api_fsm_holdings', JSON.stringify([
-            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
-        ]));
-        storage.set('fsm_portfolios', JSON.stringify([{ id: 'core', name: 'Core', archived: false }]));
-        storage.set('fsm_assignment_by_code', JSON.stringify({ AAA: 'core' }));
-        storage.set('gpv_shell_compare_selection', JSON.stringify([
-            { id: 'goal-x', kind: 'goal', source: 'endowus', title: 'Legacy Endowus Item', subtitle: 'Old', detail: 'Old' }
-        ]));
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        overlay.querySelector('[data-tab="explore"]').click();
-        const results = overlay.querySelector('.gpv-shell-results');
-        expect(results.getAttribute('role')).toBe('list');
-        const resultCard = results.querySelector('.gpv-shell-result');
-        expect(resultCard.getAttribute('tabindex')).toBe('0');
-        expect(resultCard.querySelector('[data-discovery-open="true"]')).toBeTruthy();
-
-        const addToCompare = resultCard.querySelector('[data-compare-add="true"]');
-        addToCompare.click();
-
-        overlay.querySelector('[data-tab="compare"]').click();
-        const rows = Array.from(overlay.querySelectorAll('.gpv-shell-compare-row'));
-        const portfolioRow = rows.find(row => row.querySelector('.gpv-shell-compare-label')?.textContent === 'Portfolio');
-        expect(portfolioRow.textContent).toContain('Core (core)');
-
-        const savedSelection = JSON.parse(storage.get('gpv_shell_compare_selection'));
-        expect(savedSelection).toEqual([
-            expect.objectContaining({ id: 'goal-x', kind: 'goal', source: 'endowus' }),
-            expect.objectContaining({ id: 'AAA', kind: 'holding', source: 'fsm' })
-        ]);
-    });
-
-    test('FSM compare includes saved target and fixed values from storage', () => {
-        teardownDom();
-        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
-
-        storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
-        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
-        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
-        window.fetch = global.fetch;
-        global.history = window.history;
-
-        class FakeXHR {
-            constructor() {
-                this._headers = {};
-                this.responseText = '{}';
-            }
-            open(method, url) {
-                this._url = url;
-                return true;
-            }
-            setRequestHeader(header, value) {
-                this._headers[header] = value;
-            }
-            addEventListener() {}
-            send() {}
-        }
-        global.XMLHttpRequest = FakeXHR;
-
-        storage.set('api_fsm_holdings', JSON.stringify([
-            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 },
-            { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 800 }
-        ]));
-        storage.set('fsm_assignment_by_code', JSON.stringify({ AAA: 'unassigned', BBB: 'unassigned' }));
-        storage.set('fsm_target_pct_BBB', 22.5);
-        storage.set('fsm_fixed_AAA', true);
-        storage.set('gpv_shell_compare_selection', JSON.stringify([
-            { id: 'AAA', kind: 'holding', source: 'fsm' },
-            { id: 'BBB', kind: 'holding', source: 'fsm' }
-        ]));
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        overlay.querySelector('[data-tab="compare"]').click();
-
-        expect(overlay.textContent).toContain('22.50%');
-        const compareRows = Array.from(overlay.querySelectorAll('.gpv-shell-compare-row'));
-        const fixedRow = compareRows.find(row => row.querySelector('.gpv-shell-compare-label')?.textContent === 'Fixed');
-        expect(fixedRow).toBeTruthy();
-        expect(fixedRow.textContent).toContain('Yes');
-        expect(fixedRow.textContent).toContain('No');
-    });
-
     test('discovery helpers are declared only once after shell unification cleanup', () => {
         const fs = require('fs');
         const source = fs.readFileSync(require.resolve('../goal_portfolio_viewer.user.js'), 'utf8');
@@ -1886,8 +1132,8 @@ describe('initialization and URL monitoring', () => {
         const overlay = document.querySelector('#gpv-overlay');
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Portfolio Viewer (FSM)');
-        expect(overlay.querySelector('[data-tab="overview"]')).toBeTruthy();
-        expect(overlay.querySelector('[data-tab="explore"]')).toBeTruthy();
+        expect(overlay.querySelectorAll('[data-tab]').length).toBe(0);
+        expect(overlay.querySelector('[data-shell-section="find"]')).toBeTruthy();
         expect(overlay.textContent).toContain('Fund A');
         expect(overlay.textContent).toContain('AAPL');
         expect(overlay.textContent).not.toContain('Endowus Only Goal');
@@ -1933,7 +1179,7 @@ describe('initialization and URL monitoring', () => {
 
         const overlay = document.querySelector('#gpv-overlay');
         expect(overlay).toBeTruthy();
-        expect(overlay.textContent).toContain('Readiness');
+        expect(overlay.textContent).toContain('Status');
         expect(overlay.textContent).toContain('Waiting for holdings data');
         expect(overlay.textContent).toContain('No FSM holdings found yet. Once holdings load, assign them to portfolios here.');
     });
