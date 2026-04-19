@@ -70,9 +70,6 @@
     const VIEW_STATE_KEYS = {
         bucketMode: 'gpv_bucket_mode'
     };
-    const SHELL_STATE_KEYS = {
-        searchQuery: 'gpv_shell_search_query'
-    };
     const BUCKET_VIEW_MODES = {
         allocation: 'allocation',
         performance: 'performance'
@@ -4347,8 +4344,7 @@ let GoalTargetStore;
             urlMonitorCleanup: null,
             urlCheckTimeout: null,
             observer: null,
-            overlayRefresh: null,
-            shellSearchQuery: Storage.get(SHELL_STATE_KEYS.searchQuery, '')
+            overlayRefresh: null
         }
     };
 
@@ -6833,19 +6829,19 @@ function scrollOverlayContentToTop(sourceNode = null) {
     if (!overlay) {
         return;
     }
-    const content = overlay.querySelector('.gpv-content');
-    if (!content) {
+    const scrollHost = overlay.querySelector('.gpv-body') || overlay.querySelector('.gpv-content');
+    if (!scrollHost) {
         return;
     }
     const enforceTop = () => {
-        if (content.scrollTop !== 0) {
-            content.scrollTop = 0;
+        if (scrollHost.scrollTop !== 0) {
+            scrollHost.scrollTop = 0;
         }
     };
-    if (typeof content.scrollTo === 'function') {
-        content.scrollTo({ top: 0, behavior: 'smooth' });
-        if (content.gpvEnforceTopTimer) {
-            clearTimeout(content.gpvEnforceTopTimer);
+    if (typeof scrollHost.scrollTo === 'function') {
+        scrollHost.scrollTo({ top: 0, behavior: 'smooth' });
+        if (scrollHost.gpvEnforceTopTimer) {
+            clearTimeout(scrollHost.gpvEnforceTopTimer);
         }
         if (typeof requestAnimationFrame === 'function') {
             requestAnimationFrame(() => {
@@ -6854,10 +6850,10 @@ function scrollOverlayContentToTop(sourceNode = null) {
         } else {
             detachTimerHandle(setTimeout(enforceTop, 32));
         }
-        content.gpvEnforceTopTimer = detachTimerHandle(setTimeout(enforceTop, 220));
+        scrollHost.gpvEnforceTopTimer = detachTimerHandle(setTimeout(enforceTop, 220));
         return;
     }
-    content.scrollTop = 0;
+    scrollHost.scrollTop = 0;
 }
 
 function rerenderSyncSettingsPanel({ message, type = 'success', delay = 300 } = {}) {
@@ -8041,6 +8037,8 @@ syncUi.update = function updateSyncUI() {
                 min-width: 800px;
                 display: flex;
                 flex-direction: column;
+                overflow: hidden;
+                min-height: 0;
                 animation: gpv-slideUp 0.3s ease;
             }
 
@@ -8096,12 +8094,8 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-shell {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                font-size: 14px;
-                line-height: 1.5;
+                font: inherit;
                 color: #1f2937;
-                display: grid;
-                gap: 12px;
             }
 
             .gpv-shell,
@@ -8120,26 +8114,32 @@ syncUi.update = function updateSyncUI() {
                 font: inherit;
             }
 
-            .gpv-shell-summary,
-            .gpv-shell-search {
-                min-width: 0;
+            .gpv-body {
+                flex: 1;
+                min-height: 0;
+                overflow-y: auto;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                padding: 12px 24px 16px;
             }
 
             .gpv-shell-overview {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                display: flex;
+                flex-wrap: wrap;
                 gap: 10px;
                 align-items: start;
             }
 
             .gpv-shell-card {
                 background: #f8fafc;
-                border: 1px solid #e5e7eb;
+                border: 1px solid #dbe3f1;
                 border-radius: 12px;
-                padding: 10px 12px;
+                padding: 10px 14px;
                 display: grid;
                 gap: 4px;
                 min-width: 0;
+                flex: 1 1 240px;
             }
 
             .gpv-shell-card-label {
@@ -8170,45 +8170,8 @@ syncUi.update = function updateSyncUI() {
                 align-items: center;
             }
 
-            .gpv-shell-card-actions .gpv-sync-btn,
-            .gpv-shell-card-actions .gpv-sync-btn-secondary {
-                padding: 6px 12px;
-                font-size: 13px;
-            }
-
-            .gpv-shell-search-row {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-            }
-
-            .gpv-shell-results {
-                display: grid;
-                gap: 8px;
-                margin-top: 6px;
-            }
-
-            .gpv-shell-result {
-                border: 1px solid #e5e7eb;
-                border-radius: 10px;
-                background: #ffffff;
-                padding: 8px 10px;
-                display: grid;
-                gap: 4px;
-            }
-
-            .gpv-shell-result:focus-visible {
-                outline: 2px solid rgba(79, 70, 229, 0.45);
-                outline-offset: 2px;
-            }
-
             .gpv-shell-empty {
                 color: #6b7280;
-            }
-
-            .gpv-shell-reveal {
-                background: #eef2ff;
-                transition: background-color 0.2s ease;
             }
 
             .gpv-header {
@@ -8315,9 +8278,10 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-controls {
-                padding: 12px 24px;
                 background: #f9fafb;
-                border-bottom: 1px solid #e5e7eb;
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+                padding: 12px 16px;
                 display: flex;
                 align-items: center;
                 gap: 12px;
@@ -8395,9 +8359,8 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-content {
-                overflow-y: auto;
-                padding: 16px 24px;
-                flex: 1;
+                padding: 0;
+                min-height: 0;
             }
             
             /* Summary View Styles */
@@ -10006,7 +9969,7 @@ syncUi.update = function updateSyncUI() {
         };
     }
 
-    function buildFsmOverviewDriftCardHtml(driftModel) {
+    function buildFsmDriftStatusCardHtml(driftModel, { className = 'gpv-shell-card', dataAttribute = 'data-shell-card' } = {}) {
         const summary = driftModel?.summary || {};
         const warningCount = Number(summary.warningCount) || 0;
         const targetMissingCount = Number(summary.targetMissingCount) || 0;
@@ -10043,7 +10006,7 @@ syncUi.update = function updateSyncUI() {
             : '';
 
         return `
-            <div class="gpv-shell-card" data-shell-card="fsm-drift-status">
+            <div class="${escapeHtml(className)}" ${dataAttribute}="fsm-drift-status">
                 <div class="gpv-shell-card-label">FSM drift status</div>
                 <div class="gpv-shell-card-value">${escapeHtml(headline)}</div>
                 <div class="gpv-shell-card-meta">${escapeHtml(coverageMeta)}</div>
@@ -10235,6 +10198,15 @@ syncUi.update = function updateSyncUI() {
             <div class="gpv-summary-card"><strong>Suggestion:</strong> ${escapeHtml(summary.suggestionDisplay)}</div>
         `;
         return summaryRow;
+    }
+
+    function buildFsmWorkspaceDriftPanel(driftModel) {
+        const panel = createElement('div', 'gpv-summary-row gpv-fsm-drift-panel');
+        panel.innerHTML = buildFsmDriftStatusCardHtml(driftModel, {
+            className: 'gpv-summary-card gpv-fsm-drift-card',
+            dataAttribute: 'data-workspace-card'
+        });
+        return panel;
     }
 
     function buildFsmToolbar({
@@ -10489,6 +10461,12 @@ syncUi.update = function updateSyncUI() {
             const selectAllFiltered = filteredCodes.length > 0 && selectedFilteredCount === filteredCodes.length;
             const summary = buildFsmScopedSummary(filteredRows);
             const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
+            const warningPct = Storage.get(storageKeys.fsmDriftSetting('warningPct'), null);
+            const driftModel = buildFsmPortfolioDriftStatusModel({
+                rows,
+                portfolios: activePortfolios(),
+                warningPct
+            });
 
             contentDiv.innerHTML = '';
 
@@ -10549,6 +10527,7 @@ syncUi.update = function updateSyncUI() {
                 contentDiv.appendChild(manager);
             }
 
+            contentDiv.appendChild(buildFsmWorkspaceDriftPanel(driftModel));
             contentDiv.appendChild(buildFsmSummaryRow(summary));
 
             if (!rows.length) {
@@ -10811,111 +10790,10 @@ syncUi.update = function updateSyncUI() {
         header.appendChild(buttonContainer);
         container.appendChild(header);
 
+        const body = createElement('div', 'gpv-body');
         const shellChrome = createElement('div', 'gpv-shell');
-        const shellSummary = createElement('div', 'gpv-shell-summary');
-        const shellSearch = createElement('div', 'gpv-shell-search');
-        const shellSearchRefs = {
-            initialized: false,
-            input: null,
-            results: null
-        };
-
-        shellChrome.appendChild(shellSummary);
-        shellChrome.appendChild(shellSearch);
-        container.appendChild(shellChrome);
-
-        function getCurrentDiscoveryItems() {
-            if (isFsmRoute) {
-                const fsmConfig = loadFsmPortfolioConfig(state.apiData.fsmHoldings || []);
-                return buildFsmDiscoveryItems(
-                    state.apiData.fsmHoldings || [],
-                    fsmConfig.portfolios || [],
-                    fsmConfig.assignmentByCode || {}
-                );
-            }
-            return buildEndowusDiscoveryItems(mergedInvestmentDataState, state.projectedInvestments);
-        }
-
-        function flashShellRevealRow(row) {
-            if (!row) {
-                return;
-            }
-            row.classList.add('gpv-shell-reveal');
-            detachTimerHandle(setTimeout(() => {
-                row.classList.remove('gpv-shell-reveal');
-            }, 1200));
-        }
-
-        function revealEndowusGoalInWorkspace(goalId) {
-            if (!contentDiv || !goalId) {
-                return false;
-            }
-            const goalRow = Array.from(contentDiv.querySelectorAll('tr.gpv-goal-row[data-goal-id]'))
-                .find(row => row.dataset.goalId === goalId);
-            if (!goalRow) {
-                return false;
-            }
-            if (typeof goalRow.scrollIntoView === 'function') {
-                goalRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            }
-            flashShellRevealRow(goalRow);
-            const targetInput = goalRow.querySelector('input.gpv-target-input');
-            if (targetInput && typeof targetInput.focus === 'function') {
-                targetInput.focus();
-            }
-            return true;
-        }
-
-        function revealFsmHoldingInWorkspace(code) {
-            if (!contentDiv || !code) {
-                return false;
-            }
-            const holdingRow = Array.from(contentDiv.querySelectorAll('tr[data-holding-code]'))
-                .find(row => row.dataset.holdingCode === code);
-            if (!holdingRow) {
-                return false;
-            }
-            if (typeof holdingRow.scrollIntoView === 'function') {
-                holdingRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            }
-            flashShellRevealRow(holdingRow);
-            const targetInput = holdingRow.querySelector('input.gpv-target-input');
-            if (targetInput && typeof targetInput.focus === 'function') {
-                targetInput.focus();
-            }
-            return true;
-        }
-
-        function handleDiscoveryOpen(item) {
-            if (!item) {
-                return;
-            }
-            if (isFsmRoute && item.source === 'fsm' && item.kind === 'holding') {
-                revealFsmHoldingInWorkspace(item.id);
-                return;
-            }
-            if (isFsmRoute || !select) {
-                return;
-            }
-            if (item.source !== 'endowus') {
-                return;
-            }
-            if (item.kind === 'bucket') {
-                select.value = item.id;
-                renderView(item.id, { scrollToTop: true });
-                return;
-            }
-            if (item.kind === 'goal') {
-                const bucketName = utils.normalizeString(item.bucketName, '');
-                if (bucketName && mergedInvestmentDataState?.[bucketName]) {
-                    select.value = bucketName;
-                    renderView(bucketName, { scrollToTop: true });
-                    revealEndowusGoalInWorkspace(item.id);
-                    return;
-                }
-                renderView('SUMMARY', { scrollToTop: true });
-            }
-        }
+        body.appendChild(shellChrome);
+        container.appendChild(body);
 
         function renderShellSummary() {
             const loadedState = isFsmRoute
@@ -10925,20 +10803,7 @@ syncUi.update = function updateSyncUI() {
                 ? (state.apiData.fsmHoldings ? 'Holdings loaded' : 'Waiting for holdings data')
                 : (mergedInvestmentDataState ? 'Endowus data loaded' : 'Waiting for Endowus data');
             const syncStatusSummary = SyncManager.getStatus();
-            let fsmDriftCard = '';
-            if (isFsmRoute) {
-                const fsmHoldings = Array.isArray(state.apiData.fsmHoldings) ? state.apiData.fsmHoldings : [];
-                const fsmConfig = loadFsmPortfolioConfig(fsmHoldings);
-                const fsmRows = buildFsmRowsWithAssignment(fsmHoldings, fsmConfig.assignmentByCode || {});
-                const warningPct = Storage.get(storageKeys.fsmDriftSetting('warningPct'), null);
-                const driftModel = buildFsmPortfolioDriftStatusModel({
-                    rows: fsmRows,
-                    portfolios: fsmConfig.portfolios || [],
-                    warningPct
-                });
-                fsmDriftCard = buildFsmOverviewDriftCardHtml(driftModel);
-            }
-            shellSummary.innerHTML = `
+            shellChrome.innerHTML = `
                 <div class="gpv-shell-overview">
                     <div class="gpv-shell-card" data-shell-section="status">
                         <div class="gpv-shell-card-label">Status</div>
@@ -10953,10 +10818,9 @@ syncUi.update = function updateSyncUI() {
                             <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-shell-action="open-sync">Open sync settings</button>
                         </div>
                     </div>
-                    ${fsmDriftCard}
                 </div>
             `;
-            const openSyncButton = shellSummary.querySelector('[data-shell-action="open-sync"]');
+            const openSyncButton = shellChrome.querySelector('[data-shell-action="open-sync"]');
             if (openSyncButton) {
                 openSyncButton.onclick = () => {
                     if (typeof showSyncSettings === 'function') {
@@ -10966,94 +10830,8 @@ syncUi.update = function updateSyncUI() {
             }
         }
 
-        function renderShellSearch() {
-            const items = filterDiscoveryItems(getCurrentDiscoveryItems(), state.ui.shellSearchQuery);
-            if (!shellSearchRefs.initialized) {
-                shellSearch.innerHTML = `
-                    <div class="gpv-shell-card" data-shell-section="find">
-                        <div class="gpv-shell-card-label">Find</div>
-                        <div class="gpv-shell-search-row">
-                            <input type="search" class="gpv-target-input" id="gpv-shell-search-input" placeholder="Search goals, buckets, holdings, tags" aria-label="Search workspace items" />
-                        </div>
-                        <div class="gpv-shell-results" role="list" aria-live="polite" aria-label="Search results"></div>
-                    </div>
-                `;
-                shellSearchRefs.input = shellSearch.querySelector('#gpv-shell-search-input');
-                shellSearchRefs.results = shellSearch.querySelector('.gpv-shell-results');
-                shellSearchRefs.initialized = true;
-            }
-            const input = shellSearchRefs.input;
-            if (input && input.value !== (state.ui.shellSearchQuery || '')) {
-                input.value = state.ui.shellSearchQuery || '';
-            }
-            if (input && !input.dataset.bound) {
-                input.dataset.bound = 'true';
-                input.oninput = () => {
-                    state.ui.shellSearchQuery = input.value;
-                    Storage.set(SHELL_STATE_KEYS.searchQuery, state.ui.shellSearchQuery);
-                    renderShellSearch();
-                };
-            }
-
-            const results = shellSearchRefs.results;
-            if (!results) {
-                return;
-            }
-            if (!items.length) {
-                results.innerHTML = '<div class="gpv-shell-empty">No matches yet.</div>';
-                return;
-            }
-
-            results.innerHTML = items.slice(0, 6).map(item => {
-                const openLabel = item.kind === 'bucket'
-                    ? 'Open bucket'
-                    : (item.kind === 'goal' ? 'Open goal' : 'Open holding');
-                return `
-                    <div class="gpv-shell-result" role="listitem" data-kind="${escapeHtml(item.kind)}" data-id="${escapeHtml(item.id)}" data-source="${escapeHtml(item.source)}" tabindex="0">
-                        <div><strong>${escapeHtml(item.title)}</strong></div>
-                        <div>${escapeHtml(item.subtitle)}</div>
-                        <div>${escapeHtml(item.detail)}</div>
-                        <div>
-                            <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-discovery-open="true">${openLabel}</button>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-
-            results.querySelectorAll('[data-discovery-open="true"]').forEach(button => {
-                button.onclick = () => {
-                    const card = button.closest('.gpv-shell-result');
-                    if (!card) {
-                        return;
-                    }
-                    const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
-                    handleDiscoveryOpen(match);
-                };
-            });
-            results.querySelectorAll('.gpv-shell-result').forEach(card => {
-                card.onclick = event => {
-                    if (event.target && event.target.closest && event.target.closest('button')) {
-                        return;
-                    }
-                    const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
-                    handleDiscoveryOpen(match);
-                };
-                card.onkeydown = event => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                        if (event.target && event.target.closest && event.target.closest('button, input, select, textarea, a[href]')) {
-                            return;
-                        }
-                        event.preventDefault();
-                        const match = items.find(item => item.kind === card.dataset.kind && item.id === card.dataset.id && item.source === card.dataset.source);
-                        handleDiscoveryOpen(match);
-                    }
-                };
-            });
-        }
-
         function updateShellPanels() {
             renderShellSummary();
-            renderShellSearch();
         }
 
         updateShellPanels();
@@ -11095,13 +10873,13 @@ syncUi.update = function updateSyncUI() {
             modeToggle.appendChild(performanceButton);
 
             controls.appendChild(modeToggle);
-            container.appendChild(controls);
+            body.appendChild(controls);
 
             contentDiv = createElement('div', 'gpv-content');
-            container.appendChild(contentDiv);
+            body.appendChild(contentDiv);
         } else {
             contentDiv = createElement('div', 'gpv-content');
-            container.appendChild(contentDiv);
+            body.appendChild(contentDiv);
             renderFsmWorkspace(contentDiv, fsmHoldings, () => {
                 updateShellPanels();
             });

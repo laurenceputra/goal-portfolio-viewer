@@ -485,7 +485,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         const overlay = document.querySelector('#gpv-overlay');
-        const content = overlay?.querySelector('.gpv-content');
+        const content = overlay?.querySelector('.gpv-body');
         const select = overlay?.querySelector('.gpv-select');
         const bucketValue = Array.from(select?.options || []).find(option => option.value !== 'SUMMARY')?.value;
         expect(content).toBeTruthy();
@@ -527,7 +527,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         const overlay = document.querySelector('#gpv-overlay');
-        const content = overlay?.querySelector('.gpv-content');
+        const content = overlay?.querySelector('.gpv-body');
         const bucketCard = overlay?.querySelector('.gpv-bucket-card');
         expect(content).toBeTruthy();
         expect(bucketCard).toBeTruthy();
@@ -669,140 +669,6 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.querySelectorAll('[data-tab]').length).toBe(0);
         expect(overlay.querySelector('[data-shell-section="status"]')).toBeTruthy();
         expect(overlay.querySelector('[data-shell-section="sync"]')).toBeTruthy();
-        expect(overlay.querySelector('[data-shell-section="find"]')).toBeTruthy();
-        expect(overlay.querySelectorAll('.gpv-shell-results .gpv-shell-result').length).toBeLessThanOrEqual(6);
-    });
-
-    test('discovery search preserves input node and opens Endowus bucket/goal in the main workspace', () => {
-        const performanceData = [
-            {
-                goalId: 'g1',
-                totalInvestmentValue: { amount: 1200 },
-                totalCumulativeReturn: { amount: 120 },
-                simpleRateOfReturnPercent: 0.1
-            },
-            {
-                goalId: 'g2',
-                totalInvestmentValue: { amount: 800 },
-                totalCumulativeReturn: { amount: 80 },
-                simpleRateOfReturnPercent: 0.1
-            }
-        ];
-        const investibleData = [
-            {
-                goalId: 'g1',
-                goalName: 'Retirement - Core',
-                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-                totalInvestmentAmount: { display: { amount: 1200 } }
-            },
-            {
-                goalId: 'g2',
-                goalName: 'Education - Growth',
-                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-                totalInvestmentAmount: { display: { amount: 800 } }
-            }
-        ];
-        const summaryData = investibleData.map(goal => ({
-            goalId: goal.goalId,
-            goalName: goal.goalName,
-            investmentGoalType: goal.investmentGoalType
-        }));
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        const inputBefore = overlay.querySelector('#gpv-shell-search-input');
-        inputBefore.value = 'Education';
-        inputBefore.dispatchEvent(new window.Event('input', { bubbles: true }));
-        const inputAfter = overlay.querySelector('#gpv-shell-search-input');
-        expect(inputAfter).toBe(inputBefore);
-        expect(overlay.querySelector('[data-compare-add="true"]')).toBeNull();
-
-        const educationBucketResult = overlay.querySelector('.gpv-shell-result[data-kind="bucket"][data-id="Education"][data-source="endowus"]');
-        expect(educationBucketResult).toBeTruthy();
-        educationBucketResult.querySelector('[data-discovery-open="true"]').click();
-
-        const bucketSelect = overlay.querySelector('.gpv-select');
-        expect(bucketSelect?.value).toBe('Education');
-
-        inputAfter.value = 'Retirement - Core';
-        inputAfter.dispatchEvent(new window.Event('input', { bubbles: true }));
-        const goalResult = overlay.querySelector('.gpv-shell-result[data-kind="goal"][data-id="g1"][data-source="endowus"]');
-        expect(goalResult).toBeTruthy();
-        goalResult.querySelector('[data-discovery-open="true"]').click();
-
-        expect(bucketSelect?.value).toBe('Retirement');
-        const goalRow = overlay.querySelector('tr.gpv-goal-row[data-goal-id="g1"]');
-        expect(goalRow).toBeTruthy();
-        expect(goalRow?.classList.contains('gpv-shell-reveal')).toBe(true);
-    });
-
-    test('FSM discovery panel updates immediately after workspace assignment edits', () => {
-        teardownDom();
-        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
-
-        storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
-        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
-        global.alert = jest.fn();
-        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
-        window.fetch = global.fetch;
-        global.history = window.history;
-
-        class FakeXHR {
-            constructor() {
-                this._headers = {};
-                this.responseText = '{}';
-            }
-            open(method, url) {
-                this._url = url;
-                return true;
-            }
-            setRequestHeader(header, value) {
-                this._headers[header] = value;
-            }
-            addEventListener() {}
-            send() {}
-        }
-        global.XMLHttpRequest = FakeXHR;
-
-        storage.set('api_fsm_holdings', JSON.stringify([
-            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
-        ]));
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        let overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.querySelector('.gpv-shell-results').textContent).toContain('Unassigned');
-
-        const manageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage portfolios'));
-        manageBtn.click();
-
-        overlay = document.querySelector('#gpv-overlay');
-        const createInput = overlay.querySelector('#gpv-fsm-create-portfolio');
-        const createBtn = overlay.querySelector('#gpv-fsm-create-portfolio-btn');
-        createInput.value = 'Core';
-        createBtn.click();
-
-        overlay = document.querySelector('#gpv-overlay');
-        const rowSelect = overlay.querySelector('table tbody select.gpv-select');
-        rowSelect.value = 'core';
-        rowSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-
-        overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.querySelector('.gpv-shell-results').textContent).toContain('Core (core)');
     });
 
     test('FSM overview drift status card refreshes after assignment and target edits', () => {
@@ -851,7 +717,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const getDriftCard = () => document.querySelector('#gpv-overlay [data-shell-card="fsm-drift-status"]');
+        const getDriftCard = () => document.querySelector('#gpv-overlay [data-workspace-card="fsm-drift-status"]');
         const getRowByTicker = ticker => Array.from(document.querySelectorAll('#gpv-overlay table tbody tr'))
             .find(row => row.textContent.includes(ticker));
 
@@ -872,60 +738,6 @@ describe('initialization and URL monitoring', () => {
         aaaTargetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         expect(getDriftCard()?.textContent).toContain('1 in range');
-    });
-
-    test('FSM search open action reveals the holding in the main workspace table', () => {
-        teardownDom();
-        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
-
-        storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
-        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
-        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
-        window.fetch = global.fetch;
-        global.history = window.history;
-
-        class FakeXHR {
-            constructor() {
-                this._headers = {};
-                this.responseText = '{}';
-            }
-            open(method, url) {
-                this._url = url;
-                return true;
-            }
-            setRequestHeader(header, value) {
-                this._headers[header] = value;
-            }
-            addEventListener() {}
-            send() {}
-        }
-        global.XMLHttpRequest = FakeXHR;
-
-        storage.set('api_fsm_holdings', JSON.stringify([
-            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
-        ]));
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        const searchInput = overlay.querySelector('#gpv-shell-search-input');
-        searchInput.value = 'AAA';
-        searchInput.dispatchEvent(new window.Event('input', { bubbles: true }));
-
-        const holdingCard = overlay.querySelector('.gpv-shell-result[data-kind="holding"][data-id="AAA"][data-source="fsm"]');
-        expect(holdingCard).toBeTruthy();
-        holdingCard.querySelector('[data-discovery-open="true"]').click();
-
-        const holdingRow = overlay.querySelector('tr[data-holding-code="AAA"]');
-        expect(holdingRow).toBeTruthy();
-        expect(holdingRow?.classList.contains('gpv-shell-reveal')).toBe(true);
     });
 
     test('shell overview uses normalized shell typography and compact sections', () => {
@@ -959,11 +771,10 @@ describe('initialization and URL monitoring', () => {
         const overlay = document.querySelector('#gpv-overlay');
 
         expect(styles.textContent).toContain('.gpv-shell {');
-        expect(styles.textContent).toContain('font-size: 14px;');
+        expect(styles.textContent).toContain('.gpv-body {');
         expect(styles.textContent).toContain('.gpv-shell-overview {');
-        expect(styles.textContent).toContain('.gpv-shell-search-row {');
         expect(overlay.querySelector('[data-shell-section="status"]')).toBeTruthy();
-        expect(overlay.querySelector('[data-shell-section="find"]')).toBeTruthy();
+        expect(overlay.querySelector('[data-shell-section="find"]')).toBeNull();
         expect(overlay.textContent).toContain('Last sync');
     });
 
@@ -1133,7 +944,7 @@ describe('initialization and URL monitoring', () => {
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Portfolio Viewer (FSM)');
         expect(overlay.querySelectorAll('[data-tab]').length).toBe(0);
-        expect(overlay.querySelector('[data-shell-section="find"]')).toBeTruthy();
+        expect(overlay.querySelector('[data-shell-section="find"]')).toBeNull();
         expect(overlay.textContent).toContain('Fund A');
         expect(overlay.textContent).toContain('AAPL');
         expect(overlay.textContent).not.toContain('Endowus Only Goal');
