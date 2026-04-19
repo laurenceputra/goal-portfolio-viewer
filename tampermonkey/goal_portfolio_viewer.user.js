@@ -4201,6 +4201,99 @@ function formatSyncFixed(isFixed) {
         });
     }
 
+    function normalizeFsmDriftWarningPct(rawWarningPct) {
+        const parsed = Number(rawWarningPct);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+            return null;
+        }
+        return parsed;
+    }
+
+    function buildFsmPortfolioDriftStatusModel({ rows, portfolios, warningPct } = {}) {
+        const activePortfolios = normalizeFsmPortfolios(portfolios || []).filter(item => item.archived !== true);
+        const portfolioNameMap = buildFsmPortfolioNameMap(activePortfolios);
+        const warningThresholdPct = normalizeFsmDriftWarningPct(warningPct);
+        const rowsByPortfolioId = {};
+
+        (Array.isArray(rows) ? rows : []).forEach(row => {
+            const portfolioId = utils.normalizeString(row?.portfolioId, FSM_UNASSIGNED_PORTFOLIO_ID);
+            if (!rowsByPortfolioId[portfolioId]) {
+                rowsByPortfolioId[portfolioId] = [];
+            }
+            rowsByPortfolioId[portfolioId].push(row);
+        });
+
+        const portfolioStatusItems = Object.entries(rowsByPortfolioId).map(([portfolioId, portfolioRows]) => {
+            const totalValue = portfolioRows.reduce((sum, row) => sum + (Number(row.currentValueLcy) || 0), 0);
+            const activeRows = portfolioRows.filter(row => row.fixed !== true);
+            const targetRows = activeRows.filter(row => row.targetPercent !== null
+                && row.targetPercent !== undefined
+                && row.targetPercent !== ''
+                && Number.isFinite(Number(row.targetPercent)));
+            const driftPercent = targetRows.reduce((sum, row) => {
+                if (totalValue <= 0) {
+                    return sum;
+                }
+                const targetAmount = (Number(row.targetPercent) / 100) * totalValue;
+                if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
+                    return sum;
+                }
+                const rowDrift = Math.abs(targetAmount - (Number(row.currentValueLcy) || 0)) / targetAmount;
+                return Number.isFinite(rowDrift) ? sum + rowDrift : sum;
+            }, 0);
+            const hasActiveTargets = targetRows.length > 0;
+            const isWarning = hasActiveTargets
+                && warningThresholdPct !== null
+                && (driftPercent * 100) >= warningThresholdPct;
+            const status = isWarning
+                ? 'warning'
+                : (hasActiveTargets ? 'ok' : 'target-missing');
+
+            return {
+                portfolioId,
+                portfolioLabel: formatFsmPortfolioLabel(portfolioId, portfolioNameMap),
+                rowCount: portfolioRows.length,
+                activeRowCount: activeRows.length,
+                targetRowCount: targetRows.length,
+                driftPercent: hasActiveTargets ? driftPercent : null,
+                driftDisplay: hasActiveTargets
+                    ? formatPercent(driftPercent, { multiplier: 100, showSign: false })
+                    : '-',
+                status,
+                isWarning
+            };
+        });
+
+        const statusRank = {
+            warning: 0,
+            'target-missing': 1,
+            ok: 2
+        };
+
+        portfolioStatusItems.sort((a, b) => {
+            const rankDiff = (statusRank[a.status] ?? 99) - (statusRank[b.status] ?? 99);
+            if (rankDiff !== 0) {
+                return rankDiff;
+            }
+            return a.portfolioLabel.localeCompare(b.portfolioLabel);
+        });
+
+        const warningCount = portfolioStatusItems.filter(item => item.status === 'warning').length;
+        const targetMissingCount = portfolioStatusItems.filter(item => item.status === 'target-missing').length;
+        const okCount = portfolioStatusItems.filter(item => item.status === 'ok').length;
+
+        return {
+            warningThresholdPct,
+            portfolios: portfolioStatusItems,
+            summary: {
+                portfolioCount: portfolioStatusItems.length,
+                warningCount,
+                targetMissingCount,
+                okCount
+            }
+        };
+    }
+
     function filterDiscoveryItems(items, query, sourceFilter = 'all') {
         const normalizedQuery = utils.normalizeString(query, '').toLowerCase();
         const normalizedSource = utils.normalizeString(sourceFilter, 'all');
@@ -8158,9 +8251,11 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-shell {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                font-size: 14px;
+                font-size: 13px;
                 line-height: 1.45;
                 color: #1f2937;
+                display: grid;
+                gap: 12px;
             }
 
             .gpv-shell,
@@ -8168,32 +8263,87 @@ syncUi.update = function updateSyncUI() {
                 box-sizing: border-box;
             }
 
+            .gpv-shell * {
+                font-family: inherit;
+            }
+
+            .gpv-shell button,
+            .gpv-shell input,
+            .gpv-shell select,
+            .gpv-shell textarea {
+                font: inherit;
+            }
+
+            .gpv-shell-tabs {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                align-items: center;
+            }
+
+            .gpv-shell-tab {
+                appearance: none;
+                border: 1px solid #dbe3f2;
+                background: #ffffff;
+                color: #475569;
+                border-radius: 999px;
+                padding: 6px 10px;
+                font-size: 12px;
+                font-weight: 600;
+                line-height: 1.25;
+                cursor: pointer;
+                transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+            }
+
+            .gpv-shell-tab:hover {
+                border-color: #c7d2fe;
+                background: #f8fafc;
+                color: #3730a3;
+            }
+
+            .gpv-shell-tab.is-active,
+            .gpv-shell-tab[aria-selected="true"] {
+                border-color: #c7d2fe;
+                background: #eef2ff;
+                color: #3730a3;
+            }
+
+            .gpv-shell-tab:focus-visible {
+                outline: 2px solid rgba(99, 102, 241, 0.35);
+                outline-offset: 2px;
+            }
+
+            .gpv-shell [role="tabpanel"] {
+                min-width: 0;
+            }
+
             .gpv-shell-overview {
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-                gap: 12px;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 10px;
+                align-items: start;
             }
 
             .gpv-shell-card {
                 background: #f8fafc;
                 border: 1px solid #e5e7eb;
                 border-radius: 12px;
-                padding: 12px 14px;
+                padding: 10px 12px;
                 display: grid;
-                gap: 6px;
+                gap: 4px;
                 min-width: 0;
             }
 
             .gpv-shell-card-label {
-                font-size: 11px;
+                font-size: 10px;
                 font-weight: 700;
-                letter-spacing: 0.06em;
+                letter-spacing: 0.08em;
                 text-transform: uppercase;
                 color: #6b7280;
             }
 
             .gpv-shell-card-value {
-                font-size: 14px;
+                font-size: 13px;
                 font-weight: 700;
                 color: #111827;
                 line-height: 1.3;
@@ -8201,8 +8351,14 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-shell-card-meta {
                 font-size: 12px;
-                line-height: 1.4;
+                line-height: 1.35;
                 color: #4b5563;
+            }
+
+            .gpv-shell-card-meta-compact {
+                font-size: 11px;
+                line-height: 1.25;
+                color: #6b7280;
             }
 
             .gpv-shell-card-actions {
@@ -8214,8 +8370,23 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-shell-card-actions .gpv-sync-btn,
             .gpv-shell-card-actions .gpv-sync-btn-secondary {
-                padding: 8px 14px;
-                font-size: 13px;
+                padding: 6px 12px;
+                font-size: 12px;
+            }
+
+            .gpv-shell-select {
+                min-width: 180px;
+                padding: 7px 10px;
+                border: 1px solid #d1d5db;
+                border-radius: 8px;
+                background: #ffffff;
+                color: #111827;
+            }
+
+            .gpv-shell-select:focus {
+                outline: none;
+                border-color: #a5b4fc;
+                box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
             }
 
             .gpv-header {
@@ -9969,6 +10140,9 @@ syncUi.update = function updateSyncUI() {
 
     function getFsmTarget(code) {
         const value = Storage.get(storageKeys.fsmTarget(code), null);
+        if (value === null || value === undefined || value === '') {
+            return null;
+        }
         const parsed = Number(value);
         return Number.isFinite(parsed) ? parsed : null;
     }
@@ -10008,6 +10182,53 @@ syncUi.update = function updateSyncUI() {
             driftDisplay: formatPercent(totalDrift, { multiplier: 100, showSign: false }),
             suggestionDisplay: formatMoney(0)
         };
+    }
+
+    function buildFsmOverviewDriftCardHtml(driftModel) {
+        const summary = driftModel?.summary || {};
+        const warningCount = Number(summary.warningCount) || 0;
+        const targetMissingCount = Number(summary.targetMissingCount) || 0;
+        const okCount = Number(summary.okCount) || 0;
+        const portfolioCount = Number(summary.portfolioCount) || 0;
+        const warningThresholdPct = driftModel?.warningThresholdPct;
+
+        let headline = 'No portfolios tracked';
+        if (warningCount > 0) {
+            headline = `${warningCount} warning${warningCount === 1 ? '' : 's'}`;
+        } else if (targetMissingCount > 0) {
+            headline = `${targetMissingCount} missing target${targetMissingCount === 1 ? '' : 's'}`;
+        } else if (okCount > 0) {
+            headline = `${okCount} in range`;
+        }
+
+        const thresholdDisplay = warningThresholdPct === null || warningThresholdPct === undefined
+            ? 'not set'
+            : formatPercent(warningThresholdPct / 100, { multiplier: 100, showSign: false });
+        const coverageMeta = portfolioCount > 0
+            ? `${portfolioCount} portfolio${portfolioCount === 1 ? '' : 's'} · Warning threshold ${thresholdDisplay}`
+            : 'Assign holdings to portfolios to monitor drift.';
+
+        const detailRows = (driftModel?.portfolios || []).slice(0, 3).map(item => {
+            const statusLabel = item.status === 'warning'
+                ? 'Warning'
+                : (item.status === 'target-missing' ? 'No target' : 'In range');
+            const driftLabel = item.driftDisplay || '-';
+            return `<div class="gpv-shell-card-meta gpv-shell-card-meta-compact">${escapeHtml(item.portfolioLabel)} · ${escapeHtml(driftLabel)} · ${statusLabel}</div>`;
+        }).join('');
+        const hiddenCount = Math.max(0, (driftModel?.portfolios || []).length - 3);
+        const overflowLine = hiddenCount > 0
+            ? `<div class="gpv-shell-card-meta gpv-shell-card-meta-compact">+${hiddenCount} more</div>`
+            : '';
+
+        return `
+            <div class="gpv-shell-card" data-shell-card="fsm-drift-status">
+                <div class="gpv-shell-card-label">FSM drift status</div>
+                <div class="gpv-shell-card-value">${escapeHtml(headline)}</div>
+                <div class="gpv-shell-card-meta">${escapeHtml(coverageMeta)}</div>
+                ${detailRows}
+                ${overflowLine}
+            </div>
+        `;
     }
 
     function _buildFsmHeader({ overlay, cleanupCallbacks }) {
@@ -10906,6 +11127,19 @@ syncUi.update = function updateSyncUI() {
                 ? (state.apiData.fsmHoldings ? 'Holdings loaded' : 'Waiting for holdings data')
                 : (mergedInvestmentDataState ? 'Endowus data loaded' : 'Waiting for Endowus data');
             const syncStatusSummary = SyncManager.getStatus();
+            let fsmDriftCard = '';
+            if (isFsmRoute) {
+                const fsmHoldings = Array.isArray(state.apiData.fsmHoldings) ? state.apiData.fsmHoldings : [];
+                const fsmConfig = loadFsmPortfolioConfig(fsmHoldings);
+                const fsmRows = buildFsmRowsWithAssignment(fsmHoldings, fsmConfig.assignmentByCode || {});
+                const warningPct = Storage.get(storageKeys.fsmDriftSetting('warningPct'), null);
+                const driftModel = buildFsmPortfolioDriftStatusModel({
+                    rows: fsmRows,
+                    portfolios: fsmConfig.portfolios || [],
+                    warningPct
+                });
+                fsmDriftCard = buildFsmOverviewDriftCardHtml(driftModel);
+            }
             shellMessages.innerHTML = `
                 <div class="gpv-shell-overview">
                     <div class="gpv-shell-card">
@@ -10918,6 +11152,7 @@ syncUi.update = function updateSyncUI() {
                         <div class="gpv-shell-card-value">${escapeHtml(syncStatusSummary.status)}</div>
                         <div class="gpv-shell-card-meta">Last sync ${escapeHtml(buildSyncSettingsState().lastSyncText)}</div>
                     </div>
+                    ${fsmDriftCard}
                     <div class="gpv-shell-card">
                         <div class="gpv-shell-card-label">Quick actions</div>
                         <div class="gpv-shell-card-actions">
@@ -11816,6 +12051,8 @@ syncUi.update = function updateSyncUI() {
             calculateRemainingTargetPercent,
             isRemainingTargetAboveThreshold,
             buildAllocationDriftModel,
+            normalizeFsmDriftWarningPct,
+            buildFsmPortfolioDriftStatusModel,
             buildGoalTypeAllocationModel,
             getProjectedInvestmentValue,
             buildDiffCellData,

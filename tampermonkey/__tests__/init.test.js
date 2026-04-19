@@ -1137,6 +1137,75 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.querySelector('.gpv-shell-results').textContent).toContain('Core (core)');
     });
 
+    test('FSM overview drift status card refreshes after assignment and target edits', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAA', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 },
+            { code: 'BBB', subcode: 'BBB', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 800 }
+        ]));
+        storage.set('fsm_portfolios', JSON.stringify([{ id: 'core', name: 'Core', archived: false }]));
+        storage.set('fsm_assignment_by_code', JSON.stringify({ AAA: 'core', BBB: 'unassigned' }));
+        storage.set('fsm_target_pct_AAA', 100);
+        storage.set('fsm_drift_setting_warningPct', 10);
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const getDriftCard = () => document.querySelector('#gpv-overlay [data-shell-card="fsm-drift-status"]');
+        const getRowByTicker = ticker => Array.from(document.querySelectorAll('#gpv-overlay table tbody tr'))
+            .find(row => row.textContent.includes(ticker));
+
+        expect(getDriftCard()?.textContent).toContain('1 missing target');
+
+        const bbbRow = getRowByTicker('BBB');
+        const bbbPortfolioSelect = bbbRow?.querySelector('td:nth-child(8) select.gpv-select');
+        expect(bbbPortfolioSelect).toBeTruthy();
+        bbbPortfolioSelect.value = 'core';
+        bbbPortfolioSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(getDriftCard()?.textContent).toContain('1 warning');
+
+        const aaaRow = getRowByTicker('AAA');
+        const aaaTargetInput = aaaRow?.querySelector('td:nth-child(6) input.gpv-target-input');
+        expect(aaaTargetInput).toBeTruthy();
+        aaaTargetInput.value = '60';
+        aaaTargetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(getDriftCard()?.textContent).toContain('1 in range');
+    });
+
     test('compare uses live item data after Endowus mapping changes', () => {
         const performanceData = [
             {

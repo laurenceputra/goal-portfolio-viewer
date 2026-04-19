@@ -20,6 +20,7 @@ const {
     buildGoalTargetById,
     buildGoalFixedById,
     deriveEndowusBucketAssignment,
+    buildFsmPortfolioDriftStatusModel,
     buildEndowusDiscoveryItems,
     filterDiscoveryItems,
     getPerformanceCacheKey,
@@ -98,6 +99,72 @@ describe('projected and goal helpers', () => {
         const diffData = buildDiffCellData(100, null, 0);
         expect(diffData.diffDisplay).toBe('-');
         expect(diffData.diffClassName).toBe('gpv-diff-cell');
+    });
+});
+
+describe('FSM drift status model', () => {
+    test('builds per-portfolio warning, missing-target, and in-range statuses', () => {
+        const model = buildFsmPortfolioDriftStatusModel({
+            rows: [
+                { code: 'AAA', portfolioId: 'core', currentValueLcy: 100, targetPercent: 100, fixed: false },
+                { code: 'BBB', portfolioId: 'core', currentValueLcy: 100, targetPercent: 50, fixed: false },
+                { code: 'CCC', portfolioId: 'income', currentValueLcy: 100, targetPercent: 100, fixed: false },
+                { code: 'DDD', portfolioId: 'unassigned', currentValueLcy: 50, targetPercent: null, fixed: false }
+            ],
+            portfolios: [
+                { id: 'core', name: 'Core', archived: false },
+                { id: 'income', name: 'Income', archived: false }
+            ],
+            warningPct: 20
+        });
+
+        expect(model.warningThresholdPct).toBe(20);
+        expect(model.summary).toEqual({
+            portfolioCount: 3,
+            warningCount: 1,
+            targetMissingCount: 1,
+            okCount: 1
+        });
+
+        expect(model.portfolios[0]).toEqual(expect.objectContaining({
+            portfolioId: 'core',
+            status: 'warning',
+            driftDisplay: '50.00%'
+        }));
+        expect(model.portfolios[1]).toEqual(expect.objectContaining({
+            portfolioId: 'unassigned',
+            status: 'target-missing',
+            driftDisplay: '-'
+        }));
+        expect(model.portfolios[2]).toEqual(expect.objectContaining({
+            portfolioId: 'income',
+            status: 'ok',
+            driftDisplay: '0.00%'
+        }));
+    });
+
+    test('treats fixed-only portfolios as missing target coverage', () => {
+        const model = buildFsmPortfolioDriftStatusModel({
+            rows: [
+                { code: 'AAA', portfolioId: 'core', currentValueLcy: 100, targetPercent: 30, fixed: true }
+            ],
+            portfolios: [{ id: 'core', name: 'Core', archived: false }],
+            warningPct: 5
+        });
+
+        expect(model.summary).toEqual({
+            portfolioCount: 1,
+            warningCount: 0,
+            targetMissingCount: 1,
+            okCount: 0
+        });
+        expect(model.portfolios[0]).toEqual(expect.objectContaining({
+            portfolioId: 'core',
+            status: 'target-missing',
+            activeRowCount: 0,
+            targetRowCount: 0,
+            driftDisplay: '-'
+        }));
     });
 });
 
