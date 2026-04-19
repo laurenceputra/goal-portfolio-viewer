@@ -8155,7 +8155,69 @@ syncUi.update = function updateSyncUI() {
             .gpv-input-flash--success {
                 --gpv-flash-color: #10b981;
             }
-            
+
+            .gpv-shell {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-size: 14px;
+                line-height: 1.45;
+                color: #1f2937;
+            }
+
+            .gpv-shell,
+            .gpv-shell * {
+                box-sizing: border-box;
+            }
+
+            .gpv-shell-overview {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                gap: 12px;
+            }
+
+            .gpv-shell-card {
+                background: #f8fafc;
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+                padding: 12px 14px;
+                display: grid;
+                gap: 6px;
+                min-width: 0;
+            }
+
+            .gpv-shell-card-label {
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+                color: #6b7280;
+            }
+
+            .gpv-shell-card-value {
+                font-size: 14px;
+                font-weight: 700;
+                color: #111827;
+                line-height: 1.3;
+            }
+
+            .gpv-shell-card-meta {
+                font-size: 12px;
+                line-height: 1.4;
+                color: #4b5563;
+            }
+
+            .gpv-shell-card-actions {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                align-items: center;
+            }
+
+            .gpv-shell-card-actions .gpv-sync-btn,
+            .gpv-shell-card-actions .gpv-sync-btn-secondary {
+                padding: 8px 14px;
+                font-size: 13px;
+            }
+
             .gpv-header {
                 display: flex;
                 justify-content: space-between;
@@ -10845,20 +10907,24 @@ syncUi.update = function updateSyncUI() {
                 : (mergedInvestmentDataState ? 'Endowus data loaded' : 'Waiting for Endowus data');
             const syncStatusSummary = SyncManager.getStatus();
             shellMessages.innerHTML = `
-                <div class="gpv-shell-card">
-                    <strong>Readiness</strong>
-                    <div>${loadedState ? 'Ready' : 'Not ready yet'}</div>
-                    <div>${escapeHtml(freshness)}</div>
-                </div>
-                <div class="gpv-shell-card">
-                    <strong>Sync</strong>
-                    <div>Status: ${escapeHtml(syncStatusSummary.status)}</div>
-                    <div>Last sync: ${escapeHtml(buildSyncSettingsState().lastSyncText)}</div>
-                </div>
-                <div class="gpv-shell-card">
-                    <strong>Quick actions</strong>
-                    <div>Use the tabs to search, compare, and review mappings.</div>
-                    ${state.ui.shellOnboardingDismissed ? '' : '<button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-shell-action="dismiss-onboarding">Dismiss onboarding</button>'}
+                <div class="gpv-shell-overview">
+                    <div class="gpv-shell-card">
+                        <div class="gpv-shell-card-label">Readiness</div>
+                        <div class="gpv-shell-card-value">${loadedState ? 'Ready' : 'Not ready yet'}</div>
+                        <div class="gpv-shell-card-meta">${escapeHtml(freshness)}</div>
+                    </div>
+                    <div class="gpv-shell-card">
+                        <div class="gpv-shell-card-label">Sync</div>
+                        <div class="gpv-shell-card-value">${escapeHtml(syncStatusSummary.status)}</div>
+                        <div class="gpv-shell-card-meta">Last sync ${escapeHtml(buildSyncSettingsState().lastSyncText)}</div>
+                    </div>
+                    <div class="gpv-shell-card">
+                        <div class="gpv-shell-card-label">Quick actions</div>
+                        <div class="gpv-shell-card-actions">
+                            <span class="gpv-shell-card-meta">Search, compare, mappings.</span>
+                            ${state.ui.shellOnboardingDismissed ? '' : '<button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-shell-action="dismiss-onboarding">Dismiss onboarding</button>'}
+                        </div>
+                    </div>
                 </div>
             `;
             const dismissButton = shellMessages.querySelector('[data-shell-action="dismiss-onboarding"]');
