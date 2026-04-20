@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.1
+// @version      2.14.2
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -9433,7 +9433,10 @@ syncUi.update = function updateSyncUI() {
         const total = rows.reduce((sum, row) => sum + (Number(row.currentValueLcy) || 0), 0);
         const activeRows = rows.filter(row => row.fixed !== true);
         const targetPercentTotal = activeRows.reduce((sum, row) => sum + (Number(row.targetPercent) || 0), 0);
-        const totalDrift = activeRows.reduce((sum, row) => sum + calculateFsmRowDrift(total, row), 0);
+        const totalDrift = activeRows.reduce((sum, row) => {
+            const rowDrift = calculateFsmRowDrift(total, row);
+            return sum + (Number.isFinite(rowDrift) ? rowDrift : 0);
+        }, 0);
         return {
             total,
             actualWeightDisplay: formatPercent(1, { multiplier: 100, showSign: false }),
@@ -9441,6 +9444,18 @@ syncUi.update = function updateSyncUI() {
             driftDisplay: formatPercent(totalDrift, { multiplier: 100, showSign: false }),
             suggestionDisplay: formatMoney(0)
         };
+    }
+
+    function calculateFsmCurrentAllocation(total, row) {
+        const numericTotal = toFiniteNumber(total, null);
+        if (numericTotal === null || numericTotal <= 0) {
+            return null;
+        }
+        const currentValue = toFiniteNumber(row?.currentValueLcy, null);
+        if (currentValue === null) {
+            return null;
+        }
+        return currentValue / numericTotal;
     }
 
     function buildFsmHeader({ overlay, cleanupCallbacks }) {
@@ -9481,14 +9496,41 @@ syncUi.update = function updateSyncUI() {
     }
 
     function calculateFsmRowDrift(total, row) {
-        if (total <= 0 || !Number.isFinite(row.targetPercent)) {
-            return 0;
+        const numericTotal = toFiniteNumber(total, null);
+        if (numericTotal === null || numericTotal <= 0) {
+            return null;
         }
-        const targetAmount = (row.targetPercent / 100) * total;
+        const targetPercent = toFiniteNumber(row?.targetPercent, null);
+        if (targetPercent === null) {
+            return null;
+        }
+        const targetAmount = (targetPercent / 100) * numericTotal;
         if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
-            return 0;
+            return null;
         }
-        return Math.abs(targetAmount - row.currentValueLcy) / targetAmount;
+        const currentValue = toFiniteNumber(row?.currentValueLcy, 0);
+        const drift = Math.abs(targetAmount - currentValue) / targetAmount;
+        return Number.isFinite(drift) ? drift : null;
+    }
+
+    function buildFsmDisplayRows(rows, total) {
+        return (Array.isArray(rows) ? rows : []).map(row => {
+            const currentAllocationPercent = calculateFsmCurrentAllocation(total, row);
+            const driftPercent = calculateFsmRowDrift(total, row);
+            return {
+                ...row,
+                currentAllocationPercent,
+                currentAllocationDisplay: formatPercent(currentAllocationPercent, {
+                    multiplier: 100,
+                    showSign: false
+                }),
+                driftPercent,
+                driftDisplay: formatPercent(driftPercent, {
+                    multiplier: 100,
+                    showSign: false
+                })
+            };
+        });
     }
 
     function buildFsmManagerSummary({
@@ -9728,7 +9770,9 @@ syncUi.update = function updateSyncUI() {
                     <th>Name</th>
                     <th>Product Type</th>
                     <th>Value (SGD)</th>
+                    <th>Current %</th>
                     <th>Target %</th>
+                    <th>Drift %</th>
                     <th>Fixed</th>
                     <th>Portfolio</th>
                 </tr>
@@ -9750,14 +9794,16 @@ syncUi.update = function updateSyncUI() {
             const tr = document.createElement('tr');
             const checked = selectedCodes.has(row.code);
             tr.innerHTML = `
-                <td><input type="checkbox" ${checked ? 'checked' : ''} aria-label="Select holding ${escapeHtml(row.displayTicker || row.code)}" /></td>
-                <td>${escapeHtml(row.displayTicker || '-')}</td>
-                <td>${escapeHtml(row.name)}</td>
-                <td>${escapeHtml(row.productType)}</td>
-                <td>${escapeHtml(formatMoney(row.currentValueLcy))}</td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-col="select"><input type="checkbox" ${checked ? 'checked' : ''} aria-label="Select holding ${escapeHtml(row.displayTicker || row.code)}" /></td>
+                <td data-col="ticker">${escapeHtml(row.displayTicker || '-')}</td>
+                <td data-col="name">${escapeHtml(row.name)}</td>
+                <td data-col="product-type">${escapeHtml(row.productType)}</td>
+                <td data-col="value">${escapeHtml(formatMoney(row.currentValueLcy))}</td>
+                <td data-col="current">${escapeHtml(row.currentAllocationDisplay || '-')}</td>
+                <td data-col="target"></td>
+                <td data-col="drift">${escapeHtml(row.driftDisplay || '-')}</td>
+                <td data-col="fixed"></td>
+                <td data-col="portfolio"></td>
             `;
             const checkbox = tr.querySelector('input[type="checkbox"]');
             checkbox.addEventListener('change', () => {
@@ -9766,7 +9812,11 @@ syncUi.update = function updateSyncUI() {
                 }
             });
 
-            const targetCell = tr.children[5];
+            const targetCell = tr.querySelector('td[data-col="target"]');
+            if (!targetCell) {
+                tbody.appendChild(tr);
+                return;
+            }
             const targetInput = createElement('input', 'gpv-target-input');
             targetInput.type = 'number';
             targetInput.min = '0';
@@ -9787,7 +9837,11 @@ syncUi.update = function updateSyncUI() {
                 targetCell.appendChild(err);
             }
 
-            const fixedCell = tr.children[6];
+            const fixedCell = tr.querySelector('td[data-col="fixed"]');
+            if (!fixedCell) {
+                tbody.appendChild(tr);
+                return;
+            }
             const fixedCheckbox = createElement('input');
             fixedCheckbox.type = 'checkbox';
             fixedCheckbox.checked = row.fixed === true;
@@ -9799,7 +9853,11 @@ syncUi.update = function updateSyncUI() {
             };
             fixedCell.appendChild(fixedCheckbox);
 
-            const selectCell = tr.children[7];
+            const selectCell = tr.querySelector('td[data-col="portfolio"]');
+            if (!selectCell) {
+                tbody.appendChild(tr);
+                return;
+            }
             const select = createElement('select', 'gpv-select');
             select.innerHTML = [
                 { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: 'Unassigned' },
@@ -9883,6 +9941,7 @@ syncUi.update = function updateSyncUI() {
 
             const selectedCodes = new Set(selectAllFiltered ? filteredRows.map(row => row.code).filter(Boolean) : []);
             const summary = buildFsmScopedSummary(filteredRows);
+            const displayRows = buildFsmDisplayRows(filteredRows, summary.total);
             const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
 
             contentDiv.innerHTML = '';
@@ -9991,7 +10050,7 @@ syncUi.update = function updateSyncUI() {
             }));
 
             const table = buildFsmHoldingsTable({
-                filteredRows,
+                filteredRows: displayRows,
                 selectedCodes,
                 selectAllFiltered,
                 activePortfolios: activePortfolios(),

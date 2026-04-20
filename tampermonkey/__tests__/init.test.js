@@ -485,6 +485,11 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).not.toContain('Endowus Only Goal');
         expect(overlay.querySelector('.gpv-select')).toBeTruthy();
         expect(overlay.textContent).toContain('Product Type');
+        expect(overlay.textContent).toContain('Current %');
+        expect(overlay.textContent).toContain('Drift %');
+        const firstRow = overlay.querySelector('table tbody tr');
+        expect(firstRow.querySelector('td[data-col="current"]').textContent.trim()).toBe('100.00%');
+        expect(firstRow.querySelector('td[data-col="drift"]').textContent.trim()).toBe('-');
     });
 
     test('showOverlay on FSM route alerts when FSM holdings are unavailable', () => {
@@ -789,6 +794,73 @@ describe('initialization and URL monitoring', () => {
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Enter target between 0 and 100');
         expect(storage.has('fsm_target_pct_AAA')).toBe(false);
+    });
+
+    test('FSM row allocation and drift use selected scope totals', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 },
+            { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 800 }
+        ]));
+        storage.set('fsm_target_pct_AAA', 60);
+        storage.set('fsm_portfolios', JSON.stringify([
+            { id: 'core', name: 'Core', archived: false }
+        ]));
+        storage.set('fsm_assignment_by_code', JSON.stringify({ AAA: 'core', BBB: 'unassigned' }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        let firstRow = overlay.querySelector('table tbody tr');
+        expect(firstRow.querySelector('td[data-col="ticker"]').textContent.trim()).toBe('AAPL');
+        expect(firstRow.querySelector('td[data-col="current"]').textContent.trim()).toBe('60.00%');
+        expect(firstRow.querySelector('td[data-col="drift"]').textContent.trim()).toBe('0.00%');
+
+        const scopeToolbar = Array.from(overlay.querySelectorAll('.gpv-fsm-toolbar')).find(toolbar =>
+            toolbar.querySelector('input.gpv-target-input')
+        );
+        const scopeSelect = scopeToolbar.querySelector('select.gpv-select');
+        scopeSelect.value = 'core';
+        scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        firstRow = overlay.querySelector('table tbody tr');
+        expect(firstRow.querySelector('td[data-col="ticker"]').textContent.trim()).toBe('AAPL');
+        expect(firstRow.querySelector('td[data-col="current"]').textContent.trim()).toBe('100.00%');
+        expect(firstRow.querySelector('td[data-col="drift"]').textContent.trim()).toBe('66.67%');
     });
 
 });

@@ -459,7 +459,10 @@ async function captureFsmFlow(page, summary, outputDir) {
     }
 
     const tableHeaders = await page.$$eval('.gpv-table thead th', nodes => nodes.map(node => node.textContent || '').map(text => text.trim()));
-    const hasTableHeaders = tableHeaders.includes('Ticker') && tableHeaders.includes('Portfolio');
+    const hasTableHeaders = tableHeaders.includes('Ticker')
+        && tableHeaders.includes('Current %')
+        && tableHeaders.includes('Drift %')
+        && tableHeaders.includes('Portfolio');
     recordAssertion(summary, 'fsm-overlay', 'table-headers', hasTableHeaders, 'FSM table headers present.');
     if (!hasTableHeaders) {
         summary.status = 'failed';
