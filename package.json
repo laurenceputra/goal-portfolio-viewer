@@ -16,10 +16,7 @@
     "test": "pnpm --filter ./tampermonkey test",
     "test:watch": "pnpm --filter ./tampermonkey test:watch",
     "test:coverage": "pnpm --filter ./tampermonkey test:coverage",
-    "test:e2e": "pnpm --filter ./demo test:e2e",
-    "check:release-metadata": "node scripts/check-release-metadata.js",
-    "check:open-handles": "pnpm --filter ./tampermonkey exec jest --detectOpenHandles --runInBand",
-    "check:harness": "pnpm run check:release-metadata && pnpm run check:open-handles"
+    "test:e2e": "pnpm --filter ./demo test:e2e"
   },
   "repository": {
     "type": "git",

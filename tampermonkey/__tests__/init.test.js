@@ -54,10 +54,6 @@ describe('initialization and URL monitoring', () => {
         delete global.history;
     });
 
-    function flushPromises() {
-        return new Promise(resolve => setTimeout(resolve, 0));
-    }
-
     test('auto-init stays disabled when flag is set', () => {
         window.__GPV_DISABLE_AUTO_INIT = true;
         require('../goal_portfolio_viewer.user.js');
@@ -610,6 +606,7 @@ describe('initialization and URL monitoring', () => {
         ));
         global.GM_deleteValue = jest.fn(key => storage.delete(key));
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
         global.history = window.history;
@@ -674,6 +671,7 @@ describe('initialization and URL monitoring', () => {
         ));
         global.GM_deleteValue = jest.fn(key => storage.delete(key));
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
         global.history = window.history;
@@ -738,6 +736,7 @@ describe('initialization and URL monitoring', () => {
         ));
         global.GM_deleteValue = jest.fn(key => storage.delete(key));
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
         global.history = window.history;

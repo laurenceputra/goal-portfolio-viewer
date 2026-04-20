@@ -3840,9 +3840,7 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
         ...Object.keys(localFsm.fixedByCode || {}),
         ...Object.keys(remoteFsm.fixedByCode || {}),
         ...Object.keys(localFsm.tagsByCode || {}),
-        ...Object.keys(remoteFsm.tagsByCode || {}),
-        ...Object.keys(localEndowus.bucketAssignments || {}),
-        ...Object.keys(remoteEndowus.bucketAssignments || {})
+        ...Object.keys(remoteFsm.tagsByCode || {})
     ]);
 
     Array.from(codes).sort().forEach(code => {
@@ -4035,9 +4033,9 @@ function formatSyncFixed(isFixed) {
     return isFixed ? 'Yes' : 'No';
 }
 
-    function countSyncedTargets(targets = {}, fixed = {}) {
-        return Object.keys(targets || {}).filter(goalId => fixed?.[goalId] !== true).length;
-    }
+function countSyncedTargets(targets = {}, fixed = {}) {
+    return Object.keys(targets || {}).filter(goalId => fixed?.[goalId] !== true).length;
+}
 
     function normalizeAssignmentRecord(record, fallbackBucket = '') {
         if (!record || typeof record !== 'object') {
@@ -9953,7 +9951,7 @@ syncUi.update = function updateSyncUI() {
         `;
     }
 
-    function _buildFsmHeader({ overlay, cleanupCallbacks }) {
+    function buildFsmHeader({ overlay, cleanupCallbacks }) {
         const header = createElement('div', 'gpv-header');
         const title = createElement('h1', null, 'Portfolio Viewer (FSM)');
         const titleId = 'gpv-portfolio-title';
@@ -9965,6 +9963,8 @@ syncUi.update = function updateSyncUI() {
         syncBtn.onclick = () => {
             if (typeof showSyncSettings === 'function') {
                 showSyncSettings();
+            } else {
+                showErrorMessage('Sync settings are unavailable right now. Reload the viewer and try again.');
             }
         };
 
@@ -9973,6 +9973,7 @@ syncUi.update = function updateSyncUI() {
             if (!overlay.isConnected) {
                 return;
             }
+            clearSyncMessage();
             cleanupCallbacks.forEach(callback => {
                 if (typeof callback === 'function') {
                     callback();
@@ -9988,6 +9989,14 @@ syncUi.update = function updateSyncUI() {
         header.appendChild(title);
         header.appendChild(buttonContainer);
         return { header, closeBtn, titleId, closeOverlay };
+    }
+
+    function showOverlayAlert(message) {
+        if (typeof alert === 'function') {
+            alert(message);
+            return;
+        }
+        console.warn(`[Goal Portfolio Viewer] ${message}`);
     }
 
     function calculateFsmRowDrift(total, row) {
@@ -10587,6 +10596,44 @@ syncUi.update = function updateSyncUI() {
         rerender();
     }
 
+    function renderFsmOverlay(fsmHoldings) {
+        const overlay = createElement('div', 'gpv-overlay');
+        overlay.id = 'gpv-overlay';
+
+        const container = createElement('div', 'gpv-container gpv-container--expanded');
+        const cleanupCallbacks = [];
+        container.gpvCleanupCallbacks = cleanupCallbacks;
+        overlay.gpvCleanupCallbacks = cleanupCallbacks;
+
+        const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({ overlay, cleanupCallbacks });
+        container.appendChild(header);
+
+        const contentDiv = createElement('div', 'gpv-content');
+        container.appendChild(contentDiv);
+        overlay.appendChild(container);
+
+        renderFsmWorkspace(contentDiv, fsmHoldings);
+
+        overlay.onclick = event => {
+            if (event.target === overlay) {
+                closeOverlay();
+            }
+        };
+
+        document.body.appendChild(overlay);
+
+        const modalCleanup = setupModalAccessibility({
+            overlay,
+            container,
+            titleId,
+            onClose: closeOverlay,
+            initialFocus: closeBtn
+        });
+        if (typeof modalCleanup === 'function') {
+            cleanupCallbacks.push(modalCleanup);
+        }
+    }
+
     function showOverlay() {
         let old = document.getElementById('gpv-overlay');
         if (old) {
@@ -10606,7 +10653,7 @@ syncUi.update = function updateSyncUI() {
             const fsmHoldings = Array.isArray(state.apiData.fsmHoldings) ? state.apiData.fsmHoldings : [];
             if (fsmHoldings.length === 0) {
                 logDebug('[Goal Portfolio Viewer] FSM holdings not available yet');
-                alert('Please wait for FSM holdings data to load, then try again.');
+                showOverlayAlert('Please wait for FSM holdings data to load, then try again.');
                 return;
             }
             renderFsmOverlay(fsmHoldings);
@@ -10620,7 +10667,7 @@ syncUi.update = function updateSyncUI() {
         );
         if (!mergedInvestmentDataState) {
             logDebug('[Goal Portfolio Viewer] Not all API data available yet');
-            alert('Please wait for portfolio data to load, then try again.');
+            showOverlayAlert('Please wait for portfolio data to load, then try again.');
             return;
         }
         logDebug('[Goal Portfolio Viewer] Data merged successfully');
