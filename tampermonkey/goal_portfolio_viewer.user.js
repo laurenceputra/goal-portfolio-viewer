@@ -7565,7 +7565,7 @@ function renderSyncOverlayView({
     header.appendChild(headerButtons);
 
     const body = document.createElement('div');
-    body.className = 'gpv-content';
+    body.className = 'gpv-content gpv-content--modal';
     body.innerHTML = bodyHtml;
 
     container.appendChild(header);
@@ -7614,6 +7614,7 @@ function showSyncSettings() {
         const { overlay } = renderSyncOverlayView({
             title: 'Sync Settings',
             bodyHtml: settingsHTML,
+            containerClassName: 'gpv-container gpv-sync-modal',
             onBack: () => {
                 if (typeof renderPortfolioView === 'function') {
                     overlay.innerHTML = '';
@@ -8361,6 +8362,13 @@ syncUi.update = function updateSyncUI() {
             .gpv-content {
                 padding: 0;
                 min-height: 0;
+            }
+
+            .gpv-content--modal {
+                flex: 1;
+                overflow-y: auto;
+                overscroll-behavior: contain;
+                -webkit-overflow-scrolling: touch;
             }
             
             /* Summary View Styles */
