@@ -212,88 +212,18 @@ describe('initialization and URL monitoring', () => {
         expect(document.querySelector('#gpv-overlay')).toBeNull();
     });
 
-    test('showOverlay opens readiness shell when Endowus data is not loaded yet', () => {
+    test('showOverlay alerts when Endowus data is not loaded yet', () => {
         global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
-        expect(overlay).toBeTruthy();
-        expect(overlay.textContent).toContain('Status');
-        expect(overlay.textContent).toContain('Not ready yet');
-        expect(overlay.textContent).toContain('Waiting for Endowus data');
-        expect(overlay.textContent).toContain('Endowus data is still loading. The viewer will refresh automatically once the portfolio requests complete.');
-        expect(overlay.querySelectorAll('.gpv-select option')).toHaveLength(1);
+        expect(global.alert).toHaveBeenCalledWith('Please wait for portfolio data to load, then try again.');
+        expect(document.querySelector('#gpv-overlay')).toBeNull();
     });
 
-    test('showOverlay refreshes automatically when Endowus data arrives after opening in readiness mode', async () => {
-        global.alert = jest.fn();
-
-        const performanceData = [{
-            goalId: 'goal1',
-            totalCumulativeReturn: { amount: 100 },
-            simpleRateOfReturnPercent: 0.1,
-            totalInvestmentValue: { amount: 1000 }
-        }];
-        const investibleData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-            totalInvestmentAmount: { display: { amount: 1000 } }
-        }];
-        const summaryData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
-        }];
-
-        const responseFactory = body => ({
-            clone: () => responseFactory(body),
-            json: () => Promise.resolve(body),
-            ok: true,
-            status: 200
-        });
-        global.fetch = jest.fn(url => {
-            if (url.includes('/v1/goals/performance')) {
-                return Promise.resolve(responseFactory(performanceData));
-            }
-            if (url.includes('/v2/goals/investible')) {
-                return Promise.resolve(responseFactory(investibleData));
-            }
-            if (url.match(/\/v1\/goals(?:[?#]|$)/)) {
-                return Promise.resolve(responseFactory(summaryData));
-            }
-            return Promise.resolve(responseFactory({}));
-        });
-        window.fetch = global.fetch;
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        let overlay = document.querySelector('#gpv-overlay');
-        expect(overlay?.textContent).toContain('Not ready yet');
-        expect(overlay?.textContent).toContain('Waiting for Endowus data');
-
-        await window.fetch('https://app.sg.endowus.com/v1/goals/performance');
-        await flushPromises();
-        await window.fetch('https://app.sg.endowus.com/v2/goals/investible');
-        await flushPromises();
-        await window.fetch('https://app.sg.endowus.com/v1/goals');
-        await flushPromises();
-
-        overlay = document.querySelector('#gpv-overlay');
-        expect(overlay?.textContent).toContain('Ready');
-        expect(overlay?.textContent).toContain('Endowus data loaded');
-        expect(overlay?.textContent).toContain('Retirement');
-        expect(overlay?.querySelectorAll('.gpv-select option')).toHaveLength(2);
-        expect(overlay?.textContent).not.toContain('Not ready yet');
-        expect(overlay?.textContent).not.toContain('Waiting for Endowus data');
-    });
-
-    test('showOverlay opens readiness shell on FSM route before holdings snapshot exists', () => {
+    test('showOverlay alerts on FSM route before holdings snapshot exists', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
@@ -337,88 +267,8 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
-        expect(overlay).toBeTruthy();
-        expect(overlay.textContent).toContain('Portfolio Viewer (FSM)');
-        expect(overlay.textContent).toContain('Status');
-        expect(overlay.textContent).toContain('Not ready yet');
-        expect(overlay.textContent).toContain('Waiting for holdings data');
-        expect(overlay.textContent).toContain('No FSM holdings found yet. Once holdings load, assign them to portfolios here.');
-    });
-
-    test('showOverlay refreshes automatically when FSM holdings arrive after opening in readiness mode', async () => {
-        teardownDom();
-        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
-
-        storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
-        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
-        global.alert = jest.fn();
-
-        const holdingsPayload = {
-            data: [
-                {
-                    holdings: [
-                        { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 },
-                        { code: 'HEADER', productType: 'DPMS_HEADER' }
-                    ]
-                }
-            ]
-        };
-        const responseFactory = body => ({
-            clone: () => responseFactory(body),
-            json: () => Promise.resolve(body),
-            ok: true,
-            status: 200
-        });
-        global.fetch = jest.fn(url => {
-            if (url.includes('/fsmone/rest/holding/client/protected/find-holdings-with-pnl')) {
-                return Promise.resolve(responseFactory(holdingsPayload));
-            }
-            return Promise.resolve(responseFactory({}));
-        });
-        window.fetch = global.fetch;
-        global.history = window.history;
-
-        class FakeXHR {
-            constructor() {
-                this._headers = {};
-                this.responseText = '{}';
-            }
-            open(method, url) {
-                this._url = url;
-                return true;
-            }
-            setRequestHeader(header, value) {
-                this._headers[header] = value;
-            }
-            addEventListener() {}
-            send() {}
-        }
-        global.XMLHttpRequest = FakeXHR;
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        let overlay = document.querySelector('#gpv-overlay');
-        expect(overlay?.textContent).toContain('Not ready yet');
-        expect(overlay?.textContent).toContain('Waiting for holdings data');
-
-        await window.fetch('https://secure.fundsupermart.com/fsmone/rest/holding/client/protected/find-holdings-with-pnl');
-        await flushPromises();
-
-        overlay = document.querySelector('#gpv-overlay');
-        expect(overlay?.textContent).toContain('Ready');
-        expect(overlay?.textContent).toContain('Holdings loaded');
-        expect(overlay?.textContent).toContain('Fund A');
-        expect(overlay?.textContent).toContain('AAPL');
-        expect(overlay?.textContent).not.toContain('Waiting for holdings data');
-        expect(overlay?.textContent).not.toContain('No FSM holdings found yet');
+        expect(global.alert).toHaveBeenCalledWith('Please wait for FSM holdings data to load, then try again.');
+        expect(document.querySelector('#gpv-overlay')).toBeNull();
     });
 
     test('showOverlay renders FSM workspace with product type and bulk assignment controls', () => {
@@ -485,7 +335,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         const overlay = document.querySelector('#gpv-overlay');
-        const content = overlay?.querySelector('.gpv-body');
+        const content = overlay?.querySelector('.gpv-content');
         const select = overlay?.querySelector('.gpv-select');
         const bucketValue = Array.from(select?.options || []).find(option => option.value !== 'SUMMARY')?.value;
         expect(content).toBeTruthy();
@@ -527,7 +377,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         const overlay = document.querySelector('#gpv-overlay');
-        const content = overlay?.querySelector('.gpv-body');
+        const content = overlay?.querySelector('.gpv-content');
         const bucketCard = overlay?.querySelector('.gpv-bucket-card');
         expect(content).toBeTruthy();
         expect(bucketCard).toBeTruthy();
@@ -637,40 +487,6 @@ describe('initialization and URL monitoring', () => {
         expect(indicator.getAttribute('tabindex')).toBe('0');
     });
 
-    test('shell is compact and does not render shell tabs', () => {
-        const performanceData = [{
-            goalId: 'goal1',
-            totalCumulativeReturn: { amount: 100 },
-            simpleRateOfReturnPercent: 0.1,
-            totalInvestmentValue: { amount: 1000 }
-        }];
-        const investibleData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-            totalInvestmentAmount: { display: { amount: 1000 } }
-        }];
-        const summaryData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
-        }];
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.querySelector('.gpv-shell-tabs')).toBeNull();
-        expect(overlay.querySelectorAll('[data-tab]').length).toBe(0);
-        expect(overlay.querySelector('[data-shell-section="status"]')).toBeTruthy();
-        expect(overlay.querySelector('[data-shell-section="sync"]')).toBeTruthy();
-    });
-
     test('FSM overview drift status card refreshes after assignment and target edits', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
@@ -740,45 +556,7 @@ describe('initialization and URL monitoring', () => {
         expect(getDriftCard()?.textContent).toContain('1 in range');
     });
 
-    test('shell overview uses normalized shell typography and compact sections', () => {
-        const performanceData = [{
-            goalId: 'goal1',
-            totalCumulativeReturn: { amount: 100 },
-            simpleRateOfReturnPercent: 0.1,
-            totalInvestmentValue: { amount: 1000 }
-        }];
-        const investibleData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
-            totalInvestmentAmount: { display: { amount: 1000 } }
-        }];
-        const summaryData = [{
-            goalId: 'goal1',
-            goalName: 'Retirement - Core Portfolio',
-            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
-        }];
-
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-
-        const exportsModule = require('../goal_portfolio_viewer.user.js');
-        exportsModule.init();
-        exportsModule.showOverlay();
-
-        const styles = document.querySelector('#gpv-styles');
-        const overlay = document.querySelector('#gpv-overlay');
-
-        expect(styles.textContent).toContain('.gpv-shell {');
-        expect(styles.textContent).toContain('.gpv-body {');
-        expect(styles.textContent).toContain('.gpv-shell-overview {');
-        expect(overlay.querySelector('[data-shell-section="status"]')).toBeTruthy();
-        expect(overlay.querySelector('[data-shell-section="find"]')).toBeNull();
-        expect(overlay.textContent).toContain('Last sync');
-    });
-
-    test('FSM route renders overlay for empty holdings snapshot and shows an empty-state workspace', () => {
+    test('FSM route alerts when holdings snapshot is empty', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
@@ -789,6 +567,7 @@ describe('initialization and URL monitoring', () => {
         ));
         global.GM_deleteValue = jest.fn(key => storage.delete(key));
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
         global.history = window.history;
@@ -816,10 +595,8 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
-        expect(overlay).toBeTruthy();
-        expect(overlay.textContent).toContain('No FSM holdings found yet');
-        expect(document.querySelector('.gpv-notification')?.textContent || '').not.toContain('still loading');
+        expect(global.alert).toHaveBeenCalledWith('Please wait for FSM holdings data to load, then try again.');
+        expect(document.querySelector('#gpv-overlay')).toBeNull();
     });
 
     test('FSM assignment saves keep assignments for codes outside the current holdings snapshot', () => {
@@ -874,7 +651,7 @@ describe('initialization and URL monitoring', () => {
         expect(assignments.LEGACY).toBe('core');
     });
 
-    test('discovery helpers are declared only once after shell unification cleanup', () => {
+    test('discovery helpers are declared only once after overlay cleanup', () => {
         const fs = require('fs');
         const source = fs.readFileSync(require.resolve('../goal_portfolio_viewer.user.js'), 'utf8');
 
@@ -944,15 +721,13 @@ describe('initialization and URL monitoring', () => {
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Portfolio Viewer (FSM)');
         expect(overlay.querySelectorAll('[data-tab]').length).toBe(0);
-        expect(overlay.querySelector('[data-shell-section="find"]')).toBeNull();
         expect(overlay.textContent).toContain('Fund A');
         expect(overlay.textContent).toContain('AAPL');
         expect(overlay.textContent).not.toContain('Endowus Only Goal');
-        expect(overlay.querySelector('.gpv-shell')).toBeTruthy();
         expect(overlay.textContent).toContain('Product Type');
     });
 
-    test('showOverlay on FSM route opens readiness shell when FSM holdings are unavailable', () => {
+    test('showOverlay on FSM route alerts when FSM holdings are unavailable', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
@@ -988,11 +763,8 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
-        expect(overlay).toBeTruthy();
-        expect(overlay.textContent).toContain('Status');
-        expect(overlay.textContent).toContain('Waiting for holdings data');
-        expect(overlay.textContent).toContain('No FSM holdings found yet. Once holdings load, assign them to portfolios here.');
+        expect(global.alert).toHaveBeenCalledWith('Please wait for FSM holdings data to load, then try again.');
+        expect(document.querySelector('#gpv-overlay')).toBeNull();
     });
 
     test('FSM portfolio manager supports create, rename, archive and unassigns holdings', () => {

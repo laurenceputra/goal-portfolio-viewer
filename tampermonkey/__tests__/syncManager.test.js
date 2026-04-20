@@ -382,7 +382,7 @@ describe('SyncManager', () => {
             goalA: {
                 bucketName: '',
                 provenance: 'manual',
-                note: 'Explicitly unassigned from shell mappings',
+                note: 'Explicitly unassigned from mapping overrides',
                 timestamp: Date.now()
             }
         }));

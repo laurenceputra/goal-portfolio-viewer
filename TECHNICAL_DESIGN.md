@@ -336,7 +336,7 @@ The UI consists of:
 3. **View Selector** - Dropdown to switch between Summary and Detail views, synced with summary card clicks
 4. **Data Display Area** - Dynamic content area for tables and cards
 
-The modal overlay traps keyboard focus while open, supports `Esc` to close, restores focus to the triggering button, and applies dialog ARIA attributes to improve accessibility. When the viewer opens before Endowus or FSM payloads have been intercepted, the readiness shell stays visible and refreshes in place as soon as the required data arrives.
+The modal overlay traps keyboard focus while open, supports `Esc` to close, restores focus to the triggering button, and applies dialog ARIA attributes to improve accessibility.
 
 ### Sync Conflict Review
 

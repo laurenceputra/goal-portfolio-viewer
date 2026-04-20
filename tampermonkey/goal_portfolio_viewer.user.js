@@ -4343,34 +4343,20 @@ let GoalTargetStore;
             lastUrl: window.location.href,
             urlMonitorCleanup: null,
             urlCheckTimeout: null,
-            observer: null,
-            overlayRefresh: null
+            observer: null
         }
     };
-
-    function refreshOpenOverlay() {
-        if (typeof state.ui.overlayRefresh !== 'function') {
-            return;
-        }
-        try {
-            state.ui.overlayRefresh();
-        } catch (error) {
-            console.error('[Goal Portfolio Viewer] Failed to refresh open overlay:', error);
-        }
-    }
 
     const ENDPOINT_HANDLERS = {
         performance: data => {
             state.apiData.performance = data;
             Storage.writeJson(STORAGE_KEYS.performance, data, 'Error saving performance data');
             logDebug('[Goal Portfolio Viewer] Intercepted performance data');
-            refreshOpenOverlay();
         },
         investible: data => {
             state.apiData.investible = data;
             Storage.writeJson(STORAGE_KEYS.investible, data, 'Error saving investible data');
             logDebug('[Goal Portfolio Viewer] Intercepted investible data');
-            refreshOpenOverlay();
         },
         summary: data => {
             if (!Array.isArray(data)) {
@@ -4379,7 +4365,6 @@ let GoalTargetStore;
             state.apiData.summary = data;
             Storage.writeJson(STORAGE_KEYS.summary, data, 'Error saving summary data');
             logDebug('[Goal Portfolio Viewer] Intercepted summary data');
-            refreshOpenOverlay();
         },
         fsmHoldings: data => {
             const rows = Array.isArray(data?.data)
@@ -4389,7 +4374,6 @@ let GoalTargetStore;
             state.apiData.fsmHoldings = filteredRows;
             Storage.writeJson(STORAGE_KEYS.fsmHoldings, filteredRows, 'Error saving FSM holdings data');
             logDebug('[Goal Portfolio Viewer] Intercepted FSM holdings data', { rows: filteredRows.length });
-            refreshOpenOverlay();
         }
     };
 
@@ -8094,87 +8078,6 @@ syncUi.update = function updateSyncUI() {
                 --gpv-flash-color: #10b981;
             }
 
-            .gpv-shell {
-                font: inherit;
-                color: #1f2937;
-            }
-
-            .gpv-shell,
-            .gpv-shell * {
-                box-sizing: border-box;
-            }
-
-            .gpv-shell * {
-                font-family: inherit;
-            }
-
-            .gpv-shell button,
-            .gpv-shell input,
-            .gpv-shell select,
-            .gpv-shell textarea {
-                font: inherit;
-            }
-
-            .gpv-body {
-                flex: 1;
-                min-height: 0;
-                overflow-y: auto;
-                display: flex;
-                flex-direction: column;
-                gap: 12px;
-                padding: 12px 24px 16px;
-            }
-
-            .gpv-shell-overview {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 10px;
-                align-items: start;
-            }
-
-            .gpv-shell-card {
-                background: #f8fafc;
-                border: 1px solid #dbe3f1;
-                border-radius: 12px;
-                padding: 10px 14px;
-                display: grid;
-                gap: 4px;
-                min-width: 0;
-                flex: 1 1 240px;
-            }
-
-            .gpv-shell-card-label {
-                font-size: 11px;
-                font-weight: 700;
-                letter-spacing: 0.06em;
-                text-transform: uppercase;
-                color: #6b7280;
-            }
-
-            .gpv-shell-card-value {
-                font-size: 14px;
-                font-weight: 700;
-                color: #111827;
-                line-height: 1.3;
-            }
-
-            .gpv-shell-card-meta {
-                font-size: 13px;
-                line-height: 1.35;
-                color: #4b5563;
-            }
-
-            .gpv-shell-card-actions {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 8px;
-                align-items: center;
-            }
-
-            .gpv-shell-empty {
-                color: #6b7280;
-            }
-
             .gpv-header {
                 display: flex;
                 justify-content: space-between;
@@ -9658,6 +9561,32 @@ syncUi.update = function updateSyncUI() {
                     font-size: 13px;
                 }
 
+                .gpv-fsm-drift-label {
+                    font-size: 11px;
+                    font-weight: 700;
+                    letter-spacing: 0.05em;
+                    text-transform: uppercase;
+                    color: #6b7280;
+                }
+
+                .gpv-fsm-drift-value {
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: #111827;
+                    margin-top: 4px;
+                }
+
+                .gpv-fsm-drift-meta {
+                    font-size: 12px;
+                    line-height: 1.35;
+                    color: #4b5563;
+                    margin-top: 4px;
+                }
+
+                .gpv-fsm-empty {
+                    color: #6b7280;
+                }
+
                 .gpv-fsm-portfolio-list {
                     width: 100%;
                 }
@@ -9977,7 +9906,7 @@ syncUi.update = function updateSyncUI() {
         };
     }
 
-    function buildFsmDriftStatusCardHtml(driftModel, { className = 'gpv-shell-card', dataAttribute = 'data-shell-card' } = {}) {
+    function buildFsmDriftStatusCardHtml(driftModel, { className = 'gpv-summary-card', dataAttribute = 'data-fsm-card' } = {}) {
         const summary = driftModel?.summary || {};
         const warningCount = Number(summary.warningCount) || 0;
         const targetMissingCount = Number(summary.targetMissingCount) || 0;
@@ -10006,18 +9935,18 @@ syncUi.update = function updateSyncUI() {
                 ? 'Warning'
                 : (item.status === 'target-missing' ? 'No target' : 'In range');
             const driftLabel = item.driftDisplay || '-';
-            return `<div class="gpv-shell-card-meta gpv-shell-card-meta-compact">${escapeHtml(item.portfolioLabel)} · ${escapeHtml(driftLabel)} · ${statusLabel}</div>`;
+            return `<div class="gpv-fsm-drift-meta">${escapeHtml(item.portfolioLabel)} · ${escapeHtml(driftLabel)} · ${statusLabel}</div>`;
         }).join('');
         const hiddenCount = Math.max(0, (driftModel?.portfolios || []).length - 3);
         const overflowLine = hiddenCount > 0
-            ? `<div class="gpv-shell-card-meta gpv-shell-card-meta-compact">+${hiddenCount} more</div>`
+            ? `<div class="gpv-fsm-drift-meta">+${hiddenCount} more</div>`
             : '';
 
         return `
             <div class="${escapeHtml(className)}" ${dataAttribute}="fsm-drift-status">
-                <div class="gpv-shell-card-label">FSM drift status</div>
-                <div class="gpv-shell-card-value">${escapeHtml(headline)}</div>
-                <div class="gpv-shell-card-meta">${escapeHtml(coverageMeta)}</div>
+                <div class="gpv-fsm-drift-label">FSM drift status</div>
+                <div class="gpv-fsm-drift-value">${escapeHtml(headline)}</div>
+                <div class="gpv-fsm-drift-meta">${escapeHtml(coverageMeta)}</div>
                 ${detailRows}
                 ${overflowLine}
             </div>
@@ -10410,7 +10339,7 @@ syncUi.update = function updateSyncUI() {
         return table;
     }
 
-    function renderFsmWorkspace(contentDiv, fsmHoldings, onStateChange = null) {
+    function renderFsmWorkspace(contentDiv, fsmHoldings) {
         const config = loadFsmPortfolioConfig(fsmHoldings);
         let portfolios = config.portfolios;
         let assignmentByCode = { ...config.assignmentByCode };
@@ -10541,12 +10470,9 @@ syncUi.update = function updateSyncUI() {
             if (!rows.length) {
                 contentDiv.appendChild(createElement(
                     'div',
-                    'gpv-shell-empty',
+                    'gpv-fsm-empty',
                     'No FSM holdings found yet. Once holdings load, assign them to portfolios here.'
                 ));
-                if (typeof onStateChange === 'function') {
-                    onStateChange();
-                }
                 return;
             }
 
@@ -10656,17 +10582,12 @@ syncUi.update = function updateSyncUI() {
                 }
             });
             contentDiv.appendChild(table);
-            if (typeof onStateChange === 'function') {
-                onStateChange();
-            }
         };
 
         rerender();
     }
 
     function showOverlay() {
-
-        state.ui.overlayRefresh = null;
         let old = document.getElementById('gpv-overlay');
         if (old) {
             if (Array.isArray(old.gpvCleanupCallbacks)) {
@@ -10681,25 +10602,28 @@ syncUi.update = function updateSyncUI() {
         }
 
         const isFsmRoute = isFsmInvestmentsRoute(window.location.href, window.location.origin);
-        const hasFsmHoldingsSnapshot = Array.isArray(state.apiData.fsmHoldings);
-        const fsmHoldings = hasFsmHoldingsSnapshot ? state.apiData.fsmHoldings : [];
+        if (isFsmRoute) {
+            const fsmHoldings = Array.isArray(state.apiData.fsmHoldings) ? state.apiData.fsmHoldings : [];
+            if (fsmHoldings.length === 0) {
+                logDebug('[Goal Portfolio Viewer] FSM holdings not available yet');
+                alert('Please wait for FSM holdings data to load, then try again.');
+                return;
+            }
+            renderFsmOverlay(fsmHoldings);
+            return;
+        }
 
-        let mergedInvestmentDataState = buildMergedInvestmentData(
+        const mergedInvestmentDataState = buildMergedInvestmentData(
             state.apiData.performance,
             state.apiData.investible,
             state.apiData.summary
         );
-        if (isFsmRoute) {
-            if (hasFsmHoldingsSnapshot) {
-                logDebug('[Goal Portfolio Viewer] FSM holdings loaded');
-            } else {
-                logDebug('[Goal Portfolio Viewer] FSM holdings not available yet; opening shell in readiness mode');
-            }
-        } else if (mergedInvestmentDataState) {
-            logDebug('[Goal Portfolio Viewer] Data merged successfully');
-        } else {
-            logDebug('[Goal Portfolio Viewer] Endowus data not available yet; opening shell in readiness mode');
+        if (!mergedInvestmentDataState) {
+            logDebug('[Goal Portfolio Viewer] Not all API data available yet');
+            alert('Please wait for portfolio data to load, then try again.');
+            return;
         }
+        logDebug('[Goal Portfolio Viewer] Data merged successfully');
 
         const overlay = createElement('div', 'gpv-overlay');
         overlay.id = 'gpv-overlay';
@@ -10766,7 +10690,6 @@ syncUi.update = function updateSyncUI() {
             if (!overlay.isConnected) {
                 return;
             }
-            state.ui.overlayRefresh = null;
             clearSyncMessage();
             if (!Array.isArray(cleanupCallbacks)) {
                 return;
@@ -10798,176 +10721,41 @@ syncUi.update = function updateSyncUI() {
         header.appendChild(buttonContainer);
         container.appendChild(header);
 
-        const body = createElement('div', 'gpv-body');
-        const shellChrome = createElement('div', 'gpv-shell');
-        body.appendChild(shellChrome);
-        container.appendChild(body);
+        const controls = createElement('div', 'gpv-controls');
+        const selectLabel = createElement('label', 'gpv-select-label', 'View:');
+        const select = createElement('select', 'gpv-select');
+        const summaryOption = createElement('option', null, '📊 Summary View');
+        summaryOption.value = 'SUMMARY';
+        select.appendChild(summaryOption);
 
-        function renderShellSummary() {
-            const loadedState = isFsmRoute
-                ? Array.isArray(state.apiData.fsmHoldings)
-                : Boolean(mergedInvestmentDataState);
-            const freshness = isFsmRoute
-                ? (state.apiData.fsmHoldings ? 'Holdings loaded' : 'Waiting for holdings data')
-                : (mergedInvestmentDataState ? 'Endowus data loaded' : 'Waiting for Endowus data');
-            const syncStatusSummary = SyncManager.getStatus();
-            shellChrome.innerHTML = `
-                <div class="gpv-shell-overview">
-                    <div class="gpv-shell-card" data-shell-section="status">
-                        <div class="gpv-shell-card-label">Status</div>
-                        <div class="gpv-shell-card-value">${loadedState ? 'Ready' : 'Not ready yet'}</div>
-                        <div class="gpv-shell-card-meta">${escapeHtml(freshness)}</div>
-                    </div>
-                    <div class="gpv-shell-card" data-shell-section="sync">
-                        <div class="gpv-shell-card-label">Sync</div>
-                        <div class="gpv-shell-card-value">${escapeHtml(syncStatusSummary.status)}</div>
-                        <div class="gpv-shell-card-meta">Last sync ${escapeHtml(buildSyncSettingsState().lastSyncText)}</div>
-                        <div class="gpv-shell-card-actions">
-                            <button type="button" class="gpv-sync-btn gpv-sync-btn-secondary" data-shell-action="open-sync">Open sync settings</button>
-                        </div>
-                    </div>
-                </div>
-            `;
-            const openSyncButton = shellChrome.querySelector('[data-shell-action="open-sync"]');
-            if (openSyncButton) {
-                openSyncButton.onclick = () => {
-                    if (typeof showSyncSettings === 'function') {
-                        showSyncSettings();
-                    }
-                };
-            }
-        }
+        Object.keys(mergedInvestmentDataState).sort().forEach(bucket => {
+            const opt = createElement('option', null, `📁 ${bucket}`);
+            opt.value = bucket;
+            select.appendChild(opt);
+        });
 
-        function updateShellPanels() {
-            renderShellSummary();
-        }
+        controls.appendChild(selectLabel);
+        controls.appendChild(select);
 
-        updateShellPanels();
+        const modeToggle = createElement('div', 'gpv-mode-toggle');
+        modeToggle.setAttribute('role', 'group');
+        modeToggle.setAttribute('aria-label', 'Detail mode');
+        const modeLabel = createElement('span', 'gpv-mode-label', 'Mode:');
+        const allocationButton = createElement('button', 'gpv-mode-btn', 'Allocation');
+        allocationButton.type = 'button';
+        allocationButton.dataset.mode = BUCKET_VIEW_MODES.allocation;
+        const performanceButton = createElement('button', 'gpv-mode-btn', 'Performance');
+        performanceButton.type = 'button';
+        performanceButton.dataset.mode = BUCKET_VIEW_MODES.performance;
+        modeToggle.appendChild(modeLabel);
+        modeToggle.appendChild(allocationButton);
+        modeToggle.appendChild(performanceButton);
 
-        let select = null;
-        let contentDiv = null;
-        let modeToggle = null;
-        let allocationButton = null;
-        let performanceButton = null;
-        if (!isFsmRoute) {
-            const controls = createElement('div', 'gpv-controls');
-            const selectLabel = createElement('label', 'gpv-select-label', 'View:');
-            select = createElement('select', 'gpv-select');
-            const summaryOption = createElement('option', null, '📊 Summary View');
-            summaryOption.value = 'SUMMARY';
-            select.appendChild(summaryOption);
+        controls.appendChild(modeToggle);
+        container.appendChild(controls);
 
-            Object.keys(mergedInvestmentDataState || {}).filter(Boolean).sort().forEach(bucket => {
-                const opt = createElement('option', null, `📁 ${bucket}`);
-                opt.value = bucket;
-                select.appendChild(opt);
-            });
-
-            controls.appendChild(selectLabel);
-            controls.appendChild(select);
-
-            modeToggle = createElement('div', 'gpv-mode-toggle');
-            modeToggle.setAttribute('role', 'group');
-            modeToggle.setAttribute('aria-label', 'Detail mode');
-            const modeLabel = createElement('span', 'gpv-mode-label', 'Mode:');
-            allocationButton = createElement('button', 'gpv-mode-btn', 'Allocation');
-            allocationButton.type = 'button';
-            allocationButton.dataset.mode = BUCKET_VIEW_MODES.allocation;
-            performanceButton = createElement('button', 'gpv-mode-btn', 'Performance');
-            performanceButton.type = 'button';
-            performanceButton.dataset.mode = BUCKET_VIEW_MODES.performance;
-            modeToggle.appendChild(modeLabel);
-            modeToggle.appendChild(allocationButton);
-            modeToggle.appendChild(performanceButton);
-
-            controls.appendChild(modeToggle);
-            body.appendChild(controls);
-
-            contentDiv = createElement('div', 'gpv-content');
-            body.appendChild(contentDiv);
-        } else {
-            contentDiv = createElement('div', 'gpv-content');
-            body.appendChild(contentDiv);
-            renderFsmWorkspace(contentDiv, fsmHoldings, () => {
-                updateShellPanels();
-            });
-        }
-
-
-        function refreshMergedInvestmentDataState() {
-            mergedInvestmentDataState = buildMergedInvestmentData(
-                state.apiData.performance,
-                state.apiData.investible,
-                state.apiData.summary
-            );
-            return mergedInvestmentDataState;
-        }
-
-        function renderEndowusPendingState() {
-            if (!contentDiv) {
-                return;
-            }
-            contentDiv.innerHTML = '';
-            contentDiv.appendChild(createElement(
-                'div',
-                'gpv-shell-empty',
-                'Endowus data is still loading. The viewer will refresh automatically once the portfolio requests complete.'
-            ));
-        }
-
-        function refreshOverlayFromState() {
-            if (!overlay.isConnected) {
-                return;
-            }
-            if (isFsmRoute) {
-                contentDiv.innerHTML = '';
-                renderFsmWorkspace(contentDiv, Array.isArray(state.apiData.fsmHoldings) ? state.apiData.fsmHoldings : [], () => {
-                    updateShellPanels();
-                });
-                updateShellPanels();
-                return;
-            }
-            const previousSelection = select?.value || 'SUMMARY';
-            refreshMergedInvestmentDataState();
-            if (!mergedInvestmentDataState) {
-                renderEndowusPendingState();
-                updateShellPanels();
-                return;
-            }
-            rebuildSelectionOptions();
-            renderView(select?.value || previousSelection || 'SUMMARY', {
-                scrollToTop: false,
-                useCacheOnly: true
-            });
-            updateShellPanels();
-        }
-
-        state.ui.overlayRefresh = refreshOverlayFromState;
-
-        function rebuildSelectionOptions() {
-            if (!select) {
-                return;
-            }
-            const previousValue = select.value || 'SUMMARY';
-            const bucketNames = Object.keys(mergedInvestmentDataState || {})
-                .filter(Boolean)
-                .sort();
-
-            select.innerHTML = '';
-
-            const summaryOptionNode = createElement('option', null, '📊 Summary View');
-            summaryOptionNode.value = 'SUMMARY';
-            select.appendChild(summaryOptionNode);
-
-            bucketNames.forEach(bucket => {
-                const opt = createElement('option', null, `📁 ${bucket}`);
-                opt.value = bucket;
-                select.appendChild(opt);
-            });
-
-            const availableValues = new Set(['SUMMARY', ...bucketNames]);
-            select.value = availableValues.has(previousValue) ? previousValue : 'SUMMARY';
-        }
+        const contentDiv = createElement('div', 'gpv-content');
+        container.appendChild(contentDiv);
 
         let currentBucketMode = getBucketViewModePreference();
         function updateModeToggle(mode) {
@@ -11014,23 +10802,21 @@ syncUi.update = function updateSyncUI() {
             });
         }
 
-        if (allocationButton && performanceButton) {
-            allocationButton.addEventListener('click', () => {
-                if (currentBucketMode === BUCKET_VIEW_MODES.allocation) {
-                    return;
-                }
-                currentBucketMode = setBucketViewModePreference(BUCKET_VIEW_MODES.allocation);
-                applyBucketMode(currentBucketMode);
-            });
+        allocationButton.addEventListener('click', () => {
+            if (currentBucketMode === BUCKET_VIEW_MODES.allocation) {
+                return;
+            }
+            currentBucketMode = setBucketViewModePreference(BUCKET_VIEW_MODES.allocation);
+            applyBucketMode(currentBucketMode);
+        });
 
-            performanceButton.addEventListener('click', () => {
-                if (currentBucketMode === BUCKET_VIEW_MODES.performance) {
-                    return;
-                }
-                currentBucketMode = setBucketViewModePreference(BUCKET_VIEW_MODES.performance);
-                applyBucketMode(currentBucketMode);
-            });
-        }
+        performanceButton.addEventListener('click', () => {
+            if (currentBucketMode === BUCKET_VIEW_MODES.performance) {
+                return;
+            }
+            currentBucketMode = setBucketViewModePreference(BUCKET_VIEW_MODES.performance);
+            applyBucketMode(currentBucketMode);
+        });
 
         let performanceRefreshToken = 0;
 
@@ -11092,22 +10878,11 @@ syncUi.update = function updateSyncUI() {
             renderView(bucket, { scrollToTop: true });
         }
 
-        if (!isFsmRoute && select) {
-            if (mergedInvestmentDataState) {
-                renderView('SUMMARY');
-            } else {
-                modeToggle.classList.add('gpv-mode-toggle--hidden');
-                renderEndowusPendingState();
-            }
+        renderView('SUMMARY');
 
-            select.onchange = function() {
-                if (!mergedInvestmentDataState) {
-                    renderEndowusPendingState();
-                    return;
-                }
-                renderView(select.value, { scrollToTop: true });
-            };
-        }
+        select.onchange = function() {
+            renderView(select.value, { scrollToTop: true });
+        };
 
         overlay.appendChild(container);
         

@@ -302,19 +302,17 @@ Contributions are welcome! To contribute:
 ## Changelog
 
 ### Version 2.14.5
-- Refreshed the open readiness overlay automatically as Endowus and FSM payloads arrived, so users no longer need to close and reopen the viewer after initial load
+- Fixed sync modal scrolling so settings and conflict content remain accessible in long dialogs
 
 ### Version 2.14.4
 - Cleared stale Endowus and FSM per-item sync keys before applying pulled config payloads, so remote sync state fully replaces old local namespaced values
 
 ### Version 2.14.3
-- Open the workflow shell in readiness mode even before Endowus or FSM data finishes loading
-- Show a non-blocking empty state instead of bailing out before the shell can explain what is missing
+- Preserved explicit Endowus unassigned mapping records during sync collection and apply paths
 
 ### Version 2.14.2
-- Added the unified workflow shell with Readiness, Discovery, Compare, Mappings, and Sync tabs
-- Preserved explicit Endowus bucket assignments and refreshed the viewer immediately after mapping changes
-- Hardened shell state persistence and accessibility, including route-aware filters, durable compare selections, and tab ARIA wiring
+- Added FSM drift status signals in workspace summaries
+- Preserved explicit Endowus bucket assignments for manual overrides
 - Detached transient UI timers so test runs and teardown do not leak open handles
 
 ### Version 2.14.1

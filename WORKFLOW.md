@@ -5,7 +5,7 @@
 Make the project easier to validate by turning the repeated review findings into a small, repo-local harness.
 
 This harness is intentionally project-specific. It focuses on the failure modes that kept showing up in this codebase:
-- readiness vs loaded state
+- data load-state handling
 - Endowus vs FSM route behavior
 - compare and discovery stale state
 - sync apply cleanup
