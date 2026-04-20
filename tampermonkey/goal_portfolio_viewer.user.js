@@ -325,6 +325,45 @@
         return `${sign}${percentValue.toFixed(2)}%`;
     }
 
+    function formatSignedMoney(value) {
+        const numericValue = toFiniteNumber(value, null);
+        if (numericValue === null) {
+            return '-';
+        }
+        const money = formatMoney(numericValue);
+        if (money === '-') {
+            return '-';
+        }
+        return numericValue > 0 ? `+${money}` : money;
+    }
+
+    function getDriftSeverityClass(driftRatio) {
+        const numericDrift = toFiniteNumber(driftRatio, null);
+        if (numericDrift === null) {
+            return '';
+        }
+        const magnitude = Math.abs(numericDrift);
+        if (magnitude <= 0.25) {
+            return 'gpv-drift--green';
+        }
+        if (magnitude <= 0.5) {
+            return 'gpv-drift--yellow';
+        }
+        return 'gpv-drift--red';
+    }
+
+    function formatDriftDisplay(driftPercent, driftAmount) {
+        const percentDisplay = formatPercent(driftPercent, {
+            multiplier: 100,
+            showSign: true
+        });
+        const amountDisplay = formatSignedMoney(driftAmount);
+        if (percentDisplay === '-' || amountDisplay === '-') {
+            return '-';
+        }
+        return `${percentDisplay} (${amountDisplay})`;
+    }
+
     function getFiniteNumbers(values) {
         const numbers = values.map(value => toFiniteNumber(value, null));
         return numbers.some(value => value === null) ? null : numbers;
@@ -423,23 +462,29 @@
 
     function calculateGoalDiff(currentAmount, targetPercent, adjustedTypeTotal) {
         if (targetPercent === null || targetPercent === undefined) {
-            return { diffAmount: null, diffClass: '' };
+            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
         }
         const numericValues = getFiniteNumbers([currentAmount, targetPercent, adjustedTypeTotal]);
         if (!numericValues) {
-            return { diffAmount: null, diffClass: '' };
+            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
         }
         const [numericCurrent, numericTarget, numericTotal] = numericValues;
         if (numericTotal <= 0) {
-            return { diffAmount: null, diffClass: '' };
+            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
         }
         const targetAmount = (numericTarget / 100) * numericTotal;
+        if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
+            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
+        }
         const diffAmount = numericCurrent - targetAmount;
+        const driftPercent = diffAmount / targetAmount;
         const threshold = numericCurrent * 0.05;
         const diffClass = Math.abs(diffAmount) > threshold ? 'negative' : 'positive';
         return {
             diffAmount,
-            diffClass
+            diffClass,
+            driftPercent: Number.isFinite(driftPercent) ? driftPercent : null,
+            driftAmount: Number.isFinite(diffAmount) ? diffAmount : null
         };
     }
 
@@ -449,6 +494,7 @@
             return {
                 allocationDriftPercent: null,
                 allocationDriftDisplay: '-',
+                allocationDriftClass: '',
                 allocationDriftAvailable: false
             };
         }
@@ -457,6 +503,7 @@
             return {
                 allocationDriftPercent: null,
                 allocationDriftDisplay: '-',
+                allocationDriftClass: '',
                 allocationDriftAvailable: false
             };
         }
@@ -468,6 +515,7 @@
             return {
                 allocationDriftPercent: null,
                 allocationDriftDisplay: '-',
+                allocationDriftClass: '',
                 allocationDriftAvailable: false
             };
         }
@@ -478,6 +526,7 @@
             return {
                 allocationDriftPercent: null,
                 allocationDriftDisplay: '-',
+                allocationDriftClass: '',
                 allocationDriftAvailable: false
             };
         }
@@ -503,6 +552,7 @@
         return {
             allocationDriftPercent: driftSum,
             allocationDriftDisplay: formatPercent(driftSum, { multiplier: 100, showSign: false }),
+            allocationDriftClass: getDriftSeverityClass(driftSum),
             allocationDriftAvailable: true
         };
     }
@@ -652,6 +702,8 @@
             targetPercent,
             diffAmount: diffInfo.diffAmount,
             diffClass: diffInfo.diffClass,
+            driftPercent: diffInfo.driftPercent,
+            driftAmount: diffInfo.driftAmount,
             returnValue,
             returnPercent
         };
@@ -694,7 +746,9 @@
                 return {
                     ...goal,
                     diffAmount: diffInfo.diffAmount,
-                    diffClass: diffInfo.diffClass
+                    diffClass: diffInfo.diffClass,
+                    driftPercent: diffInfo.driftPercent,
+                    driftAmount: diffInfo.driftAmount
                 };
             });
         }
@@ -704,6 +758,7 @@
             remainingTargetPercent: adjustedRemainingTargetPercent,
             allocationDriftPercent: allocationDriftModel.allocationDriftPercent,
             allocationDriftDisplay: allocationDriftModel.allocationDriftDisplay,
+            allocationDriftClass: allocationDriftModel.allocationDriftClass,
             allocationDriftAvailable: allocationDriftModel.allocationDriftAvailable
         };
     }
@@ -856,6 +911,7 @@
                                 ),
                                 returnClass: getReturnClass(typeReturn),
                                 allocationDriftDisplay: allocationModel.allocationDriftDisplay,
+                                allocationDriftClass: allocationModel.allocationDriftClass,
                                 allocationDriftAvailable: allocationModel.allocationDriftAvailable
                             };
                         })
@@ -948,6 +1004,7 @@ function buildBucketDetailGoalTypeModel({ goalType, group, projectedAmount, allo
         remainingTargetDisplay: formatPercent(allocationModel.remainingTargetPercent),
         remainingTargetIsHigh: isRemainingTargetAboveThreshold(allocationModel.remainingTargetPercent),
         allocationDriftDisplay: allocationModel.allocationDriftDisplay,
+        allocationDriftClass: allocationModel.allocationDriftClass,
         allocationDriftAvailable: allocationModel.allocationDriftAvailable,
         goalModelsById: allocationModel.goalModelsById,
         goals: allocationModel.goalModels.map(goal => buildBucketDetailGoalRow(goal))
@@ -963,6 +1020,8 @@ function buildBucketDetailGoalRow(goal) {
         percentOfTypeDisplay: formatPercent(goal.percentOfType),
         targetDisplay: goal.targetPercent !== null ? goal.targetPercent.toFixed(2) : '',
         diffDisplay: goal.diffAmount === null ? '-' : formatMoney(goal.diffAmount),
+        driftDisplay: formatDriftDisplay(goal.driftPercent, goal.driftAmount),
+        driftClass: getDriftSeverityClass(goal.driftPercent),
         returnDisplay: formatMoney(goal.returnValue),
         returnPercentDisplay: formatPercent(goal.returnPercent, { multiplier: 100, showSign: false }),
         returnClass: getReturnClass(goal.returnValue),
@@ -5611,6 +5670,7 @@ let GoalTargetStore;
         headerRow.appendChild(targetHeader);
 
         headerRow.appendChild(createElement('th', 'gpv-column-diff', 'Diff'));
+        headerRow.appendChild(createElement('th', 'gpv-column-drift', 'Drift'));
         headerRow.appendChild(createElement('th', 'gpv-column-return', 'Cumulative Return'));
         headerRow.appendChild(createElement('th', 'gpv-column-return-percent', 'Return %'));
 
@@ -5656,6 +5716,10 @@ let GoalTargetStore;
                 ? `${CLASS_NAMES.diffCell} gpv-column-diff ${goalModel.diffClass}`
                 : `${CLASS_NAMES.diffCell} gpv-column-diff`;
             tr.appendChild(createElement('td', diffClassName, goalModel.diffDisplay));
+            const driftClassName = goalModel.driftClass
+                ? `gpv-column-drift ${goalModel.driftClass}`
+                : 'gpv-column-drift';
+            tr.appendChild(createElement('td', driftClassName, goalModel.driftDisplay));
             const returnClassName = goalModel.returnClass
                 ? `${goalModel.returnClass} gpv-column-return`
                 : 'gpv-column-return';
@@ -5811,7 +5875,8 @@ let GoalTargetStore;
                     typeRow,
                     'gpv-goal-type-stat',
                     'Allocation Drift:',
-                    goalTypeModel.allocationDriftDisplay
+                    goalTypeModel.allocationDriftDisplay,
+                    { valueClass: goalTypeModel.allocationDriftClass || null }
                 );
                 bucketCard.appendChild(typeRow);
             });
@@ -5885,7 +5950,13 @@ let GoalTargetStore;
             appendLabeledValue(typeSummary, null, 'Balance:', goalTypeModel.endingBalanceDisplay);
             appendLabeledValue(typeSummary, null, 'Return:', goalTypeModel.returnDisplay);
             appendLabeledValue(typeSummary, null, 'Growth:', typeGrowth);
-            appendLabeledValue(typeSummary, null, 'Allocation Drift:', goalTypeModel.allocationDriftDisplay);
+            appendLabeledValue(
+                typeSummary,
+                null,
+                'Allocation Drift:',
+                goalTypeModel.allocationDriftDisplay,
+                { valueClass: goalTypeModel.allocationDriftClass || null }
+            );
             typeHeader.appendChild(typeTitle);
             typeHeader.appendChild(typeSummary);
 
@@ -6021,6 +6092,7 @@ let GoalTargetStore;
         rows.forEach(row => {
             const targetInput = row.querySelector(`.${CLASS_NAMES.targetInput}`);
             const diffCell = row.querySelector(`.${CLASS_NAMES.diffCell}`);
+            const driftCell = row.querySelector('.gpv-column-drift');
             if (!targetInput) {
                 return;
             }
@@ -6039,6 +6111,11 @@ let GoalTargetStore;
                 diffCell.className = goalModel.diffClass
                     ? `${CLASS_NAMES.diffCell} ${goalModel.diffClass}`
                     : CLASS_NAMES.diffCell;
+            }
+            if (driftCell) {
+                driftCell.textContent = formatDriftDisplay(goalModel.driftPercent, goalModel.driftAmount);
+                const driftClass = getDriftSeverityClass(goalModel.driftPercent);
+                driftCell.className = driftClass ? `gpv-column-drift ${driftClass}` : 'gpv-column-drift';
             }
         });
     }
@@ -7977,6 +8054,33 @@ syncUi.update = function updateSyncUI() {
                 color: #4b5563;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             }
+
+            .gpv-goal-type-stat .gpv-drift--green,
+            .gpv-type-summary .gpv-drift--green,
+            .gpv-column-drift.gpv-drift--green,
+            .gpv-summary-card.gpv-drift--green,
+            .gpv-table .gpv-drift--green {
+                color: #059669;
+                font-weight: 700;
+            }
+
+            .gpv-goal-type-stat .gpv-drift--yellow,
+            .gpv-type-summary .gpv-drift--yellow,
+            .gpv-column-drift.gpv-drift--yellow,
+            .gpv-summary-card.gpv-drift--yellow,
+            .gpv-table .gpv-drift--yellow {
+                color: #b45309;
+                font-weight: 700;
+            }
+
+            .gpv-goal-type-stat .gpv-drift--red,
+            .gpv-type-summary .gpv-drift--red,
+            .gpv-column-drift.gpv-drift--red,
+            .gpv-summary-card.gpv-drift--red,
+            .gpv-table .gpv-drift--red {
+                color: #dc2626;
+                font-weight: 700;
+            }
             
             /* Detail View Styles */
             
@@ -8138,6 +8242,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-mode-performance .gpv-column-fixed,
             .gpv-mode-performance .gpv-column-target,
             .gpv-mode-performance .gpv-column-diff,
+            .gpv-mode-performance .gpv-column-drift,
             .gpv-mode-performance .gpv-projection-panel,
             .gpv-mode-performance .gpv-section-toggle--projection {
                 display: none;
@@ -9435,13 +9540,14 @@ syncUi.update = function updateSyncUI() {
         const targetPercentTotal = activeRows.reduce((sum, row) => sum + (Number(row.targetPercent) || 0), 0);
         const totalDrift = activeRows.reduce((sum, row) => {
             const rowDrift = calculateFsmRowDrift(total, row);
-            return sum + (Number.isFinite(rowDrift) ? rowDrift : 0);
+            return sum + (Number.isFinite(rowDrift?.driftPercent) ? Math.abs(rowDrift.driftPercent) : 0);
         }, 0);
         return {
             total,
             actualWeightDisplay: formatPercent(1, { multiplier: 100, showSign: false }),
             targetWeightDisplay: formatPercent(targetPercentTotal / 100, { multiplier: 100, showSign: false }),
             driftDisplay: formatPercent(totalDrift, { multiplier: 100, showSign: false }),
+            driftClass: getDriftSeverityClass(totalDrift),
             suggestionDisplay: formatMoney(0)
         };
     }
@@ -9509,14 +9615,23 @@ syncUi.update = function updateSyncUI() {
             return null;
         }
         const currentValue = toFiniteNumber(row?.currentValueLcy, 0);
-        const drift = Math.abs(targetAmount - currentValue) / targetAmount;
-        return Number.isFinite(drift) ? drift : null;
+        const driftAmount = currentValue - targetAmount;
+        const driftPercent = driftAmount / targetAmount;
+        if (!Number.isFinite(driftPercent) || !Number.isFinite(driftAmount)) {
+            return null;
+        }
+        return {
+            driftPercent,
+            driftAmount
+        };
     }
 
     function buildFsmDisplayRows(rows, total) {
         return (Array.isArray(rows) ? rows : []).map(row => {
             const currentAllocationPercent = calculateFsmCurrentAllocation(total, row);
-            const driftPercent = calculateFsmRowDrift(total, row);
+            const driftModel = calculateFsmRowDrift(total, row);
+            const driftPercent = driftModel?.driftPercent ?? null;
+            const driftAmount = driftModel?.driftAmount ?? null;
             return {
                 ...row,
                 currentAllocationPercent,
@@ -9525,10 +9640,9 @@ syncUi.update = function updateSyncUI() {
                     showSign: false
                 }),
                 driftPercent,
-                driftDisplay: formatPercent(driftPercent, {
-                    multiplier: 100,
-                    showSign: false
-                })
+                driftAmount,
+                driftDisplay: formatDriftDisplay(driftPercent, driftAmount),
+                driftClass: getDriftSeverityClass(driftPercent)
             };
         });
     }
@@ -9659,11 +9773,14 @@ syncUi.update = function updateSyncUI() {
 
     function buildFsmSummaryRow(summary) {
         const summaryRow = createElement('div', 'gpv-summary-row');
+        const driftClassName = summary?.driftClass
+            ? `gpv-summary-card ${summary.driftClass}`
+            : 'gpv-summary-card';
         summaryRow.innerHTML = `
             <div class="gpv-summary-card"><strong>Total Value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
             <div class="gpv-summary-card"><strong>Actual:</strong> ${escapeHtml(summary.actualWeightDisplay)}</div>
             <div class="gpv-summary-card"><strong>Target:</strong> ${escapeHtml(summary.targetWeightDisplay)}</div>
-            <div class="gpv-summary-card"><strong>Drift:</strong> ${escapeHtml(summary.driftDisplay)}</div>
+            <div class="${escapeHtml(driftClassName)}"><strong>Drift:</strong> ${escapeHtml(summary.driftDisplay)}</div>
             <div class="gpv-summary-card"><strong>Suggestion:</strong> ${escapeHtml(summary.suggestionDisplay)}</div>
         `;
         return summaryRow;
@@ -9801,7 +9918,7 @@ syncUi.update = function updateSyncUI() {
                 <td data-col="value">${escapeHtml(formatMoney(row.currentValueLcy))}</td>
                 <td data-col="current">${escapeHtml(row.currentAllocationDisplay || '-')}</td>
                 <td data-col="target"></td>
-                <td data-col="drift">${escapeHtml(row.driftDisplay || '-')}</td>
+                <td data-col="drift" class="${escapeHtml(row.driftClass || '')}">${escapeHtml(row.driftDisplay || '-')}</td>
                 <td data-col="fixed"></td>
                 <td data-col="portfolio"></td>
             `;
