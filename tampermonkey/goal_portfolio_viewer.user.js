@@ -5669,7 +5669,6 @@ let GoalTargetStore;
         targetHeader.appendChild(remainingTarget);
         headerRow.appendChild(targetHeader);
 
-        headerRow.appendChild(createElement('th', 'gpv-column-diff', 'Diff'));
         headerRow.appendChild(createElement('th', 'gpv-column-drift', 'Drift'));
         headerRow.appendChild(createElement('th', 'gpv-column-return', 'Cumulative Return'));
         headerRow.appendChild(createElement('th', 'gpv-column-return-percent', 'Return %'));
@@ -5712,10 +5711,6 @@ let GoalTargetStore;
             targetCell.appendChild(targetInput);
             tr.appendChild(targetCell);
 
-            const diffClassName = goalModel.diffClass
-                ? `${CLASS_NAMES.diffCell} gpv-column-diff ${goalModel.diffClass}`
-                : `${CLASS_NAMES.diffCell} gpv-column-diff`;
-            tr.appendChild(createElement('td', diffClassName, goalModel.diffDisplay));
             const driftClassName = goalModel.driftClass
                 ? `gpv-column-drift ${goalModel.driftClass}`
                 : 'gpv-column-drift';
@@ -6091,7 +6086,6 @@ let GoalTargetStore;
         const forceTargetRefresh = options.forceTargetRefresh === true;
         rows.forEach(row => {
             const targetInput = row.querySelector(`.${CLASS_NAMES.targetInput}`);
-            const diffCell = row.querySelector(`.${CLASS_NAMES.diffCell}`);
             const driftCell = row.querySelector('.gpv-column-drift');
             if (!targetInput) {
                 return;
@@ -6105,12 +6099,6 @@ let GoalTargetStore;
             targetInput.disabled = goalModel.isFixed;
             if (goalModel.isFixed || forceTargetRefresh) {
                 targetInput.value = goalModel.targetPercent !== null ? goalModel.targetPercent.toFixed(2) : '';
-            }
-            if (diffCell) {
-                diffCell.textContent = goalModel.diffAmount === null ? '-' : formatMoney(goalModel.diffAmount);
-                diffCell.className = goalModel.diffClass
-                    ? `${CLASS_NAMES.diffCell} ${goalModel.diffClass}`
-                    : CLASS_NAMES.diffCell;
             }
             if (driftCell) {
                 driftCell.textContent = formatDriftDisplay(goalModel.driftPercent, goalModel.driftAmount);
@@ -6151,8 +6139,8 @@ let GoalTargetStore;
     function handleGoalTargetChange({
         input,
         goalId,
-        currentEndingBalance,
-        totalTypeEndingBalance,
+        _currentEndingBalance,
+        _totalTypeEndingBalance,
         bucket,
         goalType,
         typeSection,
@@ -6163,14 +6151,10 @@ let GoalTargetStore;
             return;
         }
         const value = input.value;
-        const row = input.closest('tr');
-        const diffCell = row.querySelector(`.${CLASS_NAMES.diffCell}`);
         
         if (value === '') {
             // Clear the target if input is empty
             GoalTargetStore.clearTarget(goalId);
-            diffCell.textContent = '-';
-            diffCell.className = CLASS_NAMES.diffCell;
             refreshGoalTypeSection({
                 typeSection,
                 bucket,
@@ -6205,15 +6189,6 @@ let GoalTargetStore;
             flashInputBorder(input, 'warning');
         }
         
-        // Get projected investment and calculate adjusted total
-        const projectedAmount = getProjectedInvestmentValue(projectedInvestmentsState, bucket, goalType);
-        const adjustedTypeTotal = totalTypeEndingBalance + projectedAmount;
-        
-        // Update difference display in dollar amount
-        const diffData = buildDiffCellData(currentEndingBalance, savedValue, adjustedTypeTotal);
-        diffCell.textContent = diffData.diffDisplay;
-        diffCell.className = diffData.diffClassName;
-
         refreshGoalTypeSection({
             typeSection,
             bucket,
@@ -8241,7 +8216,6 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-mode-performance .gpv-column-fixed,
             .gpv-mode-performance .gpv-column-target,
-            .gpv-mode-performance .gpv-column-diff,
             .gpv-mode-performance .gpv-column-drift,
             .gpv-mode-performance .gpv-projection-panel,
             .gpv-mode-performance .gpv-section-toggle--projection {
