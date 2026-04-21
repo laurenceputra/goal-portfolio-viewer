@@ -9246,6 +9246,11 @@ syncUi.update = function updateSyncUI() {
                     font-size: 13px;
                 }
 
+                .gpv-fsm-filter-input {
+                    width: 220px;
+                    max-width: 100%;
+                }
+
                 .gpv-fsm-portfolio-list {
                     width: 100%;
                 }
@@ -9259,8 +9264,36 @@ syncUi.update = function updateSyncUI() {
                     gap: 6px;
                 }
 
+                .gpv-fsm-table-wrap {
+                    width: 100%;
+                    overflow-x: auto;
+                    -webkit-overflow-scrolling: touch;
+                }
+
                 .gpv-fsm-table-portfolio-select {
                     min-width: 0;
+                }
+
+                .gpv-table td[data-col="value"],
+                .gpv-table td[data-col="current"],
+                .gpv-table td[data-col="drift"] {
+                    text-align: right;
+                }
+
+                .gpv-fsm-table-wrap .gpv-table {
+                    min-width: 980px;
+                }
+
+                .gpv-fsm-table-wrap thead th {
+                    position: sticky;
+                    top: 0;
+                    z-index: 1;
+                }
+
+                .gpv-target-input:disabled {
+                    background: #f3f4f6;
+                    color: #6b7280;
+                    cursor: not-allowed;
                 }
 
                 /* Sync Indicator */
@@ -9357,6 +9390,14 @@ syncUi.update = function updateSyncUI() {
 
                     .gpv-sync-text {
                         display: none;
+                    }
+
+                    .gpv-fsm-toolbar {
+                        align-items: stretch;
+                    }
+
+                    .gpv-fsm-filter-input {
+                        width: 100%;
                     }
                 }
 
@@ -9532,17 +9573,20 @@ syncUi.update = function updateSyncUI() {
         const total = rows.reduce((sum, row) => sum + (Number(row.currentValueLcy) || 0), 0);
         const activeRows = rows.filter(row => row.fixed !== true);
         const targetPercentTotal = activeRows.reduce((sum, row) => sum + (Number(row.targetPercent) || 0), 0);
+        const fixedCount = rows.filter(row => row.fixed === true).length;
+        const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
         const totalDrift = activeRows.reduce((sum, row) => {
             const rowDrift = calculateFsmRowDrift(total, row);
             return sum + (Number.isFinite(rowDrift?.driftPercent) ? Math.abs(rowDrift.driftPercent) : 0);
         }, 0);
         return {
             total,
-            actualWeightDisplay: formatPercent(1, { multiplier: 100, showSign: false }),
-            targetWeightDisplay: formatPercent(targetPercentTotal / 100, { multiplier: 100, showSign: false }),
+            targetAssignedDisplay: formatPercent(targetPercentTotal / 100, { multiplier: 100, showSign: false }),
             driftDisplay: formatPercent(totalDrift, { multiplier: 100, showSign: false }),
             driftClass: getDriftSeverityClass(totalDrift),
-            suggestionDisplay: formatMoney(0)
+            holdingsCount: rows.length,
+            fixedCount,
+            unassignedCount
         };
     }
 
@@ -9722,8 +9766,8 @@ syncUi.update = function updateSyncUI() {
                 actionSelect.setAttribute('aria-label', `Actions for portfolio ${item.name}`);
                 actionSelect.innerHTML = `
                     <option value="">Actions</option>
-                    <option value="rename">Rename</option>
-                    <option value="archive">Archive</option>
+                    <option value="rename">Rename portfolio</option>
+                    <option value="archive">Archive portfolio</option>
                 `;
                 actionSelect.onchange = () => {
                     const action = actionSelect.value;
@@ -9772,10 +9816,11 @@ syncUi.update = function updateSyncUI() {
             : 'gpv-summary-card';
         summaryRow.innerHTML = `
             <div class="gpv-summary-card"><strong>Total Value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
-            <div class="gpv-summary-card"><strong>Actual:</strong> ${escapeHtml(summary.actualWeightDisplay)}</div>
-            <div class="gpv-summary-card"><strong>Target:</strong> ${escapeHtml(summary.targetWeightDisplay)}</div>
+            <div class="gpv-summary-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>
+            <div class="gpv-summary-card"><strong>Holdings:</strong> ${escapeHtml(String(summary.holdingsCount))}</div>
+            <div class="gpv-summary-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>
+            <div class="gpv-summary-card"><strong>Fixed:</strong> ${escapeHtml(String(summary.fixedCount))}</div>
             <div class="${escapeHtml(driftClassName)}"><strong>Drift:</strong> ${escapeHtml(summary.driftDisplay)}</div>
-            <div class="gpv-summary-card"><strong>Suggestion:</strong> ${escapeHtml(summary.suggestionDisplay)}</div>
         `;
         return summaryRow;
     }
@@ -9787,7 +9832,7 @@ syncUi.update = function updateSyncUI() {
         onScopeChange,
         onFilterChange
     }) {
-        const toolbar = createElement('div', 'gpv-fsm-toolbar');
+        const toolbar = createElement('div', 'gpv-fsm-toolbar gpv-fsm-filter-toolbar');
         const scopeSelect = createElement('select', 'gpv-select');
         scopeSelect.innerHTML = scopeOptions.map(option => `
             <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
@@ -9800,8 +9845,9 @@ syncUi.update = function updateSyncUI() {
         };
         toolbar.appendChild(scopeSelect);
 
-        const searchInput = createElement('input', 'gpv-target-input');
+        const searchInput = createElement('input', 'gpv-target-input gpv-fsm-filter-input');
         searchInput.placeholder = 'Filter holdings';
+        searchInput.setAttribute('aria-label', 'Filter holdings by ticker, name, or product type');
         searchInput.value = filterTerm;
         searchInput.oninput = () => {
             if (typeof onFilterChange === 'function') {
@@ -9814,6 +9860,7 @@ syncUi.update = function updateSyncUI() {
 
     function buildFsmBulkRow({
         selectAllFiltered,
+        selectedCount,
         activePortfolios,
         bulkPortfolioId,
         filteredCount,
@@ -9835,6 +9882,9 @@ syncUi.update = function updateSyncUI() {
         selectAllLabel.prepend(selectAll);
         bulkRow.appendChild(selectAllLabel);
 
+        const selectedSummary = createElement('span', 'gpv-summary-card', `Selected: ${selectedCount} / ${filteredCount}`);
+        bulkRow.appendChild(selectedSummary);
+
         const bulkSelect = createElement('select', 'gpv-select');
         bulkSelect.innerHTML = [
             { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: 'Unassigned' },
@@ -9851,6 +9901,7 @@ syncUi.update = function updateSyncUI() {
         bulkRow.appendChild(bulkSelect);
 
         const applyBulkBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', `Apply to ${filteredCount} filtered holdings`);
+        applyBulkBtn.disabled = filteredCount === 0 || selectedCount === 0;
         applyBulkBtn.onclick = () => {
             if (typeof onApplyBulk === 'function') {
                 onApplyBulk();
@@ -9872,6 +9923,9 @@ syncUi.update = function updateSyncUI() {
         onFixedChange,
         onPortfolioChange
     }) {
+        if (!Array.isArray(filteredRows) || filteredRows.length === 0) {
+            return createElement('div', 'gpv-conflict-diff-empty', 'No holdings match this filter.');
+        }
         const table = createElement('table', 'gpv-table');
         table.innerHTML = `
             <thead>
@@ -9937,6 +9991,9 @@ syncUi.update = function updateSyncUI() {
             targetInput.setAttribute('aria-label', `Target percentage for ${row.displayTicker || row.code}`);
             targetInput.value = Number.isFinite(row.targetPercent) ? Number(row.targetPercent).toFixed(2) : '';
             targetInput.disabled = row.fixed === true;
+            if (row.fixed === true) {
+                targetInput.title = 'Fixed holdings do not use target %';
+            }
             targetInput.onchange = () => {
                 if (typeof onTargetChange === 'function') {
                     onTargetChange(row, targetInput.value.trim());
@@ -9986,7 +10043,9 @@ syncUi.update = function updateSyncUI() {
             selectCell.appendChild(select);
             tbody.appendChild(tr);
         });
-        return table;
+        const tableWrapper = createElement('div', 'gpv-fsm-table-wrap');
+        tableWrapper.appendChild(table);
+        return tableWrapper;
     }
 
     function renderFsmOverlay(fsmHoldings) {
@@ -10052,6 +10111,7 @@ syncUi.update = function updateSyncUI() {
             });
 
             const selectedCodes = new Set(selectAllFiltered ? filteredRows.map(row => row.code).filter(Boolean) : []);
+            const selectedCount = selectedCodes.size;
             const summary = buildFsmScopedSummary(filteredRows);
             const displayRows = buildFsmDisplayRows(filteredRows, summary.total);
             const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
@@ -10141,6 +10201,7 @@ syncUi.update = function updateSyncUI() {
 
             contentDiv.appendChild(buildFsmBulkRow({
                 selectAllFiltered,
+                selectedCount,
                 activePortfolios: activePortfolios(),
                 bulkPortfolioId,
                 filteredCount: filteredRows.length,
