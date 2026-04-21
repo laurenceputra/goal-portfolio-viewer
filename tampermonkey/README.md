@@ -301,6 +301,11 @@ Contributions are welcome! To contribute:
 
 ## Changelog
 
+### Version 2.14.3
+- FSM now opens to a portfolio overview first, with drill-in to individual holdings only after selecting a portfolio or unassigned holdings
+- Fixed the FSM holdings filter input losing focus while typing by keeping the detail toolbar mounted across updates
+- Normalized FSM toolbar and manager control heights for more consistent rows
+
 ### Version 2.14.2
 - Added FSM table columns for scoped current allocation percentage and per-holding drift percentage
 - Updated FSM table and E2E checks to verify the new allocation/drift columns

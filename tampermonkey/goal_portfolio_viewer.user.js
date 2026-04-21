@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.2
+// @version      2.14.3
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -5293,7 +5293,37 @@ let GoalTargetStore;
             return [];
         }
         return Array.from(container.querySelectorAll(FOCUSABLE_SELECTOR))
-            .filter(element => !element.disabled && element.getAttribute('aria-hidden') !== 'true');
+            .filter(element => {
+                if (!element || element.disabled || element.getAttribute('aria-hidden') === 'true') {
+                    return false;
+                }
+                if (element.hidden === true) {
+                    return false;
+                }
+                const hiddenAncestor = typeof element.closest === 'function'
+                    ? element.closest('[hidden], [aria-hidden="true"]')
+                    : null;
+                return !hiddenAncestor;
+            });
+    }
+
+    function setElementsDisabled(elements, disabled) {
+        (Array.isArray(elements) ? elements : []).forEach(element => {
+            if (!element) {
+                return;
+            }
+            if (disabled) {
+                if ('disabled' in element) {
+                    element.disabled = true;
+                }
+                element.setAttribute('tabindex', '-1');
+                return;
+            }
+            if ('disabled' in element) {
+                element.disabled = false;
+            }
+            element.removeAttribute('tabindex');
+        });
     }
 
     function applyAriaHiddenToSiblings(overlay) {
@@ -9238,6 +9268,10 @@ syncUi.update = function updateSyncUI() {
                     margin-bottom: 10px;
                 }
 
+                .gpv-fsm-section[hidden] {
+                    display: none;
+                }
+
                 .gpv-summary-card {
                     background: #f8fafc;
                     border: 1px solid #e5e7eb;
@@ -9262,6 +9296,161 @@ syncUi.update = function updateSyncUI() {
                 .gpv-fsm-portfolio-actions {
                     display: flex;
                     gap: 6px;
+                }
+
+                .gpv-fsm-toolbar > *,
+                .gpv-fsm-manager-row > *,
+                .gpv-fsm-portfolio-list-row > *,
+                .gpv-fsm-portfolio-actions > * {
+                    box-sizing: border-box;
+                }
+
+                .gpv-fsm-toolbar .gpv-sync-btn,
+                .gpv-fsm-toolbar .gpv-select,
+                .gpv-fsm-toolbar .gpv-target-input,
+                .gpv-fsm-manager-row .gpv-sync-btn,
+                .gpv-fsm-manager-row .gpv-select,
+                .gpv-fsm-manager-row .gpv-target-input,
+                .gpv-fsm-portfolio-list-row .gpv-sync-btn,
+                .gpv-fsm-portfolio-list-row .gpv-select,
+                .gpv-fsm-portfolio-list-row .gpv-target-input,
+                .gpv-fsm-toolbar .gpv-summary-card {
+                    min-height: 40px;
+                }
+
+                .gpv-fsm-toolbar .gpv-sync-btn,
+                .gpv-fsm-manager-row .gpv-sync-btn,
+                .gpv-fsm-portfolio-list-row .gpv-sync-btn,
+                .gpv-fsm-toolbar .gpv-select,
+                .gpv-fsm-manager-row .gpv-select,
+                .gpv-fsm-portfolio-list-row .gpv-select {
+                    font-size: 14px;
+                }
+
+                .gpv-fsm-toolbar .gpv-summary-card {
+                    display: inline-flex;
+                    align-items: center;
+                }
+
+                .gpv-fsm-overview-header {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 12px;
+                    flex-wrap: wrap;
+                    margin-bottom: 12px;
+                }
+
+                .gpv-fsm-overview-copy {
+                    margin: 0;
+                    color: #4b5563;
+                    font-size: 13px;
+                    line-height: 1.5;
+                }
+
+                .gpv-fsm-overview-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+                    gap: 12px;
+                }
+
+                .gpv-fsm-overview-card {
+                    background: #ffffff;
+                    border: 2px solid #e5e7eb;
+                    border-radius: 12px;
+                    padding: 16px;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                }
+
+                .gpv-fsm-overview-card:hover {
+                    border-color: #667eea;
+                    box-shadow: 0 6px 18px rgba(102, 126, 234, 0.12);
+                    transform: translateY(-1px);
+                }
+
+                .gpv-fsm-overview-card:focus-visible {
+                    outline: 3px solid rgba(102, 126, 234, 0.7);
+                    outline-offset: 2px;
+                }
+
+                .gpv-fsm-overview-card--unassigned {
+                    border-style: dashed;
+                }
+
+                .gpv-fsm-overview-card-header {
+                    display: flex;
+                    align-items: flex-start;
+                    justify-content: space-between;
+                    gap: 12px;
+                    margin-bottom: 12px;
+                }
+
+                .gpv-fsm-overview-card-title {
+                    margin: 0;
+                    color: #111827;
+                    font-size: 18px;
+                    font-weight: 700;
+                }
+
+                .gpv-fsm-overview-card-subtitle {
+                    margin: 4px 0 0 0;
+                    color: #6b7280;
+                    font-size: 12px;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    letter-spacing: 0.04em;
+                }
+
+                .gpv-fsm-overview-card-tag {
+                    background: #eef2ff;
+                    border-radius: 999px;
+                    color: #4338ca;
+                    font-size: 12px;
+                    font-weight: 700;
+                    padding: 6px 10px;
+                    white-space: nowrap;
+                }
+
+                .gpv-fsm-overview-stats {
+                    display: grid;
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                    gap: 8px;
+                }
+
+                .gpv-fsm-overview-stat {
+                    background: #f8fafc;
+                    border: 1px solid #e5e7eb;
+                    border-radius: 8px;
+                    padding: 8px 10px;
+                }
+
+                .gpv-fsm-overview-stat-label {
+                    display: block;
+                    color: #6b7280;
+                    font-size: 11px;
+                    font-weight: 700;
+                    letter-spacing: 0.03em;
+                    margin-bottom: 4px;
+                    text-transform: uppercase;
+                }
+
+                .gpv-fsm-overview-stat-value {
+                    color: #111827;
+                    font-size: 14px;
+                    font-weight: 700;
+                }
+
+                .gpv-fsm-overview-stat-value.gpv-drift--green {
+                    color: #047857;
+                }
+
+                .gpv-fsm-overview-stat-value.gpv-drift--yellow {
+                    color: #b45309;
+                }
+
+                .gpv-fsm-overview-stat-value.gpv-drift--red {
+                    color: #b91c1c;
                 }
 
                 .gpv-fsm-table-wrap {
@@ -9394,6 +9583,14 @@ syncUi.update = function updateSyncUI() {
 
                     .gpv-fsm-toolbar {
                         align-items: stretch;
+                    }
+
+                    .gpv-fsm-overview-header {
+                        align-items: stretch;
+                    }
+
+                    .gpv-fsm-overview-stats {
+                        grid-template-columns: 1fr;
                     }
 
                     .gpv-fsm-filter-input {
@@ -9829,19 +10026,133 @@ syncUi.update = function updateSyncUI() {
         return summaryRow;
     }
 
-    function buildFsmToolbar({
-        scopeOptions,
-        selectedScope,
-        filterTerm,
-        onScopeChange,
-        onFilterChange
-    }) {
+    function buildFsmPortfolioOverviewModel(rows, activePortfolios) {
+        const safeRows = Array.isArray(rows) ? rows : [];
+        const safePortfolios = Array.isArray(activePortfolios) ? activePortfolios : [];
+        const groupedRows = safeRows.reduce((acc, row) => {
+            const portfolioId = utils.normalizeString(row?.portfolioId, FSM_UNASSIGNED_PORTFOLIO_ID);
+            if (!acc[portfolioId]) {
+                acc[portfolioId] = [];
+            }
+            acc[portfolioId].push(row);
+            return acc;
+        }, {});
+        const buildCardModel = (id, label, cardRows, options = {}) => {
+            const summary = buildFsmScopedSummary(cardRows);
+            return {
+                id,
+                label,
+                holdingsCount: summary.holdingsCount,
+                totalDisplay: formatMoney(summary.total),
+                targetAssignedDisplay: summary.targetAssignedDisplay,
+                driftDisplay: summary.driftDisplay,
+                driftClass: summary.driftClass,
+                fixedCount: summary.fixedCount,
+                isUnassigned: options.isUnassigned === true
+            };
+        };
+        const cards = safePortfolios.map(item => buildCardModel(item.id, item.name, groupedRows[item.id] || []));
+        cards.push(buildCardModel(
+            FSM_UNASSIGNED_PORTFOLIO_ID,
+            'Unassigned',
+            groupedRows[FSM_UNASSIGNED_PORTFOLIO_ID] || [],
+            { isUnassigned: true }
+        ));
+        return {
+            cards,
+            allSummary: buildFsmScopedSummary(safeRows)
+        };
+    }
+
+    function buildFsmOverviewPanel({ overviewModel, onSelectScope, onOpenAll }) {
+        const wrapper = createElement('div', 'gpv-fsm-overview');
+        const header = createElement('div', 'gpv-fsm-overview-header');
+        const copy = createElement(
+            'p',
+            'gpv-fsm-overview-copy',
+            'Start from a portfolio overview, then open a portfolio or unassigned holdings to manage individual instruments.'
+        );
+        header.appendChild(copy);
+        const allHoldingsBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'View all holdings');
+        allHoldingsBtn.type = 'button';
+        allHoldingsBtn.onclick = () => {
+            if (typeof onOpenAll === 'function') {
+                onOpenAll();
+            }
+        };
+        header.appendChild(allHoldingsBtn);
+        wrapper.appendChild(header);
+
+        const grid = createElement('div', 'gpv-fsm-overview-grid');
+        const cards = Array.isArray(overviewModel?.cards) ? overviewModel.cards : [];
+        cards.forEach(card => {
+            const className = card.isUnassigned === true
+                ? 'gpv-fsm-overview-card gpv-fsm-overview-card--unassigned'
+                : 'gpv-fsm-overview-card';
+            const buttonCard = createElement('div', className);
+            buttonCard.setAttribute('role', 'button');
+            buttonCard.setAttribute('tabindex', '0');
+            buttonCard.dataset.scope = card.id;
+            buttonCard.setAttribute('aria-label', `Open ${card.label} holdings`);
+            buttonCard.innerHTML = `
+                <div class="gpv-fsm-overview-card-header">
+                    <div>
+                        <h2 class="gpv-fsm-overview-card-title">${escapeHtml(card.label)}</h2>
+                        <p class="gpv-fsm-overview-card-subtitle">${escapeHtml(`${card.holdingsCount} holding${card.holdingsCount === 1 ? '' : 's'}`)}</p>
+                    </div>
+                    <span class="gpv-fsm-overview-card-tag">Open</span>
+                </div>
+                <div class="gpv-fsm-overview-stats">
+                    <div class="gpv-fsm-overview-stat">
+                        <span class="gpv-fsm-overview-stat-label">Total value</span>
+                        <span class="gpv-fsm-overview-stat-value">${escapeHtml(card.totalDisplay)}</span>
+                    </div>
+                    <div class="gpv-fsm-overview-stat">
+                        <span class="gpv-fsm-overview-stat-label">Target assigned</span>
+                        <span class="gpv-fsm-overview-stat-value">${escapeHtml(card.targetAssignedDisplay)}</span>
+                    </div>
+                    <div class="gpv-fsm-overview-stat">
+                        <span class="gpv-fsm-overview-stat-label">Drift</span>
+                        <span class="gpv-fsm-overview-stat-value ${escapeHtml(card.driftClass || '')}">${escapeHtml(card.driftDisplay)}</span>
+                    </div>
+                    <div class="gpv-fsm-overview-stat">
+                        <span class="gpv-fsm-overview-stat-label">Fixed</span>
+                        <span class="gpv-fsm-overview-stat-value">${escapeHtml(String(card.fixedCount))}</span>
+                    </div>
+                </div>
+            `;
+            const handleSelect = event => {
+                if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') {
+                    return;
+                }
+                if (event.type === 'keydown') {
+                    event.preventDefault();
+                }
+                if (typeof onSelectScope === 'function') {
+                    onSelectScope(card.id);
+                }
+            };
+            buttonCard.addEventListener('click', handleSelect);
+            buttonCard.addEventListener('keydown', handleSelect);
+            grid.appendChild(buttonCard);
+        });
+        wrapper.appendChild(grid);
+        return wrapper;
+    }
+
+    function createFsmDetailToolbar({ onBack, onScopeChange, onFilterChange }) {
         const toolbar = createElement('div', 'gpv-fsm-toolbar gpv-fsm-filter-toolbar');
+        const backBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to portfolios');
+        backBtn.type = 'button';
+        backBtn.onclick = () => {
+            if (typeof onBack === 'function') {
+                onBack();
+            }
+        };
+        toolbar.appendChild(backBtn);
+
         const scopeSelect = createElement('select', 'gpv-select');
-        scopeSelect.innerHTML = scopeOptions.map(option => `
-            <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
-        `).join('');
-        scopeSelect.value = selectedScope;
+        scopeSelect.setAttribute('aria-label', 'Select portfolio scope');
         scopeSelect.onchange = () => {
             if (typeof onScopeChange === 'function') {
                 onScopeChange(scopeSelect.value);
@@ -9852,14 +10163,33 @@ syncUi.update = function updateSyncUI() {
         const searchInput = createElement('input', 'gpv-target-input gpv-fsm-filter-input');
         searchInput.placeholder = 'Filter holdings';
         searchInput.setAttribute('aria-label', 'Filter holdings by ticker, name, or product type');
-        searchInput.value = filterTerm;
         searchInput.oninput = () => {
             if (typeof onFilterChange === 'function') {
                 onFilterChange(searchInput.value);
             }
         };
         toolbar.appendChild(searchInput);
-        return toolbar;
+
+        let lastOptionsMarkup = '';
+        const setState = ({ scopeOptions, selectedScope, filterTerm }) => {
+            const nextOptionsMarkup = (Array.isArray(scopeOptions) ? scopeOptions : []).map(option => `
+                <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
+            `).join('');
+            if (nextOptionsMarkup !== lastOptionsMarkup) {
+                scopeSelect.innerHTML = nextOptionsMarkup;
+                lastOptionsMarkup = nextOptionsMarkup;
+            }
+            scopeSelect.value = selectedScope;
+            if (searchInput.value !== filterTerm) {
+                searchInput.value = filterTerm;
+            }
+        };
+        return {
+            element: toolbar,
+            setState,
+            searchInput,
+            scopeSelect
+        };
     }
 
     function buildFsmBulkRow({
@@ -10075,27 +10405,88 @@ syncUi.update = function updateSyncUI() {
         let selectedScope = FSM_ALL_PORTFOLIO_ID;
         let filterTerm = '';
         let bulkPortfolioId = FSM_UNASSIGNED_PORTFOLIO_ID;
-        let selectAllFiltered = false;
+        let selectedCodes = new Set();
         let isPortfolioManagerExpanded = false;
         let editingPortfolioId = null;
+        let viewMode = 'overview';
+        let nextFocusTarget = null;
         const targetErrorsByCode = {};
 
         const activePortfolios = () => portfolios.filter(item => item.archived !== true);
 
-        const rerender = () => {
+        const managerSection = createElement('div', 'gpv-fsm-section');
+        const summarySection = createElement('div', 'gpv-fsm-section');
+        const toolbarSection = createElement('div', 'gpv-fsm-section');
+        const bodySection = createElement('div', 'gpv-fsm-section');
+        contentDiv.appendChild(managerSection);
+        contentDiv.appendChild(summarySection);
+        contentDiv.appendChild(toolbarSection);
+        contentDiv.appendChild(bodySection);
+
+        const detailToolbar = createFsmDetailToolbar({
+            onBack: () => {
+                viewMode = 'overview';
+                filterTerm = '';
+                selectedScope = FSM_ALL_PORTFOLIO_ID;
+                selectedCodes = new Set();
+                nextFocusTarget = 'overview';
+                rerender();
+            },
+            onScopeChange: value => {
+                selectedScope = value;
+                selectedCodes = new Set();
+                rerender();
+            },
+            onFilterChange: value => {
+                filterTerm = value;
+                rerender();
+            }
+        });
+        toolbarSection.appendChild(detailToolbar.element);
+        const detailToolbarControls = [detailToolbar.searchInput, detailToolbar.scopeSelect];
+
+        const focusAfterRender = () => {
+            if (nextFocusTarget === 'overview') {
+                const firstOverviewCard = bodySection.querySelector('.gpv-fsm-overview-card');
+                if (firstOverviewCard && typeof firstOverviewCard.focus === 'function') {
+                    firstOverviewCard.focus();
+                }
+            } else if (nextFocusTarget === 'detail') {
+                if (detailToolbar.searchInput && typeof detailToolbar.searchInput.focus === 'function') {
+                    detailToolbar.searchInput.focus();
+                }
+            }
+            nextFocusTarget = null;
+        };
+
+        const buildViewState = () => {
             const rows = buildFsmRowsWithAssignment(fsmHoldings, assignmentByCode);
             const activePortfolioIds = activePortfolios().map(item => item.id);
             const activePortfolioSet = new Set(activePortfolioIds);
+            const validCodes = new Set();
 
             rows.forEach(row => {
                 if (!row.code) {
                     return;
                 }
+                validCodes.add(row.code);
                 if (!activePortfolioSet.has(row.portfolioId)) {
                     assignmentByCode[row.code] = FSM_UNASSIGNED_PORTFOLIO_ID;
                     row.portfolioId = FSM_UNASSIGNED_PORTFOLIO_ID;
                 }
             });
+
+            selectedCodes = new Set(Array.from(selectedCodes).filter(code => validCodes.has(code)));
+
+            const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
+            const scopeOptions = [
+                { id: FSM_ALL_PORTFOLIO_ID, label: 'All' },
+                ...activePortfolios().map(item => ({ id: item.id, label: item.name })),
+                { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: `Unassigned (${unassignedCount})` }
+            ];
+            if (!scopeOptions.find(option => option.id === selectedScope)) {
+                selectedScope = FSM_ALL_PORTFOLIO_ID;
+            }
 
             const normalizedFilter = filterTerm.trim().toLowerCase();
             const filteredRows = rows.filter(row => {
@@ -10115,25 +10506,43 @@ syncUi.update = function updateSyncUI() {
                     || row.productType.toLowerCase().includes(normalizedFilter);
             });
 
-            const selectedCodes = new Set(selectAllFiltered ? filteredRows.map(row => row.code).filter(Boolean) : []);
-            const selectedCount = selectedCodes.size;
+            const filteredCodeSet = new Set(filteredRows.map(row => row.code).filter(Boolean));
+            const selectedCount = Array.from(selectedCodes).filter(code => filteredCodeSet.has(code)).length;
+            const selectAllFiltered = filteredRows.length > 0 && filteredRows.every(row => row.code && selectedCodes.has(row.code));
             const showDrift = selectedScope !== FSM_ALL_PORTFOLIO_ID;
             const summary = buildFsmScopedSummary(filteredRows);
             const displayRows = buildFsmDisplayRows(filteredRows, summary.total);
-            const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
+            return {
+                rows,
+                activePortfolioIds,
+                unassignedCount,
+                scopeOptions,
+                filteredRows,
+                filteredCodeSet,
+                selectedCount,
+                selectAllFiltered,
+                showDrift,
+                summary,
+                displayRows,
+                overviewModel: buildFsmPortfolioOverviewModel(rows, activePortfolios())
+            };
+        };
 
-            contentDiv.innerHTML = '';
+        const rerender = () => {
+            const viewState = buildViewState();
+
+            managerSection.innerHTML = '';
 
             const managerSummary = buildFsmManagerSummary({
-                activePortfolioCount: activePortfolioIds.length,
-                unassignedCount,
+                activePortfolioCount: viewState.activePortfolioIds.length,
+                unassignedCount: viewState.unassignedCount,
                 isExpanded: isPortfolioManagerExpanded,
                 onToggle: () => {
                     isPortfolioManagerExpanded = !isPortfolioManagerExpanded;
                     rerender();
                 }
             });
-            contentDiv.appendChild(managerSummary);
+            managerSection.appendChild(managerSummary);
 
             if (isPortfolioManagerExpanded) {
                 const manager = buildFsmManagerPanel({
@@ -10178,48 +10587,72 @@ syncUi.update = function updateSyncUI() {
                         rerender();
                     }
                 });
-                contentDiv.appendChild(manager);
+                managerSection.appendChild(manager);
             }
 
-            contentDiv.appendChild(buildFsmSummaryRow(summary, { showDrift }));
+            summarySection.innerHTML = '';
+            bodySection.innerHTML = '';
 
-            const scopeOptions = [
-                { id: FSM_ALL_PORTFOLIO_ID, label: 'All' },
-                ...activePortfolios().map(item => ({ id: item.id, label: item.name })),
-                { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: `Unassigned (${unassignedCount})` }
-            ];
-            if (!scopeOptions.find(option => option.id === selectedScope)) {
-                selectedScope = FSM_ALL_PORTFOLIO_ID;
+            if (viewMode === 'overview') {
+                toolbarSection.hidden = true;
+                setElementsDisabled(detailToolbarControls, true);
+                summarySection.appendChild(buildFsmSummaryRow(viewState.overviewModel.allSummary, { showDrift: true }));
+                bodySection.appendChild(buildFsmOverviewPanel({
+                    overviewModel: viewState.overviewModel,
+                    onSelectScope: scopeId => {
+                        selectedScope = scopeId;
+                        filterTerm = '';
+                        selectedCodes = new Set();
+                        viewMode = 'detail';
+                        nextFocusTarget = 'detail';
+                        rerender();
+                    },
+                    onOpenAll: () => {
+                        selectedScope = FSM_ALL_PORTFOLIO_ID;
+                        filterTerm = '';
+                        selectedCodes = new Set();
+                        viewMode = 'detail';
+                        nextFocusTarget = 'detail';
+                        rerender();
+                    }
+                }));
+                focusAfterRender();
+                return;
             }
-            contentDiv.appendChild(buildFsmToolbar({
-                scopeOptions,
+
+            toolbarSection.hidden = false;
+            setElementsDisabled(detailToolbarControls, false);
+            summarySection.appendChild(buildFsmSummaryRow(viewState.summary, { showDrift: viewState.showDrift }));
+            detailToolbar.setState({
+                scopeOptions: viewState.scopeOptions,
                 selectedScope,
-                filterTerm,
-                onScopeChange: value => {
-                    selectedScope = value;
-                    rerender();
-                },
-                onFilterChange: value => {
-                    filterTerm = value;
-                    rerender();
-                }
-            }));
+                filterTerm
+            });
 
-            contentDiv.appendChild(buildFsmBulkRow({
-                selectAllFiltered,
-                selectedCount,
+            bodySection.appendChild(buildFsmBulkRow({
+                selectAllFiltered: viewState.selectAllFiltered,
+                selectedCount: viewState.selectedCount,
                 activePortfolios: activePortfolios(),
                 bulkPortfolioId,
-                filteredCount: filteredRows.length,
+                filteredCount: viewState.filteredRows.length,
                 onSelectAllChange: value => {
-                    selectAllFiltered = value;
+                    viewState.filteredRows.forEach(row => {
+                        if (!row.code) {
+                            return;
+                        }
+                        if (value) {
+                            selectedCodes.add(row.code);
+                            return;
+                        }
+                        selectedCodes.delete(row.code);
+                    });
                     rerender();
                 },
                 onBulkPortfolioChange: value => {
                     bulkPortfolioId = value;
                 },
                 onApplyBulk: () => {
-                    const targetCodes = Array.from(selectedCodes);
+                    const targetCodes = Array.from(selectedCodes).filter(code => viewState.filteredCodeSet.has(code));
                     targetCodes.forEach(code => {
                         assignmentByCode[code] = bulkPortfolioId;
                     });
@@ -10229,23 +10662,32 @@ syncUi.update = function updateSyncUI() {
             }));
 
             const table = buildFsmHoldingsTable({
-                filteredRows: displayRows,
+                filteredRows: viewState.displayRows,
                 selectedCodes,
-                selectAllFiltered,
+                selectAllFiltered: viewState.selectAllFiltered,
                 activePortfolios: activePortfolios(),
                 targetErrorsByCode,
-                showDrift,
+                showDrift: viewState.showDrift,
                 onSelectAllChange: value => {
-                    selectAllFiltered = value;
+                    viewState.filteredRows.forEach(row => {
+                        if (!row.code) {
+                            return;
+                        }
+                        if (value) {
+                            selectedCodes.add(row.code);
+                            return;
+                        }
+                        selectedCodes.delete(row.code);
+                    });
                     rerender();
                 },
                 onRowSelectChange: (code, checked) => {
                     if (checked) {
                         selectedCodes.add(code);
-                        return;
+                    } else {
+                        selectedCodes.delete(code);
                     }
-                    selectedCodes.delete(code);
-                    selectAllFiltered = false;
+                    rerender();
                 },
                 onTargetChange: (row, rawValue) => {
                     if (!rawValue) {
@@ -10278,7 +10720,8 @@ syncUi.update = function updateSyncUI() {
                     rerender();
                 }
             });
-            contentDiv.appendChild(table);
+            bodySection.appendChild(table);
+            focusAfterRender();
         };
 
         rerender();

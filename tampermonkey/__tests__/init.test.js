@@ -208,7 +208,7 @@ describe('initialization and URL monitoring', () => {
         expect(document.querySelector('#gpv-overlay')).toBeNull();
     });
 
-    test('showOverlay renders FSM workspace with product type and bulk assignment controls', () => {
+    test('showOverlay renders FSM portfolio overview on FSM route', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
@@ -231,13 +231,14 @@ describe('initialization and URL monitoring', () => {
 
         const overlay = document.querySelector('#gpv-overlay');
         expect(overlay).toBeTruthy();
-        expect(overlay.textContent).toContain('Product Type');
-        expect(overlay.textContent).toContain('AAPL');
+        expect(overlay.textContent).toContain('Start from a portfolio overview');
+        expect(overlay.querySelector('.gpv-fsm-overview-grid')).toBeTruthy();
+        expect(overlay.querySelector('table')).toBeNull();
+        expect(overlay.querySelector('.gpv-fsm-overview-card')).toBeTruthy();
         expect(overlay.textContent).toContain('Manage portfolios');
         expect(overlay.textContent).not.toContain('New portfolio');
-        expect(overlay.textContent).toContain('Target %');
-        expect(overlay.textContent).toContain('Apply to 1 filtered holdings');
-        expect(overlay.querySelector('input[aria-label="Select all holdings"]')).toBeTruthy();
+        expect(overlay.textContent).toContain('Unassigned');
+        expect(overlay.textContent).toContain('View all holdings');
 
         const manageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage portfolios'));
         manageBtn.click();
@@ -480,14 +481,21 @@ describe('initialization and URL monitoring', () => {
         const overlay = document.querySelector('#gpv-overlay');
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Portfolio Viewer (FSM)');
-        expect(overlay.textContent).toContain('Fund A');
-        expect(overlay.textContent).toContain('AAPL');
         expect(overlay.textContent).not.toContain('Endowus Only Goal');
-        expect(overlay.querySelector('.gpv-select')).toBeTruthy();
-        expect(overlay.textContent).toContain('Product Type');
-        expect(overlay.textContent).toContain('Current %');
-        expect(overlay.textContent).not.toContain('Drift %');
-        const firstRow = overlay.querySelector('table tbody tr');
+        expect(overlay.querySelector('.gpv-fsm-overview-grid')).toBeTruthy();
+        expect(overlay.querySelector('table')).toBeNull();
+
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        viewAllBtn.click();
+
+        const detailOverlay = document.querySelector('#gpv-overlay');
+        expect(detailOverlay.textContent).toContain('Fund A');
+        expect(detailOverlay.textContent).toContain('AAPL');
+        expect(detailOverlay.querySelector('.gpv-select')).toBeTruthy();
+        expect(detailOverlay.textContent).toContain('Product Type');
+        expect(detailOverlay.textContent).toContain('Current %');
+        expect(detailOverlay.textContent).not.toContain('Drift %');
+        const firstRow = detailOverlay.querySelector('table tbody tr');
         expect(firstRow.querySelector('td[data-col="current"]').textContent.trim()).toBe('100.00%');
         expect(firstRow.querySelector('td[data-col="drift"]')).toBeNull();
     });
@@ -601,6 +609,10 @@ describe('initialization and URL monitoring', () => {
         expect(corePortfolio.name).toBe('Core Growth');
 
         overlay = document.querySelector('#gpv-overlay');
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        viewAllBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
         const rowSelect = overlay.querySelector('table tbody select.gpv-select');
         rowSelect.value = 'core';
         rowSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -674,6 +686,10 @@ describe('initialization and URL monitoring', () => {
         createBtn.click();
 
         overlay = document.querySelector('#gpv-overlay');
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        viewAllBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
         const selectAll = overlay.querySelector('input[aria-label="Select all filtered holdings"]');
         selectAll.checked = true;
         selectAll.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -734,6 +750,10 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        viewAllBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
         const fixedCheckbox = overlay.querySelector('input[aria-label^="Fixed allocation"]');
         fixedCheckbox.checked = true;
         fixedCheckbox.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -787,6 +807,10 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        viewAllBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
         const targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
         targetInput.value = '150';
         targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -844,31 +868,264 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
+        const coreCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).find(card =>
+            card.textContent.includes('Core')
+        );
+        coreCard.click();
+
+        overlay = document.querySelector('#gpv-overlay');
         let firstRow = overlay.querySelector('table tbody tr');
         expect(firstRow.querySelector('td[data-col="ticker"]').textContent.trim()).toBe('AAPL');
-        expect(firstRow.querySelector('td[data-col="current"]').textContent.trim()).toBe('60.00%');
-        expect(firstRow.querySelector('td[data-col="drift"]')).toBeNull();
+        expect(firstRow.querySelector('td[data-col="current"]').textContent.trim()).toBe('100.00%');
+        expect(firstRow.querySelector('td[data-col="drift"]').textContent.trim()).toBe('+66.67% (+SGD\u00A0480.00)');
 
         const scopeToolbar = Array.from(overlay.querySelectorAll('.gpv-fsm-toolbar')).find(toolbar =>
-            toolbar.querySelector('input.gpv-target-input')
+            toolbar.querySelector('input.gpv-target-input.gpv-fsm-filter-input')
         );
         const scopeSelect = scopeToolbar.querySelector('select.gpv-select');
-        scopeSelect.value = 'core';
+        scopeSelect.value = 'all';
         scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         overlay = document.querySelector('#gpv-overlay');
         firstRow = overlay.querySelector('table tbody tr');
         expect(firstRow.querySelector('td[data-col="ticker"]').textContent.trim()).toBe('AAPL');
-        expect(firstRow.querySelector('td[data-col="current"]').textContent.trim()).toBe('100.00%');
-        expect(firstRow.querySelector('td[data-col="drift"]').textContent.trim()).toBe('+66.67% (+SGD\u00A0480.00)');
-        expect(firstRow.querySelector('td[data-col="drift"]').className).toContain('gpv-drift--red');
+        expect(firstRow.querySelector('td[data-col="current"]').textContent.trim()).toBe('60.00%');
+        expect(firstRow.querySelector('td[data-col="drift"]')).toBeNull();
 
         const driftSummaryCard = Array.from(overlay.querySelectorAll('.gpv-summary-card')).find(card =>
             card.textContent.includes('Drift:')
         );
-        expect(driftSummaryCard).toBeTruthy();
-        expect(driftSummaryCard.textContent).toContain('66.67%');
-        expect(driftSummaryCard.className).toContain('gpv-drift--red');
+        expect(driftSummaryCard).toBeFalsy();
+    });
+
+    test('FSM detail filter input keeps focus while typing', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 },
+            { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'BOND', currentValueLcy: 800 }
+        ]));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        viewAllBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const filterInput = overlay.querySelector('input.gpv-fsm-filter-input');
+        filterInput.focus();
+        filterInput.value = 'BO';
+        filterInput.setSelectionRange(2, 2);
+        filterInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+        const updatedOverlay = document.querySelector('#gpv-overlay');
+        const updatedInput = updatedOverlay.querySelector('input.gpv-fsm-filter-input');
+        expect(updatedInput).toBe(filterInput);
+        expect(updatedInput.value).toBe('BO');
+        expect(document.activeElement).toBe(updatedInput);
+        expect(updatedInput.selectionStart).toBe(2);
+        expect(updatedOverlay.textContent).toContain('BOND');
+        expect(updatedOverlay.textContent).not.toContain('AAPL');
+    });
+
+    test('FSM detail view can return to portfolio overview', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+        ]));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        viewAllBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.querySelector('table')).toBeTruthy();
+        const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to portfolios'));
+        backBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.querySelector('.gpv-fsm-overview-grid')).toBeTruthy();
+        expect(overlay.querySelector('table')).toBeNull();
+    });
+
+    test('FSM overview keeps hidden detail toolbar out of tab order and restores visible focus', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+        ]));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        viewAllBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const filterInput = overlay.querySelector('input.gpv-fsm-filter-input');
+        expect(filterInput.disabled).toBe(false);
+        filterInput.focus();
+
+        const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to portfolios'));
+        backBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const hiddenFilterInput = overlay.querySelector('input.gpv-fsm-filter-input');
+        const firstOverviewCard = overlay.querySelector('.gpv-fsm-overview-card');
+        expect(hiddenFilterInput.disabled).toBe(true);
+        expect(document.activeElement).toBe(firstOverviewCard);
+    });
+
+    test('FSM keyboard navigation moves focus into detail mode', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+        ]));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const openAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        openAllBtn.focus();
+        openAllBtn.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        openAllBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const filterInput = overlay.querySelector('input.gpv-fsm-filter-input');
+        expect(document.activeElement).toBe(filterInput);
     });
 
 });
