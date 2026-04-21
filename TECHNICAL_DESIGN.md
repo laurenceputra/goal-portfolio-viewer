@@ -338,6 +338,8 @@ The UI consists of:
 
 The modal overlay traps keyboard focus while open, supports `Esc` to close, restores focus to the triggering button, and applies dialog ARIA attributes to improve accessibility.
 
+On FSM holdings routes, the table includes per-row `Current %` and `Drift %` columns. Both values are computed against the currently selected scope/filter dataset so percentages match what is visible in the table at any time.
+
 ### Sync Conflict Review
 
 For FSM sync conflicts, the assignment step renders instrument-aware rows rather than opaque assignment IDs. The UI:

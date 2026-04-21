@@ -301,6 +301,10 @@ Contributions are welcome! To contribute:
 
 ## Changelog
 
+### Version 2.14.2
+- Added FSM table columns for scoped current allocation percentage and per-holding drift percentage
+- Updated FSM table and E2E checks to verify the new allocation/drift columns
+
 ### Version 2.14.1
 - Improved FSM sync conflict assignment readability with instrument names and richer assignment context
 

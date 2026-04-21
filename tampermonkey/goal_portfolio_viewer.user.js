@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.1
+// @version      2.14.2
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -325,6 +325,45 @@
         return `${sign}${percentValue.toFixed(2)}%`;
     }
 
+    function formatSignedMoney(value) {
+        const numericValue = toFiniteNumber(value, null);
+        if (numericValue === null) {
+            return '-';
+        }
+        const money = formatMoney(numericValue);
+        if (money === '-') {
+            return '-';
+        }
+        return numericValue > 0 ? `+${money}` : money;
+    }
+
+    function getDriftSeverityClass(driftRatio) {
+        const numericDrift = toFiniteNumber(driftRatio, null);
+        if (numericDrift === null) {
+            return '';
+        }
+        const magnitude = Math.abs(numericDrift);
+        if (magnitude <= 0.25) {
+            return 'gpv-drift--green';
+        }
+        if (magnitude <= 0.5) {
+            return 'gpv-drift--yellow';
+        }
+        return 'gpv-drift--red';
+    }
+
+    function formatDriftDisplay(driftPercent, driftAmount) {
+        const percentDisplay = formatPercent(driftPercent, {
+            multiplier: 100,
+            showSign: true
+        });
+        const amountDisplay = formatSignedMoney(driftAmount);
+        if (percentDisplay === '-' || amountDisplay === '-') {
+            return '-';
+        }
+        return `${percentDisplay} (${amountDisplay})`;
+    }
+
     function getFiniteNumbers(values) {
         const numbers = values.map(value => toFiniteNumber(value, null));
         return numbers.some(value => value === null) ? null : numbers;
@@ -423,23 +462,29 @@
 
     function calculateGoalDiff(currentAmount, targetPercent, adjustedTypeTotal) {
         if (targetPercent === null || targetPercent === undefined) {
-            return { diffAmount: null, diffClass: '' };
+            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
         }
         const numericValues = getFiniteNumbers([currentAmount, targetPercent, adjustedTypeTotal]);
         if (!numericValues) {
-            return { diffAmount: null, diffClass: '' };
+            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
         }
         const [numericCurrent, numericTarget, numericTotal] = numericValues;
         if (numericTotal <= 0) {
-            return { diffAmount: null, diffClass: '' };
+            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
         }
         const targetAmount = (numericTarget / 100) * numericTotal;
+        if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
+            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
+        }
         const diffAmount = numericCurrent - targetAmount;
+        const driftPercent = diffAmount / targetAmount;
         const threshold = numericCurrent * 0.05;
         const diffClass = Math.abs(diffAmount) > threshold ? 'negative' : 'positive';
         return {
             diffAmount,
-            diffClass
+            diffClass,
+            driftPercent: Number.isFinite(driftPercent) ? driftPercent : null,
+            driftAmount: Number.isFinite(diffAmount) ? diffAmount : null
         };
     }
 
@@ -449,6 +494,7 @@
             return {
                 allocationDriftPercent: null,
                 allocationDriftDisplay: '-',
+                allocationDriftClass: '',
                 allocationDriftAvailable: false
             };
         }
@@ -457,6 +503,7 @@
             return {
                 allocationDriftPercent: null,
                 allocationDriftDisplay: '-',
+                allocationDriftClass: '',
                 allocationDriftAvailable: false
             };
         }
@@ -468,6 +515,7 @@
             return {
                 allocationDriftPercent: null,
                 allocationDriftDisplay: '-',
+                allocationDriftClass: '',
                 allocationDriftAvailable: false
             };
         }
@@ -478,6 +526,7 @@
             return {
                 allocationDriftPercent: null,
                 allocationDriftDisplay: '-',
+                allocationDriftClass: '',
                 allocationDriftAvailable: false
             };
         }
@@ -503,6 +552,7 @@
         return {
             allocationDriftPercent: driftSum,
             allocationDriftDisplay: formatPercent(driftSum, { multiplier: 100, showSign: false }),
+            allocationDriftClass: getDriftSeverityClass(driftSum),
             allocationDriftAvailable: true
         };
     }
@@ -652,6 +702,8 @@
             targetPercent,
             diffAmount: diffInfo.diffAmount,
             diffClass: diffInfo.diffClass,
+            driftPercent: diffInfo.driftPercent,
+            driftAmount: diffInfo.driftAmount,
             returnValue,
             returnPercent
         };
@@ -694,7 +746,9 @@
                 return {
                     ...goal,
                     diffAmount: diffInfo.diffAmount,
-                    diffClass: diffInfo.diffClass
+                    diffClass: diffInfo.diffClass,
+                    driftPercent: diffInfo.driftPercent,
+                    driftAmount: diffInfo.driftAmount
                 };
             });
         }
@@ -704,6 +758,7 @@
             remainingTargetPercent: adjustedRemainingTargetPercent,
             allocationDriftPercent: allocationDriftModel.allocationDriftPercent,
             allocationDriftDisplay: allocationDriftModel.allocationDriftDisplay,
+            allocationDriftClass: allocationDriftModel.allocationDriftClass,
             allocationDriftAvailable: allocationDriftModel.allocationDriftAvailable
         };
     }
@@ -856,6 +911,7 @@
                                 ),
                                 returnClass: getReturnClass(typeReturn),
                                 allocationDriftDisplay: allocationModel.allocationDriftDisplay,
+                                allocationDriftClass: allocationModel.allocationDriftClass,
                                 allocationDriftAvailable: allocationModel.allocationDriftAvailable
                             };
                         })
@@ -948,6 +1004,7 @@ function buildBucketDetailGoalTypeModel({ goalType, group, projectedAmount, allo
         remainingTargetDisplay: formatPercent(allocationModel.remainingTargetPercent),
         remainingTargetIsHigh: isRemainingTargetAboveThreshold(allocationModel.remainingTargetPercent),
         allocationDriftDisplay: allocationModel.allocationDriftDisplay,
+        allocationDriftClass: allocationModel.allocationDriftClass,
         allocationDriftAvailable: allocationModel.allocationDriftAvailable,
         goalModelsById: allocationModel.goalModelsById,
         goals: allocationModel.goalModels.map(goal => buildBucketDetailGoalRow(goal))
@@ -963,6 +1020,8 @@ function buildBucketDetailGoalRow(goal) {
         percentOfTypeDisplay: formatPercent(goal.percentOfType),
         targetDisplay: goal.targetPercent !== null ? goal.targetPercent.toFixed(2) : '',
         diffDisplay: goal.diffAmount === null ? '-' : formatMoney(goal.diffAmount),
+        driftDisplay: formatDriftDisplay(goal.driftPercent, goal.driftAmount),
+        driftClass: getDriftSeverityClass(goal.driftPercent),
         returnDisplay: formatMoney(goal.returnValue),
         returnPercentDisplay: formatPercent(goal.returnPercent, { multiplier: 100, showSign: false }),
         returnClass: getReturnClass(goal.returnValue),
@@ -5204,6 +5263,22 @@ let GoalTargetStore;
         return span;
     }
 
+    function applySelectContentWidth(selectElement, options = {}) {
+        if (!selectElement || typeof selectElement.options === 'undefined') {
+            return;
+        }
+        const minCh = Number.isFinite(options.minCh) ? options.minCh : 12;
+        const maxCh = Number.isFinite(options.maxCh) ? options.maxCh : 28;
+        const paddingCh = Number.isFinite(options.paddingCh) ? options.paddingCh : 4;
+        const longestOptionLength = Array.from(selectElement.options).reduce((maxLength, option) => {
+            const text = utils.normalizeString(option?.text, '');
+            return Math.max(maxLength, text.length);
+        }, 0);
+        const widthCh = Math.min(maxCh, Math.max(minCh, longestOptionLength + paddingCh));
+        selectElement.style.width = `${widthCh}ch`;
+        selectElement.style.maxWidth = `${maxCh}ch`;
+    }
+
     const FOCUSABLE_SELECTOR = [
         'a[href]',
         'button',
@@ -5610,7 +5685,7 @@ let GoalTargetStore;
         targetHeader.appendChild(remainingTarget);
         headerRow.appendChild(targetHeader);
 
-        headerRow.appendChild(createElement('th', 'gpv-column-diff', 'Diff'));
+        headerRow.appendChild(createElement('th', 'gpv-column-drift', 'Drift'));
         headerRow.appendChild(createElement('th', 'gpv-column-return', 'Cumulative Return'));
         headerRow.appendChild(createElement('th', 'gpv-column-return-percent', 'Return %'));
 
@@ -5652,10 +5727,10 @@ let GoalTargetStore;
             targetCell.appendChild(targetInput);
             tr.appendChild(targetCell);
 
-            const diffClassName = goalModel.diffClass
-                ? `${CLASS_NAMES.diffCell} gpv-column-diff ${goalModel.diffClass}`
-                : `${CLASS_NAMES.diffCell} gpv-column-diff`;
-            tr.appendChild(createElement('td', diffClassName, goalModel.diffDisplay));
+            const driftClassName = goalModel.driftClass
+                ? `gpv-column-drift ${goalModel.driftClass}`
+                : 'gpv-column-drift';
+            tr.appendChild(createElement('td', driftClassName, goalModel.driftDisplay));
             const returnClassName = goalModel.returnClass
                 ? `${goalModel.returnClass} gpv-column-return`
                 : 'gpv-column-return';
@@ -5811,7 +5886,8 @@ let GoalTargetStore;
                     typeRow,
                     'gpv-goal-type-stat',
                     'Allocation Drift:',
-                    goalTypeModel.allocationDriftDisplay
+                    goalTypeModel.allocationDriftDisplay,
+                    { valueClass: goalTypeModel.allocationDriftClass || null }
                 );
                 bucketCard.appendChild(typeRow);
             });
@@ -5885,7 +5961,13 @@ let GoalTargetStore;
             appendLabeledValue(typeSummary, null, 'Balance:', goalTypeModel.endingBalanceDisplay);
             appendLabeledValue(typeSummary, null, 'Return:', goalTypeModel.returnDisplay);
             appendLabeledValue(typeSummary, null, 'Growth:', typeGrowth);
-            appendLabeledValue(typeSummary, null, 'Allocation Drift:', goalTypeModel.allocationDriftDisplay);
+            appendLabeledValue(
+                typeSummary,
+                null,
+                'Allocation Drift:',
+                goalTypeModel.allocationDriftDisplay,
+                { valueClass: goalTypeModel.allocationDriftClass || null }
+            );
             typeHeader.appendChild(typeTitle);
             typeHeader.appendChild(typeSummary);
 
@@ -6020,7 +6102,7 @@ let GoalTargetStore;
         const forceTargetRefresh = options.forceTargetRefresh === true;
         rows.forEach(row => {
             const targetInput = row.querySelector(`.${CLASS_NAMES.targetInput}`);
-            const diffCell = row.querySelector(`.${CLASS_NAMES.diffCell}`);
+            const driftCell = row.querySelector('.gpv-column-drift');
             if (!targetInput) {
                 return;
             }
@@ -6034,11 +6116,10 @@ let GoalTargetStore;
             if (goalModel.isFixed || forceTargetRefresh) {
                 targetInput.value = goalModel.targetPercent !== null ? goalModel.targetPercent.toFixed(2) : '';
             }
-            if (diffCell) {
-                diffCell.textContent = goalModel.diffAmount === null ? '-' : formatMoney(goalModel.diffAmount);
-                diffCell.className = goalModel.diffClass
-                    ? `${CLASS_NAMES.diffCell} ${goalModel.diffClass}`
-                    : CLASS_NAMES.diffCell;
+            if (driftCell) {
+                driftCell.textContent = formatDriftDisplay(goalModel.driftPercent, goalModel.driftAmount);
+                const driftClass = getDriftSeverityClass(goalModel.driftPercent);
+                driftCell.className = driftClass ? `gpv-column-drift ${driftClass}` : 'gpv-column-drift';
             }
         });
     }
@@ -6074,8 +6155,8 @@ let GoalTargetStore;
     function handleGoalTargetChange({
         input,
         goalId,
-        currentEndingBalance,
-        totalTypeEndingBalance,
+        _currentEndingBalance,
+        _totalTypeEndingBalance,
         bucket,
         goalType,
         typeSection,
@@ -6086,14 +6167,10 @@ let GoalTargetStore;
             return;
         }
         const value = input.value;
-        const row = input.closest('tr');
-        const diffCell = row.querySelector(`.${CLASS_NAMES.diffCell}`);
         
         if (value === '') {
             // Clear the target if input is empty
             GoalTargetStore.clearTarget(goalId);
-            diffCell.textContent = '-';
-            diffCell.className = CLASS_NAMES.diffCell;
             refreshGoalTypeSection({
                 typeSection,
                 bucket,
@@ -6128,15 +6205,6 @@ let GoalTargetStore;
             flashInputBorder(input, 'warning');
         }
         
-        // Get projected investment and calculate adjusted total
-        const projectedAmount = getProjectedInvestmentValue(projectedInvestmentsState, bucket, goalType);
-        const adjustedTypeTotal = totalTypeEndingBalance + projectedAmount;
-        
-        // Update difference display in dollar amount
-        const diffData = buildDiffCellData(currentEndingBalance, savedValue, adjustedTypeTotal);
-        diffCell.textContent = diffData.diffDisplay;
-        diffCell.className = diffData.diffClassName;
-
         refreshGoalTypeSection({
             typeSection,
             bucket,
@@ -7977,6 +8045,33 @@ syncUi.update = function updateSyncUI() {
                 color: #4b5563;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             }
+
+            .gpv-goal-type-stat .gpv-drift--green,
+            .gpv-type-summary .gpv-drift--green,
+            .gpv-column-drift.gpv-drift--green,
+            .gpv-summary-card.gpv-drift--green,
+            .gpv-table .gpv-drift--green {
+                color: #059669;
+                font-weight: 700;
+            }
+
+            .gpv-goal-type-stat .gpv-drift--yellow,
+            .gpv-type-summary .gpv-drift--yellow,
+            .gpv-column-drift.gpv-drift--yellow,
+            .gpv-summary-card.gpv-drift--yellow,
+            .gpv-table .gpv-drift--yellow {
+                color: #b45309;
+                font-weight: 700;
+            }
+
+            .gpv-goal-type-stat .gpv-drift--red,
+            .gpv-type-summary .gpv-drift--red,
+            .gpv-column-drift.gpv-drift--red,
+            .gpv-summary-card.gpv-drift--red,
+            .gpv-table .gpv-drift--red {
+                color: #dc2626;
+                font-weight: 700;
+            }
             
             /* Detail View Styles */
             
@@ -8137,7 +8232,7 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-mode-performance .gpv-column-fixed,
             .gpv-mode-performance .gpv-column-target,
-            .gpv-mode-performance .gpv-column-diff,
+            .gpv-mode-performance .gpv-column-drift,
             .gpv-mode-performance .gpv-projection-panel,
             .gpv-mode-performance .gpv-section-toggle--projection {
                 display: none;
@@ -9151,6 +9246,11 @@ syncUi.update = function updateSyncUI() {
                     font-size: 13px;
                 }
 
+                .gpv-fsm-filter-input {
+                    width: 220px;
+                    max-width: 100%;
+                }
+
                 .gpv-fsm-portfolio-list {
                     width: 100%;
                 }
@@ -9162,6 +9262,38 @@ syncUi.update = function updateSyncUI() {
                 .gpv-fsm-portfolio-actions {
                     display: flex;
                     gap: 6px;
+                }
+
+                .gpv-fsm-table-wrap {
+                    width: 100%;
+                    overflow-x: auto;
+                    -webkit-overflow-scrolling: touch;
+                }
+
+                .gpv-fsm-table-portfolio-select {
+                    min-width: 0;
+                }
+
+                .gpv-table td[data-col="value"],
+                .gpv-table td[data-col="current"],
+                .gpv-table td[data-col="drift"] {
+                    text-align: right;
+                }
+
+                .gpv-fsm-table-wrap .gpv-table {
+                    min-width: 980px;
+                }
+
+                .gpv-fsm-table-wrap thead th {
+                    position: sticky;
+                    top: 0;
+                    z-index: 1;
+                }
+
+                .gpv-target-input:disabled {
+                    background: #f3f4f6;
+                    color: #6b7280;
+                    cursor: not-allowed;
                 }
 
                 /* Sync Indicator */
@@ -9258,6 +9390,14 @@ syncUi.update = function updateSyncUI() {
 
                     .gpv-sync-text {
                         display: none;
+                    }
+
+                    .gpv-fsm-toolbar {
+                        align-items: stretch;
+                    }
+
+                    .gpv-fsm-filter-input {
+                        width: 100%;
                     }
                 }
 
@@ -9433,14 +9573,33 @@ syncUi.update = function updateSyncUI() {
         const total = rows.reduce((sum, row) => sum + (Number(row.currentValueLcy) || 0), 0);
         const activeRows = rows.filter(row => row.fixed !== true);
         const targetPercentTotal = activeRows.reduce((sum, row) => sum + (Number(row.targetPercent) || 0), 0);
-        const totalDrift = activeRows.reduce((sum, row) => sum + calculateFsmRowDrift(total, row), 0);
+        const fixedCount = rows.filter(row => row.fixed === true).length;
+        const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
+        const totalDrift = activeRows.reduce((sum, row) => {
+            const rowDrift = calculateFsmRowDrift(total, row);
+            return sum + (Number.isFinite(rowDrift?.driftPercent) ? Math.abs(rowDrift.driftPercent) : 0);
+        }, 0);
         return {
             total,
-            actualWeightDisplay: formatPercent(1, { multiplier: 100, showSign: false }),
-            targetWeightDisplay: formatPercent(targetPercentTotal / 100, { multiplier: 100, showSign: false }),
+            targetAssignedDisplay: formatPercent(targetPercentTotal / 100, { multiplier: 100, showSign: false }),
             driftDisplay: formatPercent(totalDrift, { multiplier: 100, showSign: false }),
-            suggestionDisplay: formatMoney(0)
+            driftClass: getDriftSeverityClass(totalDrift),
+            holdingsCount: rows.length,
+            fixedCount,
+            unassignedCount
         };
+    }
+
+    function calculateFsmCurrentAllocation(total, row) {
+        const numericTotal = toFiniteNumber(total, null);
+        if (numericTotal === null || numericTotal <= 0) {
+            return null;
+        }
+        const currentValue = toFiniteNumber(row?.currentValueLcy, null);
+        if (currentValue === null) {
+            return null;
+        }
+        return currentValue / numericTotal;
     }
 
     function buildFsmHeader({ overlay, cleanupCallbacks }) {
@@ -9481,14 +9640,49 @@ syncUi.update = function updateSyncUI() {
     }
 
     function calculateFsmRowDrift(total, row) {
-        if (total <= 0 || !Number.isFinite(row.targetPercent)) {
-            return 0;
+        const numericTotal = toFiniteNumber(total, null);
+        if (numericTotal === null || numericTotal <= 0) {
+            return null;
         }
-        const targetAmount = (row.targetPercent / 100) * total;
+        const targetPercent = toFiniteNumber(row?.targetPercent, null);
+        if (targetPercent === null) {
+            return null;
+        }
+        const targetAmount = (targetPercent / 100) * numericTotal;
         if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
-            return 0;
+            return null;
         }
-        return Math.abs(targetAmount - row.currentValueLcy) / targetAmount;
+        const currentValue = toFiniteNumber(row?.currentValueLcy, 0);
+        const driftAmount = currentValue - targetAmount;
+        const driftPercent = driftAmount / targetAmount;
+        if (!Number.isFinite(driftPercent) || !Number.isFinite(driftAmount)) {
+            return null;
+        }
+        return {
+            driftPercent,
+            driftAmount
+        };
+    }
+
+    function buildFsmDisplayRows(rows, total) {
+        return (Array.isArray(rows) ? rows : []).map(row => {
+            const currentAllocationPercent = calculateFsmCurrentAllocation(total, row);
+            const driftModel = calculateFsmRowDrift(total, row);
+            const driftPercent = driftModel?.driftPercent ?? null;
+            const driftAmount = driftModel?.driftAmount ?? null;
+            return {
+                ...row,
+                currentAllocationPercent,
+                currentAllocationDisplay: formatPercent(currentAllocationPercent, {
+                    multiplier: 100,
+                    showSign: false
+                }),
+                driftPercent,
+                driftAmount,
+                driftDisplay: formatDriftDisplay(driftPercent, driftAmount),
+                driftClass: getDriftSeverityClass(driftPercent)
+            };
+        });
     }
 
     function buildFsmManagerSummary({
@@ -9572,8 +9766,8 @@ syncUi.update = function updateSyncUI() {
                 actionSelect.setAttribute('aria-label', `Actions for portfolio ${item.name}`);
                 actionSelect.innerHTML = `
                     <option value="">Actions</option>
-                    <option value="rename">Rename</option>
-                    <option value="archive">Archive</option>
+                    <option value="rename">Rename portfolio</option>
+                    <option value="archive">Archive portfolio</option>
                 `;
                 actionSelect.onchange = () => {
                     const action = actionSelect.value;
@@ -9615,14 +9809,22 @@ syncUi.update = function updateSyncUI() {
         return manager;
     }
 
-    function buildFsmSummaryRow(summary) {
+    function buildFsmSummaryRow(summary, options = {}) {
+        const showDrift = options.showDrift !== false;
         const summaryRow = createElement('div', 'gpv-summary-row');
+        const driftClassName = summary?.driftClass
+            ? `gpv-summary-card ${summary.driftClass}`
+            : 'gpv-summary-card';
+        const driftCardHtml = showDrift
+            ? `<div class="${escapeHtml(driftClassName)}"><strong>Drift:</strong> ${escapeHtml(summary.driftDisplay)}</div>`
+            : '';
         summaryRow.innerHTML = `
             <div class="gpv-summary-card"><strong>Total Value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
-            <div class="gpv-summary-card"><strong>Actual:</strong> ${escapeHtml(summary.actualWeightDisplay)}</div>
-            <div class="gpv-summary-card"><strong>Target:</strong> ${escapeHtml(summary.targetWeightDisplay)}</div>
-            <div class="gpv-summary-card"><strong>Drift:</strong> ${escapeHtml(summary.driftDisplay)}</div>
-            <div class="gpv-summary-card"><strong>Suggestion:</strong> ${escapeHtml(summary.suggestionDisplay)}</div>
+            <div class="gpv-summary-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>
+            <div class="gpv-summary-card"><strong>Holdings:</strong> ${escapeHtml(String(summary.holdingsCount))}</div>
+            <div class="gpv-summary-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>
+            <div class="gpv-summary-card"><strong>Fixed:</strong> ${escapeHtml(String(summary.fixedCount))}</div>
+            ${driftCardHtml}
         `;
         return summaryRow;
     }
@@ -9634,7 +9836,7 @@ syncUi.update = function updateSyncUI() {
         onScopeChange,
         onFilterChange
     }) {
-        const toolbar = createElement('div', 'gpv-fsm-toolbar');
+        const toolbar = createElement('div', 'gpv-fsm-toolbar gpv-fsm-filter-toolbar');
         const scopeSelect = createElement('select', 'gpv-select');
         scopeSelect.innerHTML = scopeOptions.map(option => `
             <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
@@ -9647,8 +9849,9 @@ syncUi.update = function updateSyncUI() {
         };
         toolbar.appendChild(scopeSelect);
 
-        const searchInput = createElement('input', 'gpv-target-input');
+        const searchInput = createElement('input', 'gpv-target-input gpv-fsm-filter-input');
         searchInput.placeholder = 'Filter holdings';
+        searchInput.setAttribute('aria-label', 'Filter holdings by ticker, name, or product type');
         searchInput.value = filterTerm;
         searchInput.oninput = () => {
             if (typeof onFilterChange === 'function') {
@@ -9661,6 +9864,7 @@ syncUi.update = function updateSyncUI() {
 
     function buildFsmBulkRow({
         selectAllFiltered,
+        selectedCount,
         activePortfolios,
         bulkPortfolioId,
         filteredCount,
@@ -9682,6 +9886,9 @@ syncUi.update = function updateSyncUI() {
         selectAllLabel.prepend(selectAll);
         bulkRow.appendChild(selectAllLabel);
 
+        const selectedSummary = createElement('span', 'gpv-summary-card', `Selected: ${selectedCount} / ${filteredCount}`);
+        bulkRow.appendChild(selectedSummary);
+
         const bulkSelect = createElement('select', 'gpv-select');
         bulkSelect.innerHTML = [
             { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: 'Unassigned' },
@@ -9698,6 +9905,7 @@ syncUi.update = function updateSyncUI() {
         bulkRow.appendChild(bulkSelect);
 
         const applyBulkBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', `Apply to ${filteredCount} filtered holdings`);
+        applyBulkBtn.disabled = filteredCount === 0 || selectedCount === 0;
         applyBulkBtn.onclick = () => {
             if (typeof onApplyBulk === 'function') {
                 onApplyBulk();
@@ -9713,12 +9921,16 @@ syncUi.update = function updateSyncUI() {
         selectAllFiltered,
         activePortfolios,
         targetErrorsByCode,
+        showDrift,
         onSelectAllChange,
         onRowSelectChange,
         onTargetChange,
         onFixedChange,
         onPortfolioChange
     }) {
+        if (!Array.isArray(filteredRows) || filteredRows.length === 0) {
+            return createElement('div', 'gpv-conflict-diff-empty', 'No holdings match this filter.');
+        }
         const table = createElement('table', 'gpv-table');
         table.innerHTML = `
             <thead>
@@ -9728,7 +9940,9 @@ syncUi.update = function updateSyncUI() {
                     <th>Name</th>
                     <th>Product Type</th>
                     <th>Value (SGD)</th>
+                    <th>Current %</th>
                     <th>Target %</th>
+                    ${showDrift ? '<th>Drift %</th>' : ''}
                     <th>Fixed</th>
                     <th>Portfolio</th>
                 </tr>
@@ -9750,14 +9964,16 @@ syncUi.update = function updateSyncUI() {
             const tr = document.createElement('tr');
             const checked = selectedCodes.has(row.code);
             tr.innerHTML = `
-                <td><input type="checkbox" ${checked ? 'checked' : ''} aria-label="Select holding ${escapeHtml(row.displayTicker || row.code)}" /></td>
-                <td>${escapeHtml(row.displayTicker || '-')}</td>
-                <td>${escapeHtml(row.name)}</td>
-                <td>${escapeHtml(row.productType)}</td>
-                <td>${escapeHtml(formatMoney(row.currentValueLcy))}</td>
-                <td></td>
-                <td></td>
-                <td></td>
+                <td data-col="select"><input type="checkbox" ${checked ? 'checked' : ''} aria-label="Select holding ${escapeHtml(row.displayTicker || row.code)}" /></td>
+                <td data-col="ticker">${escapeHtml(row.displayTicker || '-')}</td>
+                <td data-col="name">${escapeHtml(row.name)}</td>
+                <td data-col="product-type">${escapeHtml(row.productType)}</td>
+                <td data-col="value">${escapeHtml(formatMoney(row.currentValueLcy))}</td>
+                <td data-col="current">${escapeHtml(row.currentAllocationDisplay || '-')}</td>
+                <td data-col="target"></td>
+                ${showDrift ? `<td data-col="drift" class="${escapeHtml(row.driftClass || '')}">${escapeHtml(row.driftDisplay || '-')}</td>` : ''}
+                <td data-col="fixed"></td>
+                <td data-col="portfolio"></td>
             `;
             const checkbox = tr.querySelector('input[type="checkbox"]');
             checkbox.addEventListener('change', () => {
@@ -9766,7 +9982,11 @@ syncUi.update = function updateSyncUI() {
                 }
             });
 
-            const targetCell = tr.children[5];
+            const targetCell = tr.querySelector('td[data-col="target"]');
+            if (!targetCell) {
+                tbody.appendChild(tr);
+                return;
+            }
             const targetInput = createElement('input', 'gpv-target-input');
             targetInput.type = 'number';
             targetInput.min = '0';
@@ -9776,6 +9996,9 @@ syncUi.update = function updateSyncUI() {
             targetInput.setAttribute('aria-label', `Target percentage for ${row.displayTicker || row.code}`);
             targetInput.value = Number.isFinite(row.targetPercent) ? Number(row.targetPercent).toFixed(2) : '';
             targetInput.disabled = row.fixed === true;
+            if (row.fixed === true) {
+                targetInput.title = 'Fixed holdings do not use target %';
+            }
             targetInput.onchange = () => {
                 if (typeof onTargetChange === 'function') {
                     onTargetChange(row, targetInput.value.trim());
@@ -9787,7 +10010,11 @@ syncUi.update = function updateSyncUI() {
                 targetCell.appendChild(err);
             }
 
-            const fixedCell = tr.children[6];
+            const fixedCell = tr.querySelector('td[data-col="fixed"]');
+            if (!fixedCell) {
+                tbody.appendChild(tr);
+                return;
+            }
             const fixedCheckbox = createElement('input');
             fixedCheckbox.type = 'checkbox';
             fixedCheckbox.checked = row.fixed === true;
@@ -9799,14 +10026,19 @@ syncUi.update = function updateSyncUI() {
             };
             fixedCell.appendChild(fixedCheckbox);
 
-            const selectCell = tr.children[7];
-            const select = createElement('select', 'gpv-select');
+            const selectCell = tr.querySelector('td[data-col="portfolio"]');
+            if (!selectCell) {
+                tbody.appendChild(tr);
+                return;
+            }
+            const select = createElement('select', 'gpv-select gpv-fsm-table-portfolio-select');
             select.innerHTML = [
                 { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: 'Unassigned' },
                 ...activePortfolios.map(item => ({ id: item.id, label: item.name }))
             ].map(option => `
                 <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
             `).join('');
+            applySelectContentWidth(select, { minCh: 12, maxCh: 26, paddingCh: 4 });
             select.value = row.portfolioId;
             select.onchange = () => {
                 if (typeof onPortfolioChange === 'function') {
@@ -9816,7 +10048,9 @@ syncUi.update = function updateSyncUI() {
             selectCell.appendChild(select);
             tbody.appendChild(tr);
         });
-        return table;
+        const tableWrapper = createElement('div', 'gpv-fsm-table-wrap');
+        tableWrapper.appendChild(table);
+        return tableWrapper;
     }
 
     function renderFsmOverlay(fsmHoldings) {
@@ -9882,7 +10116,10 @@ syncUi.update = function updateSyncUI() {
             });
 
             const selectedCodes = new Set(selectAllFiltered ? filteredRows.map(row => row.code).filter(Boolean) : []);
+            const selectedCount = selectedCodes.size;
+            const showDrift = selectedScope !== FSM_ALL_PORTFOLIO_ID;
             const summary = buildFsmScopedSummary(filteredRows);
+            const displayRows = buildFsmDisplayRows(filteredRows, summary.total);
             const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
 
             contentDiv.innerHTML = '';
@@ -9944,7 +10181,7 @@ syncUi.update = function updateSyncUI() {
                 contentDiv.appendChild(manager);
             }
 
-            contentDiv.appendChild(buildFsmSummaryRow(summary));
+            contentDiv.appendChild(buildFsmSummaryRow(summary, { showDrift }));
 
             const scopeOptions = [
                 { id: FSM_ALL_PORTFOLIO_ID, label: 'All' },
@@ -9970,6 +10207,7 @@ syncUi.update = function updateSyncUI() {
 
             contentDiv.appendChild(buildFsmBulkRow({
                 selectAllFiltered,
+                selectedCount,
                 activePortfolios: activePortfolios(),
                 bulkPortfolioId,
                 filteredCount: filteredRows.length,
@@ -9991,11 +10229,12 @@ syncUi.update = function updateSyncUI() {
             }));
 
             const table = buildFsmHoldingsTable({
-                filteredRows,
+                filteredRows: displayRows,
                 selectedCodes,
                 selectAllFiltered,
                 activePortfolios: activePortfolios(),
                 targetErrorsByCode,
+                showDrift,
                 onSelectAllChange: value => {
                     selectAllFiltered = value;
                     rerender();

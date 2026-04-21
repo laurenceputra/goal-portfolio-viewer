@@ -473,25 +473,36 @@ describe('formatGrowthPercentFromEndingBalance', () => {
 
 describe('calculateGoalDiff', () => {
     test('should return null diff when target is missing', () => {
-        expect(calculateGoalDiff(1000, null, 2000)).toEqual({ diffAmount: null, diffClass: '' });
+        expect(calculateGoalDiff(1000, null, 2000)).toEqual({
+            diffAmount: null,
+            diffClass: '',
+            driftPercent: null,
+            driftAmount: null
+        });
     });
 
     test('should calculate diff and class when within threshold', () => {
         const result = calculateGoalDiff(1000, 50, 2000);
         expect(result.diffAmount).toBe(0);
         expect(result.diffClass).toBe('positive');
+        expect(result.driftPercent).toBe(0);
+        expect(result.driftAmount).toBe(0);
     });
 
     test('should mark diff as negative when over threshold', () => {
         const result = calculateGoalDiff(1000, 80, 2000);
         expect(result.diffAmount).toBe(-600);
         expect(result.diffClass).toBe('negative');
+        expect(result.driftPercent).toBeCloseTo(-0.375, 5);
+        expect(result.driftAmount).toBe(-600);
     });
 
     test('should mark diff as positive when at threshold', () => {
         const result = calculateGoalDiff(1000, 95, 1000);
         expect(result.diffAmount).toBe(50);
         expect(result.diffClass).toBe('positive');
+        expect(result.driftPercent).toBeCloseTo(0.0526315789, 5);
+        expect(result.driftAmount).toBe(50);
     });
 
     test('should handle zero or negative current amounts', () => {
@@ -505,7 +516,12 @@ describe('calculateGoalDiff', () => {
     });
 
     test('should return null diff for invalid totals', () => {
-        expect(calculateGoalDiff(1000, 10, 0)).toEqual({ diffAmount: null, diffClass: '' });
+        expect(calculateGoalDiff(1000, 10, 0)).toEqual({
+            diffAmount: null,
+            diffClass: '',
+            driftPercent: null,
+            driftAmount: null
+        });
     });
 });
 
@@ -1778,4 +1794,3 @@ describe('buildMergedInvestmentData', () => {
         expect(result.Retirement.GENERAL_WEALTH_ACCUMULATION.goals).toHaveLength(2); // Both goals present
     });
 });
-

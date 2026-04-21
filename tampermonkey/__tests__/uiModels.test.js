@@ -52,12 +52,16 @@ describe('format helpers', () => {
         const diffInfo = calculateGoalDiff(1200, 60, 2500);
         expect(diffInfo.diffClass).toBe('negative');
         expect(diffInfo.diffAmount).toBe(-300);
+        expect(diffInfo.driftPercent).toBeCloseTo(-0.2, 5);
+        expect(diffInfo.driftAmount).toBe(-300);
     });
 
     test('should handle invalid goal diff inputs', () => {
         expect(calculateGoalDiff(100, null, 200)).toEqual({
             diffAmount: null,
-            diffClass: ''
+            diffClass: '',
+            driftPercent: null,
+            driftAmount: null
         });
     });
 
@@ -143,6 +147,7 @@ describe('view model builders', () => {
         expect(retirement.goalTypes[0].goalType).toBe('GENERAL_WEALTH_ACCUMULATION');
         expect(retirement.goalTypes[1].returnClass).toBe('negative');
         expect(retirement.goalTypes[0].allocationDriftDisplay).toBe('20.00%');
+        expect(retirement.goalTypes[0].allocationDriftClass).toBe('gpv-drift--green');
     });
 
     test('should build bucket detail view model with projections', () => {
@@ -168,11 +173,14 @@ describe('view model builders', () => {
         expect(goalTypeModel.remainingTargetDisplay).toBe('12.00%');
         expect(goalTypeModel.remainingTargetIsHigh).toBe(true);
         expect(goalTypeModel.allocationDriftDisplay).toBe('20.00%');
+        expect(goalTypeModel.allocationDriftClass).toBe('gpv-drift--green');
         const firstGoal = goalTypeModel.goals[0];
         expect(firstGoal.percentOfType).toBe(60);
         expect(firstGoal.diffDisplay).toMatch(/0\.00/);
         expect(firstGoal.targetDisplay).toBe('48.00');
         expect(firstGoal.isFixed).toBe(true);
+        expect(firstGoal.driftDisplay).toBe('0.00% (SGD\u00A00.00)');
+        expect(firstGoal.driftClass).toBe('gpv-drift--green');
     });
 
     test('should map per-goal window returns with fallback', () => {
@@ -331,6 +339,7 @@ describe('view model builders', () => {
         expect(missingGoal.targetDisplay).toBe('');
         expect(missingGoal.diffDisplay).toBe('-');
         expect(goalTypeModel.allocationDriftDisplay).toBe('-');
+        expect(goalTypeModel.allocationDriftClass).toBe('');
         expect(goalTypeModel.allocationDriftAvailable).toBe(false);
     });
 
@@ -379,6 +388,7 @@ describe('buildAllocationDriftModel', () => {
         const model = buildAllocationDriftModel(goalModels, 2500);
         expect(model.allocationDriftPercent).toBeCloseTo(0.4, 5);
         expect(model.allocationDriftDisplay).toBe('40.00%');
+        expect(model.allocationDriftClass).toBe('gpv-drift--yellow');
         expect(model.allocationDriftAvailable).toBe(true);
     });
 
@@ -390,6 +400,7 @@ describe('buildAllocationDriftModel', () => {
         const model = buildAllocationDriftModel(goalModels, 1000);
         expect(model.allocationDriftPercent).toBeCloseTo(2, 5);
         expect(model.allocationDriftDisplay).toBe('200.00%');
+        expect(model.allocationDriftClass).toBe('gpv-drift--red');
     });
 
     test('should skip non-positive target amounts', () => {
@@ -399,6 +410,7 @@ describe('buildAllocationDriftModel', () => {
         const model = buildAllocationDriftModel(goalModels, 1000);
         expect(model.allocationDriftPercent).toBe(0);
         expect(model.allocationDriftDisplay).toBe('0.00%');
+        expect(model.allocationDriftClass).toBe('gpv-drift--green');
         expect(model.allocationDriftAvailable).toBe(true);
     });
 
@@ -406,11 +418,13 @@ describe('buildAllocationDriftModel', () => {
         expect(buildAllocationDriftModel([], 1000)).toEqual({
             allocationDriftPercent: null,
             allocationDriftDisplay: '-',
+            allocationDriftClass: '',
             allocationDriftAvailable: false
         });
         expect(buildAllocationDriftModel([{ endingBalanceAmount: 100, targetPercent: 50 }], 0)).toEqual({
             allocationDriftPercent: null,
             allocationDriftDisplay: '-',
+            allocationDriftClass: '',
             allocationDriftAvailable: false
         });
     });

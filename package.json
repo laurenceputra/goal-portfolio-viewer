@@ -1,14 +1,18 @@
 {
   "name": "goal-portfolio-viewer",
-  "version": "2.14.1",
+  "version": "2.14.2",
   "description": "Goal Portfolio Viewer workspace",
   "private": true,
   "packageManager": "pnpm@9.12.3",
   "pnpm": {
     "overrides": {
       "ajv": "^6.14.0",
-      "minimatch": "^10.2.2",
-      "test-exclude": "^7.0.1"
+      "brace-expansion": "^5.0.5",
+      "flatted": "^3.4.2",
+      "minimatch": "^10.2.3",
+      "picomatch": "^2.3.2",
+      "test-exclude": "^7.0.1",
+      "undici": "^7.24.0"
     }
   },
   "scripts": {

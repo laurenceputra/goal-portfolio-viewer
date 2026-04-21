@@ -1,6 +1,6 @@
 {
   "name": "tampermonkey",
-  "version": "2.14.1",
+  "version": "2.14.2",
   "description": "Goal Portfolio Viewer userscript tooling",
   "private": true,
   "main": "goal_portfolio_viewer.user.js",
@@ -15,7 +15,7 @@
     "@eslint/js": "^9.39.2",
     "eslint": "^9.39.2",
     "jest": "^29.7.0",
-    "jsdom": "^22.1.0"
+    "jsdom": "^24.1.3"
   },
   "jest": {
     "testEnvironment": "node",
