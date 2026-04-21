@@ -5263,6 +5263,22 @@ let GoalTargetStore;
         return span;
     }
 
+    function applySelectContentWidth(selectElement, options = {}) {
+        if (!selectElement || typeof selectElement.options === 'undefined') {
+            return;
+        }
+        const minCh = Number.isFinite(options.minCh) ? options.minCh : 12;
+        const maxCh = Number.isFinite(options.maxCh) ? options.maxCh : 28;
+        const paddingCh = Number.isFinite(options.paddingCh) ? options.paddingCh : 4;
+        const longestOptionLength = Array.from(selectElement.options).reduce((maxLength, option) => {
+            const text = utils.normalizeString(option?.text, '');
+            return Math.max(maxLength, text.length);
+        }, 0);
+        const widthCh = Math.min(maxCh, Math.max(minCh, longestOptionLength + paddingCh));
+        selectElement.style.width = `${widthCh}ch`;
+        selectElement.style.maxWidth = `${maxCh}ch`;
+    }
+
     const FOCUSABLE_SELECTOR = [
         'a[href]',
         'button',
@@ -9243,6 +9259,10 @@ syncUi.update = function updateSyncUI() {
                     gap: 6px;
                 }
 
+                .gpv-fsm-table-portfolio-select {
+                    min-width: 0;
+                }
+
                 /* Sync Indicator */
                 .gpv-sync-indicator {
                     position: fixed;
@@ -9949,13 +9969,14 @@ syncUi.update = function updateSyncUI() {
                 tbody.appendChild(tr);
                 return;
             }
-            const select = createElement('select', 'gpv-select');
+            const select = createElement('select', 'gpv-select gpv-fsm-table-portfolio-select');
             select.innerHTML = [
                 { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: 'Unassigned' },
                 ...activePortfolios.map(item => ({ id: item.id, label: item.name }))
             ].map(option => `
                 <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
             `).join('');
+            applySelectContentWidth(select, { minCh: 12, maxCh: 26, paddingCh: 4 });
             select.value = row.portfolioId;
             select.onchange = () => {
                 if (typeof onPortfolioChange === 'function') {
