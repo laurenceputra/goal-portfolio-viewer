@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.3
+// @version      2.14.4
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -29,6 +29,7 @@
 
     const DEBUG = false;
     const REMAINING_TARGET_ALERT_THRESHOLD = 2;
+    const FSM_PROFIT_PERCENT_SCALE = 'auto';
     const FSM_UNASSIGNED_PORTFOLIO_ID = 'unassigned';
     const FSM_ALL_PORTFOLIO_ID = 'all';
     const FSM_MAX_PORTFOLIO_NAME_LENGTH = 64;
@@ -300,6 +301,17 @@
         return Number.isFinite(numericValue) ? numericValue : fallback;
     }
 
+    function toOptionalFiniteNumber(value) {
+        if (typeof value === 'string' && value.trim() === '') {
+            return null;
+        }
+        if (value === null || value === undefined || value === '') {
+            return null;
+        }
+        const numericValue = Number(value);
+        return Number.isFinite(numericValue) ? numericValue : null;
+    }
+
     function formatMoney(val) {
         if (typeof val === 'number' && Number.isFinite(val)) {
             return MONEY_FORMATTER.format(val);
@@ -326,7 +338,7 @@
     }
 
     function formatSignedMoney(value) {
-        const numericValue = toFiniteNumber(value, null);
+        const numericValue = toOptionalFiniteNumber(value);
         if (numericValue === null) {
             return '-';
         }
@@ -335,6 +347,62 @@
             return '-';
         }
         return numericValue > 0 ? `+${money}` : money;
+    }
+
+    function resolveProfitPercentRatio(value, derivedPercent = null) {
+        const numericValue = toOptionalFiniteNumber(value);
+        if (numericValue === null) {
+            return derivedPercent;
+        }
+        const absoluteValue = Math.abs(numericValue);
+        const ratioCandidate = numericValue;
+        const pointsCandidate = numericValue / 100;
+        if (derivedPercent !== null) {
+            const ratioDistance = Math.abs(derivedPercent - ratioCandidate);
+            const pointsDistance = Math.abs(derivedPercent - pointsCandidate);
+            return pointsDistance <= ratioDistance ? pointsCandidate : ratioCandidate;
+        }
+        if (FSM_PROFIT_PERCENT_SCALE === 'ratio') {
+            return ratioCandidate;
+        }
+        if (FSM_PROFIT_PERCENT_SCALE === 'points') {
+            return pointsCandidate;
+        }
+        if (absoluteValue === 0) {
+            return pointsCandidate;
+        }
+        return null;
+    }
+
+    function calculateProfitPercentFromValue(currentValue, profitValue) {
+        const numericCurrentValue = toOptionalFiniteNumber(currentValue);
+        const numericProfitValue = toOptionalFiniteNumber(profitValue);
+        if (numericCurrentValue === null || numericProfitValue === null) {
+            return null;
+        }
+        const costBasis = numericCurrentValue - numericProfitValue;
+        if (!Number.isFinite(costBasis) || costBasis <= 0) {
+            return null;
+        }
+        return numericProfitValue / costBasis;
+    }
+
+    function formatProfitDisplay(profitValue, profitPercent) {
+        const valueDisplay = formatSignedMoney(profitValue);
+        const percentDisplay = formatPercent(profitPercent, {
+            multiplier: 100,
+            showSign: true
+        });
+        if (valueDisplay === '-' && percentDisplay === '-') {
+            return '-';
+        }
+        if (valueDisplay === '-') {
+            return percentDisplay;
+        }
+        if (percentDisplay === '-') {
+            return valueDisplay;
+        }
+        return `${valueDisplay} (${percentDisplay})`;
     }
 
     function getDriftSeverityClass(driftRatio) {
@@ -9464,13 +9532,14 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-table td[data-col="value"],
+                .gpv-table td[data-col="profit"],
                 .gpv-table td[data-col="current"],
                 .gpv-table td[data-col="drift"] {
                     text-align: right;
                 }
 
                 .gpv-fsm-table-wrap .gpv-table {
-                    min-width: 980px;
+                    min-width: 1120px;
                 }
 
                 .gpv-fsm-table-wrap thead th {
@@ -9752,6 +9821,8 @@ syncUi.update = function updateSyncUI() {
             const code = utils.normalizeString(row?.code, '');
             const subcode = utils.normalizeString(row?.subcode ?? row?.subCode, '');
             const currentValue = Number(row?.currentValueLcy);
+            const profitValue = toOptionalFiniteNumber(row?.profitValueLcy);
+            const profitPercent = toOptionalFiniteNumber(row?.profitPercentLcy);
             return {
                 ...row,
                 code,
@@ -9759,6 +9830,8 @@ syncUi.update = function updateSyncUI() {
                 name: utils.normalizeString(row?.name, '-'),
                 productType: utils.normalizeString(row?.productType, '-'),
                 currentValueLcy: Number.isFinite(currentValue) ? currentValue : 0,
+                profitValueLcy: profitValue,
+                profitPercentLcy: profitPercent,
                 portfolioId: assignmentByCode[code] || FSM_UNASSIGNED_PORTFOLIO_ID,
                 targetPercent: getFsmTarget(code),
                 fixed: getFsmFixed(code)
@@ -9772,6 +9845,16 @@ syncUi.update = function updateSyncUI() {
         const targetPercentTotal = activeRows.reduce((sum, row) => sum + (Number(row.targetPercent) || 0), 0);
         const fixedCount = rows.filter(row => row.fixed === true).length;
         const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
+        const hasCompleteProfit = rows.length > 0 && rows.every(row => toOptionalFiniteNumber(row?.profitValueLcy) !== null);
+        const totalProfitValue = hasCompleteProfit
+            ? rows.reduce((sum, row) => {
+                const value = toOptionalFiniteNumber(row?.profitValueLcy);
+                return sum + (value === null ? 0 : value);
+            }, 0)
+            : null;
+        const totalProfitPercent = hasCompleteProfit
+            ? calculateProfitPercentFromValue(total, totalProfitValue)
+            : null;
         const totalDrift = activeRows.reduce((sum, row) => {
             const rowDrift = calculateFsmRowDrift(total, row);
             return sum + (Number.isFinite(rowDrift?.driftPercent) ? Math.abs(rowDrift.driftPercent) : 0);
@@ -9783,7 +9866,10 @@ syncUi.update = function updateSyncUI() {
             driftClass: getDriftSeverityClass(totalDrift),
             holdingsCount: rows.length,
             fixedCount,
-            unassignedCount
+            unassignedCount,
+            totalProfitValue,
+            totalProfitPercent,
+            profitDisplay: formatProfitDisplay(totalProfitValue, totalProfitPercent)
         };
     }
 
@@ -9867,6 +9953,10 @@ syncUi.update = function updateSyncUI() {
             const driftModel = calculateFsmRowDrift(total, row);
             const driftPercent = driftModel?.driftPercent ?? null;
             const driftAmount = driftModel?.driftAmount ?? null;
+            const currentValue = toFiniteNumber(row?.currentValueLcy, null);
+            const profitValue = toOptionalFiniteNumber(row?.profitValueLcy);
+            const derivedProfitPercent = calculateProfitPercentFromValue(currentValue, profitValue);
+            const profitPercent = resolveProfitPercentRatio(row?.profitPercentLcy, derivedProfitPercent);
             return {
                 ...row,
                 currentAllocationPercent,
@@ -9874,6 +9964,9 @@ syncUi.update = function updateSyncUI() {
                     multiplier: 100,
                     showSign: false
                 }),
+                profitValue,
+                profitPercent,
+                profitDisplay: formatProfitDisplay(profitValue, profitPercent),
                 driftPercent,
                 driftAmount,
                 driftDisplay: formatDriftDisplay(driftPercent, driftAmount),
@@ -10008,10 +10101,18 @@ syncUi.update = function updateSyncUI() {
 
     function buildFsmSummaryRow(summary, options = {}) {
         const showDrift = options.showDrift !== false;
+        const showProfit = options.showProfit === true;
+        const showFixed = options.showFixed !== false;
         const summaryRow = createElement('div', 'gpv-summary-row');
         const driftClassName = summary?.driftClass
             ? `gpv-summary-card ${summary.driftClass}`
             : 'gpv-summary-card';
+        const profitCardHtml = showProfit
+            ? `<div class="gpv-summary-card"><strong>Profit:</strong> ${escapeHtml(summary?.profitDisplay || '-')}</div>`
+            : '';
+        const fixedCardHtml = showFixed
+            ? `<div class="gpv-summary-card"><strong>Fixed:</strong> ${escapeHtml(String(summary.fixedCount))}</div>`
+            : '';
         const driftCardHtml = showDrift
             ? `<div class="${escapeHtml(driftClassName)}"><strong>Drift:</strong> ${escapeHtml(summary.driftDisplay)}</div>`
             : '';
@@ -10020,7 +10121,8 @@ syncUi.update = function updateSyncUI() {
             <div class="gpv-summary-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>
             <div class="gpv-summary-card"><strong>Holdings:</strong> ${escapeHtml(String(summary.holdingsCount))}</div>
             <div class="gpv-summary-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>
-            <div class="gpv-summary-card"><strong>Fixed:</strong> ${escapeHtml(String(summary.fixedCount))}</div>
+            ${profitCardHtml}
+            ${fixedCardHtml}
             ${driftCardHtml}
         `;
         return summaryRow;
@@ -10048,6 +10150,7 @@ syncUi.update = function updateSyncUI() {
                 driftDisplay: summary.driftDisplay,
                 driftClass: summary.driftClass,
                 fixedCount: summary.fixedCount,
+                profitDisplay: summary.profitDisplay,
                 isUnassigned: options.isUnassigned === true
             };
         };
@@ -10116,8 +10219,8 @@ syncUi.update = function updateSyncUI() {
                         <span class="gpv-fsm-overview-stat-value ${escapeHtml(card.driftClass || '')}">${escapeHtml(card.driftDisplay)}</span>
                     </div>
                     <div class="gpv-fsm-overview-stat">
-                        <span class="gpv-fsm-overview-stat-label">Fixed</span>
-                        <span class="gpv-fsm-overview-stat-value">${escapeHtml(String(card.fixedCount))}</span>
+                        <span class="gpv-fsm-overview-stat-label">Profit</span>
+                        <span class="gpv-fsm-overview-stat-value">${escapeHtml(card.profitDisplay || '-')}</span>
                     </div>
                 </div>
             `;
@@ -10270,6 +10373,7 @@ syncUi.update = function updateSyncUI() {
                     <th>Name</th>
                     <th>Product Type</th>
                     <th>Value (SGD)</th>
+                    <th>Profit</th>
                     <th>Current %</th>
                     <th>Target %</th>
                     ${showDrift ? '<th>Drift %</th>' : ''}
@@ -10299,6 +10403,7 @@ syncUi.update = function updateSyncUI() {
                 <td data-col="name">${escapeHtml(row.name)}</td>
                 <td data-col="product-type">${escapeHtml(row.productType)}</td>
                 <td data-col="value">${escapeHtml(formatMoney(row.currentValueLcy))}</td>
+                <td data-col="profit">${escapeHtml(row.profitDisplay || '-')}</td>
                 <td data-col="current">${escapeHtml(row.currentAllocationDisplay || '-')}</td>
                 <td data-col="target"></td>
                 ${showDrift ? `<td data-col="drift" class="${escapeHtml(row.driftClass || '')}">${escapeHtml(row.driftDisplay || '-')}</td>` : ''}
@@ -10596,7 +10701,11 @@ syncUi.update = function updateSyncUI() {
             if (viewMode === 'overview') {
                 toolbarSection.hidden = true;
                 setElementsDisabled(detailToolbarControls, true);
-                summarySection.appendChild(buildFsmSummaryRow(viewState.overviewModel.allSummary, { showDrift: true }));
+                summarySection.appendChild(buildFsmSummaryRow(viewState.overviewModel.allSummary, {
+                    showDrift: true,
+                    showProfit: true,
+                    showFixed: false
+                }));
                 bodySection.appendChild(buildFsmOverviewPanel({
                     overviewModel: viewState.overviewModel,
                     onSelectScope: scopeId => {
@@ -10622,7 +10731,10 @@ syncUi.update = function updateSyncUI() {
 
             toolbarSection.hidden = false;
             setElementsDisabled(detailToolbarControls, false);
-            summarySection.appendChild(buildFsmSummaryRow(viewState.summary, { showDrift: viewState.showDrift }));
+            summarySection.appendChild(buildFsmSummaryRow(viewState.summary, {
+                showDrift: viewState.showDrift,
+                showProfit: true
+            }));
             detailToolbar.setState({
                 scopeOptions: viewState.scopeOptions,
                 selectedScope,
@@ -11275,6 +11387,7 @@ syncUi.update = function updateSyncUI() {
             sortGoalTypes,
             formatMoney,
             formatPercent,
+            formatProfitDisplay,
             formatGrowthPercentFromEndingBalance,
             getReturnClass,
             calculatePercentOfType,
