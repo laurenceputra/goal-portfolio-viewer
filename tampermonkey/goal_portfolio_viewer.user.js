@@ -9809,18 +9809,22 @@ syncUi.update = function updateSyncUI() {
         return manager;
     }
 
-    function buildFsmSummaryRow(summary) {
+    function buildFsmSummaryRow(summary, options = {}) {
+        const showDrift = options.showDrift !== false;
         const summaryRow = createElement('div', 'gpv-summary-row');
         const driftClassName = summary?.driftClass
             ? `gpv-summary-card ${summary.driftClass}`
             : 'gpv-summary-card';
+        const driftCardHtml = showDrift
+            ? `<div class="${escapeHtml(driftClassName)}"><strong>Drift:</strong> ${escapeHtml(summary.driftDisplay)}</div>`
+            : '';
         summaryRow.innerHTML = `
             <div class="gpv-summary-card"><strong>Total Value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
             <div class="gpv-summary-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>
             <div class="gpv-summary-card"><strong>Holdings:</strong> ${escapeHtml(String(summary.holdingsCount))}</div>
             <div class="gpv-summary-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>
             <div class="gpv-summary-card"><strong>Fixed:</strong> ${escapeHtml(String(summary.fixedCount))}</div>
-            <div class="${escapeHtml(driftClassName)}"><strong>Drift:</strong> ${escapeHtml(summary.driftDisplay)}</div>
+            ${driftCardHtml}
         `;
         return summaryRow;
     }
@@ -9917,6 +9921,7 @@ syncUi.update = function updateSyncUI() {
         selectAllFiltered,
         activePortfolios,
         targetErrorsByCode,
+        showDrift,
         onSelectAllChange,
         onRowSelectChange,
         onTargetChange,
@@ -9937,7 +9942,7 @@ syncUi.update = function updateSyncUI() {
                     <th>Value (SGD)</th>
                     <th>Current %</th>
                     <th>Target %</th>
-                    <th>Drift %</th>
+                    ${showDrift ? '<th>Drift %</th>' : ''}
                     <th>Fixed</th>
                     <th>Portfolio</th>
                 </tr>
@@ -9966,7 +9971,7 @@ syncUi.update = function updateSyncUI() {
                 <td data-col="value">${escapeHtml(formatMoney(row.currentValueLcy))}</td>
                 <td data-col="current">${escapeHtml(row.currentAllocationDisplay || '-')}</td>
                 <td data-col="target"></td>
-                <td data-col="drift" class="${escapeHtml(row.driftClass || '')}">${escapeHtml(row.driftDisplay || '-')}</td>
+                ${showDrift ? `<td data-col="drift" class="${escapeHtml(row.driftClass || '')}">${escapeHtml(row.driftDisplay || '-')}</td>` : ''}
                 <td data-col="fixed"></td>
                 <td data-col="portfolio"></td>
             `;
@@ -10112,6 +10117,7 @@ syncUi.update = function updateSyncUI() {
 
             const selectedCodes = new Set(selectAllFiltered ? filteredRows.map(row => row.code).filter(Boolean) : []);
             const selectedCount = selectedCodes.size;
+            const showDrift = selectedScope !== FSM_ALL_PORTFOLIO_ID;
             const summary = buildFsmScopedSummary(filteredRows);
             const displayRows = buildFsmDisplayRows(filteredRows, summary.total);
             const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
@@ -10175,7 +10181,7 @@ syncUi.update = function updateSyncUI() {
                 contentDiv.appendChild(manager);
             }
 
-            contentDiv.appendChild(buildFsmSummaryRow(summary));
+            contentDiv.appendChild(buildFsmSummaryRow(summary, { showDrift }));
 
             const scopeOptions = [
                 { id: FSM_ALL_PORTFOLIO_ID, label: 'All' },
@@ -10228,6 +10234,7 @@ syncUi.update = function updateSyncUI() {
                 selectAllFiltered,
                 activePortfolios: activePortfolios(),
                 targetErrorsByCode,
+                showDrift,
                 onSelectAllChange: value => {
                     selectAllFiltered = value;
                     rerender();

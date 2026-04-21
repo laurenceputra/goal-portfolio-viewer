@@ -486,10 +486,10 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.querySelector('.gpv-select')).toBeTruthy();
         expect(overlay.textContent).toContain('Product Type');
         expect(overlay.textContent).toContain('Current %');
-        expect(overlay.textContent).toContain('Drift %');
+        expect(overlay.textContent).not.toContain('Drift %');
         const firstRow = overlay.querySelector('table tbody tr');
         expect(firstRow.querySelector('td[data-col="current"]').textContent.trim()).toBe('100.00%');
-        expect(firstRow.querySelector('td[data-col="drift"]').textContent.trim()).toBe('-');
+        expect(firstRow.querySelector('td[data-col="drift"]')).toBeNull();
     });
 
     test('showOverlay on FSM route alerts when FSM holdings are unavailable', () => {
@@ -847,8 +847,7 @@ describe('initialization and URL monitoring', () => {
         let firstRow = overlay.querySelector('table tbody tr');
         expect(firstRow.querySelector('td[data-col="ticker"]').textContent.trim()).toBe('AAPL');
         expect(firstRow.querySelector('td[data-col="current"]').textContent.trim()).toBe('60.00%');
-        expect(firstRow.querySelector('td[data-col="drift"]').textContent.trim()).toBe('0.00% (SGD\u00A00.00)');
-        expect(firstRow.querySelector('td[data-col="drift"]').className).toContain('gpv-drift--green');
+        expect(firstRow.querySelector('td[data-col="drift"]')).toBeNull();
 
         const scopeToolbar = Array.from(overlay.querySelectorAll('.gpv-fsm-toolbar')).find(toolbar =>
             toolbar.querySelector('input.gpv-target-input')
