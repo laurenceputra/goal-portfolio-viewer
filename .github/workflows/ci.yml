@@ -15,6 +15,7 @@ jobs:
   changes:
     name: Detect changed paths
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     outputs:
       userscript: ${{ steps.filter.outputs.userscript }}
@@ -51,6 +52,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: changes
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.changes.outputs.userscript == 'true' }}
     steps:
@@ -76,6 +78,7 @@ jobs:
   test:
     name: Test on Node.js ${{ matrix.node-version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [changes, lint]
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.changes.outputs.userscript == 'true' }}
 
@@ -130,6 +133,7 @@ jobs:
   worker-unit:
     name: Worker Unit Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: changes
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.changes.outputs.workers == 'true' }}
     steps:
@@ -177,6 +181,7 @@ jobs:
   security-audit:
     name: Dependency Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: changes
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.userscript == 'true' || needs.changes.outputs.workers == 'true') }}
     steps:
@@ -202,6 +207,7 @@ jobs:
   e2e:
     name: E2E Demo
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: changes
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.changes.outputs.e2e == 'true' }}
     steps:
