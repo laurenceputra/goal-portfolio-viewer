@@ -338,7 +338,13 @@ The UI consists of:
 
 The modal overlay traps keyboard focus while open, supports `Esc` to close, restores focus to the triggering button, and applies dialog ARIA attributes to improve accessibility.
 
-On FSM holdings routes, the table includes per-row `Current %` and `Drift %` columns. Both values are computed against the currently selected scope/filter dataset so percentages match what is visible in the table at any time.
+On FSM holdings routes, the overlay now opens in a portfolio overview instead of dropping directly into the full holdings table. The overview renders one card per active portfolio plus an explicit unassigned card, then drills into the existing instrument-level workspace only after the user picks a portfolio or requests all holdings.
+
+Within FSM detail mode, the scope/filter toolbar stays mounted while summary, bulk actions, and table content rerender. This keeps the `Filter holdings` input focused while users type, instead of recreating the input on every keystroke.
+
+The FSM overview summary and portfolio cards now show a `Profit` metric sourced from holdings-level `profitValueLcy`, with aggregate percent derived from total cost basis (`total value - total profit`) to avoid incorrect averaging. If any holding in scope is missing `profitValueLcy`, scope-level profit falls back to `-`.
+
+The FSM detail table includes per-row `Profit`, `Current %`, and `Drift %` columns. `Profit` is rendered as `value (percent)`; row percent prefers `profitPercentLcy` when available and derives from value/cost basis when missing. Current and drift values are computed against the currently selected scope/filter dataset so percentages match what is visible in the table at any time.
 
 ### Sync Conflict Review
 

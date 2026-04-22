@@ -91,7 +91,13 @@ describe('API interception', () => {
                 {
                     refno: 'ref-1',
                     holdings: [
-                        { code: 'AAA', productType: 'STOCK' },
+                        {
+                            code: 'AAA',
+                            productType: 'STOCK',
+                            currentValueLcy: 1200,
+                            profitValueLcy: 120,
+                            profitPercentLcy: 10
+                        },
                         { code: 'HEADER', productType: 'DPMS_HEADER' }
                     ]
                 }
@@ -110,7 +116,15 @@ describe('API interception', () => {
 
         expect(global.GM_setValue).toHaveBeenCalledWith(
             'api_fsm_holdings',
-            JSON.stringify([{ code: 'AAA', productType: 'STOCK' }])
+            JSON.stringify([
+                {
+                    code: 'AAA',
+                    productType: 'STOCK',
+                    currentValueLcy: 1200,
+                    profitValueLcy: 120,
+                    profitPercentLcy: 10
+                }
+            ])
         );
     });
 
