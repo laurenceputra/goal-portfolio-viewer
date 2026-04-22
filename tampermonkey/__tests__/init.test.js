@@ -722,12 +722,32 @@ describe('initialization and URL monitoring', () => {
         viewAllBtn.click();
 
         overlay = document.querySelector('#gpv-overlay');
+        let applyBulkBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Apply to'));
+        expect(applyBulkBtn.textContent).toContain('Apply to 0 selected holdings');
+        expect(applyBulkBtn.getAttribute('aria-label')).toContain('Apply portfolio assignment to 0 selected holdings');
+        expect(applyBulkBtn.disabled).toBe(true);
+
+        overlay = document.querySelector('#gpv-overlay');
+        const firstRowCheckbox = overlay.querySelector('table tbody tr td[data-col="select"] input[type="checkbox"]');
+        firstRowCheckbox.checked = true;
+        firstRowCheckbox.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        applyBulkBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Apply to'));
+        expect(applyBulkBtn.textContent).toContain('Apply to 1 selected holding');
+        expect(applyBulkBtn.getAttribute('aria-label')).toContain('Apply portfolio assignment to 1 selected holding');
+        expect(applyBulkBtn.disabled).toBe(false);
+
+        overlay = document.querySelector('#gpv-overlay');
         const selectAll = overlay.querySelector('input[aria-label="Select all filtered holdings"]');
         selectAll.checked = true;
         selectAll.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         overlay = document.querySelector('#gpv-overlay');
-        const applyBulkBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Apply to'));
+        applyBulkBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Apply to'));
+        expect(applyBulkBtn.textContent).toContain('Apply to 2 selected holdings');
+        expect(applyBulkBtn.getAttribute('aria-label')).toContain('Apply portfolio assignment to 2 selected holdings');
+        expect(applyBulkBtn.disabled).toBe(false);
         const bulkRow = applyBulkBtn.parentElement;
         const bulkSelect = bulkRow.querySelector('select.gpv-select');
         bulkSelect.value = 'core';

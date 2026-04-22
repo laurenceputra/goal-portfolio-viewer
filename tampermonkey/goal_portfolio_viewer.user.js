@@ -10337,8 +10337,10 @@ syncUi.update = function updateSyncUI() {
         };
         bulkRow.appendChild(bulkSelect);
 
-        const applyBulkBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', `Apply to ${filteredCount} filtered holdings`);
-        applyBulkBtn.disabled = filteredCount === 0 || selectedCount === 0;
+        const selectedLabel = selectedCount === 1 ? 'holding' : 'holdings';
+        const applyBulkBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', `Apply to ${selectedCount} selected ${selectedLabel}`);
+        applyBulkBtn.setAttribute('aria-label', `Apply portfolio assignment to ${selectedCount} selected ${selectedLabel}`);
+        applyBulkBtn.disabled = selectedCount === 0;
         applyBulkBtn.onclick = () => {
             if (typeof onApplyBulk === 'function') {
                 onApplyBulk();
