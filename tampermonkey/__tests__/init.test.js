@@ -492,7 +492,7 @@ describe('initialization and URL monitoring', () => {
         expect(detailOverlay.textContent).toContain('Fund A');
         expect(detailOverlay.textContent).toContain('AAPL');
         expect(detailOverlay.querySelector('.gpv-select')).toBeTruthy();
-        expect(detailOverlay.textContent).toContain('Product Type');
+        expect(detailOverlay.textContent).toContain('Type');
         expect(detailOverlay.textContent).toContain('Current %');
         expect(detailOverlay.textContent).not.toContain('Drift %');
         const firstRow = detailOverlay.querySelector('table tbody tr');

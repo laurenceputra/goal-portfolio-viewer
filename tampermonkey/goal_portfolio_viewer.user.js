@@ -10437,7 +10437,7 @@ syncUi.update = function updateSyncUI() {
                     <th><input type="checkbox" aria-label="Select all holdings" ${selectAllFiltered ? 'checked' : ''} /></th>
                     <th>Ticker</th>
                     <th>Name</th>
-                    <th>Product Type</th>
+                    <th>Type</th>
                     <th>Value (SGD)</th>
                     <th>Profit</th>
                     <th>Current %</th>
