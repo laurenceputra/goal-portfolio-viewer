@@ -35,7 +35,7 @@ This opens a browser window for Cloudflare authentication.
 npx wrangler kv:namespace create "SYNC_KV"
 ```
 
-Copy the `id` from the output and update `wrangler.toml`:
+Copy the `id` from the output and update `workers/wrangler.toml` for local/manual deploys:
 
 ```toml
 [[kv_namespaces]]
@@ -78,7 +78,7 @@ curl https://your-worker.workers.dev/health
 npx wrangler kv:namespace create "SYNC_KV" --env production
 ```
 
-Update `wrangler.toml` with the production ID.
+Update `workers/wrangler.toml` with the production ID for local/manual deploys.
 
 For multiple instances, use separate `name`, `routes`, `JWT_SECRET`, `CORS_ORIGINS`, and KV namespaces per env.
 
@@ -161,6 +161,7 @@ npx wrangler secret put JWT_SECRET --env production
 - Previews use a shared KV namespace via `SYNC_KV_ID` (no per-PR KV creation).
 - Set `CLOUDFLARE_WORKERS_SUBDOMAIN` to include the subdomain in PR comments.
 - Preview versions are managed by Cloudflare and clean up automatically, so no additional cleanup jobs are required.
+- CI preview deploys render `workers/wrangler.preview.toml.template`; they do not edit `workers/wrangler.toml` in place.
 
 ### Production Deploy via GitHub Actions
 - CI renders `workers/wrangler.production.toml.template` with secrets and deploys with `--config`.
@@ -345,8 +346,8 @@ const RATE_LIMITS = {
 # Verify KV namespace exists
 npx wrangler kv:namespace list
 
-# Check KV binding in wrangler.toml
-cat wrangler.toml | grep -A 5 kv_namespaces
+# Check KV binding in workers/wrangler.toml
+grep -n "kv_namespaces" -A 5 workers/wrangler.toml
 ```
 
 ### CORS Errors
@@ -389,13 +390,13 @@ Share your worker URL with your other devices only.
 ### Common Issues
 
 **Q: Worker deployed but getting 404**  
-A: Check the URL matches wrangler.toml route configuration.
+A: Check the URL matches your local `workers/wrangler.toml` route configuration or the rendered CI template used for deploy.
 
 **Q: "Exceeded daily request quota"**  
 A: You hit the 100k/day limit. Upgrade to paid plan or optimize sync frequency.
 
 **Q: KV namespace not found**  
-A: Verify namespace ID in wrangler.toml matches `wrangler kv:namespace list` output.
+A: Verify the namespace ID in `workers/wrangler.toml` for local deploys, or the rendered workflow template for CI deploys, matches `wrangler kv:namespace list` output.
 
 **Q: Can't delete old workers**  
 A: Use Cloudflare dashboard → Workers & Pages → Delete.

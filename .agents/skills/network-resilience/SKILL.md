@@ -32,7 +32,7 @@ When traffic can originate from multiple frontends (e.g., multiple app domains),
 - Disallowed origins do not receive `Access-Control-Allow-Origin`.
 - `Vary: Origin` is present when origin-based branching is used.
 - Preflight (`OPTIONS`) and normal JSON/error responses both apply equivalent CORS policy.
-- Deployment config (`wrangler.toml`, env vars, infra config) includes all intended origins.
+- Deployment config (`workers/wrangler.toml`, rendered workflow templates, env vars, infra config) includes all intended origins.
 
 ## Output Format
 - Resilience gaps
