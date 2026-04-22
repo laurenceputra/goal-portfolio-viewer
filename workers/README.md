@@ -52,7 +52,7 @@ This outputs namespace IDs like:
 
 ### 4. Update Configuration
 
-Edit `wrangler.toml` and add your KV namespace IDs:
+Edit `workers/wrangler.toml` and add your KV namespace IDs for local/manual deploys:
 
 ```toml
 [[kv_namespaces]]
@@ -108,7 +108,7 @@ Use a separate environment for test builds so you can validate changes without t
 npx wrangler kv:namespace create "SYNC_KV" --env staging
 ```
 
-2. **Add a staging environment** in `wrangler.toml` (unique name + KV binding + CORS):
+2. **Add a staging environment** in `workers/wrangler.toml` (unique name + KV binding + CORS) for local/manual deploys:
 
 ```toml
 [env.staging]
@@ -148,6 +148,8 @@ For per‑PR preview URLs that follow Cloudflare’s preview alias pattern:
    - The preview URL is posted to the PR.
 
 **Note:** Preview versions require the base worker to exist. Run one normal deploy (e.g., `pnpm run deploy`) before the first preview if the script has never been created in your account.
+
+CI preview deploys render `workers/wrangler.preview.toml.template`; they do not edit `workers/wrangler.toml` in place.
 
 After a PR is opened or updated, the workflow posts the preview URL in the PR comments.
 Preview versions are managed by Cloudflare and clean up automatically, so no additional cleanup jobs are required.
@@ -529,7 +531,7 @@ A $10/month budget supports 10,000+ active users.
 
 ### Environment Variables
 
-Set in `wrangler.toml`:
+Set in `workers/wrangler.toml` for local/manual deploys, or in the rendered workflow template for CI deploys:
 
 ```toml
 [env.production]
@@ -571,7 +573,7 @@ npx wrangler secret put JWT_SECRET --env production
 
 ### Custom Domain
 
-Add a custom domain in Cloudflare dashboard or `wrangler.toml`:
+Add a custom domain in Cloudflare dashboard or `workers/wrangler.toml`:
 
 ```toml
 routes = [
@@ -619,9 +621,9 @@ Setup alerts in Cloudflare dashboard:
 - Ensure header is `Authorization: Bearer <accessToken>`
 
 ### Error: "KV namespace not found"
-- Check `wrangler.toml` has correct namespace IDs
+- Check `workers/wrangler.toml` has correct namespace IDs for local/manual deploys
 - Run `npx wrangler kv:namespace list` to see your namespaces
-- Update IDs in `wrangler.toml`
+- Update IDs in `workers/wrangler.toml` or the rendered CI template
 
 ### Error: "Rate limit exceeded"
 - Wait 60 seconds and retry
@@ -631,7 +633,7 @@ Setup alerts in Cloudflare dashboard:
 ### Deployment fails
 - Check you're logged in: `npx wrangler whoami`
 - Ensure your account has Workers enabled
-- Check `wrangler.toml` syntax
+- Check `workers/wrangler.toml` syntax for local/manual deploys
 
 ### Data not syncing
 - Check server logs: `npx wrangler tail`
@@ -657,7 +659,7 @@ Before deploying to production:
 
 Improvements welcome! Please:
 1. Test changes locally (`pnpm run dev`)
-2. Run tests (`pnpm test`)
+2. Run tests (`pnpm --filter ./workers test:unit:coverage`)
 3. Deploy to staging first (`pnpm run deploy:staging`)
 4. Submit PR with clear description
 

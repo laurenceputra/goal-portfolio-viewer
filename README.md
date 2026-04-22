@@ -24,7 +24,7 @@
 
 ---
 
-**Track core-satellite portfolios the way they were meant to be seen — clean, goal-aware, and entirely private.**
+**Track core-satellite portfolios the way they were meant to be seen - clean, goal-aware, and entirely private.**
 
 Investing today often means buying individual funds or managed funds across multiple goals. Most platforms still do not provide an easy way to visualize each of these purchases or track allocation across all of them, whether you follow core-satellite or a broader asset allocation framework. This userscript helps you spot imbalances early and organize everything around your real-life goals.
 
@@ -36,7 +36,7 @@ Investing today often means buying individual funds or managed funds across mult
 
 Goal Portfolio Viewer is built for investors who structure their wealth with intention. Whether you run a classic core-satellite strategy or a disciplined asset allocation plan, this userscript turns your portfolio dashboard into a purpose-first view of your portfolio.
 
-It groups your goals by real-life outcomes — retirement, education, emergency funds, or any other life milestone — so you can see how each goal maps to your core and satellite holdings at a glance. Different goals naturally come with different timelines and risk tolerances, and this view helps you reflect those differences in how you allocate your portfolio.
+It groups your goals by real-life outcomes - retirement, education, emergency funds, or any other life milestone - so you can see how each goal maps to your core and satellite holdings at a glance. Different goals naturally come with different timelines and risk tolerances, and this view helps you reflect those differences in how you allocate your portfolio.
 
 ---
 
@@ -82,7 +82,6 @@ Bring your core-satellite strategy to life with a view that aligns with how you 
 
 ---
 
-
 ## 🆕 Cross-Device Sync (Optional)
 
 Sync your portfolio configuration across multiple devices with end-to-end encryption.
@@ -118,59 +117,78 @@ Sync your portfolio configuration across multiple devices with end-to-end encryp
 
 ## Contributing
 
-We use a multi-agent workflow to maintain code quality and ensure robust development practices.
+We use a high-ceremony multi-agent workflow to maintain code quality, protect privacy, and keep the userscript, backend, demo, and CI surfaces aligned.
 
 ### Quick Start for Contributors
 
 1. **Fork and clone** the repository
 2. **Install dependencies**: `pnpm install`
-3. **Make changes** following the workflow below
-4. **Submit PR** with clear description
+3. **Make changes** following the canonical workflow in [`.agents/agent-instructions.md`](.agents/agent-instructions.md)
+4. **Submit or update a PR** using the repository PR template
 
 ### Development Workflow
 
-Our project uses specialized AI agents for different aspects of development:
+Our project uses specialized agents for different aspects of development:
 
 | Agent | Role | When to Use |
 |-------|------|-------------|
 | 🎯 **Product Manager** | Requirements & scope | Defining features, clarifying requirements |
-| 🔧 **Staff Engineer** | Design & implementation | Architecture decisions, code changes |
-| 🧪 **QA Engineer** | Testing & quality | Test plans, quality verification |
-| 👁️ **Code Reviewer** | Final review | Pre-merge quality gates |
+| 🔧 **Staff Engineer** | Design, implementation, fixes | Architecture decisions, code changes, review fixes |
+| 🧪 **QA Engineer** | Testing & verification | Test plans, verification matrix, regression checks |
+| 👁️ **Code Reviewer** | Review gate | Approval, important/blocking findings |
 | 😈 **Devil's Advocate** | Risk assessment | Challenging assumptions, finding blind spots |
 
 **Workflow Phases:**
-1. **Planning** → Define requirements (Product Manager)
-2. **Design** → Propose solution (Staff Engineer)
-3. **Risk Check** → Challenge assumptions (Devil's Advocate)
-4. **Implementation** → Write code (Staff Engineer)
-5. **QA** → Test thoroughly (QA Engineer)
-6. **Review** → Final approval (Code Reviewer)
+1. **Planning** -> Define requirements and acceptance criteria
+2. **Design** -> Propose solution and record tradeoffs
+3. **Risk** -> Challenge assumptions and document mitigations
+4. **Implementation** -> Make the change
+5. **QA** -> Build the verification matrix and record results
+6. **Self-Review** -> Inspect the diff and capture evidence
+7. **Review** -> Reviewer approves or requests changes
+8. **Fix** -> Required whenever review includes any `important` or `blocking` finding
+9. **QA -> Self-Review -> Review** repeat after every fix loop
+
+### Required PR Artifacts
+
+Every PR must include:
+
+- Change Brief
+- Risks & Tradeoffs
+- Acceptance Criteria
+- Verification Matrix
+- Self-Review Evidence
+- Skill Alignment Notes
+- Review Response Matrix when review changes are requested
 
 ### Development Commands
 
 ```bash
-# Development
-pnpm test              # Run tests
-pnpm run lint          # Check code quality
-pnpm run test:watch    # Development mode
+pnpm test
+pnpm run lint
+pnpm run test:watch
+pnpm run test:coverage
+pnpm run test:e2e
 ```
 
 `pnpm-lock.yaml` is committed to keep workspace installs reproducible across contributors and CI.
 
 ### Documentation
 
-- **[Development Guide](.github/copilot-instructions.md)** - Comprehensive instructions with workflow
+- **[Canonical Agent Instructions](.agents/agent-instructions.md)** - Canonical workflow, stage gates, and required artifacts
+- **[GitHub Compatibility Instructions](.github/copilot-instructions.md)** - Compatibility entrypoint for GitHub tooling
 - **[Technical Design](TECHNICAL_DESIGN.md)** - Architecture details
-- **[Agent Roles](.github/agents/)** - Individual agent documentation
+- **[Testing Guide](TESTING.md)** - Test strategy and commands
+- **[Deployment Guide](DEPLOYMENT.md)** - Workers deployment guidance
+- **[Agent Roles](.github/agents/)** - Individual role documentation
 
 ### Quality Standards
 
-- ✅ All tests must pass
-- ✅ ESLint checks clean
-- ✅ Financial calculations manually verified
-- ✅ Documentation updated for behavior changes
-- ✅ Version bumped appropriately
+- ✅ All relevant tests and checks must pass
+- ✅ Verification evidence must be newer than the latest fix
+- ✅ Financial calculations must be manually verified when behavior changes touch them
+- ✅ Documentation must stay aligned with the actual repo structure and commands
+- ✅ No unresolved `important` or `blocking` review findings remain
 - 🔒 No data egress unless the user explicitly enables sync
 - 🔒 No `eval()` or unsafe patterns
 

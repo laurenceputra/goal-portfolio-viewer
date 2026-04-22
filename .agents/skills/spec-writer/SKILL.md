@@ -28,6 +28,7 @@ Write clear, executable specifications/plan documents that other contributors ca
 ## Pre‑write Checklist
 1. Read repository instructions first:
    - `AGENTS.md`
+   - `.agents/agent-instructions.md`
    - `.github/copilot-instructions.md`
 2. Read the current plan (if present): `spec/plan.md`.
 3. Skim the most relevant docs for the request (examples: `README.md`, `docs/*`, `TECHNICAL_DESIGN.md`, `SYNC_ARCHITECTURE.md`).
@@ -41,6 +42,7 @@ Write clear, executable specifications/plan documents that other contributors ca
 - Include a **commit step** with a suggested concise message.
 - Keep formatting consistent and scannable (headings + lists).
 - Avoid implementation details that aren’t required for execution.
+- If the repo uses PR-body persistence for specs, include a short PR-body-ready summary of the approved spec.
 
 ## Cross-Origin + Sync Spec Checklist (when relevant)
 If work introduces a new frontend origin, API host, or sync surface, explicitly include:
@@ -62,6 +64,7 @@ If work introduces a new frontend origin, API host, or sync surface, explicitly 
 ## Update Behavior
 - If overwriting: replace the entire file.
 - If appending: add a new section clearly labeled with date or change scope.
+- Treat `spec/plan.md` as a local working artifact when the repository keeps `spec/` ignored.
 
 ## Output Expectations
 - Keep it concise but complete. Another contributor should be able to execute without asking for clarification.
