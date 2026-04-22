@@ -105,7 +105,7 @@ npx playwright install --with-deps
 
 ### Run E2E Regression Tests
 
-Regression mode captures screenshots, compares them with baselines, and adds data assertions.
+Regression mode captures screenshots, compares them with committed baselines, and adds data assertions.
 
 ```bash
 pnpm --filter ./demo test:e2e:regression
@@ -122,7 +122,9 @@ To update baselines:
 pnpm --filter ./demo test:e2e:update-baseline
 ```
 
-Baseline files are gitignored by default. Only update baselines intentionally.
+Baseline files in `demo/regression/baseline/` are committed to the repository so GitHub Actions can compare PR screenshots against the same checked-in reference images.
+
+Only update baselines intentionally. Treat baseline refreshes as reviewable UI changes and include them in the same PR as the visual change they validate.
 
 ### Take Screenshots
 

@@ -218,6 +218,8 @@ async function runE2ETests() {
             server.close();
         }
     }
+
+    await finalizeSummary(summary);
 }
 
 if (require.main === module) {
@@ -271,7 +273,12 @@ async function captureScreenshot(page, summary, outputDir, flowName) {
     const normalizedFlowName = normalizeName(flowName);
     const screenshotName = `e2e-${normalizedFlowName}.png`;
     const screenshotPath = path.join(outputDir, screenshotName);
-    await page.screenshot({ path: screenshotPath, fullPage: false });
+    const overlayContainer = page.locator('#gpv-overlay .gpv-container').first();
+    if (await overlayContainer.count() > 0) {
+        await overlayContainer.screenshot({ path: screenshotPath });
+    } else {
+        await page.screenshot({ path: screenshotPath, fullPage: false });
+    }
 
     if (!summary.flowsTested.includes(flowName)) {
         summary.flowsTested.push(flowName);
@@ -326,6 +333,23 @@ function recordAssertion(summary, flowName, assertionName, passed, message) {
     if (!passed) {
         summary.status = 'failed';
     }
+}
+
+async function finalizeSummary(summary) {
+    if (summary.status !== 'failed') {
+        return;
+    }
+
+    const failingAssertions = Object.entries(summary.assertions || {}).flatMap(([flow, items]) =>
+        (Array.isArray(items) ? items : [])
+            .filter(item => item && item.passed === false)
+            .map(item => `${flow}:${item.name}`)
+    );
+    const failingDiffs = (Array.isArray(summary.diffs) ? summary.diffs : [])
+        .filter(diff => diff?.status === 'failed' || diff?.status === 'baseline-missing')
+        .map(diff => `${diff.flow}:${diff.status}`);
+    const failures = [...failingAssertions, ...failingDiffs];
+    throw new Error(`E2E regression recorded failures: ${failures.join(', ') || 'unknown failure'}`);
 }
 
 async function captureSyncScreens(page, outputDir, summary) {
@@ -442,6 +466,10 @@ async function captureFsmFlow(page, summary, outputDir) {
     recordAssertion(summary, 'fsm-overlay', 'toolbar', true, 'FSM toolbar rendered.');
     await captureScreenshot(page, summary, outputDir, 'fsm-overlay');
 
+    await clickButtonByRole(page, /view all holdings/i);
+    await page.waitForSelector('.gpv-fsm-table-wrap .gpv-table', { timeout: 5000 });
+    await page.waitForSelector('.gpv-fsm-filter-toolbar', { timeout: 5000 });
+
     const managerToggle = page.getByRole('button', { name: /manage portfolios|hide portfolio manager/i }).first();
     if (await managerToggle.count() > 0) {
         await clickButtonByRole(page, /manage portfolios|hide portfolio manager/i);
@@ -458,11 +486,15 @@ async function captureFsmFlow(page, summary, outputDir) {
         summary.status = 'failed';
     }
 
-    const tableHeaders = await page.$$eval('.gpv-table thead th', nodes => nodes.map(node => node.textContent || '').map(text => text.trim()));
-    const hasTableHeaders = tableHeaders.includes('Ticker')
+    const tableHeaders = await page.$$eval(
+        '.gpv-fsm-table-wrap .gpv-table thead th',
+        nodes => nodes.map(node => node.textContent || '').map(text => text.trim())
+    );
+    const hasCoreHeaders = tableHeaders.includes('Ticker')
         && tableHeaders.includes('Current %')
-        && tableHeaders.includes('Drift %')
+        && tableHeaders.includes('Target %')
         && tableHeaders.includes('Portfolio');
+    const hasTableHeaders = hasCoreHeaders;
     recordAssertion(summary, 'fsm-overlay', 'table-headers', hasTableHeaders, 'FSM table headers present.');
     if (!hasTableHeaders) {
         summary.status = 'failed';
