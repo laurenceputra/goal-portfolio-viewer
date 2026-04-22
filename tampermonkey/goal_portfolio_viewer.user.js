@@ -88,6 +88,7 @@
         remainingAlert: 'gpv-remaining-alert',
         diffCell: 'gpv-diff-cell'
     };
+    const FSM_PROFIT_COLOR_THRESHOLD = 0.05;
 
     // ============================================
     // Sync Constants (Cross-Device Sync Feature)
@@ -403,6 +404,45 @@
             return valueDisplay;
         }
         return `${valueDisplay} (${percentDisplay})`;
+    }
+
+    function normalizeMoneyDisplaySpacing(value) {
+        if (typeof value !== 'string') {
+            return value;
+        }
+        return value.replace(/\u00A0/g, ' ');
+    }
+
+    function formatFsmProfitDisplay(profitValue, profitPercent) {
+        const percentDisplay = formatPercent(profitPercent, {
+            multiplier: 100,
+            showSign: true
+        });
+        const valueDisplay = normalizeMoneyDisplaySpacing(formatSignedMoney(profitValue));
+        if (percentDisplay === '-' && valueDisplay === '-') {
+            return '-';
+        }
+        if (percentDisplay === '-') {
+            return valueDisplay;
+        }
+        if (valueDisplay === '-') {
+            return percentDisplay;
+        }
+        return `${percentDisplay} (${valueDisplay})`;
+    }
+
+    function getFsmProfitClass(profitPercent) {
+        const numericPercent = toOptionalFiniteNumber(profitPercent);
+        if (numericPercent === null) {
+            return '';
+        }
+        if (numericPercent > FSM_PROFIT_COLOR_THRESHOLD) {
+            return 'positive';
+        }
+        if (numericPercent < -FSM_PROFIT_COLOR_THRESHOLD) {
+            return 'negative';
+        }
+        return '';
     }
 
     function getDriftSeverityClass(driftRatio) {
@@ -8120,6 +8160,20 @@ syncUi.update = function updateSyncUI() {
             .gpv-stat-value.negative {
                 color: #dc2626;
             }
+
+            .gpv-summary-profit-value {
+                font-weight: 700;
+            }
+
+            .gpv-summary-profit-value.positive,
+            .gpv-fsm-overview-stat-value.positive {
+                color: #059669;
+            }
+
+            .gpv-summary-profit-value.negative,
+            .gpv-fsm-overview-stat-value.negative {
+                color: #dc2626;
+            }
             
             .gpv-goal-type-row {
                 display: flex;
@@ -9538,6 +9592,10 @@ syncUi.update = function updateSyncUI() {
                     text-align: right;
                 }
 
+                .gpv-fsm-table-wrap .gpv-table td[data-col="profit"] {
+                    font-weight: 700;
+                }
+
                 .gpv-fsm-table-wrap .gpv-table {
                     min-width: 1120px;
                 }
@@ -9869,7 +9927,8 @@ syncUi.update = function updateSyncUI() {
             unassignedCount,
             totalProfitValue,
             totalProfitPercent,
-            profitDisplay: formatProfitDisplay(totalProfitValue, totalProfitPercent)
+            profitDisplay: formatFsmProfitDisplay(totalProfitValue, totalProfitPercent),
+            profitClass: getFsmProfitClass(totalProfitPercent)
         };
     }
 
@@ -9966,7 +10025,8 @@ syncUi.update = function updateSyncUI() {
                 }),
                 profitValue,
                 profitPercent,
-                profitDisplay: formatProfitDisplay(profitValue, profitPercent),
+                profitDisplay: formatFsmProfitDisplay(profitValue, profitPercent),
+                profitClass: getFsmProfitClass(profitPercent),
                 driftPercent,
                 driftAmount,
                 driftDisplay: formatDriftDisplay(driftPercent, driftAmount),
@@ -10107,8 +10167,11 @@ syncUi.update = function updateSyncUI() {
         const driftClassName = summary?.driftClass
             ? `gpv-summary-card ${summary.driftClass}`
             : 'gpv-summary-card';
+        const profitClassName = summary?.profitClass === 'positive' || summary?.profitClass === 'negative'
+            ? ` ${summary.profitClass}`
+            : '';
         const profitCardHtml = showProfit
-            ? `<div class="gpv-summary-card"><strong>Profit:</strong> ${escapeHtml(summary?.profitDisplay || '-')}</div>`
+            ? `<div class="gpv-summary-card"><strong>Profit:</strong> <span class="gpv-summary-profit-value${escapeHtml(profitClassName)}">${escapeHtml(summary?.profitDisplay || '-')}</span></div>`
             : '';
         const fixedCardHtml = showFixed
             ? `<div class="gpv-summary-card"><strong>Fixed:</strong> ${escapeHtml(String(summary.fixedCount))}</div>`
@@ -10151,6 +10214,7 @@ syncUi.update = function updateSyncUI() {
                 driftClass: summary.driftClass,
                 fixedCount: summary.fixedCount,
                 profitDisplay: summary.profitDisplay,
+                profitClass: summary.profitClass,
                 isUnassigned: options.isUnassigned === true
             };
         };
@@ -10220,7 +10284,7 @@ syncUi.update = function updateSyncUI() {
                     </div>
                     <div class="gpv-fsm-overview-stat">
                         <span class="gpv-fsm-overview-stat-label">Profit</span>
-                        <span class="gpv-fsm-overview-stat-value">${escapeHtml(card.profitDisplay || '-')}</span>
+                        <span class="gpv-fsm-overview-stat-value ${escapeHtml(card.profitClass || '')}">${escapeHtml(card.profitDisplay || '-')}</span>
                     </div>
                 </div>
             `;
@@ -10405,7 +10469,7 @@ syncUi.update = function updateSyncUI() {
                 <td data-col="name">${escapeHtml(row.name)}</td>
                 <td data-col="product-type">${escapeHtml(row.productType)}</td>
                 <td data-col="value">${escapeHtml(formatMoney(row.currentValueLcy))}</td>
-                <td data-col="profit">${escapeHtml(row.profitDisplay || '-')}</td>
+                <td data-col="profit" class="${escapeHtml(row.profitClass || '')}">${escapeHtml(row.profitDisplay || '-')}</td>
                 <td data-col="current">${escapeHtml(row.currentAllocationDisplay || '-')}</td>
                 <td data-col="target"></td>
                 ${showDrift ? `<td data-col="drift" class="${escapeHtml(row.driftClass || '')}">${escapeHtml(row.driftDisplay || '-')}</td>` : ''}
@@ -11390,6 +11454,8 @@ syncUi.update = function updateSyncUI() {
             formatMoney,
             formatPercent,
             formatProfitDisplay,
+            formatFsmProfitDisplay,
+            getFsmProfitClass,
             formatGrowthPercentFromEndingBalance,
             getReturnClass,
             calculatePercentOfType,

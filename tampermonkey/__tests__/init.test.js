@@ -944,7 +944,7 @@ describe('initialization and URL monitoring', () => {
         overlay = document.querySelector('#gpv-overlay');
         let firstRow = overlay.querySelector('table tbody tr');
         expect(firstRow.querySelector('td[data-col="ticker"]').textContent.trim()).toBe('AAPL');
-        expect(firstRow.querySelector('td[data-col="profit"]').textContent.trim()).toBe('+SGD\u00A0120.00 (+10.00%)');
+        expect(firstRow.querySelector('td[data-col="profit"]').textContent.trim()).toBe('+10.00% (+SGD 120.00)');
         expect(firstRow.querySelector('td[data-col="current"]').textContent.trim()).toBe('100.00%');
         expect(firstRow.querySelector('td[data-col="drift"]').textContent.trim()).toBe('+66.67% (+SGD\u00A0480.00)');
 
@@ -958,7 +958,7 @@ describe('initialization and URL monitoring', () => {
         overlay = document.querySelector('#gpv-overlay');
         firstRow = overlay.querySelector('table tbody tr');
         expect(firstRow.querySelector('td[data-col="ticker"]').textContent.trim()).toBe('AAPL');
-        expect(firstRow.querySelector('td[data-col="profit"]').textContent.trim()).toBe('+SGD\u00A0120.00 (+10.00%)');
+        expect(firstRow.querySelector('td[data-col="profit"]').textContent.trim()).toBe('+10.00% (+SGD 120.00)');
         expect(firstRow.querySelector('td[data-col="current"]').textContent.trim()).toBe('60.00%');
         expect(firstRow.querySelector('td[data-col="drift"]')).toBeNull();
 
@@ -1027,11 +1027,11 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).toContain('Profit: +SGD\u00A0160.00 (+8.70%)');
+        expect(overlay.textContent).toContain('Profit: +8.70% (+SGD 160.00)');
         const overviewCards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'));
         const unassignedCard = overviewCards.find(card => card.textContent.includes('Unassigned'));
         expect(unassignedCard.textContent).toContain('Profit');
-        expect(unassignedCard.textContent).toContain('+SGD\u00A0160.00 (+8.70%)');
+        expect(unassignedCard.textContent).toContain('+8.70% (+SGD 160.00)');
 
         const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
         viewAllBtn.click();
@@ -1041,7 +1041,7 @@ describe('initialization and URL monitoring', () => {
         const profitHeader = Array.from(overlay.querySelectorAll('th')).find(th => th.textContent.trim() === 'Profit');
         expect(profitHeader).toBeTruthy();
         const firstRow = overlay.querySelector('table tbody tr');
-        expect(firstRow.querySelector('td[data-col="profit"]').textContent.trim()).toBe('+SGD\u00A0120.00 (+10.00%)');
+        expect(firstRow.querySelector('td[data-col="profit"]').textContent.trim()).toBe('+10.00% (+SGD 120.00)');
     });
 
     test('FSM profit display falls back when holdings are missing profit fields', () => {
@@ -1112,7 +1112,7 @@ describe('initialization and URL monitoring', () => {
             acc[ticker] = row;
             return acc;
         }, {});
-        expect(rowByTicker.AAPL.querySelector('td[data-col="profit"]').textContent.trim()).toBe('+SGD\u00A0120.00 (+11.11%)');
+        expect(rowByTicker.AAPL.querySelector('td[data-col="profit"]').textContent.trim()).toBe('+11.11% (+SGD 120.00)');
         expect(rowByTicker.BOND.querySelector('td[data-col="profit"]').textContent.trim()).toBe('-');
     });
 
