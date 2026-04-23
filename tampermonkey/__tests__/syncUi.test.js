@@ -107,6 +107,32 @@ describe('sync settings UI', () => {
         expect(document.querySelector('.gpv-sync-advanced')).toBeTruthy();
     });
 
+    test('renders sync now outside advanced settings', () => {
+        const { createSyncSettingsHTML } = exportsModule;
+        seedStatus();
+
+        document.body.innerHTML = createSyncSettingsHTML();
+
+        const syncNowBtn = document.getElementById('gpv-sync-now-btn');
+        const advanced = document.querySelector('.gpv-sync-advanced');
+        expect(syncNowBtn).toBeTruthy();
+        expect(advanced).toBeTruthy();
+        expect(advanced.contains(syncNowBtn)).toBe(false);
+        expect(syncNowBtn.disabled).toBe(true);
+    });
+
+    test('disables sync now when session key is missing after move', () => {
+        const { createSyncSettingsHTML } = exportsModule;
+        seedStatus();
+        storage.delete('sync_session_master_key');
+
+        document.body.innerHTML = createSyncSettingsHTML();
+
+        const syncNowBtn = document.getElementById('gpv-sync-now-btn');
+        expect(syncNowBtn).toBeTruthy();
+        expect(syncNowBtn.disabled).toBe(true);
+    });
+
     test('renders sync settings containers with required class tokens', () => {
         const root = renderSyncSettingsAndGetElement('.gpv-sync-settings');
         expectClassTokens(root, ['gpv-sync-settings']);

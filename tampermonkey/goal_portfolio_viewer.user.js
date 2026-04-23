@@ -813,6 +813,7 @@
             percentOfType,
             isFixed,
             targetPercent,
+            effectiveTargetPercent: targetPercent,
             diffAmount: diffInfo.diffAmount,
             diffClass: diffInfo.diffClass,
             driftPercent: diffInfo.driftPercent,
@@ -858,6 +859,7 @@
                 );
                 return {
                     ...goal,
+                    effectiveTargetPercent: remainingTargetPercent,
                     diffAmount: diffInfo.diffAmount,
                     diffClass: diffInfo.diffClass,
                     driftPercent: diffInfo.driftPercent,
@@ -1299,6 +1301,60 @@ function buildAttentionDriftReason(driftClass, label) {
     return driftClass === 'gpv-drift--red' ? label : null;
 }
 
+function buildRebalanceSummaryText({
+        underweight,
+        overweight,
+        underweightTotalAmount = 0,
+        overweightTotalAmount = 0,
+        underweightCount = 0,
+        overweightCount = 0,
+        itemLabelSingular = 'holding',
+        itemLabelPlural = 'holdings'
+    }) {
+        const totalBuyAmount = toFiniteNumber(underweightTotalAmount, 0);
+        const totalSellAmount = toFiniteNumber(overweightTotalAmount, 0);
+        const buyCount = Number.isFinite(underweightCount) ? Math.max(0, underweightCount) : 0;
+        const sellCount = Number.isFinite(overweightCount) ? Math.max(0, overweightCount) : 0;
+
+        if (totalBuyAmount <= 0 && totalSellAmount <= 0) {
+            return 'Rebalance summary: Portfolio is close to target.';
+        }
+
+        const parts = [];
+        if (buyCount > 0 && totalBuyAmount > 0) {
+            const topBuyName = underweight?.displayTicker || underweight?.goalName || underweight?.name || underweight?.code;
+            let buySummary = `Buy ${formatMoney(totalBuyAmount)} across ${buyCount} underweight ${buyCount === 1 ? itemLabelSingular : itemLabelPlural}`;
+            if (topBuyName && Number.isFinite(underweight?.diffAmount ?? underweight?.driftAmount)) {
+                buySummary += ` (largest: ${topBuyName} ${formatMoney(Math.abs(underweight.diffAmount ?? underweight.driftAmount))})`;
+            }
+            parts.push(buySummary);
+        }
+
+        if (sellCount > 0 && totalSellAmount > 0) {
+            const topSellName = overweight?.displayTicker || overweight?.goalName || overweight?.name || overweight?.code;
+            let sellSummary = `Sell ${formatMoney(totalSellAmount)} across ${sellCount} overweight ${sellCount === 1 ? itemLabelSingular : itemLabelPlural}`;
+            if (topSellName && Number.isFinite(overweight?.diffAmount ?? overweight?.driftAmount)) {
+                sellSummary += ` (largest: ${topSellName} ${formatMoney(Math.abs(overweight.diffAmount ?? overweight.driftAmount))})`;
+            }
+            parts.push(sellSummary);
+        }
+
+        const netAmount = Number((totalSellAmount - totalBuyAmount).toFixed(2));
+        if (buyCount > 0 && sellCount > 0) {
+            if (netAmount > 0.009) {
+                parts.push(`Net excess after buys: ${formatMoney(netAmount)}`);
+            } else if (netAmount < -0.009) {
+                parts.push(`Additional cash needed after sells: ${formatMoney(Math.abs(netAmount))}`);
+            }
+        } else if (buyCount > 0 && netAmount < -0.009) {
+            parts.push(`Additional cash needed: ${formatMoney(Math.abs(netAmount))}`);
+        } else if (sellCount > 0 && netAmount > 0.009) {
+            parts.push(`Net excess cash: ${formatMoney(netAmount)}`);
+        }
+
+        return `Rebalance summary: ${parts.join('; ')}.`;
+}
+
 function buildTargetCoverageLabel(targetTotalPercent) {
     const rounded = Number.isFinite(targetTotalPercent) ? Number(targetTotalPercent.toFixed(2)) : null;
     if (rounded === null) {
@@ -1357,7 +1413,7 @@ function buildPlanningModel(goalTypeModel) {
             }
             return sum + fixedTargetPercent;
         }
-        const targetPercent = toFiniteNumber(goal?.targetPercent, null);
+        const targetPercent = toFiniteNumber(goal?.effectiveTargetPercent, null);
         if (targetPercent === null) {
             return sum;
         }
@@ -1368,12 +1424,14 @@ function buildPlanningModel(goalTypeModel) {
         ? buildTargetCoverageLabel(targetCoveragePercent)
         : null;
 
-    const underweight = goalModels
+    const underweightCandidates = goalModels
         .filter(goal => Number.isFinite(goal?.diffAmount) && goal.diffAmount < 0)
-        .sort((left, right) => Math.abs(right.diffAmount) - Math.abs(left.diffAmount))[0] || null;
-    const overweight = goalModels
+        .sort((left, right) => Math.abs(right.diffAmount) - Math.abs(left.diffAmount));
+    const overweightCandidates = goalModels
         .filter(goal => Number.isFinite(goal?.diffAmount) && goal.diffAmount > 0)
-        .sort((left, right) => Math.abs(right.diffAmount) - Math.abs(left.diffAmount))[0] || null;
+        .sort((left, right) => Math.abs(right.diffAmount) - Math.abs(left.diffAmount));
+    const underweight = underweightCandidates[0] || null;
+    const overweight = overweightCandidates[0] || null;
 
     const projectedAmount = toFiniteNumber(goalTypeModel?.projectedAmount, 0);
     const scenarioAmount = projectedAmount > 0 ? projectedAmount : 0;
@@ -1385,6 +1443,10 @@ function buildPlanningModel(goalTypeModel) {
         targetCoverageLabel: coverageLabel,
         underweight,
         overweight,
+        underweightCount: underweightCandidates.length,
+        overweightCount: overweightCandidates.length,
+        underweightTotalAmount: underweightCandidates.reduce((sum, goal) => sum + Math.abs(goal.diffAmount), 0),
+        overweightTotalAmount: overweightCandidates.reduce((sum, goal) => sum + Math.abs(goal.diffAmount), 0),
         scenarioAmount,
         scenarioSplit
     };
@@ -1400,6 +1462,10 @@ function buildBucketPlanningModel(goalTypeModels) {
     let scenarioAmount = 0;
     let underweight = null;
     let overweight = null;
+    let underweightCount = 0;
+    let overweightCount = 0;
+    let underweightTotalAmount = 0;
+    let overweightTotalAmount = 0;
 
     models.forEach(goalTypeModel => {
         const planning = goalTypeModel?.planning;
@@ -1410,6 +1476,10 @@ function buildBucketPlanningModel(goalTypeModels) {
             coverageIssues.push(`${goalTypeModel.displayName}: ${planning.targetCoverageLabel}`);
         }
         scenarioAmount += toFiniteNumber(planning.scenarioAmount, 0);
+        underweightCount += Number.isFinite(planning.underweightCount) ? planning.underweightCount : 0;
+        overweightCount += Number.isFinite(planning.overweightCount) ? planning.overweightCount : 0;
+        underweightTotalAmount += toFiniteNumber(planning.underweightTotalAmount, 0);
+        overweightTotalAmount += toFiniteNumber(planning.overweightTotalAmount, 0);
         const split = Array.isArray(planning.scenarioSplit) ? planning.scenarioSplit : [];
         split.forEach(item => {
             const goalId = utils.normalizeString(item?.goalId, '');
@@ -1462,7 +1532,11 @@ function buildBucketPlanningModel(goalTypeModels) {
         scenarioAmount,
         scenarioSplit,
         underweight,
-        overweight
+        overweight,
+        underweightCount,
+        overweightCount,
+        underweightTotalAmount,
+        overweightTotalAmount
     };
 }
 
@@ -6135,13 +6209,15 @@ let GoalTargetStore;
 
         const coverageText = planning.coverageIssues.length > 0
             ? planning.coverageIssues.join(' | ')
-            : 'Target total is within tolerance for this bucket.';
-        panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
+            : null;
+        if (coverageText) {
+            panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
+        }
 
         if (planning.scenarioAmount > 0) {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', `Scenario contribution: ${formatMoney(planning.scenarioAmount)}`));
+            panel.appendChild(createElement('p', 'gpv-planning-copy', `Scenario amount: ${formatMoney(planning.scenarioAmount)}`));
         } else {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', 'Scenario contribution: add a projected investment to see a what-if split.'));
+            panel.appendChild(createElement('p', 'gpv-planning-copy', 'Set a scenario amount to see a what-if split.'));
         }
 
         if (Array.isArray(planning.scenarioSplit) && planning.scenarioSplit.length > 0) {
@@ -6152,18 +6228,15 @@ let GoalTargetStore;
             panel.appendChild(splitList);
         }
 
-        const rebalance = createElement('p', 'gpv-planning-copy');
-        if (planning.underweight || planning.overweight) {
-            const under = planning.underweight
-                ? `Add ${formatMoney(Math.abs(planning.underweight.diffAmount))} to ${planning.underweight.goalName}`
-                : 'No underweight goals';
-            const over = planning.overweight
-                ? `Reduce ${formatMoney(Math.abs(planning.overweight.diffAmount))} from ${planning.overweight.goalName}`
-                : 'No overweight goals';
-            rebalance.textContent = `Rebalance summary: ${under}; ${over}.`;
-        } else {
-            rebalance.textContent = 'Rebalance summary: Portfolio is close to target.';
-        }
+        const rebalance = createElement(
+            'p',
+            'gpv-planning-copy',
+            buildRebalanceSummaryText({
+                ...planning,
+                itemLabelSingular: 'goal',
+                itemLabelPlural: 'goals'
+            })
+        );
         panel.appendChild(rebalance);
 
         contentDiv.appendChild(panel);
@@ -7478,14 +7551,11 @@ function withButtonState(button, busyText, action) {
         `;
     }
 
-    function renderSyncActionButtons({ isEnabled, cryptoSupported, syncStatus }) {
+    function renderSyncActionButtons({ isEnabled, cryptoSupported }) {
         return `
             <div class="gpv-sync-actions">
                 <button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-test-btn" ${!isEnabled || !cryptoSupported ? 'disabled' : ''}>
                     Test Connection
-                </button>
-                <button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-now-btn" ${!isEnabled || !syncStatus.isConfigured || !syncStatus.hasSessionKey || !cryptoSupported ? 'disabled' : ''}>
-                    Sync Now
                 </button>
                 <button class="gpv-sync-btn gpv-sync-btn-danger" id="gpv-sync-clear-btn" ${!cryptoSupported ? 'disabled' : ''}>
                     Logout
@@ -7494,11 +7564,14 @@ function withButtonState(button, busyText, action) {
         `;
     }
 
-    function renderSyncPrimaryAction({ cryptoSupported }) {
+    function renderSyncPrimaryAction({ isEnabled, cryptoSupported, syncStatus }) {
         return `
             <div class="gpv-sync-actions">
                 <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-sync-save-btn" ${!cryptoSupported ? 'disabled' : ''}>
                     Save Settings
+                </button>
+                <button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-now-btn" ${!isEnabled || !syncStatus.isConfigured || !syncStatus.hasSessionKey || !cryptoSupported ? 'disabled' : ''}>
+                    Sync Now
                 </button>
             </div>
         `;
@@ -7508,15 +7581,14 @@ function withButtonState(button, busyText, action) {
         isEnabled,
         cryptoSupported,
         autoSync,
-        syncInterval,
-        syncStatus
+        syncInterval
     }) {
         return `
             <details class="gpv-sync-advanced">
                 <summary>Advanced settings</summary>
                 <div class="gpv-sync-advanced-content">
                     ${renderAutoSyncSection({ autoSync, syncInterval, isEnabled, cryptoSupported })}
-                    ${renderSyncActionButtons({ isEnabled, cryptoSupported, syncStatus })}
+                    ${renderSyncActionButtons({ isEnabled, cryptoSupported })}
                 </div>
             </details>
         `;
@@ -7535,7 +7607,11 @@ function withButtonState(button, busyText, action) {
                     ${renderPasswordField(state)}
                     ${renderRememberKeySection(state)}
                     ${renderSyncAuthButtons(state)}
-                    ${renderSyncPrimaryAction({ cryptoSupported: state.cryptoSupported })}
+                    ${renderSyncPrimaryAction({
+                        isEnabled: state.isEnabled,
+                        cryptoSupported: state.cryptoSupported,
+                        syncStatus: state.syncStatus
+                    })}
                     ${renderSyncAdvancedSection({
                         isEnabled: state.isEnabled,
                         cryptoSupported: state.cryptoSupported,
@@ -8910,17 +8986,18 @@ syncUi.update = function updateSyncUI() {
         remainder: `
             
             .gpv-bucket-card {
-                background: #ffffff;
-                border: 2px solid #e5e7eb;
+                background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+                border: 2px solid #dbe4ff;
                 border-radius: 12px;
                 padding: 16px;
                 cursor: pointer;
                 transition: all 0.3s ease;
+                color: #111827;
             }
             
             .gpv-bucket-card:hover {
-                border-color: #667eea;
-                box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+                border-color: #4f46e5;
+                box-shadow: 0 8px 18px rgba(79, 70, 229, 0.14);
                 transform: translateY(-2px);
             }
 
@@ -8935,6 +9012,7 @@ syncUi.update = function updateSyncUI() {
                 grid-template-columns: auto 1fr;
                 gap: 8px 12px;
                 align-items: center;
+                color: #111827;
             }
             
             .gpv-bucket-title {
@@ -10956,19 +11034,25 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     function buildFsmPlanningModel(rows, summary) {
         const safeRows = Array.isArray(rows) ? rows : [];
         const safeSummary = summary || {};
-        const underweight = safeRows
+        const underweightCandidates = safeRows
             .filter(row => Number.isFinite(row?.driftAmount) && row.driftAmount < 0)
-            .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount))[0] || null;
-        const overweight = safeRows
+            .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount));
+        const overweightCandidates = safeRows
             .filter(row => Number.isFinite(row?.driftAmount) && row.driftAmount > 0)
-            .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount))[0] || null;
+            .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount));
+        const underweight = underweightCandidates[0] || null;
+        const overweight = overweightCandidates[0] || null;
         const scenarioAmount = 0;
         return {
             targetCoverageLabel: safeSummary.targetCoverageLabel || null,
             scenarioAmount,
             scenarioSplit: calculateRecommendedContributionSplitForFsm(safeRows, scenarioAmount),
             underweight,
-            overweight
+            overweight,
+            underweightCount: underweightCandidates.length,
+            overweightCount: overweightCandidates.length,
+            underweightTotalAmount: underweightCandidates.reduce((sum, row) => sum + Math.abs(row.driftAmount), 0),
+            overweightTotalAmount: overweightCandidates.reduce((sum, row) => sum + Math.abs(row.driftAmount), 0)
         };
     }
 
@@ -11370,15 +11454,16 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const panel = createElement('div', 'gpv-planning-panel');
         panel.appendChild(createElement('h3', 'gpv-planning-title', 'Planning'));
         panel.appendChild(createElement('p', 'gpv-planning-copy', `Scope: ${scopeLabel}`));
-        const coverageText = planning?.targetCoverageLabel
-            || 'Target total is within tolerance for this portfolio scope.';
-        panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
+        const coverageText = planning?.targetCoverageLabel || null;
+        if (coverageText) {
+            panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
+        }
 
         const scenarioAmount = toFiniteNumber(planning?.scenarioAmount, 0);
         if (scenarioAmount > 0) {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', `Scenario contribution: ${formatMoney(scenarioAmount)}`));
+            panel.appendChild(createElement('p', 'gpv-planning-copy', `Scenario amount: ${formatMoney(scenarioAmount)}`));
         } else {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', 'Scenario contribution: set a scenario amount to see a what-if split.'));
+            panel.appendChild(createElement('p', 'gpv-planning-copy', 'Set a scenario amount to see a what-if split.'));
         }
 
         if (Array.isArray(planning?.scenarioSplit) && planning.scenarioSplit.length > 0) {
@@ -11389,18 +11474,15 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             panel.appendChild(splitList);
         }
 
-        const rebalance = createElement('p', 'gpv-planning-copy');
-        if (planning?.underweight || planning?.overweight) {
-            const under = planning.underweight
-                ? `Add ${formatMoney(Math.abs(planning.underweight.driftAmount))} to ${planning.underweight.displayTicker || planning.underweight.name || planning.underweight.code}`
-                : 'No underweight holdings';
-            const over = planning.overweight
-                ? `Reduce ${formatMoney(Math.abs(planning.overweight.driftAmount))} from ${planning.overweight.displayTicker || planning.overweight.name || planning.overweight.code}`
-                : 'No overweight holdings';
-            rebalance.textContent = `Rebalance summary: ${under}; ${over}.`;
-        } else {
-            rebalance.textContent = 'Rebalance summary: Portfolio is close to target.';
-        }
+        const rebalance = createElement(
+            'p',
+            'gpv-planning-copy',
+            buildRebalanceSummaryText({
+                ...planning,
+                itemLabelSingular: 'holding',
+                itemLabelPlural: 'holdings'
+            })
+        );
         panel.appendChild(rebalance);
         return panel;
     }
@@ -12847,6 +12929,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             buildBucketDetailViewModel,
             buildHealthStatus,
             buildAttentionDriftReason,
+            buildRebalanceSummaryText,
             buildPlanningModel,
             collectGoalIds,
             collectAllGoalIds,
