@@ -579,7 +579,7 @@ describe('initialization and URL monitoring', () => {
         expect(detailOverlay.querySelector('.gpv-select')).toBeTruthy();
         expect(detailOverlay.textContent).toContain('Planning');
         expect(detailOverlay.textContent).toContain('Set a scenario amount to see a what-if split.');
-        expect(detailOverlay.textContent).toContain('Rebalance summary:');
+        expect(detailOverlay.textContent).toContain('Rebalance: close to target.');
         expect(detailOverlay.textContent).toContain('Type');
         expect(detailOverlay.textContent).toContain('Current %');
         expect(detailOverlay.textContent).not.toContain('Drift %');
@@ -1073,6 +1073,93 @@ describe('initialization and URL monitoring', () => {
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Enter target between 0 and 100');
         expect(storage.has('fsm_target_pct_AAA')).toBe(false);
+    });
+
+    test('Endowus planning warning refreshes after target edits resolve the remainder', () => {
+        teardownDom();
+        setupDom({ url: 'https://app.sg.endowus.com/dashboard' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_summary', JSON.stringify([
+            { goalId: 'f1', goalName: 'Investment - Fixed One', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
+            { goalId: 'f2', goalName: 'Investment - Fixed Two', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
+            { goalId: 'f3', goalName: 'Investment - Fixed Three', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
+            { goalId: 't1', goalName: 'Investment - Target One', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
+            { goalId: 't2', goalName: 'Investment - Target Two', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
+            { goalId: 't3', goalName: 'Investment - Target Three', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
+            { goalId: 'blank', goalName: 'Investment - Blank', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }
+        ]));
+        storage.set('api_investible', JSON.stringify([
+            { goalId: 'f1', goalName: 'Investment - Fixed One', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 100 } } },
+            { goalId: 'f2', goalName: 'Investment - Fixed Two', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 150 } } },
+            { goalId: 'f3', goalName: 'Investment - Fixed Three', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 150 } } },
+            { goalId: 't1', goalName: 'Investment - Target One', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 150 } } },
+            { goalId: 't2', goalName: 'Investment - Target Two', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 150 } } },
+            { goalId: 't3', goalName: 'Investment - Target Three', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 100 } } },
+            { goalId: 'blank', goalName: 'Investment - Blank', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 200 } } }
+        ]));
+        storage.set('api_performance', JSON.stringify([
+            { goalId: 'f1', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 },
+            { goalId: 'f2', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 },
+            { goalId: 'f3', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 },
+            { goalId: 't1', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 },
+            { goalId: 't2', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 },
+            { goalId: 't3', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 },
+            { goalId: 'blank', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 }
+        ]));
+        storage.set('goal_fixed_f1', true);
+        storage.set('goal_fixed_f2', true);
+        storage.set('goal_fixed_f3', true);
+        storage.set('goal_target_pct_t1', 10);
+        storage.set('goal_target_pct_t2', 10);
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const bucketCard = Array.from(overlay.querySelectorAll('.gpv-bucket-card')).find(card =>
+            card.textContent.includes('Investment')
+        );
+        bucketCard.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Target total is 60.00% (40.00% unallocated)');
+
+        const targetInput = overlay.querySelector('input.gpv-target-input[data-goal-id="t3"]');
+        targetInput.value = '10';
+        targetInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).not.toContain('Target total is 60.00% (40.00% unallocated)');
     });
 
     test('FSM row allocation and drift use selected scope totals', () => {

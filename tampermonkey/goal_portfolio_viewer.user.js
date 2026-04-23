@@ -843,8 +843,9 @@
         const hasOtherTarget = goalModels.some(goal => goal?.goalId !== missingGoalId
             && typeof goal.targetPercent === 'number'
             && Number.isFinite(goal.targetPercent));
+        const hasFixedGoal = goalModels.some(goal => goal?.isFixed === true);
         const shouldAssignRemainingTarget = missingTargetGoals.length === 1
-            && hasOtherTarget
+            && (hasOtherTarget || hasFixedGoal)
             && remainingTargetPercent >= 0;
         const adjustedRemainingTargetPercent = shouldAssignRemainingTarget ? 0 : remainingTargetPercent;
         if (shouldAssignRemainingTarget) {
@@ -1302,57 +1303,53 @@ function buildAttentionDriftReason(driftClass, label) {
 }
 
 function buildRebalanceSummaryText({
-        underweight,
-        overweight,
-        underweightTotalAmount = 0,
-        overweightTotalAmount = 0,
-        underweightCount = 0,
-        overweightCount = 0,
-        itemLabelSingular = 'holding',
-        itemLabelPlural = 'holdings'
-    }) {
-        const totalBuyAmount = toFiniteNumber(underweightTotalAmount, 0);
-        const totalSellAmount = toFiniteNumber(overweightTotalAmount, 0);
-        const buyCount = Number.isFinite(underweightCount) ? Math.max(0, underweightCount) : 0;
-        const sellCount = Number.isFinite(overweightCount) ? Math.max(0, overweightCount) : 0;
+    underweight,
+    overweight,
+    underweightTotalAmount = 0,
+    overweightTotalAmount = 0
+}) {
+    const totalBuyAmount = toFiniteNumber(underweightTotalAmount, 0);
+    const totalSellAmount = toFiniteNumber(overweightTotalAmount, 0);
+    const netAmount = Number((totalSellAmount - totalBuyAmount).toFixed(2));
 
-        if (totalBuyAmount <= 0 && totalSellAmount <= 0) {
-            return 'Rebalance summary: Portfolio is close to target.';
+    if (totalBuyAmount <= 0 && totalSellAmount <= 0) {
+        return {
+            summaryLine: 'Rebalance: close to target.',
+            detailLine: null
+        };
+    }
+
+    let summaryLine = 'Rebalance: close to target.';
+    if (totalBuyAmount > 0 && totalSellAmount > 0) {
+        if (netAmount > 0.009) {
+            summaryLine = `Rebalance: frees up ${formatMoney(netAmount)} cash.`;
+        } else if (netAmount < -0.009) {
+            summaryLine = `Rebalance: needs ${formatMoney(Math.abs(netAmount))} new cash.`;
+        } else {
+            summaryLine = 'Rebalance: fully funded from sells.';
         }
+    } else if (totalBuyAmount > 0) {
+        summaryLine = `Rebalance: needs ${formatMoney(totalBuyAmount)} new cash.`;
+    } else if (totalSellAmount > 0) {
+        summaryLine = `Rebalance: frees up ${formatMoney(totalSellAmount)} cash.`;
+    }
 
-        const parts = [];
-        if (buyCount > 0 && totalBuyAmount > 0) {
-            const topBuyName = underweight?.displayTicker || underweight?.goalName || underweight?.name || underweight?.code;
-            let buySummary = `Buy ${formatMoney(totalBuyAmount)} across ${buyCount} underweight ${buyCount === 1 ? itemLabelSingular : itemLabelPlural}`;
-            if (topBuyName && Number.isFinite(underweight?.diffAmount ?? underweight?.driftAmount)) {
-                buySummary += ` (largest: ${topBuyName} ${formatMoney(Math.abs(underweight.diffAmount ?? underweight.driftAmount))})`;
-            }
-            parts.push(buySummary);
-        }
+    const detailParts = [];
+    const topBuyName = underweight?.displayTicker || underweight?.goalName || underweight?.name || underweight?.code;
+    const topBuyAmount = Math.abs(toFiniteNumber(underweight?.diffAmount ?? underweight?.driftAmount, 0));
+    if (topBuyName && topBuyAmount > 0) {
+        detailParts.push(`Largest buy: ${topBuyName} ${formatMoney(topBuyAmount)}`);
+    }
+    const topSellName = overweight?.displayTicker || overweight?.goalName || overweight?.name || overweight?.code;
+    const topSellAmount = Math.abs(toFiniteNumber(overweight?.diffAmount ?? overweight?.driftAmount, 0));
+    if (topSellName && topSellAmount > 0) {
+        detailParts.push(`Largest sell: ${topSellName} ${formatMoney(topSellAmount)}`);
+    }
 
-        if (sellCount > 0 && totalSellAmount > 0) {
-            const topSellName = overweight?.displayTicker || overweight?.goalName || overweight?.name || overweight?.code;
-            let sellSummary = `Sell ${formatMoney(totalSellAmount)} across ${sellCount} overweight ${sellCount === 1 ? itemLabelSingular : itemLabelPlural}`;
-            if (topSellName && Number.isFinite(overweight?.diffAmount ?? overweight?.driftAmount)) {
-                sellSummary += ` (largest: ${topSellName} ${formatMoney(Math.abs(overweight.diffAmount ?? overweight.driftAmount))})`;
-            }
-            parts.push(sellSummary);
-        }
-
-        const netAmount = Number((totalSellAmount - totalBuyAmount).toFixed(2));
-        if (buyCount > 0 && sellCount > 0) {
-            if (netAmount > 0.009) {
-                parts.push(`Net excess after buys: ${formatMoney(netAmount)}`);
-            } else if (netAmount < -0.009) {
-                parts.push(`Additional cash needed after sells: ${formatMoney(Math.abs(netAmount))}`);
-            }
-        } else if (buyCount > 0 && netAmount < -0.009) {
-            parts.push(`Additional cash needed: ${formatMoney(Math.abs(netAmount))}`);
-        } else if (sellCount > 0 && netAmount > 0.009) {
-            parts.push(`Net excess cash: ${formatMoney(netAmount)}`);
-        }
-
-        return `Rebalance summary: ${parts.join('; ')}.`;
+    return {
+        summaryLine,
+        detailLine: detailParts.length > 0 ? detailParts.join(' | ') : null
+    };
 }
 
 function buildTargetCoverageLabel(targetTotalPercent) {
@@ -6228,16 +6225,11 @@ let GoalTargetStore;
             panel.appendChild(splitList);
         }
 
-        const rebalance = createElement(
-            'p',
-            'gpv-planning-copy',
-            buildRebalanceSummaryText({
-                ...planning,
-                itemLabelSingular: 'goal',
-                itemLabelPlural: 'goals'
-            })
-        );
-        panel.appendChild(rebalance);
+        const rebalanceSummary = buildRebalanceSummaryText(planning);
+        panel.appendChild(createElement('p', 'gpv-planning-copy', rebalanceSummary.summaryLine));
+        if (rebalanceSummary.detailLine) {
+            panel.appendChild(createElement('p', 'gpv-planning-copy', rebalanceSummary.detailLine));
+        }
 
         contentDiv.appendChild(panel);
     }
@@ -6896,6 +6888,34 @@ let GoalTargetStore;
         });
     }
 
+    function refreshBucketPlanningPanel({
+        typeSection,
+        bucket,
+        mergedInvestmentDataState,
+        projectedInvestmentsState
+    }) {
+        const contentDiv = typeSection?.closest('.gpv-content');
+        if (!contentDiv || !bucket) {
+            return;
+        }
+        const bucketViewModel = buildBucketDetailViewModel({
+            bucketName: bucket,
+            bucketMap: mergedInvestmentDataState,
+            projectedInvestmentsState,
+            goalTargetById: buildGoalTargetById(collectGoalIds(mergedInvestmentDataState?.[bucket]), GoalTargetStore.getTarget),
+            goalFixedById: buildGoalFixedById(collectGoalIds(mergedInvestmentDataState?.[bucket]), GoalTargetStore.getFixed)
+        });
+        if (!bucketViewModel) {
+            return;
+        }
+
+        const existingPanel = contentDiv.querySelector('.gpv-planning-panel');
+        if (existingPanel) {
+            existingPanel.remove();
+        }
+        renderPlanningPanel(contentDiv, bucketViewModel);
+    }
+
     function flashInputBorder(input, variant) {
         if (!input) {
             return;
@@ -6950,6 +6970,12 @@ let GoalTargetStore;
                 mergedInvestmentDataState,
                 projectedInvestmentsState
             });
+            refreshBucketPlanningPanel({
+                typeSection,
+                bucket,
+                mergedInvestmentDataState,
+                projectedInvestmentsState
+            });
             return;
         }
         
@@ -6984,6 +7010,12 @@ let GoalTargetStore;
             mergedInvestmentDataState,
             projectedInvestmentsState
         });
+        refreshBucketPlanningPanel({
+            typeSection,
+            bucket,
+            mergedInvestmentDataState,
+            projectedInvestmentsState
+        });
     }
 
     function handleGoalFixedToggle({
@@ -7010,6 +7042,12 @@ let GoalTargetStore;
             mergedInvestmentDataState,
             projectedInvestmentsState,
             options: { forceTargetRefresh: true }
+        });
+        refreshBucketPlanningPanel({
+            typeSection,
+            bucket,
+            mergedInvestmentDataState,
+            projectedInvestmentsState
         });
     }
 
@@ -7057,6 +7095,12 @@ let GoalTargetStore;
                 typeSection,
                 bucket,
                 goalType,
+                mergedInvestmentDataState,
+                projectedInvestmentsState
+            });
+            refreshBucketPlanningPanel({
+                typeSection,
+                bucket,
                 mergedInvestmentDataState,
                 projectedInvestmentsState
             });
@@ -11474,16 +11518,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             panel.appendChild(splitList);
         }
 
-        const rebalance = createElement(
-            'p',
-            'gpv-planning-copy',
-            buildRebalanceSummaryText({
-                ...planning,
-                itemLabelSingular: 'holding',
-                itemLabelPlural: 'holdings'
-            })
-        );
-        panel.appendChild(rebalance);
+        const rebalanceSummary = buildRebalanceSummaryText(planning);
+        panel.appendChild(createElement('p', 'gpv-planning-copy', rebalanceSummary.summaryLine));
+        if (rebalanceSummary.detailLine) {
+            panel.appendChild(createElement('p', 'gpv-planning-copy', rebalanceSummary.detailLine));
+        }
         return panel;
     }
 

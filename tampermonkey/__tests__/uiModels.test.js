@@ -110,16 +110,20 @@ describe('projected and goal helpers', () => {
         expect(buildRebalanceSummaryText({
             underweight: { goalName: 'VWRA', diffAmount: -4618.04 },
             underweightCount: 1,
-            underweightTotalAmount: 4618.04,
-            itemLabelSingular: 'goal',
-            itemLabelPlural: 'goals'
-        })).toBe('Rebalance summary: Buy SGD\u00A04,618.04 across 1 underweight goal (largest: VWRA SGD\u00A04,618.04); Additional cash needed: SGD\u00A04,618.04.');
+            underweightTotalAmount: 4618.04
+        })).toEqual({
+            summaryLine: 'Rebalance: needs SGD\u00A04,618.04 new cash.',
+            detailLine: 'Largest buy: VWRA SGD\u00A04,618.04'
+        });
 
         expect(buildRebalanceSummaryText({
             overweight: { displayTicker: 'ALZP64', driftAmount: 12509.12 },
             overweightCount: 1,
             overweightTotalAmount: 12509.12
-        })).toBe('Rebalance summary: Sell SGD\u00A012,509.12 across 1 overweight holding (largest: ALZP64 SGD\u00A012,509.12); Net excess cash: SGD\u00A012,509.12.');
+        })).toEqual({
+            summaryLine: 'Rebalance: frees up SGD\u00A012,509.12 cash.',
+            detailLine: 'Largest sell: ALZP64 SGD\u00A012,509.12'
+        });
     });
 
     test('should describe mixed rebalance with unmatched remainder clearly', () => {
@@ -129,10 +133,11 @@ describe('projected and goal helpers', () => {
             underweightCount: 1,
             overweightCount: 1,
             underweightTotalAmount: 4618.04,
-            overweightTotalAmount: 12509.12,
-            itemLabelSingular: 'holding',
-            itemLabelPlural: 'holdings'
-        })).toBe('Rebalance summary: Buy SGD\u00A04,618.04 across 1 underweight holding (largest: VWRA SGD\u00A04,618.04); Sell SGD\u00A012,509.12 across 1 overweight holding (largest: ALZP64 SGD\u00A012,509.12); Net excess after buys: SGD\u00A07,891.08.');
+            overweightTotalAmount: 12509.12
+        })).toEqual({
+            summaryLine: 'Rebalance: frees up SGD\u00A07,891.08 cash.',
+            detailLine: 'Largest buy: VWRA SGD\u00A04,618.04 | Largest sell: ALZP64 SGD\u00A012,509.12'
+        });
     });
 });
 
@@ -454,6 +459,76 @@ describe('view model builders', () => {
         expect(viewModel.health.label).toBe('Healthy');
         expect(viewModel.health.reasons).toEqual([]);
         expect(viewModel.goalTypes[0].planning.targetCoverageLabel).toBeNull();
+    });
+
+    test('should assign remainder when fixed and explicit targets leave one blank goal', () => {
+        const bucketMap = {
+            Investment: {
+                _meta: { endingBalanceTotal: 1000 },
+                GENERAL_WEALTH_ACCUMULATION: {
+                    endingBalanceAmount: 1000,
+                    totalCumulativeReturn: 0,
+                    goals: [
+                        {
+                            goalId: 'f1',
+                            goalName: 'Investment - Fixed One',
+                            endingBalanceAmount: 100,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 'f2',
+                            goalName: 'Investment - Fixed Two',
+                            endingBalanceAmount: 150,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 'f3',
+                            goalName: 'Investment - Fixed Three',
+                            endingBalanceAmount: 150,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 't1',
+                            goalName: 'Investment - Target One',
+                            endingBalanceAmount: 150,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 't2',
+                            goalName: 'Investment - Target Two',
+                            endingBalanceAmount: 150,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 't3',
+                            goalName: 'Investment - Target Three',
+                            endingBalanceAmount: 100,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 'blank',
+                            goalName: 'Investment - Blank',
+                            endingBalanceAmount: 200,
+                            totalCumulativeReturn: 0
+                        }
+                    ]
+                }
+            }
+        };
+        const viewModel = buildBucketDetailViewModel({
+            bucketName: 'Investment',
+            bucketMap,
+            projectedInvestmentsState: null,
+            goalTargetById: { t1: 10, t2: 10, t3: 10 },
+            goalFixedById: { f1: true, f2: true, f3: true }
+        });
+        const goalType = viewModel.goalTypes[0];
+        const blankGoal = goalType.goals.find(goal => goal.goalId === 'blank');
+        expect(goalType.remainingTargetDisplay).toBe('0.00%');
+        expect(blankGoal.targetDisplay).toBe('');
+        expect(blankGoal.diffDisplay).toMatch(/0\.00/);
+        expect(goalType.planning.targetCoverageLabel).toBeNull();
+        expect(viewModel.health.reasons).toEqual([]);
     });
 
     test('should only add Endowus drift attention for red severity', () => {
