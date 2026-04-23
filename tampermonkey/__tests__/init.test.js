@@ -541,7 +541,7 @@ describe('initialization and URL monitoring', () => {
         expect(firstRow.querySelector('td[data-col="drift"]')).toBeNull();
     });
 
-    test('showOverlay on FSM route alerts when FSM holdings are unavailable', () => {
+    test('showOverlay on FSM route shows readiness state when holdings are unavailable', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
@@ -573,13 +573,66 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        expect(overlay).toBeTruthy();
+        expect(overlay.textContent).toContain('Waiting for FSM holdings response');
+        expect(overlay.textContent).toContain('FSM holdings data');
+    });
+
+    test('readiness overlay auto-updates into portfolio view when data arrives', async () => {
         global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
         exportsModule.showOverlay();
 
-        expect(global.alert).toHaveBeenCalledWith('Please wait for FSM holdings data to load, then try again.');
+        let overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Fetching Endowus portfolio data');
+
+        const perfPayload = [{
+            goalId: 'goal-ready',
+            totalInvestmentValue: { amount: 1000 },
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const invPayload = [{
+            goalId: 'goal-ready',
+            goalName: 'Retirement - Core',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const sumPayload = [{
+            goalId: 'goal-ready',
+            goalName: 'Retirement - Core',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+
+        await window.fetch('/v1/goals/performance?demo=1').then(response => response.clone().json().catch(() => null));
+        global.fetch.mockResolvedValueOnce(responseFactory(perfPayload));
+        await window.fetch('/v1/goals/performance');
+
+        global.fetch.mockResolvedValueOnce(responseFactory(invPayload));
+        await window.fetch('/v2/goals/investible');
+
+        global.fetch.mockResolvedValueOnce(responseFactory(sumPayload));
+        await window.fetch('/v1/goals');
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Portfolio Viewer');
+        expect(overlay.textContent).toContain('Summary View');
     });
 
     test('FSM portfolio manager supports create, rename, archive and unassigns holdings', () => {
