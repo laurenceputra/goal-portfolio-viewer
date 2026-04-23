@@ -208,6 +208,12 @@ async function takeScreenshots() {
         }
         await syncButtons.first().click();
         await page.waitForSelector('.gpv-sync-settings', { timeout: 5000 });
+        await page.evaluate(() => {
+            const advanced = document.querySelector('.gpv-sync-advanced');
+            if (advanced) {
+                advanced.open = false;
+            }
+        });
         await page.screenshot({
             path: path.join(outputDir, 'sync-settings-unconfigured.png'),
             fullPage: false
