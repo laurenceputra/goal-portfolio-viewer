@@ -15,6 +15,9 @@ const {
     resolveGoalTypeActionTarget,
     buildSummaryViewModel,
     buildBucketDetailViewModel,
+    buildHealthStatus,
+    buildAttentionDriftReason,
+    buildPlanningModel,
     collectGoalIds,
     collectAllGoalIds,
     buildGoalTargetById,
@@ -153,7 +156,7 @@ describe('view model builders', () => {
         expect(viewModel.attentionItems.length).toBeGreaterThan(0);
         expect(retirement.health.label).toBe('Needs Setup');
         expect(retirement.health.reasons.length).toBeGreaterThan(0);
-        expect(retirement.health.score).toBeLessThan(100);
+        expect(retirement.health.score).toBeUndefined();
     });
 
     test('should build bucket detail view model with projections', () => {
@@ -183,7 +186,7 @@ describe('view model builders', () => {
         expect(goalTypeModel.planning).toBeTruthy();
         expect(goalTypeModel.planning.targetCoverageLabel).toContain('Target total is');
         expect(viewModel.health.label).toBe('Needs Setup');
-        expect(viewModel.health.score).toBeLessThan(100);
+        expect(viewModel.health.score).toBeUndefined();
         const firstGoal = goalTypeModel.goals[0];
         expect(firstGoal.percentOfType).toBe(60);
         expect(firstGoal.diffDisplay).toMatch(/0\.00/);
@@ -343,6 +346,80 @@ describe('view model builders', () => {
         expect(viewModel.health.label).toBe('Healthy');
         expect(viewModel.health.reasons).toEqual([]);
         expect(viewModel.goalTypes[0].planning.targetCoverageLabel).toBeNull();
+    });
+
+    test('should not flag all-zero targets as setup intent', () => {
+        const bucketMap = {
+            Zeroed: {
+                _meta: { endingBalanceTotal: 1000 },
+                GENERAL_WEALTH_ACCUMULATION: {
+                    endingBalanceAmount: 1000,
+                    totalCumulativeReturn: 0,
+                    goals: [
+                        {
+                            goalId: 'z1',
+                            goalName: 'Zeroed - One',
+                            endingBalanceAmount: 600,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 'z2',
+                            goalName: 'Zeroed - Two',
+                            endingBalanceAmount: 400,
+                            totalCumulativeReturn: 0
+                        }
+                    ]
+                }
+            }
+        };
+        const viewModel = buildBucketDetailViewModel({
+            bucketName: 'Zeroed',
+            bucketMap,
+            projectedInvestmentsState: null,
+            goalTargetById: { z1: 0, z2: 0 },
+            goalFixedById: {}
+        });
+        expect(viewModel.health.label).toBe('Healthy');
+        expect(viewModel.health.reasons).toEqual([]);
+        expect(viewModel.goalTypes[0].planning.targetCoverageLabel).toBeNull();
+    });
+
+    test('should only add Endowus drift attention for red severity', () => {
+        const planning = buildPlanningModel({
+            adjustedTotal: 2500,
+            projectedAmount: 0,
+            goals: [
+                {
+                    goalId: 'y1',
+                    goalName: 'Yellow - One',
+                    endingBalanceAmount: 800,
+                    targetPercent: 40
+                },
+                {
+                    goalId: 'y2',
+                    goalName: 'Yellow - Two',
+                    endingBalanceAmount: 1700,
+                    targetPercent: 60
+                }
+            ]
+        });
+        expect(planning.scenarioAmount).toBe(0);
+        expect(buildAttentionDriftReason('gpv-drift--yellow', 'x')).toBeNull();
+        expect(buildAttentionDriftReason('gpv-drift--green', 'x')).toBeNull();
+        expect(buildAttentionDriftReason('gpv-drift--red', 'x')).toBe('x');
+    });
+
+    test('should keep health status labels without scores', () => {
+        expect(buildHealthStatus({ reasons: [], setupRequired: false })).toEqual({
+            label: 'Healthy',
+            className: 'gpv-health--healthy',
+            reasons: []
+        });
+        expect(buildHealthStatus({ reasons: ['Missing target'], setupRequired: true })).toEqual({
+            label: 'Needs Setup',
+            className: 'gpv-health--setup',
+            reasons: ['Missing target']
+        });
     });
 
     test('should keep diff empty when remaining target is negative', () => {

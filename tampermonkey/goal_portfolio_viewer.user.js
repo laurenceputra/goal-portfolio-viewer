@@ -1170,10 +1170,14 @@ function enrichGoalTypeWithPlanning(goalTypeModel) {
     if (planning.targetCoverageLabel) {
         reasons.push(planning.targetCoverageLabel);
     }
-    if (planning.underweight) {
+    if (planning.underweight && buildAttentionDriftReason(planning.underweight.driftClass, '')) {
         reasons.push(`Largest underweight: ${planning.underweight.goalName}`);
     }
-    if (planning.overweight && Math.abs(planning.overweight.diffAmount || 0) > 0) {
+    if (
+        planning.overweight
+        && Math.abs(planning.overweight.diffAmount || 0) > 0
+        && buildAttentionDriftReason(planning.overweight.driftClass, '')
+    ) {
         reasons.push(`Largest overweight: ${planning.overweight.goalName}`);
     }
     return {
@@ -1269,27 +1273,30 @@ function buildHealthStatus({ reasons, setupRequired = false }) {
         return {
             label: 'Healthy',
             className: 'gpv-health--healthy',
-            reasons: [],
-            score: 100
+            reasons: []
         };
     }
-    const setupPenalty = setupRequired ? 35 : 0;
-    const reasonPenalty = Math.min(safeReasons.length * 12, 55);
-    const score = Math.max(0, 100 - setupPenalty - reasonPenalty);
     if (setupRequired) {
         return {
             label: 'Needs Setup',
             className: 'gpv-health--setup',
-            reasons: safeReasons,
-            score
+            reasons: safeReasons
         };
     }
     return {
         label: 'Needs Review',
         className: 'gpv-health--review',
-        reasons: safeReasons,
-        score
+        reasons: safeReasons
     };
+}
+
+function hasConfiguredAllocationIntent({ targetValues = [], fixedCount = 0 }) {
+    const safeTargets = Array.isArray(targetValues) ? targetValues : [];
+    return safeTargets.some(value => Number.isFinite(value) && value > 0) || fixedCount > 0;
+}
+
+function buildAttentionDriftReason(driftClass, label) {
+    return driftClass === 'gpv-drift--red' ? label : null;
 }
 
 function buildTargetCoverageLabel(targetTotalPercent) {
@@ -1336,8 +1343,11 @@ function calculateRecommendedContributionSplit(goalModels, additionalAmount) {
 function buildPlanningModel(goalTypeModel) {
     const goalModels = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
     const adjustedTotal = toFiniteNumber(goalTypeModel?.adjustedTotal, null);
+    const targetValues = [];
+    let fixedCount = 0;
     const targetCoveragePercent = goalModels.reduce((sum, goal) => {
         if (goal?.isFixed === true) {
+            fixedCount += 1;
             const fixedTargetPercent = calculateFixedTargetPercent(
                 toFiniteNumber(goal?.endingBalanceAmount, 0),
                 adjustedTotal
@@ -1351,9 +1361,12 @@ function buildPlanningModel(goalTypeModel) {
         if (targetPercent === null) {
             return sum;
         }
+        targetValues.push(targetPercent);
         return sum + targetPercent;
     }, 0);
-    const coverageLabel = buildTargetCoverageLabel(targetCoveragePercent);
+    const coverageLabel = hasConfiguredAllocationIntent({ targetValues, fixedCount })
+        ? buildTargetCoverageLabel(targetCoveragePercent)
+        : null;
 
     const underweight = goalModels
         .filter(goal => Number.isFinite(goal?.diffAmount) && goal.diffAmount < 0)
@@ -1363,7 +1376,7 @@ function buildPlanningModel(goalTypeModel) {
         .sort((left, right) => Math.abs(right.diffAmount) - Math.abs(left.diffAmount))[0] || null;
 
     const projectedAmount = toFiniteNumber(goalTypeModel?.projectedAmount, 0);
-    const scenarioAmount = projectedAmount > 0 ? projectedAmount : 1000;
+    const scenarioAmount = projectedAmount > 0 ? projectedAmount : 0;
     const scenarioSplit = calculateRecommendedContributionSplit(goalModels, scenarioAmount);
 
     return {
@@ -6090,7 +6103,7 @@ let GoalTargetStore;
         const healthBadge = createElement(
             'span',
             `gpv-health-badge ${bucketViewModel.health?.className || 'gpv-health--healthy'}`,
-            `${bucketViewModel.health?.label || 'Healthy'}${Number.isFinite(bucketViewModel.health?.score) ? ` (${bucketViewModel.health.score})` : ''}`
+            `${bucketViewModel.health?.label || 'Healthy'}`
         );
         const bucketStats = createElement('div', 'gpv-stats gpv-detail-stats');
         bucketStats.appendChild(buildBucketStatsFragment({
@@ -6125,8 +6138,11 @@ let GoalTargetStore;
             : 'Target total is within tolerance for this bucket.';
         panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
 
-        const scenarioLabel = createElement('p', 'gpv-planning-copy', `Scenario contribution: ${formatMoney(planning.scenarioAmount)}`);
-        panel.appendChild(scenarioLabel);
+        if (planning.scenarioAmount > 0) {
+            panel.appendChild(createElement('p', 'gpv-planning-copy', `Scenario contribution: ${formatMoney(planning.scenarioAmount)}`));
+        } else {
+            panel.appendChild(createElement('p', 'gpv-planning-copy', 'Scenario contribution: add a projected investment to see a what-if split.'));
+        }
 
         if (Array.isArray(planning.scenarioSplit) && planning.scenarioSplit.length > 0) {
             const splitList = createElement('ul', 'gpv-planning-list');
@@ -6519,7 +6535,7 @@ let GoalTargetStore;
             const healthBadge = createElement(
                 'span',
                 `gpv-health-badge ${bucketModel.health?.className || 'gpv-health--healthy'}`,
-                `${bucketModel.health?.label || 'Healthy'}${Number.isFinite(bucketModel.health?.score) ? ` (${bucketModel.health.score})` : ''}`
+                `${bucketModel.health?.label || 'Healthy'}`
             );
             bucketHeader.appendChild(healthBadge);
             const bucketStats = createElement('div', 'gpv-stats gpv-bucket-stats');
@@ -10856,6 +10872,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const targetPercentTotal = activeTargetPercent + fixedCoveragePercent;
         const fixedCount = rows.filter(row => row.fixed === true).length;
         const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
+        const configuredIntent = hasConfiguredAllocationIntent({
+            targetValues: activeRows.map(row => toFiniteNumber(row?.targetPercent, null)),
+            fixedCount
+        });
         const hasCompleteProfit = rows.length > 0 && rows.every(row => toOptionalFiniteNumber(row?.profitValueLcy) !== null);
         const totalProfitValue = hasCompleteProfit
             ? rows.reduce((sum, row) => {
@@ -10870,7 +10890,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const rowDrift = calculateFsmRowDrift(total, row);
             return sum + (Number.isFinite(rowDrift?.driftPercent) ? Math.abs(rowDrift.driftPercent) : 0);
         }, 0);
-        const coverageLabel = buildTargetCoverageLabel(targetPercentTotal);
+        const coverageLabel = configuredIntent ? buildTargetCoverageLabel(targetPercentTotal) : null;
         const driftClass = getDriftSeverityClass(totalDrift);
         const healthReasons = [];
         if (coverageLabel) {
@@ -10880,10 +10900,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const suffix = unassignedCount === 1 ? '' : 's';
             healthReasons.push(`${unassignedCount} holding${suffix} unassigned to a portfolio`);
         }
-        if (driftClass === 'gpv-drift--red') {
-            healthReasons.push('Large allocation drift across this portfolio scope');
-        } else if (driftClass === 'gpv-drift--yellow') {
-            healthReasons.push('Moderate allocation drift across this portfolio scope');
+        const driftReason = buildAttentionDriftReason(driftClass, 'Large allocation drift across this portfolio scope');
+        if (driftReason) {
+            healthReasons.push(driftReason);
         }
         return {
             total,
@@ -10943,8 +10962,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const overweight = safeRows
             .filter(row => Number.isFinite(row?.driftAmount) && row.driftAmount > 0)
             .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount))[0] || null;
-        const baseScenario = toFiniteNumber(safeSummary.total, 0);
-        const scenarioAmount = baseScenario > 0 ? Number((baseScenario * 0.05).toFixed(2)) : 1000;
+        const scenarioAmount = 0;
         return {
             targetCoverageLabel: safeSummary.targetCoverageLabel || null,
             scenarioAmount,
@@ -11301,7 +11319,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         <h2 class="gpv-fsm-overview-card-title">${escapeHtml(card.label)}</h2>
                         <p class="gpv-fsm-overview-card-subtitle">${escapeHtml(`${card.holdingsCount} holding${card.holdingsCount === 1 ? '' : 's'}`)}</p>
                     </div>
-                    <span class="gpv-health-badge ${escapeHtml(card.health?.className || 'gpv-health--healthy')}">${escapeHtml(card.health?.label || 'Healthy')}${Number.isFinite(card.health?.score) ? ` (${escapeHtml(String(card.health.score))})` : ''}</span>
+                    <span class="gpv-health-badge ${escapeHtml(card.health?.className || 'gpv-health--healthy')}">${escapeHtml(card.health?.label || 'Healthy')}</span>
                 </div>
                 <div class="gpv-fsm-overview-stats">
                     <div class="gpv-fsm-overview-stat">
@@ -11357,7 +11375,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
 
         const scenarioAmount = toFiniteNumber(planning?.scenarioAmount, 0);
-        panel.appendChild(createElement('p', 'gpv-planning-copy', `Scenario contribution: ${formatMoney(scenarioAmount)}`));
+        if (scenarioAmount > 0) {
+            panel.appendChild(createElement('p', 'gpv-planning-copy', `Scenario contribution: ${formatMoney(scenarioAmount)}`));
+        } else {
+            panel.appendChild(createElement('p', 'gpv-planning-copy', 'Scenario contribution: set a scenario amount to see a what-if split.'));
+        }
 
         if (Array.isArray(planning?.scenarioSplit) && planning.scenarioSplit.length > 0) {
             const splitList = createElement('ul', 'gpv-planning-list');
@@ -12618,6 +12640,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
     
     function handleUrlChange() {
+        if (typeof window === 'undefined' || !window || typeof document === 'undefined') {
+            return;
+        }
         const currentUrl = window.location.href;
         if (currentUrl !== state.ui.lastUrl) {
             state.ui.lastUrl = currentUrl;
@@ -12677,6 +12702,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const maxStableChecks = 10;
         const pollingIntervalMs = 1000;
         intervalId = window.setInterval(() => {
+            if (typeof window === 'undefined' || !window || typeof document === 'undefined') {
+                if (intervalId) {
+                    clearInterval(intervalId);
+                    intervalId = null;
+                }
+                return;
+            }
             const beforeUrl = state.ui.lastUrl;
             handleUrlChange();
             if (state.ui.lastUrl === beforeUrl) {
@@ -12813,6 +12845,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             resolveGoalTypeActionTarget,
             buildSummaryViewModel,
             buildBucketDetailViewModel,
+            buildHealthStatus,
+            buildAttentionDriftReason,
+            buildPlanningModel,
             collectGoalIds,
             collectAllGoalIds,
             buildGoalTargetById,
