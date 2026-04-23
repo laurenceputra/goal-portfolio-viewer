@@ -247,6 +247,51 @@ async function openBucket(page, bucketName) {
         bucketName,
         { timeout: 5000 }
     );
+    await waitForBucketViewStability(page);
+}
+
+async function waitForBucketViewStability(page, { timeout = 7000, idleMs = 250 } = {}) {
+    await page.waitForLoadState('networkidle', { timeout }).catch(() => undefined);
+    await page.waitForFunction(() => {
+        const root = document.querySelector('#gpv-overlay .gpv-content');
+        if (!root) {
+            return false;
+        }
+        const loadingNodes = Array.from(root.querySelectorAll('.gpv-performance-loading'));
+        return loadingNodes.every(node => {
+            const text = (node.textContent || '').trim();
+            return !/^Loading performance data/i.test(text);
+        });
+    }, null, { timeout });
+    await page.evaluate(quietMs => {
+        return new Promise(resolve => {
+            const root = document.querySelector('#gpv-overlay .gpv-content');
+            if (!root) {
+                resolve();
+                return;
+            }
+            let settleTimer = null;
+            const observer = new MutationObserver(() => {
+                if (settleTimer) {
+                    clearTimeout(settleTimer);
+                }
+                settleTimer = setTimeout(() => {
+                    observer.disconnect();
+                    resolve();
+                }, quietMs);
+            });
+            observer.observe(root, {
+                childList: true,
+                subtree: true,
+                characterData: true,
+                attributes: true
+            });
+            settleTimer = setTimeout(() => {
+                observer.disconnect();
+                resolve();
+            }, quietMs);
+        });
+    }, idleMs);
 }
 
 async function clickButtonByRole(page, name, { timeout = 5000, retries = 1 } = {}) {
@@ -273,6 +318,17 @@ async function captureScreenshot(page, summary, outputDir, flowName) {
     const normalizedFlowName = normalizeName(flowName);
     const screenshotName = `e2e-${normalizedFlowName}.png`;
     const screenshotPath = path.join(outputDir, screenshotName);
+    await page.waitForFunction(
+        () => !document.fonts || document.fonts.status === 'loaded',
+        null,
+        { timeout: 5000 }
+    ).catch(() => undefined);
+    await page.evaluate(() => new Promise(resolve => {
+        const schedule = typeof requestAnimationFrame === 'function'
+            ? requestAnimationFrame
+            : callback => setTimeout(callback, 0);
+        schedule(() => schedule(resolve));
+    }));
     const overlayContainer = page.locator('#gpv-overlay .gpv-container').first();
     if (await overlayContainer.count() > 0) {
         await overlayContainer.screenshot({ path: screenshotPath });
