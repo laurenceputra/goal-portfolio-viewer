@@ -29,6 +29,7 @@
 
     const DEBUG = false;
     const REMAINING_TARGET_ALERT_THRESHOLD = 2;
+    const TARGET_TOTAL_TOLERANCE_PERCENT = 2;
     const FSM_PROFIT_PERCENT_SCALE = 'auto';
     const FSM_UNASSIGNED_PORTFOLIO_ID = 'unassigned';
     const FSM_ALL_PORTFOLIO_ID = 'all';
@@ -960,7 +961,7 @@ function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
 
     function buildSummaryViewModel(bucketMap, projectedInvestmentsState, goalTargetById, goalFixedById) {
         if (!bucketMap || typeof bucketMap !== 'object') {
-            return { buckets: [], showAllocationDriftHint: false };
+            return { buckets: [], showAllocationDriftHint: false, attentionItems: [] };
         }
         const projectedInvestments = projectedInvestmentsState || {};
         const goalTargets = goalTargetById || {};
@@ -975,6 +976,52 @@ function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
                     return null;
                 }
                 const { orderedTypes, bucketTotalReturn, endingBalanceTotal } = base;
+                const goalTypeModels = orderedTypes
+                    .map(goalType => {
+                        const group = base.bucketObj[goalType];
+                        if (!group) {
+                            return null;
+                        }
+                        const typeReturn = group.totalCumulativeReturn || 0;
+                        const projectedAmount = getProjectedInvestmentValue(
+                            projectedInvestments,
+                            bucketName,
+                            goalType
+                        );
+                        const adjustedTotal = (group.endingBalanceAmount || 0) + projectedAmount;
+                        const goals = Array.isArray(group.goals) ? group.goals : [];
+                        const allocationModel = computeGoalTypeViewState(
+                            goals,
+                            group.endingBalanceAmount || 0,
+                            adjustedTotal,
+                            goalTargets,
+                            goalFixed
+                        );
+                        if (allocationModel.allocationDriftAvailable === false) {
+                            showAllocationDriftHint = true;
+                        }
+                        return enrichGoalTypeWithPlanning({
+                            goalType,
+                            displayName: getDisplayGoalType(goalType),
+                            endingBalanceAmount: group.endingBalanceAmount || 0,
+                            endingBalanceDisplay: formatMoney(group.endingBalanceAmount),
+                            returnAmount: typeReturn,
+                            returnDisplay: formatMoney(typeReturn),
+                            growthDisplay: formatGrowthPercentFromEndingBalance(
+                                typeReturn,
+                                group.endingBalanceAmount
+                            ),
+                            returnClass: getReturnClass(typeReturn),
+                            allocationDriftDisplay: allocationModel.allocationDriftDisplay,
+                            allocationDriftClass: allocationModel.allocationDriftClass,
+                            allocationDriftAvailable: allocationModel.allocationDriftAvailable,
+                            goals: allocationModel.goalModels.map(goal => buildBucketDetailGoalRow(goal)),
+                            adjustedTotal,
+                            projectedAmount
+                        });
+                    })
+                    .filter(Boolean);
+                const bucketReasons = goalTypeModels.flatMap(model => model.health?.reasons || []);
                 return {
                     bucketName,
                     endingBalanceAmount: endingBalanceTotal,
@@ -986,52 +1033,19 @@ function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
                         endingBalanceTotal
                     ),
                     returnClass: getReturnClass(bucketTotalReturn),
-                    goalTypes: orderedTypes
-                        .map(goalType => {
-                            const group = base.bucketObj[goalType];
-                            if (!group) {
-                                return null;
-                            }
-                            const typeReturn = group.totalCumulativeReturn || 0;
-                            const projectedAmount = getProjectedInvestmentValue(
-                                projectedInvestments,
-                                bucketName,
-                                goalType
-                            );
-                            const adjustedTotal = (group.endingBalanceAmount || 0) + projectedAmount;
-                            const goals = Array.isArray(group.goals) ? group.goals : [];
-                            const allocationModel = computeGoalTypeViewState(
-                                goals,
-                                group.endingBalanceAmount || 0,
-                                adjustedTotal,
-                                goalTargets,
-                                goalFixed
-                            );
-                            if (allocationModel.allocationDriftAvailable === false) {
-                                showAllocationDriftHint = true;
-                            }
-                            return {
-                                goalType,
-                                displayName: getDisplayGoalType(goalType),
-                                endingBalanceAmount: group.endingBalanceAmount || 0,
-                                endingBalanceDisplay: formatMoney(group.endingBalanceAmount),
-                                returnAmount: typeReturn,
-                                returnDisplay: formatMoney(typeReturn),
-                                growthDisplay: formatGrowthPercentFromEndingBalance(
-                                    typeReturn,
-                                    group.endingBalanceAmount
-                                ),
-                                returnClass: getReturnClass(typeReturn),
-                                allocationDriftDisplay: allocationModel.allocationDriftDisplay,
-                                allocationDriftClass: allocationModel.allocationDriftClass,
-                                allocationDriftAvailable: allocationModel.allocationDriftAvailable
-                            };
-                        })
-                        .filter(Boolean)
+                    goalTypes: goalTypeModels,
+                    health: buildHealthStatus({
+                        reasons: bucketReasons,
+                        setupRequired: bucketReasons.some(reason => reason.includes('Target total is'))
+                    })
                 };
             })
             .filter(Boolean);
-        return { buckets, showAllocationDriftHint };
+        return {
+            buckets,
+            showAllocationDriftHint,
+            attentionItems: buildNeedsAttentionItemsForSummary({ buckets })
+        };
     }
 
 function buildBucketDetailViewModel({
@@ -1055,6 +1069,34 @@ function buildBucketDetailViewModel({
         const { orderedTypes, bucketTotalReturn, endingBalanceTotal } = base;
         let showAllocationDriftHint = false;
 
+    const goalTypeModels = orderedTypes
+        .map(goalType => {
+            const group = base.bucketObj[goalType];
+            if (!group) {
+                return null;
+            }
+            const projectedAmount = getProjectedInvestmentValue(projectedInvestments, bucketName, goalType);
+            const allocationModel = computeGoalTypeViewState(
+                Array.isArray(group.goals) ? group.goals : [],
+                group.endingBalanceAmount || 0,
+                (group.endingBalanceAmount || 0) + projectedAmount,
+                goalTargets,
+                goalFixed
+            );
+            if (allocationModel.allocationDriftAvailable === false) {
+                showAllocationDriftHint = true;
+            }
+            return enrichGoalTypeWithPlanning(buildBucketDetailGoalTypeModel({
+                goalType,
+                group,
+                projectedAmount,
+                allocationModel
+            }));
+        })
+        .filter(Boolean);
+
+    const bucketReasons = goalTypeModels.flatMap(model => model.health?.reasons || []);
+
     return {
         bucketName,
         endingBalanceAmount: endingBalanceTotal,
@@ -1066,32 +1108,12 @@ function buildBucketDetailViewModel({
             endingBalanceTotal
         ),
         returnClass: getReturnClass(bucketTotalReturn),
-        goalTypes: orderedTypes
-            .map(goalType => {
-                const group = base.bucketObj[goalType];
-                if (!group) {
-                    return null;
-                }
-                const projectedAmount = getProjectedInvestmentValue(projectedInvestments, bucketName, goalType);
-                const allocationModel = computeGoalTypeViewState(
-                    Array.isArray(group.goals) ? group.goals : [],
-                    group.endingBalanceAmount || 0,
-                    (group.endingBalanceAmount || 0) + projectedAmount,
-                    goalTargets,
-                    goalFixed
-                );
-                if (allocationModel.allocationDriftAvailable === false) {
-                    showAllocationDriftHint = true;
-                }
-                return buildBucketDetailGoalTypeModel({
-                    goalType,
-                    group,
-                    projectedAmount,
-                    allocationModel
-                });
-            })
-            .filter(Boolean),
-        showAllocationDriftHint
+        goalTypes: goalTypeModels,
+        showAllocationDriftHint,
+        health: buildHealthStatus({
+            reasons: bucketReasons,
+            setupRequired: bucketReasons.some(reason => reason.includes('Target total is'))
+        })
     };
 }
 
@@ -1139,6 +1161,26 @@ function buildBucketDetailGoalRow(goal) {
         returnClass: getReturnClass(goal.returnValue),
         windowReturns,
         windowReturnDisplays
+    };
+}
+
+function enrichGoalTypeWithPlanning(goalTypeModel) {
+    const planning = buildPlanningModel(goalTypeModel);
+    const reasons = [];
+    if (planning.targetCoverageLabel) {
+        reasons.push(planning.targetCoverageLabel);
+    }
+    if (planning.underweight) {
+        reasons.push(`Largest underweight: ${planning.underweight.goalName}`);
+    }
+    if (planning.overweight && Math.abs(planning.overweight.diffAmount || 0) > 0) {
+        reasons.push(`Largest overweight: ${planning.overweight.goalName}`);
+    }
+    return {
+        ...goalTypeModel,
+        planning,
+        targetCoverageIssue: planning.targetCoverageLabel,
+        health: buildHealthStatus({ reasons, setupRequired: Boolean(planning.targetCoverageLabel) })
     };
 }
 
@@ -1208,6 +1250,256 @@ function buildGoalBucketAssignmentMap({
     });
 
     return bucketById;
+}
+
+function buildHealthStatus({ reasons, setupRequired = false }) {
+    const dedupe = new Set();
+    const safeReasons = Array.isArray(reasons)
+        ? reasons
+            .filter(reason => typeof reason === 'string' && reason.trim().length > 0)
+            .filter(reason => {
+                if (dedupe.has(reason)) {
+                    return false;
+                }
+                dedupe.add(reason);
+                return true;
+            })
+        : [];
+    if (safeReasons.length === 0) {
+        return {
+            label: 'Healthy',
+            className: 'gpv-health--healthy',
+            reasons: [],
+            score: 100
+        };
+    }
+    const setupPenalty = setupRequired ? 35 : 0;
+    const reasonPenalty = Math.min(safeReasons.length * 12, 55);
+    const score = Math.max(0, 100 - setupPenalty - reasonPenalty);
+    if (setupRequired) {
+        return {
+            label: 'Needs Setup',
+            className: 'gpv-health--setup',
+            reasons: safeReasons,
+            score
+        };
+    }
+    return {
+        label: 'Needs Review',
+        className: 'gpv-health--review',
+        reasons: safeReasons,
+        score
+    };
+}
+
+function buildTargetCoverageLabel(targetTotalPercent) {
+    const rounded = Number.isFinite(targetTotalPercent) ? Number(targetTotalPercent.toFixed(2)) : null;
+    if (rounded === null) {
+        return null;
+    }
+    const difference = rounded - 100;
+    if (Math.abs(difference) <= TARGET_TOTAL_TOLERANCE_PERCENT) {
+        return null;
+    }
+    if (difference < 0) {
+        return `Target total is ${rounded.toFixed(2)}% (${Math.abs(difference).toFixed(2)}% unallocated)`;
+    }
+    return `Target total is ${rounded.toFixed(2)}% (${difference.toFixed(2)}% over-allocated)`;
+}
+
+function calculateRecommendedContributionSplit(goalModels, additionalAmount) {
+    const numericAmount = toFiniteNumber(additionalAmount, null);
+    if (numericAmount === null || numericAmount <= 0 || !Array.isArray(goalModels)) {
+        return [];
+    }
+    const candidates = goalModels
+        .filter(goal => goal && goal.isFixed !== true && Number.isFinite(goal.diffAmount) && goal.diffAmount < 0)
+        .map(goal => ({
+            goalId: goal.goalId,
+            goalName: goal.goalName,
+            neededAmount: Math.abs(goal.diffAmount)
+        }));
+    const totalNeed = candidates.reduce((sum, item) => sum + item.neededAmount, 0);
+    if (totalNeed <= 0) {
+        return [];
+    }
+    return candidates.map(item => {
+        const share = item.neededAmount / totalNeed;
+        return {
+            goalId: item.goalId,
+            goalName: item.goalName,
+            amount: Number((numericAmount * share).toFixed(2))
+        };
+    });
+}
+
+function buildPlanningModel(goalTypeModel) {
+    const goalModels = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
+    const adjustedTotal = toFiniteNumber(goalTypeModel?.adjustedTotal, null);
+    const targetCoveragePercent = goalModels.reduce((sum, goal) => {
+        if (goal?.isFixed === true) {
+            const fixedTargetPercent = calculateFixedTargetPercent(
+                toFiniteNumber(goal?.endingBalanceAmount, 0),
+                adjustedTotal
+            );
+            if (fixedTargetPercent === null) {
+                return sum;
+            }
+            return sum + fixedTargetPercent;
+        }
+        const targetPercent = toFiniteNumber(goal?.targetPercent, null);
+        if (targetPercent === null) {
+            return sum;
+        }
+        return sum + targetPercent;
+    }, 0);
+    const coverageLabel = buildTargetCoverageLabel(targetCoveragePercent);
+
+    const underweight = goalModels
+        .filter(goal => Number.isFinite(goal?.diffAmount) && goal.diffAmount < 0)
+        .sort((left, right) => Math.abs(right.diffAmount) - Math.abs(left.diffAmount))[0] || null;
+    const overweight = goalModels
+        .filter(goal => Number.isFinite(goal?.diffAmount) && goal.diffAmount > 0)
+        .sort((left, right) => Math.abs(right.diffAmount) - Math.abs(left.diffAmount))[0] || null;
+
+    const projectedAmount = toFiniteNumber(goalTypeModel?.projectedAmount, 0);
+    const scenarioAmount = projectedAmount > 0 ? projectedAmount : 1000;
+    const scenarioSplit = calculateRecommendedContributionSplit(goalModels, scenarioAmount);
+
+    return {
+        adjustedTotal,
+        targetCoveragePercent,
+        targetCoverageLabel: coverageLabel,
+        underweight,
+        overweight,
+        scenarioAmount,
+        scenarioSplit
+    };
+}
+
+function buildBucketPlanningModel(goalTypeModels) {
+    const models = Array.isArray(goalTypeModels) ? goalTypeModels.filter(Boolean) : [];
+    if (models.length === 0) {
+        return null;
+    }
+    const coverageIssues = [];
+    const scenarioByGoal = {};
+    let scenarioAmount = 0;
+    let underweight = null;
+    let overweight = null;
+
+    models.forEach(goalTypeModel => {
+        const planning = goalTypeModel?.planning;
+        if (!planning) {
+            return;
+        }
+        if (planning.targetCoverageLabel) {
+            coverageIssues.push(`${goalTypeModel.displayName}: ${planning.targetCoverageLabel}`);
+        }
+        scenarioAmount += toFiniteNumber(planning.scenarioAmount, 0);
+        const split = Array.isArray(planning.scenarioSplit) ? planning.scenarioSplit : [];
+        split.forEach(item => {
+            const goalId = utils.normalizeString(item?.goalId, '');
+            if (!goalId) {
+                return;
+            }
+            if (!scenarioByGoal[goalId]) {
+                scenarioByGoal[goalId] = {
+                    goalId,
+                    goalName: utils.normalizeString(item.goalName, goalId),
+                    amount: 0
+                };
+            }
+            scenarioByGoal[goalId].amount += toFiniteNumber(item?.amount, 0);
+        });
+        const candidateUnderweight = planning.underweight;
+        if (
+            candidateUnderweight
+            && Number.isFinite(candidateUnderweight.diffAmount)
+            && (
+                !underweight
+                || Math.abs(candidateUnderweight.diffAmount) > Math.abs(underweight.diffAmount)
+            )
+        ) {
+            underweight = candidateUnderweight;
+        }
+        const candidateOverweight = planning.overweight;
+        if (
+            candidateOverweight
+            && Number.isFinite(candidateOverweight.diffAmount)
+            && (
+                !overweight
+                || Math.abs(candidateOverweight.diffAmount) > Math.abs(overweight.diffAmount)
+            )
+        ) {
+            overweight = candidateOverweight;
+        }
+    });
+
+    const scenarioSplit = Object.values(scenarioByGoal)
+        .sort((left, right) => right.amount - left.amount)
+        .slice(0, 4)
+        .map(item => ({
+            ...item,
+            amount: Number(item.amount.toFixed(2))
+        }));
+
+    return {
+        coverageIssues,
+        scenarioAmount,
+        scenarioSplit,
+        underweight,
+        overweight
+    };
+}
+
+function buildNeedsAttentionItemsForSummary(summaryViewModel) {
+    if (!summaryViewModel || !Array.isArray(summaryViewModel.buckets)) {
+        return [];
+    }
+    const items = [];
+    summaryViewModel.buckets.forEach(bucket => {
+        const goalTypes = Array.isArray(bucket.goalTypes) ? bucket.goalTypes : [];
+        goalTypes.forEach(goalType => {
+            if (goalType.targetCoverageIssue) {
+                items.push({
+                    bucketName: bucket.bucketName,
+                    label: `${bucket.bucketName}: ${goalType.targetCoverageIssue}`,
+                    reason: goalType.targetCoverageIssue
+                });
+            }
+        });
+        const healthReasons = Array.isArray(bucket.health?.reasons) ? bucket.health.reasons : [];
+        healthReasons.forEach(reason => {
+            if (items.some(item => item.bucketName === bucket.bucketName && item.reason === reason)) {
+                return;
+            }
+            items.push({
+                bucketName: bucket.bucketName,
+                label: `${bucket.bucketName}: ${reason}`,
+                reason
+            });
+        });
+    });
+    return items.slice(0, 6);
+}
+
+function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
+    if (!overviewModel || !Array.isArray(overviewModel.cards)) {
+        return [];
+    }
+    const items = [];
+    overviewModel.cards.forEach(card => {
+        const reasons = Array.isArray(card.health?.reasons) ? card.health.reasons : [];
+        reasons.forEach(reason => {
+            items.push({
+                scopeId: card.id,
+                label: `${card.label}: ${reason}`,
+                reason
+            });
+        });
+    });
+    return items.slice(0, 6);
 }
 
     function collectGoalIds(bucketObj) {
@@ -5777,6 +6069,11 @@ let GoalTargetStore;
     function buildBucketHeader(bucketViewModel) {
         const bucketHeader = createElement('div', 'gpv-detail-header');
         const bucketTitle = createElement('h2', 'gpv-detail-title', bucketViewModel.bucketName);
+        const healthBadge = createElement(
+            'span',
+            `gpv-health-badge ${bucketViewModel.health?.className || 'gpv-health--healthy'}`,
+            `${bucketViewModel.health?.label || 'Healthy'}${Number.isFinite(bucketViewModel.health?.score) ? ` (${bucketViewModel.health.score})` : ''}`
+        );
         const bucketStats = createElement('div', 'gpv-stats gpv-detail-stats');
         bucketStats.appendChild(buildBucketStatsFragment({
             endingBalanceDisplay: bucketViewModel.endingBalanceDisplay,
@@ -5786,8 +6083,56 @@ let GoalTargetStore;
             returnLabel: 'Return'
         }));
         bucketHeader.appendChild(bucketTitle);
+        bucketHeader.appendChild(healthBadge);
         bucketHeader.appendChild(bucketStats);
         return bucketHeader;
+    }
+
+    function renderPlanningPanel(contentDiv, bucketViewModel) {
+        if (!contentDiv || !bucketViewModel) {
+            return;
+        }
+        const panel = createElement('div', 'gpv-planning-panel');
+        panel.appendChild(createElement('h3', 'gpv-planning-title', 'Planning'));
+
+        const planning = buildBucketPlanningModel(bucketViewModel.goalTypes);
+        if (!planning) {
+            panel.appendChild(createElement('p', 'gpv-planning-empty', 'Planning insights appear once targets and balances are available.'));
+            contentDiv.appendChild(panel);
+            return;
+        }
+
+        const coverageText = planning.coverageIssues.length > 0
+            ? planning.coverageIssues.join(' | ')
+            : 'Target total is within tolerance for this bucket.';
+        panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
+
+        const scenarioLabel = createElement('p', 'gpv-planning-copy', `Scenario contribution: ${formatMoney(planning.scenarioAmount)}`);
+        panel.appendChild(scenarioLabel);
+
+        if (Array.isArray(planning.scenarioSplit) && planning.scenarioSplit.length > 0) {
+            const splitList = createElement('ul', 'gpv-planning-list');
+            planning.scenarioSplit.forEach(item => {
+                splitList.appendChild(createElement('li', 'gpv-planning-item', `${item.goalName}: ${formatMoney(item.amount)}`));
+            });
+            panel.appendChild(splitList);
+        }
+
+        const rebalance = createElement('p', 'gpv-planning-copy');
+        if (planning.underweight || planning.overweight) {
+            const under = planning.underweight
+                ? `Add ${formatMoney(Math.abs(planning.underweight.diffAmount))} to ${planning.underweight.goalName}`
+                : 'No underweight goals';
+            const over = planning.overweight
+                ? `Reduce ${formatMoney(Math.abs(planning.overweight.diffAmount))} from ${planning.overweight.goalName}`
+                : 'No overweight goals';
+            rebalance.textContent = `Rebalance summary: ${under}; ${over}.`;
+        } else {
+            rebalance.textContent = 'Rebalance summary: Portfolio is close to target.';
+        }
+        panel.appendChild(rebalance);
+
+        contentDiv.appendChild(panel);
     }
 
     function renderAllocationDriftHint(contentDiv, bucketViewModel) {
@@ -6128,6 +6473,15 @@ let GoalTargetStore;
     function renderSummaryView(contentDiv, summaryViewModel, onBucketSelect) {
         contentDiv.innerHTML = '';
 
+        const attention = buildAttentionStrip(summaryViewModel.attentionItems, item => {
+            if (typeof onBucketSelect === 'function') {
+                onBucketSelect(item.bucketName);
+            }
+        });
+        if (attention) {
+            contentDiv.appendChild(attention);
+        }
+
         if (summaryViewModel.showAllocationDriftHint) {
             const hint = createElement('div', 'gpv-allocation-drift-hint', 'Set goal targets to see drift.');
             contentDiv.appendChild(hint);
@@ -6144,6 +6498,12 @@ let GoalTargetStore;
 
             const bucketHeader = createElement('div', 'gpv-bucket-header');
             const bucketTitle = createElement('h2', 'gpv-bucket-title', bucketModel.bucketName);
+            const healthBadge = createElement(
+                'span',
+                `gpv-health-badge ${bucketModel.health?.className || 'gpv-health--healthy'}`,
+                `${bucketModel.health?.label || 'Healthy'}${Number.isFinite(bucketModel.health?.score) ? ` (${bucketModel.health.score})` : ''}`
+            );
+            bucketHeader.appendChild(healthBadge);
             const bucketStats = createElement('div', 'gpv-stats gpv-bucket-stats');
             bucketStats.appendChild(buildBucketStatsFragment({
                 endingBalanceDisplay: bucketModel.endingBalanceDisplay,
@@ -6156,6 +6516,14 @@ let GoalTargetStore;
             bucketHeader.appendChild(bucketTitle);
             bucketHeader.appendChild(bucketStats);
             bucketCard.appendChild(bucketHeader);
+
+            if (Array.isArray(bucketModel.health?.reasons) && bucketModel.health.reasons.length > 0) {
+                const reasonList = createElement('ul', 'gpv-health-reasons');
+                bucketModel.health.reasons.slice(0, 2).forEach(reason => {
+                    reasonList.appendChild(createElement('li', 'gpv-health-reason', reason));
+                });
+                bucketCard.appendChild(reasonList);
+            }
 
             bucketModel.goalTypes.forEach(goalTypeModel => {
                 const typeRow = createElement('div', 'gpv-goal-type-row');
@@ -6242,6 +6610,7 @@ let GoalTargetStore;
         }
 
         contentDiv.appendChild(buildBucketHeader(bucketViewModel));
+        renderPlanningPanel(contentDiv, bucketViewModel);
         renderAllocationDriftHint(contentDiv, bucketViewModel);
 
         bucketViewModel.goalTypes.forEach(goalTypeModel => {
@@ -6927,6 +7296,10 @@ function withButtonState(button, busyText, action) {
     function renderSyncActivation({ isEnabled, cryptoSupported }) {
         return `
             <div class="gpv-sync-form-group">
+                <h4 class="gpv-sync-quick-title">Quick setup</h4>
+                <p class="gpv-sync-help gpv-sync-help--lead">
+                    Set your sync endpoint, user ID, and password, then save to enable cross-device portfolio sync.
+                </p>
                 <label class="gpv-sync-toggle">
                     <input 
                         type="checkbox" 
@@ -6943,7 +7316,7 @@ function withButtonState(button, busyText, action) {
                        rel="noopener noreferrer">Learn more</a>
                 </p>
                 <p class="gpv-sync-help">
-                    🔒 <strong>No data is sent</strong> until you click <strong>Save Settings</strong>.
+                    Login and Sign Up validate credentials immediately. Save applies local sync settings on this device.
                 </p>
             </div>
         `;
@@ -7074,9 +7447,6 @@ function withButtonState(button, busyText, action) {
     function renderSyncActionButtons({ isEnabled, cryptoSupported, syncStatus }) {
         return `
             <div class="gpv-sync-actions">
-                <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-sync-save-btn" ${!cryptoSupported ? 'disabled' : ''}>
-                    Save Settings
-                </button>
                 <button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-test-btn" ${!isEnabled || !cryptoSupported ? 'disabled' : ''}>
                     Test Connection
                 </button>
@@ -7087,6 +7457,34 @@ function withButtonState(button, busyText, action) {
                     Logout
                 </button>
             </div>
+        `;
+    }
+
+    function renderSyncPrimaryAction({ cryptoSupported }) {
+        return `
+            <div class="gpv-sync-actions">
+                <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-sync-save-btn" ${!cryptoSupported ? 'disabled' : ''}>
+                    Save Settings
+                </button>
+            </div>
+        `;
+    }
+
+    function renderSyncAdvancedSection({
+        isEnabled,
+        cryptoSupported,
+        autoSync,
+        syncInterval,
+        syncStatus
+    }) {
+        return `
+            <details class="gpv-sync-advanced">
+                <summary>Advanced settings</summary>
+                <div class="gpv-sync-advanced-content">
+                    ${renderAutoSyncSection({ autoSync, syncInterval, isEnabled, cryptoSupported })}
+                    ${renderSyncActionButtons({ isEnabled, cryptoSupported, syncStatus })}
+                </div>
+            </details>
         `;
     }
 
@@ -7103,10 +7501,12 @@ function withButtonState(button, busyText, action) {
                     ${renderPasswordField(state)}
                     ${renderRememberKeySection(state)}
                     ${renderSyncAuthButtons(state)}
-                    ${renderAutoSyncSection(state)}
-                    ${renderSyncActionButtons({
+                    ${renderSyncPrimaryAction({ cryptoSupported: state.cryptoSupported })}
+                    ${renderSyncAdvancedSection({
                         isEnabled: state.isEnabled,
                         cryptoSupported: state.cryptoSupported,
+                        autoSync: state.autoSync,
+                        syncInterval: state.syncInterval,
                         syncStatus: state.syncStatus
                     })}
                 </div>
@@ -8256,6 +8656,140 @@ syncUi.update = function updateSyncUI() {
                 padding: 10px 12px;
             }
 
+            .gpv-attention-strip {
+                background: #fff7ed;
+                border: 1px solid #fed7aa;
+                border-radius: 10px;
+                padding: 10px 12px;
+                margin-bottom: 12px;
+            }
+
+            .gpv-attention-title {
+                color: #9a3412;
+                font-size: 12px;
+                font-weight: 800;
+                letter-spacing: 0.04em;
+                margin-bottom: 8px;
+                text-transform: uppercase;
+            }
+
+            .gpv-attention-list {
+                list-style: none;
+                margin: 0;
+                padding: 0;
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+
+            .gpv-attention-item {
+                margin: 0;
+                padding: 0;
+            }
+
+            .gpv-attention-button {
+                width: 100%;
+                text-align: left;
+                border: 1px solid #fdba74;
+                background: #ffedd5;
+                color: #7c2d12;
+                border-radius: 8px;
+                padding: 8px 10px;
+                font-size: 13px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s ease;
+            }
+
+            .gpv-attention-button:hover {
+                background: #fed7aa;
+            }
+
+            .gpv-attention-button:focus-visible {
+                outline: 2px solid rgba(194, 65, 12, 0.45);
+                outline-offset: 2px;
+            }
+
+            .gpv-health-badge {
+                display: inline-flex;
+                align-items: center;
+                border-radius: 999px;
+                padding: 4px 10px;
+                font-size: 12px;
+                font-weight: 700;
+                white-space: nowrap;
+            }
+
+            .gpv-health--healthy {
+                background: #dcfce7;
+                color: #166534;
+            }
+
+            .gpv-health--setup {
+                background: #ffedd5;
+                color: #9a3412;
+            }
+
+            .gpv-health--review {
+                background: #fee2e2;
+                color: #991b1b;
+            }
+
+            .gpv-health-reasons {
+                list-style: disc;
+                margin: 4px 0 12px 18px;
+                padding: 0;
+                color: #4b5563;
+                font-size: 12px;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+
+            .gpv-health-reason {
+                margin: 0;
+            }
+
+            .gpv-planning-panel {
+                border: 1px solid #dbeafe;
+                background: #eff6ff;
+                border-radius: 10px;
+                padding: 10px 12px;
+                margin-bottom: 12px;
+            }
+
+            .gpv-planning-title {
+                margin: 0 0 8px;
+                font-size: 14px;
+                font-weight: 800;
+                color: #1e3a8a;
+                text-transform: uppercase;
+                letter-spacing: 0.03em;
+            }
+
+            .gpv-planning-coverage,
+            .gpv-planning-copy,
+            .gpv-planning-empty {
+                margin: 0 0 8px;
+                color: #1f2937;
+                font-size: 13px;
+                line-height: 1.45;
+            }
+
+            .gpv-planning-list {
+                margin: 0 0 8px 18px;
+                padding: 0;
+                color: #1f2937;
+                font-size: 13px;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+
+            .gpv-planning-item {
+                margin: 0;
+            }
+
             .gpv-readiness {
                 border: 1px solid #dbeafe;
                 border-radius: 12px;
@@ -8363,6 +8897,10 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-bucket-header {
                 margin-bottom: 12px;
+                display: grid;
+                grid-template-columns: auto 1fr;
+                gap: 8px 12px;
+                align-items: center;
             }
             
             .gpv-bucket-title {
@@ -8380,6 +8918,7 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-bucket-stats {
                 flex-wrap: wrap;
+                grid-column: 1 / -1;
             }
             
             .gpv-stat-item {
@@ -8481,6 +9020,10 @@ syncUi.update = function updateSyncUI() {
                 margin-bottom: 16px;
                 padding-bottom: 12px;
                 border-bottom: 2px solid #e5e7eb;
+                display: grid;
+                grid-template-columns: auto 1fr;
+                gap: 8px 12px;
+                align-items: center;
             }
             
             .gpv-detail-title {
@@ -8494,6 +9037,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-detail-stats {
                 gap: 28px;
                 flex-wrap: nowrap;
+                grid-column: 1 / -1;
             }
             
             .gpv-type-section {
@@ -10124,7 +10668,7 @@ syncUi.update = function updateSyncUI() {
         return item;
     }
 
-    function createReadinessView({ title, description, items, tone = 'pending' }) {
+function createReadinessView({ title, description, items, tone = 'pending' }) {
         const wrapper = createElement('div', `gpv-readiness gpv-readiness-${tone}`);
         wrapper.setAttribute('role', 'status');
         wrapper.setAttribute('aria-live', 'polite');
@@ -10136,6 +10680,32 @@ syncUi.update = function updateSyncUI() {
         });
         wrapper.appendChild(list);
         return wrapper;
+    }
+
+    function buildAttentionStrip(items, onSelect) {
+        const safeItems = Array.isArray(items) ? items.filter(Boolean) : [];
+        if (safeItems.length === 0) {
+            return null;
+        }
+        const attention = createElement('div', 'gpv-attention-strip');
+        const title = createElement('div', 'gpv-attention-title', 'Needs Attention');
+        attention.appendChild(title);
+        const list = createElement('ul', 'gpv-attention-list');
+        safeItems.forEach(item => {
+            const li = createElement('li', 'gpv-attention-item');
+            const label = utils.normalizeString(item.label, 'Review portfolio settings');
+            const button = createElement('button', 'gpv-attention-button', label);
+            button.type = 'button';
+            button.addEventListener('click', () => {
+                if (typeof onSelect === 'function') {
+                    onSelect(item);
+                }
+            });
+            li.appendChild(button);
+            list.appendChild(li);
+        });
+        attention.appendChild(list);
+        return attention;
     }
 
     // ============================================
@@ -10209,7 +10779,18 @@ syncUi.update = function updateSyncUI() {
     function buildFsmScopedSummary(rows) {
         const total = rows.reduce((sum, row) => sum + (Number(row.currentValueLcy) || 0), 0);
         const activeRows = rows.filter(row => row.fixed !== true);
-        const targetPercentTotal = activeRows.reduce((sum, row) => sum + (Number(row.targetPercent) || 0), 0);
+        const activeTargetPercent = activeRows.reduce((sum, row) => sum + (Number(row.targetPercent) || 0), 0);
+        const fixedCoveragePercent = rows.reduce((sum, row) => {
+            if (row.fixed !== true) {
+                return sum;
+            }
+            const allocation = calculateFsmCurrentAllocation(total, row);
+            if (!Number.isFinite(allocation)) {
+                return sum;
+            }
+            return sum + (allocation * 100);
+        }, 0);
+        const targetPercentTotal = activeTargetPercent + fixedCoveragePercent;
         const fixedCount = rows.filter(row => row.fixed === true).length;
         const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
         const hasCompleteProfit = rows.length > 0 && rows.every(row => toOptionalFiniteNumber(row?.profitValueLcy) !== null);
@@ -10226,18 +10807,87 @@ syncUi.update = function updateSyncUI() {
             const rowDrift = calculateFsmRowDrift(total, row);
             return sum + (Number.isFinite(rowDrift?.driftPercent) ? Math.abs(rowDrift.driftPercent) : 0);
         }, 0);
+        const coverageLabel = buildTargetCoverageLabel(targetPercentTotal);
+        const driftClass = getDriftSeverityClass(totalDrift);
+        const healthReasons = [];
+        if (coverageLabel) {
+            healthReasons.push(coverageLabel);
+        }
+        if (unassignedCount > 0) {
+            const suffix = unassignedCount === 1 ? '' : 's';
+            healthReasons.push(`${unassignedCount} holding${suffix} unassigned to a portfolio`);
+        }
+        if (driftClass === 'gpv-drift--red') {
+            healthReasons.push('Large allocation drift across this portfolio scope');
+        } else if (driftClass === 'gpv-drift--yellow') {
+            healthReasons.push('Moderate allocation drift across this portfolio scope');
+        }
         return {
             total,
             targetAssignedDisplay: formatPercent(targetPercentTotal / 100, { multiplier: 100, showSign: false }),
             driftDisplay: formatPercent(totalDrift, { multiplier: 100, showSign: false }),
-            driftClass: getDriftSeverityClass(totalDrift),
+            driftClass,
             holdingsCount: rows.length,
             fixedCount,
             unassignedCount,
             totalProfitValue,
             totalProfitPercent,
             profitDisplay: formatFsmProfitDisplay(totalProfitValue, totalProfitPercent),
-            profitClass: getFsmProfitClass(totalProfitPercent)
+            profitClass: getFsmProfitClass(totalProfitPercent),
+            targetCoverageLabel: coverageLabel,
+            health: buildHealthStatus({
+                reasons: healthReasons,
+                setupRequired: Boolean(coverageLabel) || unassignedCount > 0
+            })
+        };
+    }
+
+    function calculateRecommendedContributionSplitForFsm(rows, additionalAmount) {
+        const numericAmount = toFiniteNumber(additionalAmount, null);
+        if (numericAmount === null || numericAmount <= 0 || !Array.isArray(rows)) {
+            return [];
+        }
+        const candidates = rows
+            .filter(row => row && row.fixed !== true && Number.isFinite(row.driftAmount) && row.driftAmount < 0)
+            .map(row => ({
+                goalId: row.code,
+                goalName: row.displayTicker || row.name || row.code,
+                neededAmount: Math.abs(row.driftAmount)
+            }));
+        const totalNeed = candidates.reduce((sum, item) => sum + item.neededAmount, 0);
+        if (totalNeed <= 0) {
+            return [];
+        }
+        return candidates
+            .map(item => {
+                const share = item.neededAmount / totalNeed;
+                return {
+                    goalId: item.goalId,
+                    goalName: item.goalName,
+                    amount: Number((numericAmount * share).toFixed(2))
+                };
+            })
+            .sort((left, right) => right.amount - left.amount)
+            .slice(0, 4);
+    }
+
+    function buildFsmPlanningModel(rows, summary) {
+        const safeRows = Array.isArray(rows) ? rows : [];
+        const safeSummary = summary || {};
+        const underweight = safeRows
+            .filter(row => Number.isFinite(row?.driftAmount) && row.driftAmount < 0)
+            .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount))[0] || null;
+        const overweight = safeRows
+            .filter(row => Number.isFinite(row?.driftAmount) && row.driftAmount > 0)
+            .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount))[0] || null;
+        const baseScenario = toFiniteNumber(safeSummary.total, 0);
+        const scenarioAmount = baseScenario > 0 ? Number((baseScenario * 0.05).toFixed(2)) : 1000;
+        return {
+            targetCoverageLabel: safeSummary.targetCoverageLabel || null,
+            scenarioAmount,
+            scenarioSplit: calculateRecommendedContributionSplitForFsm(safeRows, scenarioAmount),
+            underweight,
+            overweight
         };
     }
 
@@ -10524,7 +11174,8 @@ syncUi.update = function updateSyncUI() {
                 fixedCount: summary.fixedCount,
                 profitDisplay: summary.profitDisplay,
                 profitClass: summary.profitClass,
-                isUnassigned: options.isUnassigned === true
+                isUnassigned: options.isUnassigned === true,
+                health: summary.health
             };
         };
         const cards = safePortfolios.map(item => buildCardModel(item.id, item.name, groupedRows[item.id] || []));
@@ -10534,9 +11185,11 @@ syncUi.update = function updateSyncUI() {
             groupedRows[FSM_UNASSIGNED_PORTFOLIO_ID] || [],
             { isUnassigned: true }
         ));
+        const allSummary = buildFsmScopedSummary(safeRows);
         return {
             cards,
-            allSummary: buildFsmScopedSummary(safeRows)
+            allSummary,
+            attentionItems: buildNeedsAttentionItemsForFsmOverview({ cards })
         };
     }
 
@@ -10559,6 +11212,15 @@ syncUi.update = function updateSyncUI() {
         header.appendChild(allHoldingsBtn);
         wrapper.appendChild(header);
 
+        const attention = buildAttentionStrip(overviewModel?.attentionItems, item => {
+            if (typeof onSelectScope === 'function') {
+                onSelectScope(item.scopeId);
+            }
+        });
+        if (attention) {
+            wrapper.appendChild(attention);
+        }
+
         const grid = createElement('div', 'gpv-fsm-overview-grid');
         const cards = Array.isArray(overviewModel?.cards) ? overviewModel.cards : [];
         cards.forEach(card => {
@@ -10576,7 +11238,7 @@ syncUi.update = function updateSyncUI() {
                         <h2 class="gpv-fsm-overview-card-title">${escapeHtml(card.label)}</h2>
                         <p class="gpv-fsm-overview-card-subtitle">${escapeHtml(`${card.holdingsCount} holding${card.holdingsCount === 1 ? '' : 's'}`)}</p>
                     </div>
-                    <span class="gpv-fsm-overview-card-tag">Open</span>
+                    <span class="gpv-health-badge ${escapeHtml(card.health?.className || 'gpv-health--healthy')}">${escapeHtml(card.health?.label || 'Healthy')}${Number.isFinite(card.health?.score) ? ` (${escapeHtml(String(card.health.score))})` : ''}</span>
                 </div>
                 <div class="gpv-fsm-overview-stats">
                     <div class="gpv-fsm-overview-stat">
@@ -10597,6 +11259,13 @@ syncUi.update = function updateSyncUI() {
                     </div>
                 </div>
             `;
+            if (Array.isArray(card.health?.reasons) && card.health.reasons.length > 0) {
+                const reasonList = createElement('ul', 'gpv-health-reasons');
+                card.health.reasons.slice(0, 2).forEach(reason => {
+                    reasonList.appendChild(createElement('li', 'gpv-health-reason', reason));
+                });
+                buttonCard.appendChild(reasonList);
+            }
             const handleSelect = event => {
                 if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') {
                     return;
@@ -10614,6 +11283,41 @@ syncUi.update = function updateSyncUI() {
         });
         wrapper.appendChild(grid);
         return wrapper;
+    }
+
+    function buildFsmPlanningPanel(planning, scopeLabel) {
+        const panel = createElement('div', 'gpv-planning-panel');
+        panel.appendChild(createElement('h3', 'gpv-planning-title', 'Planning'));
+        panel.appendChild(createElement('p', 'gpv-planning-copy', `Scope: ${scopeLabel}`));
+        const coverageText = planning?.targetCoverageLabel
+            || 'Target total is within tolerance for this portfolio scope.';
+        panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
+
+        const scenarioAmount = toFiniteNumber(planning?.scenarioAmount, 0);
+        panel.appendChild(createElement('p', 'gpv-planning-copy', `Scenario contribution: ${formatMoney(scenarioAmount)}`));
+
+        if (Array.isArray(planning?.scenarioSplit) && planning.scenarioSplit.length > 0) {
+            const splitList = createElement('ul', 'gpv-planning-list');
+            planning.scenarioSplit.forEach(item => {
+                splitList.appendChild(createElement('li', 'gpv-planning-item', `${item.goalName}: ${formatMoney(item.amount)}`));
+            });
+            panel.appendChild(splitList);
+        }
+
+        const rebalance = createElement('p', 'gpv-planning-copy');
+        if (planning?.underweight || planning?.overweight) {
+            const under = planning.underweight
+                ? `Add ${formatMoney(Math.abs(planning.underweight.driftAmount))} to ${planning.underweight.displayTicker || planning.underweight.name || planning.underweight.code}`
+                : 'No underweight holdings';
+            const over = planning.overweight
+                ? `Reduce ${formatMoney(Math.abs(planning.overweight.driftAmount))} from ${planning.overweight.displayTicker || planning.overweight.name || planning.overweight.code}`
+                : 'No overweight holdings';
+            rebalance.textContent = `Rebalance summary: ${under}; ${over}.`;
+        } else {
+            rebalance.textContent = 'Rebalance summary: Portfolio is close to target.';
+        }
+        panel.appendChild(rebalance);
+        return panel;
     }
 
     function createFsmDetailToolbar({ onBack, onScopeChange, onFilterChange }) {
@@ -10992,6 +11696,8 @@ syncUi.update = function updateSyncUI() {
             const showDrift = selectedScope !== FSM_ALL_PORTFOLIO_ID;
             const summary = buildFsmScopedSummary(filteredRows);
             const displayRows = buildFsmDisplayRows(filteredRows, summary.total);
+            const planning = buildFsmPlanningModel(displayRows, summary);
+            const selectedScopeOption = scopeOptions.find(option => option.id === selectedScope);
             return {
                 rows,
                 activePortfolioIds,
@@ -11004,6 +11710,8 @@ syncUi.update = function updateSyncUI() {
                 showDrift,
                 summary,
                 displayRows,
+                planning,
+                selectedScopeLabel: selectedScopeOption?.label || 'All',
                 overviewModel: buildFsmPortfolioOverviewModel(rows, activePortfolios())
             };
         };
@@ -11115,6 +11823,8 @@ syncUi.update = function updateSyncUI() {
                 selectedScope,
                 filterTerm
             });
+
+            summarySection.appendChild(buildFsmPlanningPanel(viewState.planning, viewState.selectedScopeLabel));
 
             bodySection.appendChild(buildFsmBulkRow({
                 selectAllFiltered: viewState.selectAllFiltered,

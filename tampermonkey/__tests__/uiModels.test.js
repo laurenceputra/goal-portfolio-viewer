@@ -149,6 +149,11 @@ describe('view model builders', () => {
         expect(retirement.goalTypes[1].returnClass).toBe('negative');
         expect(retirement.goalTypes[0].allocationDriftDisplay).toBe('20.00%');
         expect(retirement.goalTypes[0].allocationDriftClass).toBe('gpv-drift--green');
+        expect(Array.isArray(viewModel.attentionItems)).toBe(true);
+        expect(viewModel.attentionItems.length).toBeGreaterThan(0);
+        expect(retirement.health.label).toBe('Needs Setup');
+        expect(retirement.health.reasons.length).toBeGreaterThan(0);
+        expect(retirement.health.score).toBeLessThan(100);
     });
 
     test('should build bucket detail view model with projections', () => {
@@ -175,6 +180,10 @@ describe('view model builders', () => {
         expect(goalTypeModel.remainingTargetIsHigh).toBe(true);
         expect(goalTypeModel.allocationDriftDisplay).toBe('20.00%');
         expect(goalTypeModel.allocationDriftClass).toBe('gpv-drift--green');
+        expect(goalTypeModel.planning).toBeTruthy();
+        expect(goalTypeModel.planning.targetCoverageLabel).toContain('Target total is');
+        expect(viewModel.health.label).toBe('Needs Setup');
+        expect(viewModel.health.score).toBeLessThan(100);
         const firstGoal = goalTypeModel.goals[0];
         expect(firstGoal.percentOfType).toBe(60);
         expect(firstGoal.diffDisplay).toMatch(/0\.00/);
@@ -228,8 +237,16 @@ describe('view model builders', () => {
     });
 
     test('should return empty buckets for invalid summary input', () => {
-        expect(buildSummaryViewModel(null)).toEqual({ buckets: [], showAllocationDriftHint: false });
-        expect(buildSummaryViewModel('invalid')).toEqual({ buckets: [], showAllocationDriftHint: false });
+        expect(buildSummaryViewModel(null)).toEqual({
+            buckets: [],
+            showAllocationDriftHint: false,
+            attentionItems: []
+        });
+        expect(buildSummaryViewModel('invalid')).toEqual({
+            buckets: [],
+            showAllocationDriftHint: false,
+            attentionItems: []
+        });
     });
 
     test('should handle summary buckets without meta or goal types', () => {
@@ -296,6 +313,36 @@ describe('view model builders', () => {
         const missingGoal = goalTypeModel.goals.find(goal => goal.goalId === 'g2');
         expect(missingGoal.targetDisplay).toBe('');
         expect(missingGoal.diffDisplay).toMatch(/0\.00/);
+    });
+
+    test('should treat fixed goal coverage as assigned in planning health', () => {
+        const bucketMap = {
+            FixedOnly: {
+                _meta: { endingBalanceTotal: 1000 },
+                GENERAL_WEALTH_ACCUMULATION: {
+                    endingBalanceAmount: 1000,
+                    totalCumulativeReturn: 20,
+                    goals: [
+                        {
+                            goalId: 'fixed-1',
+                            goalName: 'FixedOnly - Core',
+                            endingBalanceAmount: 1000,
+                            totalCumulativeReturn: 20
+                        }
+                    ]
+                }
+            }
+        };
+        const viewModel = buildBucketDetailViewModel({
+            bucketName: 'FixedOnly',
+            bucketMap,
+            projectedInvestmentsState: null,
+            goalTargetById: {},
+            goalFixedById: { 'fixed-1': true }
+        });
+        expect(viewModel.health.label).toBe('Healthy');
+        expect(viewModel.health.reasons).toEqual([]);
+        expect(viewModel.goalTypes[0].planning.targetCoverageLabel).toBeNull();
     });
 
     test('should keep diff empty when remaining target is negative', () => {

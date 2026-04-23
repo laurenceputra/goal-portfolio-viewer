@@ -280,6 +280,8 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).not.toContain('New portfolio');
         expect(overlay.textContent).toContain('Unassigned');
         expect(overlay.textContent).toContain('View all holdings');
+        expect(overlay.textContent).toContain('Needs Attention');
+        expect(overlay.querySelector('.gpv-health-badge')).toBeTruthy();
 
         const manageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage portfolios'));
         manageBtn.click();
@@ -533,6 +535,8 @@ describe('initialization and URL monitoring', () => {
         expect(detailOverlay.textContent).toContain('Fund A');
         expect(detailOverlay.textContent).toContain('AAPL');
         expect(detailOverlay.querySelector('.gpv-select')).toBeTruthy();
+        expect(detailOverlay.textContent).toContain('Planning');
+        expect(detailOverlay.textContent).toContain('Rebalance summary:');
         expect(detailOverlay.textContent).toContain('Type');
         expect(detailOverlay.textContent).toContain('Current %');
         expect(detailOverlay.textContent).not.toContain('Drift %');
@@ -1136,6 +1140,59 @@ describe('initialization and URL monitoring', () => {
         expect(profitHeader).toBeTruthy();
         const firstRow = overlay.querySelector('table tbody tr');
         expect(firstRow.querySelector('td[data-col="profit"]').textContent.trim()).toBe('+10.00% (+SGD 120.00)');
+    });
+
+    test('FSM health treats fixed holdings as assigned coverage', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+        ]));
+        storage.set('fsm_fixed_AAA', true);
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        expect(overlay).toBeTruthy();
+        const unassignedCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).find(card =>
+            card.textContent.includes('Unassigned')
+        );
+        expect(unassignedCard).toBeTruthy();
+        expect(unassignedCard.textContent).toContain('Needs Setup');
+        expect(unassignedCard.textContent).toContain('100.00%');
+        expect(unassignedCard.textContent).not.toContain('Target total is');
     });
 
     test('FSM profit display falls back when holdings are missing profit fields', () => {
