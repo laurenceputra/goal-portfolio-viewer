@@ -9936,6 +9936,22 @@ syncUi.update = function updateSyncUI() {
                     color: #6c757d;
                 }
 
+                .gpv-sync-help--lead {
+                    margin-top: 0;
+                    font-size: 13px;
+                    color: #4b5563;
+                    line-height: 1.45;
+                }
+
+                .gpv-sync-quick-title {
+                    margin: 0;
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: #374151;
+                    text-transform: uppercase;
+                    letter-spacing: 0.03em;
+                }
+
                 .gpv-sync-help a {
                     color: #007bff;
                     text-decoration: none;
@@ -9950,6 +9966,32 @@ syncUi.update = function updateSyncUI() {
                     gap: 10px;
                     flex-wrap: wrap;
                     margin-top: 10px;
+                }
+
+                .gpv-sync-advanced {
+                    border: 1px solid #e5e7eb;
+                    border-radius: 8px;
+                    background: #f9fafb;
+                    padding: 10px 12px;
+                }
+
+                .gpv-sync-advanced > summary {
+                    cursor: pointer;
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: #374151;
+                    list-style: none;
+                }
+
+                .gpv-sync-advanced > summary::-webkit-details-marker {
+                    display: none;
+                }
+
+                .gpv-sync-advanced-content {
+                    margin-top: 10px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 10px;
                 }
 
                 .gpv-sync-auth-buttons {
