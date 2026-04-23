@@ -12622,7 +12622,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     return;
                 }
                 const commit = () => {
-                    const previousStoredBucket = GoalTargetStore.getBucket(goalId);
                     const derivedBucket = utils.extractBucketName(utils.normalizeString(input.dataset.goalName, ''));
                     const fallbackBucket = derivedBucket || 'Uncategorized';
                     const previousDisplayedBucket = utils.normalizeString(input.defaultValue, '') || fallbackBucket;
