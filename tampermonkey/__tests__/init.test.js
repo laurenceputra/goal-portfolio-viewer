@@ -210,6 +210,47 @@ describe('initialization and URL monitoring', () => {
         expect(storage.get('goal_bucket_name_goal1')).toBe('Wealth Builder');
     });
 
+    test('bucket manager allows clearing explicit Endowus bucket assignment', () => {
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        global.GM_setValue('goal_bucket_name_goal1', 'Legacy Override');
+        global.alert = jest.fn();
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Buckets'));
+        bucketManageBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const bucketInput = overlay.querySelector('.gpv-bucket-manager-input');
+        expect(bucketInput).toBeTruthy();
+        bucketInput.value = '';
+        bucketInput.dispatchEvent(new window.Event('blur', { bubbles: true }));
+
+        expect(storage.has('goal_bucket_name_goal1')).toBe(false);
+    });
+
     test('showOverlay sets dialog attributes and closes on Escape', () => {
         const performanceData = [{
             goalId: 'goal1',
@@ -637,6 +678,68 @@ describe('initialization and URL monitoring', () => {
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Portfolio Viewer');
         expect(overlay.textContent).toContain('Summary View');
+    });
+
+    test('showOverlay opens Endowus view when intercepted datasets are empty arrays', () => {
+        global.GM_setValue('api_performance', JSON.stringify([]));
+        global.GM_setValue('api_investible', JSON.stringify([]));
+        global.GM_setValue('api_summary', JSON.stringify([]));
+        global.alert = jest.fn();
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        expect(overlay).toBeTruthy();
+        expect(overlay.textContent).toContain('Portfolio Viewer');
+        expect(overlay.textContent).toContain('Summary View');
+        expect(overlay.textContent).not.toContain('Preparing data');
+    });
+
+    test('showOverlay opens FSM view when holdings response is empty', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_fsm_holdings', JSON.stringify([]));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        expect(overlay).toBeTruthy();
+        expect(overlay.textContent).toContain('Portfolio Viewer (FSM)');
+        expect(overlay.textContent).toContain('Start from a portfolio overview');
+        expect(overlay.textContent).not.toContain('Waiting for FSM holdings response');
     });
 
     test('FSM portfolio manager supports create, rename, archive and unassigns holdings', () => {

@@ -4533,6 +4533,16 @@ let GoalTargetStore;
             urlCheckTimeout: null,
             observer: null,
             dataUpdateListeners: new Set()
+        },
+        readiness: {
+            endowus: {
+                performanceLoaded: false,
+                investibleLoaded: false,
+                summaryLoaded: false
+            },
+            fsm: {
+                holdingsLoaded: false
+            }
         }
     };
 
@@ -4562,12 +4572,14 @@ let GoalTargetStore;
     const ENDPOINT_HANDLERS = {
         performance: data => {
             state.apiData.performance = data;
+            state.readiness.endowus.performanceLoaded = true;
             Storage.writeJson(STORAGE_KEYS.performance, data, 'Error saving performance data');
             logDebug('[Goal Portfolio Viewer] Intercepted performance data');
             notifyDataUpdates();
         },
         investible: data => {
             state.apiData.investible = data;
+            state.readiness.endowus.investibleLoaded = true;
             Storage.writeJson(STORAGE_KEYS.investible, data, 'Error saving investible data');
             logDebug('[Goal Portfolio Viewer] Intercepted investible data');
             notifyDataUpdates();
@@ -4577,6 +4589,7 @@ let GoalTargetStore;
                 return;
             }
             state.apiData.summary = data;
+            state.readiness.endowus.summaryLoaded = true;
             Storage.writeJson(STORAGE_KEYS.summary, data, 'Error saving summary data');
             logDebug('[Goal Portfolio Viewer] Intercepted summary data');
             notifyDataUpdates();
@@ -4587,6 +4600,7 @@ let GoalTargetStore;
                 : [];
             const filteredRows = rows.filter(row => row && row.productType !== 'DPMS_HEADER');
             state.apiData.fsmHoldings = filteredRows;
+            state.readiness.fsm.holdingsLoaded = true;
             Storage.writeJson(STORAGE_KEYS.fsmHoldings, filteredRows, 'Error saving FSM holdings data');
             logDebug('[Goal Portfolio Viewer] Intercepted FSM holdings data', { rows: filteredRows.length });
             notifyDataUpdates();
@@ -4825,20 +4839,22 @@ let GoalTargetStore;
         }
         const performance = Storage.readJson(
             STORAGE_KEYS.performance,
-            data => data && typeof data === 'object',
+            data => Array.isArray(data),
             'Error loading performance data'
         );
         if (performance) {
             apiDataState.performance = performance;
+            appState.readiness.endowus.performanceLoaded = true;
             logDebug('[Goal Portfolio Viewer] Loaded performance data from storage');
         }
         const investible = Storage.readJson(
             STORAGE_KEYS.investible,
-            data => data && typeof data === 'object',
+            data => Array.isArray(data),
             'Error loading investible data'
         );
         if (investible) {
             apiDataState.investible = investible;
+            appState.readiness.endowus.investibleLoaded = true;
             logDebug('[Goal Portfolio Viewer] Loaded investible data from storage');
         }
         const summary = Storage.readJson(
@@ -4848,6 +4864,7 @@ let GoalTargetStore;
         );
         if (summary) {
             apiDataState.summary = summary;
+            appState.readiness.endowus.summaryLoaded = true;
             logDebug('[Goal Portfolio Viewer] Loaded summary data from storage');
         }
         const fsmHoldings = Storage.readJson(
@@ -4857,6 +4874,7 @@ let GoalTargetStore;
         );
         if (fsmHoldings) {
             apiDataState.fsmHoldings = fsmHoldings;
+            appState.readiness.fsm.holdingsLoaded = true;
             logDebug('[Goal Portfolio Viewer] Loaded FSM holdings data from storage');
         }
     }
@@ -10624,9 +10642,12 @@ syncUi.update = function updateSyncUI() {
     };
 
     function getEndowusReadinessState() {
-        const hasPerformance = Array.isArray(state.apiData.performance) && state.apiData.performance.length > 0;
-        const hasInvestible = Array.isArray(state.apiData.investible) && state.apiData.investible.length > 0;
-        const hasSummary = Array.isArray(state.apiData.summary) && state.apiData.summary.length > 0;
+        const hasPerformance = state.readiness.endowus.performanceLoaded === true
+            && Array.isArray(state.apiData.performance);
+        const hasInvestible = state.readiness.endowus.investibleLoaded === true
+            && Array.isArray(state.apiData.investible);
+        const hasSummary = state.readiness.endowus.summaryLoaded === true
+            && Array.isArray(state.apiData.summary);
         const goalBucketById = buildGoalBucketAssignmentMap({
             performanceData: state.apiData.performance,
             investibleData: state.apiData.investible,
@@ -10654,7 +10675,7 @@ syncUi.update = function updateSyncUI() {
     function getFsmReadinessState() {
         const fsmHoldings = Array.isArray(state.apiData.fsmHoldings) ? state.apiData.fsmHoldings : [];
         return {
-            ready: fsmHoldings.length > 0,
+            ready: state.readiness.fsm.holdingsLoaded === true,
             fsmHoldings
         };
     }
@@ -12453,7 +12474,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 }
                 const commit = () => {
                     const previousBucket = GoalTargetStore.getBucket(goalId) || 'Uncategorized';
-                    const nextBucket = utils.normalizeString(input.value, 'Uncategorized');
+                    const nextBucket = utils.normalizeString(input.value, '');
+                    if (!nextBucket) {
+                        GoalTargetStore.clearBucket(goalId);
+                        input.value = 'Uncategorized';
+                        return;
+                    }
                     if (nextBucket === previousBucket) {
                         input.value = previousBucket;
                         return;

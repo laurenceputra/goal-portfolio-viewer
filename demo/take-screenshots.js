@@ -216,19 +216,9 @@ async function takeScreenshots() {
 
         console.log('📸 Capturing Sync Settings (configured)...');
         await page.evaluate(() => {
-            const status = document.querySelector('.gpv-sync-status-bar');
-            if (status) {
-                status.insertAdjacentHTML(
-                    'beforeend',
-                    '<div class="gpv-sync-status-item"><span class="gpv-sync-label">Auth:</span><span class="gpv-sync-value">Connected (refresh active)</span></div>'
-                );
-            }
-            const actions = document.querySelector('.gpv-sync-actions');
-            if (actions && !actions.querySelector('#gpv-sync-now-btn')) {
-                actions.insertAdjacentHTML(
-                    'beforeend',
-                    '<button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-now-btn">Sync Now</button>'
-                );
+            const advanced = document.querySelector('.gpv-sync-advanced');
+            if (advanced) {
+                advanced.open = true;
             }
         });
         await page.screenshot({

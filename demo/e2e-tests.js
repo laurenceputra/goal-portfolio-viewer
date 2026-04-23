@@ -372,21 +372,27 @@ async function captureSyncScreens(page, outputDir, summary) {
     await captureScreenshot(page, summary, outputDir, 'sync-unconfigured');
 
     await page.evaluate(() => {
-        const status = document.querySelector('.gpv-sync-status-bar');
-        if (status) {
-            status.insertAdjacentHTML(
-                'beforeend',
-                '<div class="gpv-sync-status-item"><span class="gpv-sync-label">Auth:</span><span class="gpv-sync-value">Connected (refresh active)</span></div>'
-            );
-        }
-        const actions = document.querySelector('.gpv-sync-actions');
-        if (actions && !actions.querySelector('#gpv-sync-now-btn')) {
-            actions.insertAdjacentHTML(
-                'beforeend',
-                '<button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-now-btn">Sync Now</button>'
-            );
+        const advanced = document.querySelector('.gpv-sync-advanced');
+        if (advanced) {
+            advanced.open = true;
         }
     });
+
+    await page.waitForFunction(() => {
+        const root = document.querySelector('.gpv-sync-settings');
+        if (!root) {
+            return false;
+        }
+        const advanced = root.querySelector('.gpv-sync-advanced');
+        if (!advanced) {
+            return false;
+        }
+        if (advanced.open !== true) {
+            return false;
+        }
+        const syncNow = root.querySelector('#gpv-sync-now-btn');
+        return Boolean(syncNow);
+    }, null, { timeout: 5000 });
 
     recordAssertion(summary, 'sync-configured', 'sync-actions', true, 'Sync actions rendered.');
     await captureScreenshot(page, summary, outputDir, 'sync-configured');
