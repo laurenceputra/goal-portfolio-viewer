@@ -84,6 +84,10 @@ describe('sync settings UI', () => {
 
         expect(document.body.textContent).toContain('Connected (refresh active)');
         expect(document.body.textContent).toContain('Locked (enter password to unlock this device)');
+        expect(document.body.textContent).toContain('Quick setup');
+        expect(document.body.textContent).toContain('Advanced settings');
+        expect(document.body.textContent).toContain('Save Settings');
+        expect(document.body.textContent).toContain('Login and Sign Up validate credentials immediately');
     });
 
     test('uses styled sync button classes in settings actions', () => {
@@ -100,6 +104,7 @@ describe('sync settings UI', () => {
         expect(document.getElementById('gpv-sync-now-btn').className).toContain('gpv-sync-btn-secondary');
         expect(document.getElementById('gpv-sync-clear-btn').className).toContain('gpv-sync-btn');
         expect(document.getElementById('gpv-sync-clear-btn').className).toContain('gpv-sync-btn-danger');
+        expect(document.querySelector('.gpv-sync-advanced')).toBeTruthy();
     });
 
     test('renders sync settings containers with required class tokens', () => {
