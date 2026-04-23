@@ -30,6 +30,19 @@ describe('conflict diff helpers', () => {
         expect(items[0].remoteTargetDisplay).toBe('15.00%');
         expect(items[0].localFixedDisplay).toBe('No');
         expect(items[0].remoteFixedDisplay).toBe('No');
+        expect(items[0].localBucketDisplay).toBe('-');
+        expect(items[0].remoteBucketDisplay).toBe('-');
+    });
+
+    it('detects explicit bucket assignment change', () => {
+        const conflict = {
+            local: { goalTargets: {}, goalFixed: {}, goalBuckets: { goal1: 'Retirement' } },
+            remote: { goalTargets: {}, goalFixed: {}, goalBuckets: { goal1: 'Education' } }
+        };
+        const items = buildConflictDiffItemsForMap(conflict, { goal1: 'Goal One' });
+        expect(items).toHaveLength(1);
+        expect(items[0].localBucketDisplay).toBe('Retirement');
+        expect(items[0].remoteBucketDisplay).toBe('Education');
     });
 
     it('ignores target changes when goal is fixed', () => {

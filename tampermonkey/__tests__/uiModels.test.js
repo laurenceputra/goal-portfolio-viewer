@@ -19,6 +19,7 @@ const {
     collectAllGoalIds,
     buildGoalTargetById,
     buildGoalFixedById,
+    buildMergedInvestmentData,
     getPerformanceCacheKey,
     getBucketViewModePreference,
     setBucketViewModePreference,
@@ -352,6 +353,37 @@ describe('view model builders', () => {
             goalTargetById: {},
             goalFixedById: {}
         })).toBeNull();
+    });
+
+    test('should honor explicit goal bucket assignment over goal name bucket', () => {
+        const performanceData = [{
+            goalId: 'goal-1',
+            totalInvestmentValue: { amount: 1000 },
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal-1',
+            goalName: 'Retirement - Core',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal-1',
+            goalName: 'Retirement - Core',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        const defaultBuckets = buildMergedInvestmentData(performanceData, investibleData, summaryData);
+        expect(Object.keys(defaultBuckets)).toEqual(['Retirement']);
+
+        const assignedBuckets = buildMergedInvestmentData(
+            performanceData,
+            investibleData,
+            summaryData,
+            { 'goal-1': 'Wealth Builder' }
+        );
+        expect(Object.keys(assignedBuckets)).toEqual(['Wealth Builder']);
     });
 });
 

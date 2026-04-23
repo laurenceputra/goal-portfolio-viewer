@@ -169,6 +169,47 @@ describe('initialization and URL monitoring', () => {
         expect(document.querySelector('#gpv-overlay')).toBeNull();
     });
 
+    test('bucket manager updates explicit Endowus bucket assignment', () => {
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        global.alert = jest.fn();
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Buckets'));
+        expect(bucketManageBtn).toBeTruthy();
+        bucketManageBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const bucketInput = overlay.querySelector('.gpv-bucket-manager-input');
+        expect(bucketInput).toBeTruthy();
+        bucketInput.value = 'Wealth Builder';
+        bucketInput.dispatchEvent(new window.Event('blur', { bubbles: true }));
+
+        expect(storage.get('goal_bucket_name_goal1')).toBe('Wealth Builder');
+    });
+
     test('showOverlay sets dialog attributes and closes on Escape', () => {
         const performanceData = [{
             goalId: 'goal1',

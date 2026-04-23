@@ -59,6 +59,7 @@
     const STORAGE_KEY_PREFIXES = {
         goalTarget: 'goal_target_pct_',
         goalFixed: 'goal_fixed_',
+        goalBucket: 'goal_bucket_name_',
         fsmTarget: 'fsm_target_pct_',
         fsmFixed: 'fsm_fixed_',
         fsmTag: 'fsm_tag_',
@@ -230,6 +231,9 @@
         },
         goalFixed(goalId) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.goalFixed, goalId ?? '');
+        },
+        goalBucket(goalId) {
+            return buildStorageKey(STORAGE_KEY_PREFIXES.goalBucket, goalId ?? '');
         },
         fsmTarget(code) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.fsmTarget, code ?? '');
@@ -907,7 +911,7 @@
         return typeof value === 'number' && Number.isFinite(value) ? value : 0;
     }
 
-    function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
+function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
         const diffInfo = calculateGoalDiff(currentAmount, targetPercent, adjustedTypeTotal);
         const diffDisplay = diffInfo.diffAmount === null ? '-' : formatMoney(diffInfo.diffAmount);
         return {
@@ -1138,6 +1142,74 @@ function buildBucketDetailGoalRow(goal) {
     };
 }
 
+function collectGoalIdSetFromApiData(performanceData, investibleData, summaryData) {
+    const goalIds = new Set();
+    if (Array.isArray(performanceData)) {
+        performanceData.forEach(item => {
+            const goalId = utils.normalizeString(item?.goalId, '');
+            if (goalId) {
+                goalIds.add(goalId);
+            }
+        });
+    }
+    if (Array.isArray(investibleData)) {
+        investibleData.forEach(item => {
+            const goalId = utils.normalizeString(item?.goalId, '');
+            if (goalId) {
+                goalIds.add(goalId);
+            }
+        });
+    }
+    if (Array.isArray(summaryData)) {
+        summaryData.forEach(item => {
+            const goalId = utils.normalizeString(item?.goalId, '');
+            if (goalId) {
+                goalIds.add(goalId);
+            }
+        });
+    }
+    return goalIds;
+}
+
+function buildGoalBucketAssignmentMap({
+    performanceData,
+    investibleData,
+    summaryData,
+    getAssignedBucket,
+    seedAssignedBucket
+}) {
+    const goalIds = collectGoalIdSetFromApiData(performanceData, investibleData, summaryData);
+    if (goalIds.size === 0) {
+        return {};
+    }
+    const investibleMap = utils.indexBy(investibleData, item => item?.goalId);
+    const summaryMap = utils.indexBy(summaryData, item => item?.goalId);
+    const getBucket = typeof getAssignedBucket === 'function' ? getAssignedBucket : () => null;
+    const seedBucket = typeof seedAssignedBucket === 'function' ? seedAssignedBucket : null;
+    const bucketById = {};
+
+    Array.from(goalIds).forEach(goalId => {
+        const assignedBucket = utils.normalizeString(getBucket(goalId), '');
+        if (assignedBucket) {
+            bucketById[goalId] = assignedBucket;
+            return;
+        }
+        const invest = investibleMap[goalId] || {};
+        const summary = summaryMap[goalId] || {};
+        const goalName = utils.normalizeString(invest.goalName || summary.goalName || '', '');
+        const derivedBucket = utils.extractBucketName(goalName);
+        if (!derivedBucket) {
+            return;
+        }
+        bucketById[goalId] = derivedBucket;
+        if (seedBucket) {
+            seedBucket(goalId, derivedBucket, { suppressSync: true });
+        }
+    });
+
+    return bucketById;
+}
+
     function collectGoalIds(bucketObj) {
         if (!bucketObj || typeof bucketObj !== 'object') {
             return [];
@@ -1207,7 +1279,7 @@ function buildBucketDetailGoalRow(goal) {
      * @returns {Object|null} Bucket map with aggregated data, or null if API data incomplete
      * Structure: { bucketName: { _meta: { endingBalanceTotal: number }, goalType: { endingBalanceAmount, totalCumulativeReturn, goals: [] } } }
      */
-    function buildMergedInvestmentData(performanceData, investibleData, summaryData) {
+    function buildMergedInvestmentData(performanceData, investibleData, summaryData, goalBucketById = {}) {
         if (!performanceData || !investibleData || !summaryData) {
             return null;
         }
@@ -1225,8 +1297,9 @@ function buildBucketDetailGoalRow(goal) {
             const invest = investibleMap[perf.goalId] || {};
             const summary = summaryMap[perf.goalId] || {};
             const goalName = utils.normalizeString(invest.goalName || summary.goalName || '', '');
+            const configuredBucket = utils.normalizeString(goalBucketById?.[perf.goalId], '');
             // Extract bucket name using "Bucket Name - Goal Description" convention
-            const goalBucket = utils.extractBucketName(goalName);
+            const goalBucket = configuredBucket || utils.extractBucketName(goalName);
             // Note: investible API `totalInvestmentAmount` is misnamed and represents ending balance.
             // We map it internally to endingBalanceAmount to avoid confusing it with principal invested.
             const performanceEndingBalance = extractAmount(perf.totalInvestmentValue);
@@ -2561,7 +2634,8 @@ function buildBucketDetailGoalRow(goal) {
     function collectLegacyEndowusConfig() {
         const config = {
             goalTargets: {},
-            goalFixed: {}
+            goalFixed: {},
+            goalBuckets: {}
         };
         const allKeys = GM_listValues ? GM_listValues() : [];
         for (const key of allKeys) {
@@ -2575,6 +2649,12 @@ function buildBucketDetailGoalRow(goal) {
                 const goalId = key.substring(STORAGE_KEY_PREFIXES.goalFixed.length);
                 const value = Storage.get(key, false);
                 config.goalFixed[goalId] = value;
+            } else if (key.startsWith(STORAGE_KEY_PREFIXES.goalBucket)) {
+                const goalId = key.substring(STORAGE_KEY_PREFIXES.goalBucket.length);
+                const value = utils.normalizeString(Storage.get(key, ''), '');
+                if (value) {
+                    config.goalBuckets[goalId] = value;
+                }
             }
         }
         Object.entries(config.goalFixed).forEach(([goalId, isFixed]) => {
@@ -2682,6 +2762,7 @@ function buildBucketDetailGoalRow(goal) {
                     endowus: {
                         goalTargets: endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {},
                         goalFixed: endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {},
+                        goalBuckets: endowus.goalBuckets && typeof endowus.goalBuckets === 'object' ? endowus.goalBuckets : {},
                         timestamp: typeof endowus.timestamp === 'number' ? endowus.timestamp : (config.timestamp || Date.now())
                     },
                     fsm: {
@@ -2705,6 +2786,7 @@ function buildBucketDetailGoalRow(goal) {
                 endowus: {
                     goalTargets: config.goalTargets && typeof config.goalTargets === 'object' ? config.goalTargets : {},
                     goalFixed: config.goalFixed && typeof config.goalFixed === 'object' ? config.goalFixed : {},
+                    goalBuckets: config.goalBuckets && typeof config.goalBuckets === 'object' ? config.goalBuckets : {},
                     timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
                 },
                 fsm: {
@@ -2761,6 +2843,7 @@ function buildBucketDetailGoalRow(goal) {
         const endowus = normalized.platforms.endowus || {};
         const endowusTargets = endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {};
         const endowusFixed = endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {};
+        const endowusBuckets = endowus.goalBuckets && typeof endowus.goalBuckets === 'object' ? endowus.goalBuckets : {};
 
         for (const [goalId, value] of Object.entries(endowusTargets)) {
             if (endowusFixed[goalId] === true) {
@@ -2771,6 +2854,13 @@ function buildBucketDetailGoalRow(goal) {
 
         for (const [goalId, value] of Object.entries(endowusFixed)) {
             Storage.set(storageKeys.goalFixed(goalId), value === true);
+        }
+
+        for (const [goalId, value] of Object.entries(endowusBuckets)) {
+            const normalizedBucket = utils.normalizeString(value, '');
+            if (normalizedBucket) {
+                Storage.set(storageKeys.goalBucket(goalId), normalizedBucket);
+            }
         }
 
         const fsm = normalized.platforms.fsm || {};
@@ -2825,6 +2915,7 @@ function buildBucketDetailGoalRow(goal) {
         logDebug('[Goal Portfolio Viewer] Applied sync config data', {
             endowusTargets: Object.keys(endowusTargets).length,
             endowusFixed: Object.keys(endowusFixed).length,
+            endowusBuckets: Object.keys(endowusBuckets).length,
             fsmTargets: Object.keys(fsmTargets).length,
             fsmFixed: Object.keys(fsmFixed).length,
             fsmTags: Object.keys(fsmTags).length,
@@ -3781,7 +3872,7 @@ function buildBucketDetailGoalRow(goal) {
 
 function getEndowusSyncView(config) {
     if (!config || typeof config !== 'object') {
-        return { goalTargets: {}, goalFixed: {} };
+        return { goalTargets: {}, goalFixed: {}, goalBuckets: {} };
     }
     if (config.platforms && typeof config.platforms === 'object') {
         const endowus = config.platforms.endowus && typeof config.platforms.endowus === 'object'
@@ -3789,12 +3880,14 @@ function getEndowusSyncView(config) {
             : {};
         return {
             goalTargets: endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {},
-            goalFixed: endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {}
+            goalFixed: endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {},
+            goalBuckets: endowus.goalBuckets && typeof endowus.goalBuckets === 'object' ? endowus.goalBuckets : {}
         };
     }
     return {
         goalTargets: config.goalTargets && typeof config.goalTargets === 'object' ? config.goalTargets : {},
-        goalFixed: config.goalFixed && typeof config.goalFixed === 'object' ? config.goalFixed : {}
+        goalFixed: config.goalFixed && typeof config.goalFixed === 'object' ? config.goalFixed : {},
+        goalBuckets: config.goalBuckets && typeof config.goalBuckets === 'object' ? config.goalBuckets : {}
     };
 }
 
@@ -4044,11 +4137,15 @@ function buildConflictDiffItemsForMap(conflict, nameMapOverride = {}) {
     const remoteTargets = remoteEndowus.goalTargets || {};
     const localFixed = localEndowus.goalFixed || {};
     const remoteFixed = remoteEndowus.goalFixed || {};
+    const localBuckets = localEndowus.goalBuckets || {};
+    const remoteBuckets = remoteEndowus.goalBuckets || {};
     const goalIds = new Set([
         ...Object.keys(localTargets),
         ...Object.keys(remoteTargets),
         ...Object.keys(localFixed),
-        ...Object.keys(remoteFixed)
+        ...Object.keys(remoteFixed),
+        ...Object.keys(localBuckets),
+        ...Object.keys(remoteBuckets)
     ]);
     if (goalIds.size === 0) {
         return [];
@@ -4063,10 +4160,13 @@ function buildConflictDiffItemsForMap(conflict, nameMapOverride = {}) {
             const remoteTarget = remoteTargets[goalId];
             const localFixedValue = localFixed[goalId] === true;
             const remoteFixedValue = remoteFixed[goalId] === true;
+            const localBucket = utils.normalizeString(localBuckets[goalId], '');
+            const remoteBucket = utils.normalizeString(remoteBuckets[goalId], '');
             const shouldIgnoreTarget = localFixedValue || remoteFixedValue;
             const targetChanged = !shouldIgnoreTarget && localTarget !== remoteTarget;
             const fixedChanged = localFixedValue !== remoteFixedValue;
-            if (!targetChanged && !fixedChanged) {
+            const bucketChanged = localBucket !== remoteBucket;
+            if (!targetChanged && !fixedChanged && !bucketChanged) {
                 return null;
             }
             const goalName = nameMap[goalId] || `Goal ${goalId.slice(0, 8)}...`;
@@ -4076,7 +4176,9 @@ function buildConflictDiffItemsForMap(conflict, nameMapOverride = {}) {
                 localTargetDisplay: formatSyncTarget(localTarget),
                 remoteTargetDisplay: formatSyncTarget(remoteTarget),
                 localFixedDisplay: formatSyncFixed(localFixedValue),
-                remoteFixedDisplay: formatSyncFixed(remoteFixedValue)
+                remoteFixedDisplay: formatSyncFixed(remoteFixedValue),
+                localBucketDisplay: localBucket || '-',
+                remoteBucketDisplay: remoteBucket || '-'
             };
         })
         .filter(Boolean)
@@ -4361,6 +4463,34 @@ let GoalTargetStore;
             logDebug(`[Goal Portfolio Viewer] Deleted goal fixed state for ${goalId}`);
             if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                 SyncManager.scheduleSyncOnChange('fixed-clear');
+            }
+        },
+        getBucket(goalId) {
+            const key = storageKeys.goalBucket(goalId);
+            const value = utils.normalizeString(Storage.get(key, ''), '');
+            return value || null;
+        },
+        setBucket(goalId, bucketName, options = {}) {
+            const normalizedBucket = utils.normalizeString(bucketName, '');
+            const key = storageKeys.goalBucket(goalId);
+            if (!normalizedBucket) {
+                Storage.remove(key, 'Error deleting goal bucket assignment');
+                return null;
+            }
+            const didSet = Storage.set(key, normalizedBucket, 'Error saving goal bucket assignment');
+            if (!didSet) {
+                return null;
+            }
+            if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
+                SyncManager.scheduleSyncOnChange('bucket-update');
+            }
+            return normalizedBucket;
+        },
+        clearBucket(goalId, options = {}) {
+            const key = storageKeys.goalBucket(goalId);
+            Storage.remove(key, 'Error deleting goal bucket assignment');
+            if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
+                SyncManager.scheduleSyncOnChange('bucket-clear');
             }
         }
     };
@@ -7287,7 +7417,8 @@ function withButtonState(button, busyText, action) {
         window.__gpvSyncUi = {
             createSyncSettingsHTML,
             setupSyncSettingsListeners,
-            createConflictDialogHTML
+            createConflictDialogHTML,
+            renderSyncOverlayView
         };
     }
 
@@ -7450,8 +7581,8 @@ function createConflictDialogHTML(conflict) {
     const endowusRows = diffSections.endowus.map(item => `
         <tr>
             <td class="gpv-conflict-goal-name">${escapeHtml(item.goalName)}</td>
-            <td>${escapeHtml(item.localTargetDisplay)} / ${escapeHtml(item.localFixedDisplay)}</td>
-            <td>${escapeHtml(item.remoteTargetDisplay)} / ${escapeHtml(item.remoteFixedDisplay)}</td>
+            <td>${escapeHtml(item.localTargetDisplay)} / ${escapeHtml(item.localFixedDisplay)} / ${escapeHtml(item.localBucketDisplay)}</td>
+            <td>${escapeHtml(item.remoteTargetDisplay)} / ${escapeHtml(item.remoteFixedDisplay)} / ${escapeHtml(item.remoteBucketDisplay)}</td>
         </tr>
     `).join('');
 
@@ -7536,10 +7667,18 @@ function buildGoalNameMap() {
             return acc;
         }, {})
         : {};
+    const goalBucketById = buildGoalBucketAssignmentMap({
+        performanceData: state.apiData.performance,
+        investibleData: state.apiData.investible,
+        summaryData: state.apiData.summary,
+        getAssignedBucket: GoalTargetStore.getBucket,
+        seedAssignedBucket: GoalTargetStore.setBucket
+    });
     const merged = buildMergedInvestmentData(
         state.apiData.performance,
         state.apiData.investible,
-        state.apiData.summary
+        state.apiData.summary,
+        goalBucketById
     );
     if (merged) {
         Object.keys(merged).forEach(bucket => {
@@ -10951,10 +11090,18 @@ syncUi.update = function updateSyncUI() {
             return;
         }
 
+        const goalBucketById = buildGoalBucketAssignmentMap({
+            performanceData: state.apiData.performance,
+            investibleData: state.apiData.investible,
+            summaryData: state.apiData.summary,
+            getAssignedBucket: GoalTargetStore.getBucket,
+            seedAssignedBucket: GoalTargetStore.setBucket
+        });
         const mergedInvestmentDataState = buildMergedInvestmentData(
             state.apiData.performance,
             state.apiData.investible,
-            state.apiData.summary
+            state.apiData.summary,
+            goalBucketById
         );
         if (!mergedInvestmentDataState) {
             logDebug('[Goal Portfolio Viewer] Not all API data available yet');
@@ -11213,6 +11360,114 @@ syncUi.update = function updateSyncUI() {
         }
 
         renderView('SUMMARY');
+
+        function collectEndowusGoalRows() {
+            const bucketRows = Object.keys(mergedInvestmentDataState || {}).sort().flatMap(bucketName => {
+                const bucketObj = mergedInvestmentDataState[bucketName];
+                if (!bucketObj || typeof bucketObj !== 'object') {
+                    return [];
+                }
+                return Object.keys(bucketObj)
+                    .filter(goalType => goalType !== '_meta')
+                    .flatMap(goalType => {
+                        const goals = Array.isArray(bucketObj[goalType]?.goals) ? bucketObj[goalType].goals : [];
+                        return goals.map(goal => ({
+                            goalId: utils.normalizeString(goal?.goalId, ''),
+                            goalName: utils.normalizeString(goal?.goalName, ''),
+                            currentBucket: bucketName
+                        }));
+                    })
+                    .filter(row => row.goalId && row.goalName);
+            });
+            return bucketRows.sort((left, right) => left.goalName.localeCompare(right.goalName));
+        }
+
+        function renderBucketManagerPanelHtml() {
+            const goalRows = collectEndowusGoalRows();
+            if (!goalRows.length) {
+                return `
+                    <div class="gpv-bucket-manager">
+                        <h3 class="gpv-bucket-manager-title">Bucket Manager</h3>
+                        <p class="gpv-bucket-manager-empty">No goals available to assign.</p>
+                    </div>
+                `;
+            }
+            const rowsHtml = goalRows.map(row => `
+                <tr>
+                    <td class="gpv-bucket-manager-goal">${escapeHtml(row.goalName)}</td>
+                    <td>
+                        <input
+                            type="text"
+                            class="gpv-target-input gpv-bucket-manager-input"
+                            data-goal-id="${escapeHtml(row.goalId)}"
+                            value="${escapeHtml(row.currentBucket)}"
+                            placeholder="Uncategorized"
+                            aria-label="Bucket name for ${escapeHtml(row.goalName)}"
+                        />
+                    </td>
+                </tr>
+            `).join('');
+            return `
+                <div class="gpv-bucket-manager">
+                    <h3 class="gpv-bucket-manager-title">Bucket Manager</h3>
+                    <p class="gpv-bucket-manager-copy">Manage Endowus bucket assignments directly. Existing goals are seeded from naming and can be adjusted here without renaming goals.</p>
+                    <table class="gpv-table gpv-bucket-manager-table">
+                        <thead>
+                            <tr>
+                                <th>Goal</th>
+                                <th>Bucket</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rowsHtml}</tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        function setupBucketManagerListeners(root) {
+            if (!root) {
+                return;
+            }
+            const inputs = Array.from(root.querySelectorAll('.gpv-bucket-manager-input'));
+            inputs.forEach(input => {
+                const goalId = utils.normalizeString(input.dataset.goalId, '');
+                if (!goalId) {
+                    return;
+                }
+                const commit = () => {
+                    const previousBucket = GoalTargetStore.getBucket(goalId) || 'Uncategorized';
+                    const nextBucket = utils.normalizeString(input.value, 'Uncategorized');
+                    if (nextBucket === previousBucket) {
+                        input.value = previousBucket;
+                        return;
+                    }
+                    GoalTargetStore.setBucket(goalId, nextBucket);
+                    input.value = nextBucket;
+                };
+                input.addEventListener('blur', commit);
+                input.addEventListener('keydown', event => {
+                    if (event.key === 'Enter') {
+                        event.preventDefault();
+                        commit();
+                        input.blur();
+                    }
+                });
+            });
+        }
+
+        const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', '🗂️ Buckets');
+        bucketManageBtn.type = 'button';
+        bucketManageBtn.title = 'Manage Endowus bucket assignments';
+        bucketManageBtn.addEventListener('click', () => {
+            const managerView = renderSyncOverlayView({
+                title: 'Bucket Manager',
+                bodyHtml: renderBucketManagerPanelHtml(),
+                onBack: () => showOverlay(),
+                backLabel: '← Back to Portfolio Viewer'
+            });
+            setupBucketManagerListeners(managerView?.body);
+        });
+        buttonContainer.insertBefore(bucketManageBtn, syncBtn);
 
         select.onchange = function() {
             renderView(select.value, { scrollToTop: true });
