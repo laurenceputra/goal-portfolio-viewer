@@ -578,8 +578,8 @@ describe('initialization and URL monitoring', () => {
         expect(detailOverlay.textContent).toContain('AAPL');
         expect(detailOverlay.querySelector('.gpv-select')).toBeTruthy();
         expect(detailOverlay.textContent).toContain('Planning');
-        expect(detailOverlay.textContent).toContain('Set a scenario amount to see a what-if split.');
-        expect(detailOverlay.textContent).toContain('Rebalance: close to target.');
+        expect(detailOverlay.textContent).not.toContain('Set a projected investment amount to see a what-if split.');
+        expect(detailOverlay.textContent).not.toContain('Rebalance:');
         expect(detailOverlay.textContent).toContain('Type');
         expect(detailOverlay.textContent).toContain('Current %');
         expect(detailOverlay.textContent).not.toContain('Drift %');

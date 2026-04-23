@@ -18,7 +18,7 @@ const {
     buildHealthStatus,
     buildAttentionDriftReason,
     buildPlanningModel,
-    buildRebalanceSummaryText,
+    buildPlanningTradeLines,
     collectGoalIds,
     collectAllGoalIds,
     buildGoalTargetById,
@@ -106,38 +106,29 @@ describe('projected and goal helpers', () => {
         expect(diffData.diffClassName).toBe('gpv-diff-cell');
     });
 
-    test('should describe one-sided rebalance cash needs clearly', () => {
-        expect(buildRebalanceSummaryText({
-            underweight: { goalName: 'VWRA', diffAmount: -4618.04 },
-            underweightCount: 1,
-            underweightTotalAmount: 4618.04
-        })).toEqual({
-            summaryLine: 'Rebalance: needs SGD\u00A04,618.04 new cash.',
-            detailLine: 'Largest buy: VWRA SGD\u00A04,618.04'
-        });
-
-        expect(buildRebalanceSummaryText({
-            overweight: { displayTicker: 'ALZP64', driftAmount: 12509.12 },
-            overweightCount: 1,
-            overweightTotalAmount: 12509.12
-        })).toEqual({
-            summaryLine: 'Rebalance: frees up SGD\u00A012,509.12 cash.',
-            detailLine: 'Largest sell: ALZP64 SGD\u00A012,509.12'
-        });
+    test('should describe top planning buys and sells clearly', () => {
+        expect(buildPlanningTradeLines({
+            topBuys: [
+                { goalName: 'VWRA', diffAmount: -4618.04 },
+                { goalName: 'ES3', diffAmount: -1200 }
+            ],
+            topSells: [
+                { displayTicker: 'ALZP64', driftAmount: 12509.12 },
+                { displayTicker: 'MBH', driftAmount: 2500.5 }
+            ]
+        })).toEqual([
+            'Top buys: VWRA SGD\u00A04,618.04 | ES3 SGD\u00A01,200.00',
+            'Top sells: ALZP64 SGD\u00A012,509.12 | MBH SGD\u00A02,500.50'
+        ]);
     });
 
-    test('should describe mixed rebalance with unmatched remainder clearly', () => {
-        expect(buildRebalanceSummaryText({
-            underweight: { goalName: 'VWRA', diffAmount: -4618.04 },
-            overweight: { displayTicker: 'ALZP64', driftAmount: 12509.12 },
-            underweightCount: 1,
-            overweightCount: 1,
-            underweightTotalAmount: 4618.04,
-            overweightTotalAmount: 12509.12
-        })).toEqual({
-            summaryLine: 'Rebalance: frees up SGD\u00A07,891.08 cash.',
-            detailLine: 'Largest buy: VWRA SGD\u00A04,618.04 | Largest sell: ALZP64 SGD\u00A012,509.12'
-        });
+    test('should omit empty planning trade groups', () => {
+        expect(buildPlanningTradeLines({
+            topBuys: [],
+            topSells: [{ displayTicker: 'ALZP64', driftAmount: 12509.12 }]
+        })).toEqual([
+            'Top sells: ALZP64 SGD\u00A012,509.12'
+        ]);
     });
 });
 

@@ -30,6 +30,7 @@
     const DEBUG = false;
     const REMAINING_TARGET_ALERT_THRESHOLD = 2;
     const TARGET_TOTAL_TOLERANCE_PERCENT = 2;
+    const MATERIAL_DRIFT_RATIO = 0.25;
     const FSM_PROFIT_PERCENT_SCALE = 'auto';
     const FSM_UNASSIGNED_PORTFOLIO_ID = 'unassigned';
     const FSM_ALL_PORTFOLIO_ID = 'all';
@@ -456,7 +457,7 @@
             return '';
         }
         const magnitude = Math.abs(numericDrift);
-        if (magnitude <= 0.25) {
+        if (magnitude <= MATERIAL_DRIFT_RATIO) {
             return 'gpv-drift--green';
         }
         if (magnitude <= 0.5) {
@@ -1302,54 +1303,47 @@ function buildAttentionDriftReason(driftClass, label) {
     return driftClass === 'gpv-drift--red' ? label : null;
 }
 
-function buildRebalanceSummaryText({
-    underweight,
-    overweight,
-    underweightTotalAmount = 0,
-    overweightTotalAmount = 0
-}) {
-    const totalBuyAmount = toFiniteNumber(underweightTotalAmount, 0);
-    const totalSellAmount = toFiniteNumber(overweightTotalAmount, 0);
-    const netAmount = Number((totalSellAmount - totalBuyAmount).toFixed(2));
-
-    if (totalBuyAmount <= 0 && totalSellAmount <= 0) {
-        return {
-            summaryLine: 'Rebalance: close to target.',
-            detailLine: null
-        };
+function isMaterialDriftCandidate(item) {
+    if (!item || !Number.isFinite(item?.driftPercent)) {
+        return false;
     }
+    return Math.abs(item.driftPercent) > MATERIAL_DRIFT_RATIO;
+}
 
-    let summaryLine = 'Rebalance: close to target.';
-    if (totalBuyAmount > 0 && totalSellAmount > 0) {
-        if (netAmount > 0.009) {
-            summaryLine = `Rebalance: frees up ${formatMoney(netAmount)} cash.`;
-        } else if (netAmount < -0.009) {
-            summaryLine = `Rebalance: needs ${formatMoney(Math.abs(netAmount))} new cash.`;
-        } else {
-            summaryLine = 'Rebalance: fully funded from sells.';
+function formatPlanningTradeLine(label, items) {
+    const safeItems = Array.isArray(items) ? items.filter(Boolean) : [];
+    if (safeItems.length === 0) {
+        return null;
+    }
+    const formattedItems = safeItems.map(item => {
+        const name = item.displayTicker || item.goalName || item.name || item.code;
+        const amount = Math.abs(toFiniteNumber(item.diffAmount ?? item.driftAmount, 0));
+        if (!name || amount <= 0) {
+            return null;
         }
-    } else if (totalBuyAmount > 0) {
-        summaryLine = `Rebalance: needs ${formatMoney(totalBuyAmount)} new cash.`;
-    } else if (totalSellAmount > 0) {
-        summaryLine = `Rebalance: frees up ${formatMoney(totalSellAmount)} cash.`;
+        return `${name} ${formatMoney(amount)}`;
+    }).filter(Boolean);
+    if (formattedItems.length === 0) {
+        return null;
     }
+    return `${label}: ${formattedItems.join(' | ')}`;
+}
 
-    const detailParts = [];
-    const topBuyName = underweight?.displayTicker || underweight?.goalName || underweight?.name || underweight?.code;
-    const topBuyAmount = Math.abs(toFiniteNumber(underweight?.diffAmount ?? underweight?.driftAmount, 0));
-    if (topBuyName && topBuyAmount > 0) {
-        detailParts.push(`Largest buy: ${topBuyName} ${formatMoney(topBuyAmount)}`);
-    }
-    const topSellName = overweight?.displayTicker || overweight?.goalName || overweight?.name || overweight?.code;
-    const topSellAmount = Math.abs(toFiniteNumber(overweight?.diffAmount ?? overweight?.driftAmount, 0));
-    if (topSellName && topSellAmount > 0) {
-        detailParts.push(`Largest sell: ${topSellName} ${formatMoney(topSellAmount)}`);
-    }
+function buildPlanningTradeLines({ topBuys, topSells }) {
+    return [
+        formatPlanningTradeLine('Top buys', topBuys),
+        formatPlanningTradeLine('Top sells', topSells)
+    ].filter(Boolean);
+}
 
-    return {
-        summaryLine,
-        detailLine: detailParts.length > 0 ? detailParts.join(' | ') : null
-    };
+function selectTopMaterialPlanningTrades(items, direction) {
+    const comparator = direction === 'buy'
+        ? item => toFiniteNumber(item?.diffAmount ?? item?.driftAmount, 0) < 0
+        : item => toFiniteNumber(item?.diffAmount ?? item?.driftAmount, 0) > 0;
+    return (Array.isArray(items) ? items : [])
+        .filter(item => comparator(item) && isMaterialDriftCandidate(item))
+        .sort((left, right) => Math.abs(toFiniteNumber(right?.diffAmount ?? right?.driftAmount, 0)) - Math.abs(toFiniteNumber(left?.diffAmount ?? left?.driftAmount, 0)))
+        .slice(0, 2);
 }
 
 function buildTargetCoverageLabel(targetTotalPercent) {
@@ -1427,8 +1421,8 @@ function buildPlanningModel(goalTypeModel) {
     const overweightCandidates = goalModels
         .filter(goal => Number.isFinite(goal?.diffAmount) && goal.diffAmount > 0)
         .sort((left, right) => Math.abs(right.diffAmount) - Math.abs(left.diffAmount));
-    const underweight = underweightCandidates[0] || null;
-    const overweight = overweightCandidates[0] || null;
+    const topBuys = selectTopMaterialPlanningTrades(underweightCandidates, 'buy');
+    const topSells = selectTopMaterialPlanningTrades(overweightCandidates, 'sell');
 
     const projectedAmount = toFiniteNumber(goalTypeModel?.projectedAmount, 0);
     const scenarioAmount = projectedAmount > 0 ? projectedAmount : 0;
@@ -1438,14 +1432,11 @@ function buildPlanningModel(goalTypeModel) {
         adjustedTotal,
         targetCoveragePercent,
         targetCoverageLabel: coverageLabel,
-        underweight,
-        overweight,
-        underweightCount: underweightCandidates.length,
-        overweightCount: overweightCandidates.length,
-        underweightTotalAmount: underweightCandidates.reduce((sum, goal) => sum + Math.abs(goal.diffAmount), 0),
-        overweightTotalAmount: overweightCandidates.reduce((sum, goal) => sum + Math.abs(goal.diffAmount), 0),
         scenarioAmount,
-        scenarioSplit
+        scenarioSplit,
+        topBuys,
+        topSells,
+        hasMaterialDrift: topBuys.length > 0 || topSells.length > 0
     };
 }
 
@@ -1457,12 +1448,8 @@ function buildBucketPlanningModel(goalTypeModels) {
     const coverageIssues = [];
     const scenarioByGoal = {};
     let scenarioAmount = 0;
-    let underweight = null;
-    let overweight = null;
-    let underweightCount = 0;
-    let overweightCount = 0;
-    let underweightTotalAmount = 0;
-    let overweightTotalAmount = 0;
+    const topBuyCandidates = [];
+    const topSellCandidates = [];
 
     models.forEach(goalTypeModel => {
         const planning = goalTypeModel?.planning;
@@ -1473,10 +1460,6 @@ function buildBucketPlanningModel(goalTypeModels) {
             coverageIssues.push(`${goalTypeModel.displayName}: ${planning.targetCoverageLabel}`);
         }
         scenarioAmount += toFiniteNumber(planning.scenarioAmount, 0);
-        underweightCount += Number.isFinite(planning.underweightCount) ? planning.underweightCount : 0;
-        overweightCount += Number.isFinite(planning.overweightCount) ? planning.overweightCount : 0;
-        underweightTotalAmount += toFiniteNumber(planning.underweightTotalAmount, 0);
-        overweightTotalAmount += toFiniteNumber(planning.overweightTotalAmount, 0);
         const split = Array.isArray(planning.scenarioSplit) ? planning.scenarioSplit : [];
         split.forEach(item => {
             const goalId = utils.normalizeString(item?.goalId, '');
@@ -1492,28 +1475,8 @@ function buildBucketPlanningModel(goalTypeModels) {
             }
             scenarioByGoal[goalId].amount += toFiniteNumber(item?.amount, 0);
         });
-        const candidateUnderweight = planning.underweight;
-        if (
-            candidateUnderweight
-            && Number.isFinite(candidateUnderweight.diffAmount)
-            && (
-                !underweight
-                || Math.abs(candidateUnderweight.diffAmount) > Math.abs(underweight.diffAmount)
-            )
-        ) {
-            underweight = candidateUnderweight;
-        }
-        const candidateOverweight = planning.overweight;
-        if (
-            candidateOverweight
-            && Number.isFinite(candidateOverweight.diffAmount)
-            && (
-                !overweight
-                || Math.abs(candidateOverweight.diffAmount) > Math.abs(overweight.diffAmount)
-            )
-        ) {
-            overweight = candidateOverweight;
-        }
+        topBuyCandidates.push(...(Array.isArray(planning.topBuys) ? planning.topBuys : []));
+        topSellCandidates.push(...(Array.isArray(planning.topSells) ? planning.topSells : []));
     });
 
     const scenarioSplit = Object.values(scenarioByGoal)
@@ -1528,12 +1491,10 @@ function buildBucketPlanningModel(goalTypeModels) {
         coverageIssues,
         scenarioAmount,
         scenarioSplit,
-        underweight,
-        overweight,
-        underweightCount,
-        overweightCount,
-        underweightTotalAmount,
-        overweightTotalAmount
+        topBuys: selectTopMaterialPlanningTrades(topBuyCandidates, 'buy'),
+        topSells: selectTopMaterialPlanningTrades(topSellCandidates, 'sell'),
+        hasMaterialDrift: selectTopMaterialPlanningTrades(topBuyCandidates, 'buy').length > 0
+            || selectTopMaterialPlanningTrades(topSellCandidates, 'sell').length > 0
     };
 }
 
@@ -6212,9 +6173,9 @@ let GoalTargetStore;
         }
 
         if (planning.scenarioAmount > 0) {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', `Scenario amount: ${formatMoney(planning.scenarioAmount)}`));
+            panel.appendChild(createElement('p', 'gpv-planning-copy', `Projected Investment: ${formatMoney(planning.scenarioAmount)}`));
         } else {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', 'Set a scenario amount to see a what-if split.'));
+            panel.appendChild(createElement('p', 'gpv-planning-copy', 'Set a projected investment amount to see a what-if split.'));
         }
 
         if (Array.isArray(planning.scenarioSplit) && planning.scenarioSplit.length > 0) {
@@ -6225,11 +6186,9 @@ let GoalTargetStore;
             panel.appendChild(splitList);
         }
 
-        const rebalanceSummary = buildRebalanceSummaryText(planning);
-        panel.appendChild(createElement('p', 'gpv-planning-copy', rebalanceSummary.summaryLine));
-        if (rebalanceSummary.detailLine) {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', rebalanceSummary.detailLine));
-        }
+        buildPlanningTradeLines(planning).forEach(line => {
+            panel.appendChild(createElement('p', 'gpv-planning-copy', line));
+        });
 
         contentDiv.appendChild(panel);
     }
@@ -11084,19 +11043,16 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const overweightCandidates = safeRows
             .filter(row => Number.isFinite(row?.driftAmount) && row.driftAmount > 0)
             .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount));
-        const underweight = underweightCandidates[0] || null;
-        const overweight = overweightCandidates[0] || null;
         const scenarioAmount = 0;
+        const topBuys = selectTopMaterialPlanningTrades(underweightCandidates, 'buy');
+        const topSells = selectTopMaterialPlanningTrades(overweightCandidates, 'sell');
         return {
             targetCoverageLabel: safeSummary.targetCoverageLabel || null,
             scenarioAmount,
             scenarioSplit: calculateRecommendedContributionSplitForFsm(safeRows, scenarioAmount),
-            underweight,
-            overweight,
-            underweightCount: underweightCandidates.length,
-            overweightCount: overweightCandidates.length,
-            underweightTotalAmount: underweightCandidates.reduce((sum, row) => sum + Math.abs(row.driftAmount), 0),
-            overweightTotalAmount: overweightCandidates.reduce((sum, row) => sum + Math.abs(row.driftAmount), 0)
+            topBuys,
+            topSells,
+            hasMaterialDrift: topBuys.length > 0 || topSells.length > 0
         };
     }
 
@@ -11505,9 +11461,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         const scenarioAmount = toFiniteNumber(planning?.scenarioAmount, 0);
         if (scenarioAmount > 0) {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', `Scenario amount: ${formatMoney(scenarioAmount)}`));
-        } else {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', 'Set a scenario amount to see a what-if split.'));
+            panel.appendChild(createElement('p', 'gpv-planning-copy', `Projected Investment: ${formatMoney(scenarioAmount)}`));
         }
 
         if (Array.isArray(planning?.scenarioSplit) && planning.scenarioSplit.length > 0) {
@@ -11518,11 +11472,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             panel.appendChild(splitList);
         }
 
-        const rebalanceSummary = buildRebalanceSummaryText(planning);
-        panel.appendChild(createElement('p', 'gpv-planning-copy', rebalanceSummary.summaryLine));
-        if (rebalanceSummary.detailLine) {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', rebalanceSummary.detailLine));
-        }
+        buildPlanningTradeLines(planning).forEach(line => {
+            panel.appendChild(createElement('p', 'gpv-planning-copy', line));
+        });
         return panel;
     }
 
@@ -12968,7 +12920,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             buildBucketDetailViewModel,
             buildHealthStatus,
             buildAttentionDriftReason,
-            buildRebalanceSummaryText,
+            buildPlanningTradeLines,
             buildPlanningModel,
             collectGoalIds,
             collectAllGoalIds,
