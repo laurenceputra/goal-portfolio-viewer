@@ -199,6 +199,7 @@ describe('initialization and URL monitoring', () => {
         let overlay = document.querySelector('#gpv-overlay');
         const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Buckets'));
         expect(bucketManageBtn).toBeTruthy();
+        expect(bucketManageBtn.className).toContain('gpv-bucket-manage-btn');
         bucketManageBtn.click();
 
         overlay = document.querySelector('#gpv-overlay');
@@ -926,6 +927,7 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         let applyBulkBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Apply to'));
+        expect(applyBulkBtn.className).toContain('gpv-fsm-bulk-apply-btn');
         expect(applyBulkBtn.textContent).toContain('Apply to 0 selected holdings');
         expect(applyBulkBtn.getAttribute('aria-label')).toContain('Apply portfolio assignment to 0 selected holdings');
         expect(applyBulkBtn.disabled).toBe(true);

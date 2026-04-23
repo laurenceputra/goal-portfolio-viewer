@@ -10144,6 +10144,22 @@ syncUi.update = function updateSyncUI() {
                     box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
                 }
 
+                .gpv-header-buttons .gpv-bucket-manage-btn {
+                    background: rgba(255, 255, 255, 0.18);
+                    color: #ffffff;
+                    border: 2px solid rgba(255, 255, 255, 0.7);
+                }
+
+                .gpv-header-buttons .gpv-bucket-manage-btn:hover:not(:disabled) {
+                    background: rgba(255, 255, 255, 0.28);
+                    color: #ffffff;
+                    border-color: #ffffff;
+                }
+
+                .gpv-fsm-bulk-apply-btn:hover:not(:disabled) {
+                    transform: none;
+                }
+
                 .gpv-sync-btn-danger {
                     background-color: #dc3545;
                     color: white;
@@ -11573,7 +11589,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         bulkRow.appendChild(bulkSelect);
 
         const selectedLabel = selectedCount === 1 ? 'holding' : 'holdings';
-        const applyBulkBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', `Apply to ${selectedCount} selected ${selectedLabel}`);
+        const applyBulkBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary gpv-fsm-bulk-apply-btn', `Apply to ${selectedCount} selected ${selectedLabel}`);
         applyBulkBtn.setAttribute('aria-label', `Apply portfolio assignment to ${selectedCount} selected ${selectedLabel}`);
         applyBulkBtn.disabled = selectedCount === 0;
         applyBulkBtn.onclick = () => {
@@ -12635,7 +12651,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             });
         }
 
-        const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', '🗂️ Buckets');
+        const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary gpv-bucket-manage-btn', '🗂️ Buckets');
         bucketManageBtn.type = 'button';
         bucketManageBtn.title = 'Manage Endowus bucket assignments';
         bucketManageBtn.addEventListener('click', () => {
