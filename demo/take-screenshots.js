@@ -202,7 +202,11 @@ async function takeScreenshots() {
         
         // Sync settings screens
         console.log('📸 Capturing Sync Settings (unconfigured)...');
-        await page.click('.gpv-header-buttons .gpv-sync-btn');
+        const syncButtons = page.locator('.gpv-header-buttons .gpv-sync-btn').filter({ hasText: /sync/i });
+        if (await syncButtons.count() === 0) {
+            throw new Error('Sync button not found in header.');
+        }
+        await syncButtons.first().click();
         await page.waitForSelector('.gpv-sync-settings', { timeout: 5000 });
         await page.screenshot({
             path: path.join(outputDir, 'sync-settings-unconfigured.png'),

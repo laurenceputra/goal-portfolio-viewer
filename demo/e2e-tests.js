@@ -353,9 +353,10 @@ async function finalizeSummary(summary) {
 }
 
 async function captureSyncScreens(page, outputDir, summary) {
-    const syncButtonSelector = '.gpv-header-buttons .gpv-sync-btn';
-
-    await page.click(syncButtonSelector);
+    const syncButtons = page.locator('.gpv-header-buttons .gpv-sync-btn').filter({ hasText: /sync/i });
+    const syncCount = await syncButtons.count();
+    assertCondition(syncCount > 0, 'Expected a Sync button in overlay header.');
+    await syncButtons.first().click();
     await page.waitForSelector('.gpv-sync-settings', { timeout: 5000 });
 
     await page.waitForFunction(() => {
