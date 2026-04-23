@@ -1225,8 +1225,7 @@ function buildGoalBucketAssignmentMap({
     performanceData,
     investibleData,
     summaryData,
-    getAssignedBucket,
-    seedAssignedBucket
+    getAssignedBucket
 }) {
     const goalIds = collectGoalIdSetFromApiData(performanceData, investibleData, summaryData);
     if (goalIds.size === 0) {
@@ -1235,7 +1234,6 @@ function buildGoalBucketAssignmentMap({
     const investibleMap = utils.indexBy(investibleData, item => item?.goalId);
     const summaryMap = utils.indexBy(summaryData, item => item?.goalId);
     const getBucket = typeof getAssignedBucket === 'function' ? getAssignedBucket : () => null;
-    const seedBucket = typeof seedAssignedBucket === 'function' ? seedAssignedBucket : null;
     const bucketById = {};
 
     Array.from(goalIds).forEach(goalId => {
@@ -1252,9 +1250,6 @@ function buildGoalBucketAssignmentMap({
             return;
         }
         bucketById[goalId] = derivedBucket;
-        if (seedBucket) {
-            seedBucket(goalId, derivedBucket, { suppressSync: true });
-        }
     });
 
     return bucketById;
@@ -12591,6 +12586,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             type="text"
                             class="gpv-target-input gpv-bucket-manager-input"
                             data-goal-id="${escapeHtml(row.goalId)}"
+                            data-goal-name="${escapeHtml(row.goalName)}"
                             value="${escapeHtml(row.currentBucket)}"
                             placeholder="Uncategorized"
                             aria-label="Bucket name for ${escapeHtml(row.goalName)}"
@@ -12626,19 +12622,24 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     return;
                 }
                 const commit = () => {
-                    const previousBucket = GoalTargetStore.getBucket(goalId) || 'Uncategorized';
+                    const previousStoredBucket = GoalTargetStore.getBucket(goalId);
+                    const derivedBucket = utils.extractBucketName(utils.normalizeString(input.dataset.goalName, ''));
+                    const fallbackBucket = derivedBucket || 'Uncategorized';
+                    const previousDisplayedBucket = utils.normalizeString(input.defaultValue, '') || fallbackBucket;
                     const nextBucket = utils.normalizeString(input.value, '');
                     if (!nextBucket) {
                         GoalTargetStore.clearBucket(goalId);
-                        input.value = 'Uncategorized';
+                        input.value = fallbackBucket;
+                        input.defaultValue = input.value;
                         return;
                     }
-                    if (nextBucket === previousBucket) {
-                        input.value = previousBucket;
+                    if (nextBucket === previousDisplayedBucket) {
+                        input.value = previousDisplayedBucket;
                         return;
                     }
                     GoalTargetStore.setBucket(goalId, nextBucket);
                     input.value = nextBucket;
+                    input.defaultValue = nextBucket;
                 };
                 input.addEventListener('blur', commit);
                 input.addEventListener('keydown', event => {
