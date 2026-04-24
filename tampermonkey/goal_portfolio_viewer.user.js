@@ -1594,15 +1594,17 @@ function buildBucketPlanningModel(goalTypeModels) {
     const sortedBucketSellCandidates = selectPlanningTradesByDrift(bucketSellCandidates, 'sell');
     const sortedBucketMaterialBuys = selectPlanningTradesByDrift(bucketMaterialBuys, 'buy', { materialOnly: true });
     const sortedBucketMaterialSells = selectPlanningTradesByDrift(bucketMaterialSells, 'sell', { materialOnly: true });
+    const suggestedBuys = buildFundingRecommendations(sortedBucketMaterialSells, sortedBucketBuyCandidates);
+    const suggestedSells = buildFundingRecommendations(sortedBucketMaterialBuys, sortedBucketSellCandidates);
 
     return {
         coverageIssues,
         scenarioAmount,
         scenarioSplit,
-        suggestedBuys: buildFundingRecommendations(sortedBucketMaterialSells, sortedBucketBuyCandidates),
-        suggestedSells: buildFundingRecommendations(sortedBucketMaterialBuys, sortedBucketSellCandidates),
-        triggerBuys: sortedBucketMaterialBuys,
-        triggerSells: sortedBucketMaterialSells,
+        suggestedBuys,
+        suggestedSells,
+        triggerBuys: buildTriggerSubset(sortedBucketMaterialBuys, suggestedSells),
+        triggerSells: buildTriggerSubset(sortedBucketMaterialSells, suggestedBuys),
         hasMaterialDrift: sortedBucketMaterialBuys.length > 0 || sortedBucketMaterialSells.length > 0
     };
 }

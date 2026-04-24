@@ -324,10 +324,22 @@ describe('view model builders', () => {
             'Retirement - Buy Strong',
             'Retirement - Buy Mild'
         ]);
+        expect(planning.suggestedBuys.map(item => item.recommendedAmount)).toEqual([7000, 2000]);
+        expect(planning.triggerSells.map(item => item.goalName)).toEqual([
+            'Retirement - Sell Strong',
+            'Retirement - Sell Mild'
+        ]);
+        expect(planning.triggerSells.map(item => item.recommendedAmount)).toEqual([5000, 4000]);
         expect(planning.suggestedSells.map(item => item.goalName)).toEqual([
             'Retirement - Sell Strong',
             'Retirement - Sell Mild'
         ]);
+        expect(planning.suggestedSells.map(item => item.recommendedAmount)).toEqual([5000, 4900]);
+        expect(planning.triggerBuys.map(item => item.goalName)).toEqual([
+            'Retirement - Buy Strong',
+            'Retirement - Buy Mild'
+        ]);
+        expect(planning.triggerBuys.map(item => item.recommendedAmount)).toEqual([7000, 2900]);
     });
 
     test('should map per-goal window returns with fallback', () => {
