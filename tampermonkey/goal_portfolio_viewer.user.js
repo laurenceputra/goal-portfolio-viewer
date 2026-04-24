@@ -237,6 +237,9 @@
         goalBucket(goalId) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.goalBucket, goalId ?? '');
         },
+        goalBucketCleared(goalId) {
+            return buildStorageKey(STORAGE_KEY_PREFIXES.goalBucket, goalId ?? '', '__cleared');
+        },
         fsmTarget(code) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.fsmTarget, code ?? '');
         },
@@ -1260,6 +1263,7 @@ function buildGoalBucketAssignmentMap({
 
     Array.from(goalIds).forEach(goalId => {
         const assignedBucket = utils.normalizeString(getBucket(goalId), '');
+        const wasCleared = Storage.get(storageKeys.goalBucketCleared(goalId), false) === true;
         if (assignedBucket) {
             bucketById[goalId] = assignedBucket;
             return;
@@ -1272,7 +1276,7 @@ function buildGoalBucketAssignmentMap({
             return;
         }
         bucketById[goalId] = derivedBucket;
-        if (seedBucket) {
+        if (seedBucket && !wasCleared) {
             seedBucket(goalId, derivedBucket, { suppressSync: true });
         }
     });
@@ -5006,10 +5010,12 @@ let GoalTargetStore;
         setBucket(goalId, bucketName, options = {}) {
             const normalizedBucket = utils.normalizeString(bucketName, '');
             const key = storageKeys.goalBucket(goalId);
+            const clearedKey = storageKeys.goalBucketCleared(goalId);
             if (!normalizedBucket) {
                 Storage.remove(key, 'Error deleting goal bucket assignment');
                 return null;
             }
+            Storage.remove(clearedKey, 'Error deleting cleared goal bucket flag');
             const didSet = Storage.set(key, normalizedBucket, 'Error saving goal bucket assignment');
             if (!didSet) {
                 return null;
@@ -5021,7 +5027,9 @@ let GoalTargetStore;
         },
         clearBucket(goalId, options = {}) {
             const key = storageKeys.goalBucket(goalId);
+            const clearedKey = storageKeys.goalBucketCleared(goalId);
             Storage.remove(key, 'Error deleting goal bucket assignment');
+            Storage.set(clearedKey, true, 'Error saving cleared goal bucket flag');
             if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
                 SyncManager.scheduleSyncOnChange('bucket-clear');
             }
@@ -12738,7 +12746,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             mergedInvestmentDataState = refreshedReadiness.mergedInvestmentDataState;
             const selectedValue = select.value;
             refreshBucketSelectOptions(selectedValue);
-            renderView(select.value, { useCacheOnly: true });
+            renderView(select.value);
         });
         cleanupCallbacks.push(unsubscribeOverlayUpdates);
 

@@ -318,7 +318,17 @@ describe('initialization and URL monitoring', () => {
         bucketInput.dispatchEvent(new window.Event('blur', { bubbles: true }));
 
         expect(storage.has('goal_bucket_name_goal1')).toBe(false);
+        expect(storage.get('goal_bucket_name_goal1__cleared')).toBe(true);
         expect(bucketInput.value).toBe('Retirement');
+
+        exportsModule.showOverlay();
+        overlay = document.querySelector('#gpv-overlay');
+        const reopenedBucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Buckets'));
+        reopenedBucketManageBtn.click();
+        overlay = document.querySelector('#gpv-overlay');
+        const reopenedInput = overlay.querySelector('.gpv-bucket-manager-input');
+        expect(storage.has('goal_bucket_name_goal1')).toBe(false);
+        expect(reopenedInput.value).toBe('Retirement');
     });
 
     test('showOverlay sets dialog attributes and closes on Escape', () => {
@@ -598,6 +608,20 @@ describe('initialization and URL monitoring', () => {
         const panelsAfter = Array.from(overlay.querySelectorAll('.gpv-performance-panel'));
         panelsAfter.forEach(panel => {
             expect(panel.classList.contains('gpv-collapsible--collapsed')).toBe(false);
+        });
+
+        global.fetch.mockResolvedValueOnce({
+            clone: () => ({ json: () => Promise.resolve(performanceData), ok: true, status: 200 }),
+            json: () => Promise.resolve(performanceData),
+            ok: true,
+            status: 200
+        });
+        window.fetch('/v1/goals/performance');
+
+        return new Promise(resolve => setTimeout(resolve, 0)).then(() => {
+            const refreshedOverlay = document.querySelector('#gpv-overlay');
+            expect(refreshedOverlay.textContent).not.toContain('Performance data unavailable.');
+            expect(refreshedOverlay.querySelectorAll('.gpv-performance-panel').length).toBeGreaterThan(0);
         });
     });
 
