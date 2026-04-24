@@ -10852,12 +10852,17 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         ) || {};
         const validPortfolioIds = new Set(portfolios.filter(item => item.archived !== true).map(item => item.id));
         const sanitizedAssignments = {};
+        const codeCounts = buildFsmCodeCounts(fsmHoldings);
         (Array.isArray(fsmHoldings) ? fsmHoldings : []).forEach(row => {
+            const code = utils.normalizeString(row?.code, '');
             const holdingId = getFsmHoldingIdentity(row);
             if (!holdingId) {
                 return;
             }
-            const assigned = utils.normalizeString(assignmentByCode[holdingId], '');
+            const legacyAssigned = isFsmLegacyCodeFallbackAllowed(code, holdingId, codeCounts)
+                ? assignmentByCode[code]
+                : null;
+            const assigned = utils.normalizeString(assignmentByCode[holdingId] || legacyAssigned, '');
             sanitizedAssignments[holdingId] = validPortfolioIds.has(assigned) ? assigned : FSM_UNASSIGNED_PORTFOLIO_ID;
         });
         return {
@@ -10885,14 +10890,32 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return Storage.get(storageKeys.fsmFixed(code), false) === true;
     }
 
+    function buildFsmCodeCounts(fsmHoldings) {
+        return (Array.isArray(fsmHoldings) ? fsmHoldings : []).reduce((acc, row) => {
+            const code = utils.normalizeString(row?.code, '');
+            if (code) {
+                acc[code] = (acc[code] || 0) + 1;
+            }
+            return acc;
+        }, {});
+    }
+
+    function isFsmLegacyCodeFallbackAllowed(code, holdingId, codeCounts) {
+        return Boolean(code && holdingId && holdingId !== code && codeCounts?.[code] === 1);
+    }
+
     function buildFsmRowsWithAssignment(fsmHoldings, assignmentByCode) {
+        const codeCounts = buildFsmCodeCounts(fsmHoldings);
         return (Array.isArray(fsmHoldings) ? fsmHoldings : []).map(row => {
             const code = utils.normalizeString(row?.code, '');
             const subcode = utils.normalizeString(row?.subcode ?? row?.subCode, '');
             const holdingId = getFsmHoldingIdentity(code, subcode);
+            const allowLegacyFallback = isFsmLegacyCodeFallbackAllowed(code, holdingId, codeCounts);
             const currentValue = Number(row?.currentValueLcy);
             const profitValue = toOptionalFiniteNumber(row?.profitValueLcy);
             const profitPercent = toOptionalFiniteNumber(row?.profitPercentLcy);
+            const targetPercent = getFsmTarget(holdingId);
+            const fixed = getFsmFixed(holdingId);
             return {
                 ...row,
                 code,
@@ -10904,8 +10927,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 profitValueLcy: profitValue,
                 profitPercentLcy: profitPercent,
                 portfolioId: assignmentByCode[holdingId] || FSM_UNASSIGNED_PORTFOLIO_ID,
-                targetPercent: getFsmTarget(holdingId),
-                fixed: getFsmFixed(holdingId)
+                targetPercent: targetPercent ?? (allowLegacyFallback ? getFsmTarget(code) : null),
+                fixed: fixed || (allowLegacyFallback ? getFsmFixed(code) : false)
             };
         });
     }
