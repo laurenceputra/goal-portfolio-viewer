@@ -3122,7 +3122,8 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const config = {
             goalTargets: {},
             goalFixed: {},
-            goalBuckets: {}
+            goalBuckets: {},
+            clearedGoalBuckets: {}
         };
         const allKeys = GM_listValues ? GM_listValues() : [];
         for (const key of allKeys) {
@@ -3137,6 +3138,11 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 const value = Storage.get(key, false);
                 config.goalFixed[goalId] = value;
             } else if (key.startsWith(STORAGE_KEY_PREFIXES.goalBucket)) {
+                if (key.endsWith('__cleared')) {
+                    const goalId = key.substring(STORAGE_KEY_PREFIXES.goalBucket.length, key.length - '__cleared'.length);
+                    config.clearedGoalBuckets[goalId] = Storage.get(key, false) === true;
+                    continue;
+                }
                 const goalId = key.substring(STORAGE_KEY_PREFIXES.goalBucket.length);
                 const value = utils.normalizeString(Storage.get(key, ''), '');
                 if (value) {
@@ -3250,6 +3256,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                         goalTargets: endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {},
                         goalFixed: endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {},
                         goalBuckets: endowus.goalBuckets && typeof endowus.goalBuckets === 'object' ? endowus.goalBuckets : {},
+                        clearedGoalBuckets: endowus.clearedGoalBuckets && typeof endowus.clearedGoalBuckets === 'object' ? endowus.clearedGoalBuckets : {},
                         timestamp: typeof endowus.timestamp === 'number' ? endowus.timestamp : (config.timestamp || Date.now())
                     },
                     fsm: {
@@ -3274,6 +3281,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     goalTargets: config.goalTargets && typeof config.goalTargets === 'object' ? config.goalTargets : {},
                     goalFixed: config.goalFixed && typeof config.goalFixed === 'object' ? config.goalFixed : {},
                     goalBuckets: config.goalBuckets && typeof config.goalBuckets === 'object' ? config.goalBuckets : {},
+                    clearedGoalBuckets: config.clearedGoalBuckets && typeof config.clearedGoalBuckets === 'object' ? config.clearedGoalBuckets : {},
                     timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
                 },
                 fsm: {
@@ -3331,6 +3339,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const endowusTargets = endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {};
         const endowusFixed = endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {};
         const endowusBuckets = endowus.goalBuckets && typeof endowus.goalBuckets === 'object' ? endowus.goalBuckets : {};
+        const clearedGoalBuckets = endowus.clearedGoalBuckets && typeof endowus.clearedGoalBuckets === 'object' ? endowus.clearedGoalBuckets : {};
 
         for (const [goalId, value] of Object.entries(endowusTargets)) {
             if (endowusFixed[goalId] === true) {
@@ -3347,7 +3356,16 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             const normalizedBucket = utils.normalizeString(value, '');
             if (normalizedBucket) {
                 Storage.set(storageKeys.goalBucket(goalId), normalizedBucket);
+                Storage.remove(storageKeys.goalBucketCleared(goalId), 'Error deleting cleared goal bucket flag');
             }
+        }
+
+        for (const [goalId, wasCleared] of Object.entries(clearedGoalBuckets)) {
+            if (wasCleared !== true) {
+                continue;
+            }
+            Storage.remove(storageKeys.goalBucket(goalId), 'Error deleting goal bucket assignment');
+            Storage.set(storageKeys.goalBucketCleared(goalId), true, 'Error saving cleared goal bucket flag');
         }
 
         const fsm = normalized.platforms.fsm || {};
