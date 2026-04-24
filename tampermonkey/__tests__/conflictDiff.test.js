@@ -45,6 +45,17 @@ describe('conflict diff helpers', () => {
         expect(items[0].remoteBucketDisplay).toBe('Education');
     });
 
+    it('detects cleared bucket marker differences', () => {
+        const conflict = {
+            local: { goalTargets: {}, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: { goal1: true } },
+            remote: { goalTargets: {}, goalFixed: {}, goalBuckets: { goal1: 'Retirement' }, clearedGoalBuckets: {} }
+        };
+        const items = buildConflictDiffItemsForMap(conflict, { goal1: 'Goal One' });
+        expect(items).toHaveLength(1);
+        expect(items[0].localBucketDisplay).toBe('Cleared');
+        expect(items[0].remoteBucketDisplay).toBe('Retirement');
+    });
+
     it('ignores target changes when goal is fixed', () => {
         const conflict = {
             local: { goalTargets: { goal1: 10 }, goalFixed: { goal1: true } },

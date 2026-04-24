@@ -4377,7 +4377,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
 function getEndowusSyncView(config) {
     if (!config || typeof config !== 'object') {
-        return { goalTargets: {}, goalFixed: {}, goalBuckets: {} };
+        return { goalTargets: {}, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} };
     }
     if (config.platforms && typeof config.platforms === 'object') {
         const endowus = config.platforms.endowus && typeof config.platforms.endowus === 'object'
@@ -4386,13 +4386,15 @@ function getEndowusSyncView(config) {
         return {
             goalTargets: endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {},
             goalFixed: endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {},
-            goalBuckets: endowus.goalBuckets && typeof endowus.goalBuckets === 'object' ? endowus.goalBuckets : {}
+            goalBuckets: endowus.goalBuckets && typeof endowus.goalBuckets === 'object' ? endowus.goalBuckets : {},
+            clearedGoalBuckets: endowus.clearedGoalBuckets && typeof endowus.clearedGoalBuckets === 'object' ? endowus.clearedGoalBuckets : {}
         };
     }
     return {
         goalTargets: config.goalTargets && typeof config.goalTargets === 'object' ? config.goalTargets : {},
         goalFixed: config.goalFixed && typeof config.goalFixed === 'object' ? config.goalFixed : {},
-        goalBuckets: config.goalBuckets && typeof config.goalBuckets === 'object' ? config.goalBuckets : {}
+        goalBuckets: config.goalBuckets && typeof config.goalBuckets === 'object' ? config.goalBuckets : {},
+        clearedGoalBuckets: config.clearedGoalBuckets && typeof config.clearedGoalBuckets === 'object' ? config.clearedGoalBuckets : {}
     };
 }
 
@@ -4644,13 +4646,17 @@ function buildConflictDiffItemsForMap(conflict, nameMapOverride = {}) {
     const remoteFixed = remoteEndowus.goalFixed || {};
     const localBuckets = localEndowus.goalBuckets || {};
     const remoteBuckets = remoteEndowus.goalBuckets || {};
+    const localClearedBuckets = localEndowus.clearedGoalBuckets || {};
+    const remoteClearedBuckets = remoteEndowus.clearedGoalBuckets || {};
     const goalIds = new Set([
         ...Object.keys(localTargets),
         ...Object.keys(remoteTargets),
         ...Object.keys(localFixed),
         ...Object.keys(remoteFixed),
         ...Object.keys(localBuckets),
-        ...Object.keys(remoteBuckets)
+        ...Object.keys(remoteBuckets),
+        ...Object.keys(localClearedBuckets),
+        ...Object.keys(remoteClearedBuckets)
     ]);
     if (goalIds.size === 0) {
         return [];
@@ -4667,10 +4673,12 @@ function buildConflictDiffItemsForMap(conflict, nameMapOverride = {}) {
             const remoteFixedValue = remoteFixed[goalId] === true;
             const localBucket = utils.normalizeString(localBuckets[goalId], '');
             const remoteBucket = utils.normalizeString(remoteBuckets[goalId], '');
+            const localBucketCleared = localClearedBuckets[goalId] === true;
+            const remoteBucketCleared = remoteClearedBuckets[goalId] === true;
             const shouldIgnoreTarget = localFixedValue || remoteFixedValue;
             const targetChanged = !shouldIgnoreTarget && localTarget !== remoteTarget;
             const fixedChanged = localFixedValue !== remoteFixedValue;
-            const bucketChanged = localBucket !== remoteBucket;
+            const bucketChanged = localBucket !== remoteBucket || localBucketCleared !== remoteBucketCleared;
             if (!targetChanged && !fixedChanged && !bucketChanged) {
                 return null;
             }
@@ -4682,8 +4690,8 @@ function buildConflictDiffItemsForMap(conflict, nameMapOverride = {}) {
                 remoteTargetDisplay: formatSyncTarget(remoteTarget),
                 localFixedDisplay: formatSyncFixed(localFixedValue),
                 remoteFixedDisplay: formatSyncFixed(remoteFixedValue),
-                localBucketDisplay: localBucket || '-',
-                remoteBucketDisplay: remoteBucket || '-'
+                localBucketDisplay: localBucketCleared ? 'Cleared' : (localBucket || '-'),
+                remoteBucketDisplay: remoteBucketCleared ? 'Cleared' : (remoteBucket || '-')
             };
         })
         .filter(Boolean)
@@ -7876,23 +7884,31 @@ function withButtonState(button, busyText, action) {
         });
     }
 
+    function updateSyncActivationControls(isEnabled) {
+        const inputs = document.querySelectorAll('.gpv-sync-input, #gpv-sync-auto, #gpv-sync-interval');
+        inputs.forEach(input => {
+            input.disabled = !isEnabled;
+        });
+
+        const status = SyncManager.getStatus();
+        const buttons = document.querySelectorAll('#gpv-sync-test-btn, #gpv-sync-now-btn, #gpv-sync-register-btn, #gpv-sync-login-btn');
+        buttons.forEach(btn => {
+            if (btn.id === 'gpv-sync-now-btn') {
+                btn.disabled = !isEnabled || !status.isConfigured || !status.hasSessionKey;
+                return;
+            }
+            if (btn.id === 'gpv-sync-test-btn') {
+                btn.disabled = !isEnabled || !status.isConfigured;
+                return;
+            }
+            btn.disabled = !isEnabled;
+        });
+    }
+
     // Enable/disable sync
     if (enabledCheckbox) {
         enabledCheckbox.addEventListener('change', (e) => {
-            const inputs = document.querySelectorAll('.gpv-sync-input, #gpv-sync-auto, #gpv-sync-interval');
-            inputs.forEach(input => {
-                input.disabled = !e.target.checked;
-            });
-            
-            const status = SyncManager.getStatus();
-            const buttons = document.querySelectorAll('#gpv-sync-test-btn, #gpv-sync-now-btn');
-            buttons.forEach(btn => {
-                if (btn.id === 'gpv-sync-now-btn') {
-                    btn.disabled = !e.target.checked || !status.isConfigured || !status.hasSessionKey;
-                } else {
-                    btn.disabled = !e.target.checked || !status.isConfigured;
-                }
-            });
+            updateSyncActivationControls(e.target.checked);
             updateRememberKeyVisibility();
         });
     }
@@ -7912,6 +7928,7 @@ function withButtonState(button, busyText, action) {
         });
     }
 
+    updateSyncActivationControls(enabledCheckbox?.checked === true);
     updateRememberKeyVisibility();
 
     // Save settings
@@ -7982,12 +7999,17 @@ function withButtonState(button, busyText, action) {
                 try {
                     clearSyncMessage();
                     const {
+                        enabled,
                         serverUrl,
                         userId,
                         password,
                         autoSync,
                         syncInterval
                     } = getSyncFormState();
+
+                    if (!enabled) {
+                        throw new Error('Activate Sync before signing up');
+                    }
 
                     if (!serverUrl || !userId || !password) {
                         throw new Error('Please fill in Server URL, User ID, and Password');
@@ -8026,6 +8048,7 @@ function withButtonState(button, busyText, action) {
                 try {
                     clearSyncMessage();
                     const {
+                        enabled,
                         serverUrl,
                         userId,
                         password,
@@ -8036,6 +8059,10 @@ function withButtonState(button, busyText, action) {
                     const rememberKey = rememberKeyTouched
                         ? rememberKeyCheckbox?.checked === true
                         : true;
+
+                    if (!enabled) {
+                        throw new Error('Activate Sync before logging in');
+                    }
 
                     if (!serverUrl || !userId || !password) {
                         throw new Error('Please fill in Server URL, User ID, and Password');

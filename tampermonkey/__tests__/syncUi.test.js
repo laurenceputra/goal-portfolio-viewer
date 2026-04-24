@@ -259,6 +259,23 @@ describe('sync settings UI', () => {
         expect(wrapper.style.display).toBe('block');
     });
 
+    test('login and sign up stay disabled when sync activation is off', () => {
+        const { createSyncSettingsHTML, setupSyncSettingsListeners } = exportsModule;
+        seedStatusEnabledUnconfigured();
+        storage.delete('sync_refresh_token');
+        storage.delete('sync_refresh_token_expiry');
+
+        document.body.innerHTML = createSyncSettingsHTML();
+        setupSyncSettingsListeners();
+
+        const enabledCheckbox = document.getElementById('gpv-sync-enabled');
+        enabledCheckbox.checked = false;
+        enabledCheckbox.dispatchEvent(new window.Event('change'));
+
+        expect(document.getElementById('gpv-sync-login-btn').disabled).toBe(true);
+        expect(document.getElementById('gpv-sync-register-btn').disabled).toBe(true);
+    });
+
     test('login enables sync with encryption by default and saves settings', async () => {
         jest.useFakeTimers();
         const { createSyncSettingsHTML, setupSyncSettingsListeners, SyncManager } = exportsModule;
