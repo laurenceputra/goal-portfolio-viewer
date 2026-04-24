@@ -1389,18 +1389,47 @@ function buildFundingRecommendations(triggerTrades, oppositeTrades) {
     return recommendations;
 }
 
+function buildTriggerSubset(triggerTrades, fundedTrades) {
+    const fundedTotal = (Array.isArray(fundedTrades) ? fundedTrades : [])
+        .reduce((sum, item) => sum + (toFiniteNumber(item?.recommendedAmount, null) ?? getPlanningTradeAmount(item)), 0);
+    if (fundedTotal <= 0) {
+        return [];
+    }
+    let runningTotal = 0;
+    const triggers = [];
+    (Array.isArray(triggerTrades) ? triggerTrades : []).forEach(item => {
+        if (runningTotal >= fundedTotal) {
+            return;
+        }
+        const amount = getPlanningTradeAmount(item);
+        if (amount <= 0) {
+            return;
+        }
+        const remainingAmount = Math.max(fundedTotal - runningTotal, 0);
+        const triggerAmount = Math.min(amount, remainingAmount || amount);
+        runningTotal += triggerAmount;
+        triggers.push({
+            ...item,
+            recommendedAmount: Number(triggerAmount.toFixed(2))
+        });
+    });
+    return triggers;
+}
+
 function buildPlanningRecommendations({ buys, sells }) {
     const materialBuys = selectPlanningTradesByDrift(buys, 'buy', { materialOnly: true });
     const materialSells = selectPlanningTradesByDrift(sells, 'sell', { materialOnly: true });
+    const suggestedBuys = materialSells.length > 0
+        ? buildFundingRecommendations(materialSells, selectPlanningTradesByDrift(buys, 'buy'))
+        : [];
+    const suggestedSells = materialBuys.length > 0
+        ? buildFundingRecommendations(materialBuys, selectPlanningTradesByDrift(sells, 'sell'))
+        : [];
     return {
-        suggestedBuys: materialSells.length > 0
-            ? buildFundingRecommendations(materialSells, selectPlanningTradesByDrift(buys, 'buy'))
-            : [],
-        suggestedSells: materialBuys.length > 0
-            ? buildFundingRecommendations(materialBuys, selectPlanningTradesByDrift(sells, 'sell'))
-            : [],
-        triggerBuys: materialBuys,
-        triggerSells: materialSells,
+        suggestedBuys,
+        suggestedSells,
+        triggerBuys: buildTriggerSubset(materialBuys, suggestedSells),
+        triggerSells: buildTriggerSubset(materialSells, suggestedBuys),
         buyCandidates: selectPlanningTradesByDrift(buys, 'buy'),
         sellCandidates: selectPlanningTradesByDrift(sells, 'sell'),
         materialBuys,

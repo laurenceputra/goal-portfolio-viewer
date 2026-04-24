@@ -111,11 +111,11 @@ describe('projected and goal helpers', () => {
     test('should describe suggested buys and sells clearly', () => {
         expect(buildPlanningTradeLines({
             triggerBuys: [
-                { goalName: 'BND', recommendedAmount: 4000 }
+                { goalName: 'BND', recommendedAmount: 3500 }
             ],
             triggerSells: [
-                { displayTicker: 'ALZP64', recommendedAmount: 12509.12 },
-                { displayTicker: 'MBH', recommendedAmount: 2500.5 }
+                { displayTicker: 'ALZP64', recommendedAmount: 4618.04 },
+                { displayTicker: 'MBH', recommendedAmount: 1200 }
             ],
             suggestedBuys: [
                 { goalName: 'VWRA', recommendedAmount: 4618.04 },
@@ -125,9 +125,9 @@ describe('projected and goal helpers', () => {
                 { displayTicker: 'A35', recommendedAmount: 3500 }
             ]
         })).toEqual([
-            'Trigger sells: ALZP64 SGD\u00A012,509.12 | MBH SGD\u00A02,500.50',
+            'Trigger sells: ALZP64 SGD\u00A04,618.04 | MBH SGD\u00A01,200.00',
             'Suggested buys: VWRA SGD\u00A04,618.04 | ES3 SGD\u00A01,200.00',
-            'Trigger buys: BND SGD\u00A04,000.00',
+            'Trigger buys: BND SGD\u00A03,500.00',
             'Suggested sells: A35 SGD\u00A03,500.00'
         ]);
     });
@@ -161,6 +161,7 @@ describe('projected and goal helpers', () => {
         expect(result.suggestedBuys[2].recommendedAmount).toBe(1800);
         expect(result.suggestedSells.map(item => item.displayTicker)).toEqual(['Sell A']);
         expect(result.triggerSells.map(item => item.displayTicker)).toEqual(['Sell A', 'Sell B']);
+        expect(result.triggerSells.map(item => item.recommendedAmount)).toEqual([10000, 800]);
     });
 
     test('should build suggested sells from material buys using drift order', () => {
@@ -181,6 +182,7 @@ describe('projected and goal helpers', () => {
         expect(result.suggestedSells[2].recommendedAmount).toBe(1800);
         expect(result.suggestedBuys.map(item => item.goalName)).toEqual(['Buy A']);
         expect(result.triggerBuys.map(item => item.goalName)).toEqual(['Buy A', 'Buy B']);
+        expect(result.triggerBuys.map(item => item.recommendedAmount)).toEqual([10000, 800]);
     });
 });
 
