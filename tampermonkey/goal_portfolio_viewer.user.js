@@ -128,6 +128,26 @@
             }
             return serverUrl.trim().replace(/\/+$/, '');
         },
+        isAllowedSyncServerUrl(serverUrl) {
+            const normalized = this.normalizeServerUrl(serverUrl);
+            if (!normalized) {
+                return false;
+            }
+            try {
+                const url = new URL(normalized);
+                if (url.protocol === 'https:') {
+                    return true;
+                }
+                return url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
+            } catch (_error) {
+                return false;
+            }
+        },
+        assertAllowedSyncServerUrl(serverUrl) {
+            if (!this.isAllowedSyncServerUrl(serverUrl)) {
+                throw new Error('Sync server URL must use HTTPS, except localhost/127.0.0.1 for development');
+            }
+        },
         normalizeString(value, fallback = '') {
             if (value === null || value === undefined) {
                 return fallback;
@@ -2582,49 +2602,8 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         Storage.set(key, isCollapsed ? 'true' : 'false', 'Error writing collapse state');
     }
 
-    function bytesToBase64(bytes) {
-        if (!bytes || !(bytes instanceof Uint8Array)) {
-            return '';
-        }
-        return btoa(String.fromCharCode(...bytes));
-    }
-
-    function base64ToBytes(base64) {
-        if (!base64 || typeof base64 !== 'string') {
-            return null;
-        }
-        try {
-            return new Uint8Array(atob(base64).split('').map(char => char.charCodeAt(0)));
-        } catch (_error) {
-            return null;
-        }
-    }
-
-    function getRememberedMasterKey() {
-        const remember = Storage.get(SYNC_STORAGE_KEYS.rememberKey, false);
-        if (!remember) {
-            return null;
-        }
-        const stored = Storage.get(SYNC_STORAGE_KEYS.rememberedMasterKey, null);
-        const bytes = base64ToBytes(stored);
-        return bytes && bytes.length ? bytes : null;
-    }
-
-    function setRememberedMasterKey(masterKey, remember) {
-        if (!remember) {
-            Storage.set(SYNC_STORAGE_KEYS.rememberKey, false);
-            Storage.remove(SYNC_STORAGE_KEYS.rememberedMasterKey);
-            return;
-        }
-        if (!masterKey || !(masterKey instanceof Uint8Array) || !masterKey.length) {
-            return;
-        }
-        Storage.set(SYNC_STORAGE_KEYS.rememberKey, true);
-        Storage.set(SYNC_STORAGE_KEYS.rememberedMasterKey, bytesToBase64(masterKey));
-    }
-
     function clearRememberedMasterKey() {
-        Storage.set(SYNC_STORAGE_KEYS.rememberKey, false);
+        Storage.remove(SYNC_STORAGE_KEYS.rememberKey);
         Storage.remove(SYNC_STORAGE_KEYS.rememberedMasterKey);
     }
 
@@ -2928,11 +2907,15 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     let autoSyncTimer = null;
     let syncOnChangeTimer = null;
     let syncOnChangeRetryTimer = null;
-    let sessionMasterKey = getRememberedMasterKey();
+    let sessionMasterKey = null;
 
     function getStoredServerUrl(fallback = '') {
         const stored = Storage.get(SYNC_STORAGE_KEYS.serverUrl, fallback);
-        return utils.normalizeServerUrl(stored || '');
+        const normalized = utils.normalizeServerUrl(stored || '');
+        if (normalized) {
+            utils.assertAllowedSyncServerUrl(normalized);
+        }
+        return normalized;
     }
 
     function decodeBase64Url(value) {
@@ -3053,6 +3036,8 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         Storage.remove(SYNC_STORAGE_KEYS.accessTokenExpiry);
         Storage.remove(SYNC_STORAGE_KEYS.refreshTokenExpiry);
     }
+
+    clearRememberedMasterKey();
 
     async function refreshAccessToken() {
         const serverUrl = getStoredServerUrl(SYNC_DEFAULTS.serverUrl);
@@ -3300,6 +3285,20 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         };
     }
 
+    function removeStalePrefixedKeys(prefix, activeSuffixes, errorMessage = 'Error deleting stale sync key') {
+        const allKeys = GM_listValues ? GM_listValues() : [];
+        const active = activeSuffixes instanceof Set ? activeSuffixes : new Set(activeSuffixes || []);
+        for (const key of allKeys) {
+            if (!key.startsWith(prefix)) {
+                continue;
+            }
+            const suffix = key.substring(prefix.length);
+            if (!active.has(suffix)) {
+                Storage.remove(key, errorMessage);
+            }
+        }
+    }
+
     /**
      * Collect syncable config data
      */
@@ -3341,6 +3340,25 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const endowusBuckets = endowus.goalBuckets && typeof endowus.goalBuckets === 'object' ? endowus.goalBuckets : {};
         const clearedGoalBuckets = endowus.clearedGoalBuckets && typeof endowus.clearedGoalBuckets === 'object' ? endowus.clearedGoalBuckets : {};
 
+        removeStalePrefixedKeys(
+            STORAGE_KEY_PREFIXES.goalTarget,
+            new Set(Object.keys(endowusTargets).filter(goalId => endowusFixed[goalId] !== true)),
+            'Error deleting stale Endowus target'
+        );
+        removeStalePrefixedKeys(
+            STORAGE_KEY_PREFIXES.goalFixed,
+            new Set(Object.keys(endowusFixed)),
+            'Error deleting stale Endowus fixed flag'
+        );
+        removeStalePrefixedKeys(
+            STORAGE_KEY_PREFIXES.goalBucket,
+            new Set([
+                ...Object.keys(endowusBuckets),
+                ...Object.keys(clearedGoalBuckets).filter(goalId => clearedGoalBuckets[goalId] === true).map(goalId => `${goalId}__cleared`)
+            ]),
+            'Error deleting stale Endowus bucket setting'
+        );
+
         for (const [goalId, value] of Object.entries(endowusTargets)) {
             if (endowusFixed[goalId] === true) {
                 continue;
@@ -3375,6 +3393,27 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const fsmDriftSettings = fsm.driftSettings && typeof fsm.driftSettings === 'object' ? fsm.driftSettings : {};
         const fsmPortfolios = normalizeFsmPortfolios(Array.isArray(fsm.portfolios) ? fsm.portfolios : []);
         const fsmAssignmentByCode = fsm.assignmentByCode && typeof fsm.assignmentByCode === 'object' ? fsm.assignmentByCode : {};
+
+        removeStalePrefixedKeys(
+            STORAGE_KEY_PREFIXES.fsmTarget,
+            new Set(Object.keys(fsmTargets).filter(code => fsmFixed[code] !== true)),
+            'Error deleting stale FSM target'
+        );
+        removeStalePrefixedKeys(
+            STORAGE_KEY_PREFIXES.fsmFixed,
+            new Set(Object.keys(fsmFixed)),
+            'Error deleting stale FSM fixed flag'
+        );
+        removeStalePrefixedKeys(
+            STORAGE_KEY_PREFIXES.fsmTag,
+            new Set(Object.keys(fsmTags)),
+            'Error deleting stale FSM tag'
+        );
+        removeStalePrefixedKeys(
+            STORAGE_KEY_PREFIXES.fsmDriftSetting,
+            new Set(Object.keys(fsmDriftSettings)),
+            'Error deleting stale FSM drift setting'
+        );
 
         for (const [code, value] of Object.entries(fsmTargets)) {
             if (fsmFixed[code] === true) {
@@ -4175,17 +4214,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         if (!config || !normalizedServerUrl || !config.userId) {
             throw new Error('Invalid sync configuration: serverUrl and userId required');
         }
+        utils.assertAllowedSyncServerUrl(normalizedServerUrl);
 
         if (config.masterKey) {
             setSessionMasterKey(config.masterKey);
         } else if (config.password) {
             const derivedKey = await SyncEncryption.deriveMasterKey(config.password);
             setSessionMasterKey(derivedKey);
-        } else if (!sessionMasterKey) {
-            const storedKey = getRememberedMasterKey();
-            if (storedKey) {
-                setSessionMasterKey(storedKey);
-            }
         }
 
         if (!sessionMasterKey) {
@@ -4212,11 +4247,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             Storage.set(SYNC_STORAGE_KEYS.syncInterval, config.syncInterval);
         }
 
-        if (config.rememberKey === true) {
-            setRememberedMasterKey(sessionMasterKey, true);
-        } else if (config.rememberKey === false) {
-            clearRememberedMasterKey();
-        }
+        clearRememberedMasterKey();
 
         startAutoSync();
         logDebug('[Goal Portfolio Viewer] Sync enabled');
@@ -4230,6 +4261,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         if (!normalizedServerUrl || !userId || !password) {
             throw new Error('serverUrl, userId, and password are required');
         }
+        utils.assertAllowedSyncServerUrl(normalizedServerUrl);
 
         if (password.length < 8) {
             throw new Error('Password must be at least 8 characters');
@@ -4272,6 +4304,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         if (!normalizedServerUrl || !userId || !password) {
             throw new Error('serverUrl, userId, and password are required');
         }
+        utils.assertAllowedSyncServerUrl(normalizedServerUrl);
 
         // Hash password for authentication
         const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
@@ -4349,6 +4382,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             isTokenValid,
             refreshAccessToken,
             getAccessToken,
+            setSessionMasterKey,
             storeTokens,
             clearTokens
         }
@@ -4940,7 +4974,9 @@ let GoalTargetStore;
         extractAuthHeaders(args[0], args[1]);
         const response = await originalFetch.apply(this, args);
         const url = args[0];
-        void handleInterceptedResponse(url, () => response.clone().json());
+        if (response?.ok) {
+            void handleInterceptedResponse(url, () => response.clone().json());
+        }
         return response;
     };
 
@@ -4964,7 +5000,10 @@ let GoalTargetStore;
         
         if (url && typeof url === 'string') {
             this.addEventListener('load', function() {
-                handleInterceptedResponse(url, () => Promise.resolve(parseJsonSafely(this.responseText)));
+                const status = Number(this.status);
+                if (!Number.isFinite(status) || (status >= 200 && status < 300)) {
+                    handleInterceptedResponse(url, () => Promise.resolve(parseJsonSafely(this.responseText)));
+                }
             });
         }
         
@@ -7420,7 +7459,6 @@ function getSyncFormState() {
     const serverUrl = utils.normalizeServerUrl(rawServerUrl);
     const userId = document.getElementById('gpv-sync-user-id')?.value.trim() || '';
     const password = document.getElementById('gpv-sync-password')?.value || '';
-    const rememberKey = document.getElementById('gpv-sync-remember-key')?.checked === true;
     const autoSync = document.getElementById('gpv-sync-auto')?.checked === true;
     const intervalValue = document.getElementById('gpv-sync-interval')?.value;
     const syncInterval = Number.parseInt(intervalValue, 10) || SYNC_DEFAULTS.syncInterval;
@@ -7430,7 +7468,6 @@ function getSyncFormState() {
         serverUrl,
         userId,
         password,
-        rememberKey,
         autoSync,
         syncInterval
     };
@@ -7533,7 +7570,6 @@ function withButtonState(button, busyText, action) {
         const hasValidRefreshToken = syncStatus.hasValidRefreshToken;
         const serverUrl = utils.normalizeServerUrl(Storage.get(SYNC_STORAGE_KEYS.serverUrl, SYNC_DEFAULTS.serverUrl)) || SYNC_DEFAULTS.serverUrl;
         const userId = Storage.get(SYNC_STORAGE_KEYS.userId, '');
-        const rememberKey = Storage.get(SYNC_STORAGE_KEYS.rememberKey, false);
         const autoSync = Storage.get(SYNC_STORAGE_KEYS.autoSync, SYNC_DEFAULTS.autoSync);
         const syncInterval = Storage.get(SYNC_STORAGE_KEYS.syncInterval, SYNC_DEFAULTS.syncInterval);
         const lastSyncTimestamp = syncStatus.lastSync;
@@ -7545,7 +7581,6 @@ function withButtonState(button, busyText, action) {
             hasValidRefreshToken,
             serverUrl,
             userId,
-            rememberKey,
             autoSync,
             syncInterval,
             lastSyncText: lastSyncTimestamp
@@ -7687,27 +7722,6 @@ function withButtonState(button, busyText, action) {
         `;
     }
 
-    function renderRememberKeySection({ isEnabled, cryptoSupported, hasSessionKey, rememberKey }) {
-        const shouldShowRememberKey = isEnabled && cryptoSupported && (hasSessionKey || rememberKey);
-        return `
-            <div class="gpv-sync-form-group" id="gpv-sync-remember-wrapper" style="display: ${shouldShowRememberKey ? 'block' : 'none'};">
-                <label class="gpv-sync-toggle">
-                    <input 
-                        type="checkbox" 
-                        id="gpv-sync-remember-key"
-                        ${rememberKey ? 'checked' : ''}
-                        ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
-                    />
-                    <span>Remember encryption key on this device</span>
-                </label>
-                <p class="gpv-sync-help">Keeps sync unlocked between sessions on this device only.</p>
-            </div>
-            <p class="gpv-sync-help" id="gpv-sync-remember-hint" style="display: ${shouldShowRememberKey || !isEnabled || !cryptoSupported ? 'none' : 'block'};">
-                Save settings after entering your password to unlock sync.
-            </p>
-        `;
-    }
-
     function renderAutoSyncSection({ autoSync, syncInterval, isEnabled, cryptoSupported }) {
         return `
             <div class="gpv-sync-form-group">
@@ -7811,7 +7825,6 @@ function withButtonState(button, busyText, action) {
                     ${renderServerUrlField(state)}
                     ${renderUserIdField(state)}
                     ${renderPasswordField(state)}
-                    ${renderRememberKeySection(state)}
                     ${renderSyncAuthButtons(state)}
                     ${renderSyncPrimaryAction({
                         isEnabled: state.isEnabled,
@@ -7836,7 +7849,7 @@ function withButtonState(button, busyText, action) {
     if (serverUrlInput) {
         serverUrlInput.addEventListener('blur', () => {
             const normalized = utils.normalizeServerUrl(serverUrlInput.value);
-            if (normalized) {
+            if (normalized && utils.isAllowedSyncServerUrl(normalized)) {
                 Storage.set(SYNC_STORAGE_KEYS.serverUrl, normalized);
             }
         });
@@ -7852,37 +7865,7 @@ function withButtonState(button, busyText, action) {
         });
     }
 
-    const passwordInput = document.getElementById('gpv-sync-password');
-    const rememberKeyWrapper = document.getElementById('gpv-sync-remember-wrapper');
-    const rememberKeyHint = document.getElementById('gpv-sync-remember-hint');
     const enabledCheckbox = document.getElementById('gpv-sync-enabled');
-
-    function updateRememberKeyVisibility() {
-        const status = SyncManager.getStatus();
-        const isEnabled = enabledCheckbox ? enabledCheckbox.checked : status.isEnabled;
-        const isValidPassword = Boolean(passwordInput?.value && passwordInput.value.length >= 8);
-        const rememberKeyCheckbox = document.getElementById('gpv-sync-remember-key');
-        const shouldShow = isEnabled && status.cryptoSupported && (status.hasSessionKey || isValidPassword || rememberKeyCheckbox?.checked);
-
-        if (rememberKeyWrapper) {
-            rememberKeyWrapper.style.display = shouldShow ? 'block' : 'none';
-        }
-        if (rememberKeyHint) {
-            rememberKeyHint.style.display = shouldShow || !isEnabled || !status.cryptoSupported ? 'none' : 'block';
-        }
-    }
-
-    const rememberKeyCheckbox = document.getElementById('gpv-sync-remember-key');
-    let rememberKeyTouched = false;
-    if (rememberKeyCheckbox) {
-        rememberKeyCheckbox.addEventListener('change', (e) => {
-            rememberKeyTouched = true;
-            if (!e.target.checked) {
-                clearRememberedMasterKey();
-            }
-            updateRememberKeyVisibility();
-        });
-    }
 
     function updateSyncActivationControls(isEnabled) {
         const inputs = document.querySelectorAll('.gpv-sync-input, #gpv-sync-auto, #gpv-sync-interval');
@@ -7909,12 +7892,7 @@ function withButtonState(button, busyText, action) {
     if (enabledCheckbox) {
         enabledCheckbox.addEventListener('change', (e) => {
             updateSyncActivationControls(e.target.checked);
-            updateRememberKeyVisibility();
         });
-    }
-
-    if (passwordInput) {
-        passwordInput.addEventListener('input', updateRememberKeyVisibility);
     }
 
     // Auto-sync toggle
@@ -7929,7 +7907,6 @@ function withButtonState(button, busyText, action) {
     }
 
     updateSyncActivationControls(enabledCheckbox?.checked === true);
-    updateRememberKeyVisibility();
 
     // Save settings
     const saveBtn = document.getElementById('gpv-sync-save-btn');
@@ -7943,7 +7920,6 @@ function withButtonState(button, busyText, action) {
                         serverUrl,
                         userId,
                         password,
-                        rememberKey,
                         autoSync,
                         syncInterval
                     } = getSyncFormState();
@@ -7955,7 +7931,7 @@ function withButtonState(button, busyText, action) {
                             throw new Error('Server URL and User ID are required when sync is activated');
                         }
                         if (!password && !hasSessionKey) {
-                            throw new Error('Password is required to unlock sync for this session (or enable remember key)');
+                            throw new Error('Password is required to unlock sync for this session');
                         }
                         if (password && password.length < 8) {
                             throw new Error('Password must be at least 8 characters');
@@ -7971,8 +7947,7 @@ function withButtonState(button, busyText, action) {
                             userId,
                             password: password || null,
                             autoSync,
-                            syncInterval,
-                            rememberKey
+                            syncInterval
                         });
                         const successMessage = 'Sync settings saved successfully!';
                         showSuccessMessage(successMessage);
@@ -8026,8 +8001,7 @@ function withButtonState(button, busyText, action) {
                         userId,
                         password,
                         autoSync,
-                        syncInterval,
-                        rememberKey: true
+                        syncInterval
                     });
                     const successMessage = '✅ Account created and sync enabled with encryption by default.';
                     showSuccessMessage(successMessage);
@@ -8055,10 +8029,6 @@ function withButtonState(button, busyText, action) {
                         autoSync,
                         syncInterval
                     } = getSyncFormState();
-                    const rememberKeyCheckbox = document.getElementById('gpv-sync-remember-key');
-                    const rememberKey = rememberKeyTouched
-                        ? rememberKeyCheckbox?.checked === true
-                        : true;
 
                     if (!enabled) {
                         throw new Error('Activate Sync before logging in');
@@ -8074,8 +8044,7 @@ function withButtonState(button, busyText, action) {
                         userId,
                         password,
                         autoSync,
-                        syncInterval,
-                        rememberKey
+                        syncInterval
                     });
                     const successMessage = '✅ Login successful! Sync enabled with encryption by default.';
                     showSuccessMessage(successMessage);
@@ -8104,6 +8073,7 @@ function withButtonState(button, busyText, action) {
                     if (!serverUrl) {
                         throw new Error('Server URL is required to test the connection');
                     }
+                    utils.assertAllowedSyncServerUrl(serverUrl);
                     Storage.set(SYNC_STORAGE_KEYS.serverUrl, serverUrl);
                     const response = await SyncManager.requestJson(`${serverUrl}/health`);
                     const data = await response.json().catch(() => ({}));

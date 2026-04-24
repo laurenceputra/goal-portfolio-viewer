@@ -144,6 +144,23 @@ describe('API interception', () => {
         expect(global.GM_setValue).not.toHaveBeenCalled();
     });
 
+    test('fetch interception ignores non-2xx responses', async () => {
+        const performanceData = [{ goalId: 'goal1' }];
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: false,
+            status: 500
+        });
+        baseFetchMock.mockResolvedValueOnce(responseFactory(performanceData));
+        global.GM_setValue.mockClear();
+
+        await window.fetch('https://app.sg.endowus.com/v1/goals/performance');
+        await flushPromises();
+
+        expect(global.GM_setValue).not.toHaveBeenCalled();
+    });
+
     test('fetch interception tolerates JSON parse errors', async () => {
         jest.spyOn(console, 'error').mockImplementation(() => {});
         const responseFactory = () => ({
@@ -176,6 +193,19 @@ describe('API interception', () => {
             'api_summary',
             JSON.stringify(summaryData)
         );
+    });
+
+    test('XMLHttpRequest interception ignores non-2xx responses', async () => {
+        const xhr = new global.XMLHttpRequest();
+        xhr.open('GET', 'https://app.sg.endowus.com/v1/goals');
+        xhr.status = 401;
+        xhr.responseText = JSON.stringify([{ goalId: 'goal1' }]);
+        global.GM_setValue.mockClear();
+
+        xhr.send();
+        await flushPromises();
+
+        expect(global.GM_setValue).not.toHaveBeenCalled();
     });
 
     test('XMLHttpRequest interception ignores invalid JSON', async () => {
