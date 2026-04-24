@@ -25,6 +25,7 @@ const {
     buildGoalTargetById,
     buildGoalFixedById,
     buildMergedInvestmentData,
+    buildBucketPlanningModel,
     getPerformanceCacheKey,
     getBucketViewModePreference,
     setBucketViewModePreference,
@@ -146,7 +147,8 @@ describe('projected and goal helpers', () => {
         });
 
         expect(result.suggestedBuys.map(item => item.goalName)).toEqual(['Buy B', 'Buy C', 'Buy A']);
-        expect(result.suggestedBuys.reduce((sum, item) => sum + item.recommendedAmount, 0)).toBeGreaterThanOrEqual(10800);
+        expect(result.suggestedBuys.reduce((sum, item) => sum + item.recommendedAmount, 0)).toBe(10800);
+        expect(result.suggestedBuys[2].recommendedAmount).toBe(1800);
         expect(result.suggestedSells.map(item => item.displayTicker)).toEqual(['Sell A']);
     });
 
@@ -164,7 +166,8 @@ describe('projected and goal helpers', () => {
         });
 
         expect(result.suggestedSells.map(item => item.displayTicker)).toEqual(['Sell B', 'Sell C', 'Sell A']);
-        expect(result.suggestedSells.reduce((sum, item) => sum + item.recommendedAmount, 0)).toBeGreaterThanOrEqual(10800);
+        expect(result.suggestedSells.reduce((sum, item) => sum + item.recommendedAmount, 0)).toBe(10800);
+        expect(result.suggestedSells[2].recommendedAmount).toBe(1800);
         expect(result.suggestedBuys.map(item => item.goalName)).toEqual(['Buy A']);
     });
 });
@@ -257,6 +260,60 @@ describe('view model builders', () => {
         expect(firstGoal.isFixed).toBe(true);
         expect(firstGoal.driftDisplay).toBe('0.00% (SGD\u00A00.00)');
         expect(firstGoal.driftClass).toBe('gpv-drift--green');
+    });
+
+    test('should sort bucket-level planning recommendations across goal types by drift severity', () => {
+        const planning = buildBucketPlanningModel([
+            {
+                displayName: 'Type A',
+                planning: {
+                    scenarioAmount: 0,
+                    scenarioSplit: [],
+                    targetCoverageLabel: null,
+                    buyCandidates: [
+                        { goalName: 'Retirement - Buy Mild', diffAmount: -4000, driftPercent: -0.31 }
+                    ],
+                    sellCandidates: [
+                        { goalName: 'Retirement - Sell Strong', diffAmount: 5000, driftPercent: 0.5 }
+                    ],
+                    materialBuys: [
+                        { goalName: 'Retirement - Buy Mild', diffAmount: -4000, driftPercent: -0.31 }
+                    ],
+                    materialSells: [
+                        { goalName: 'Retirement - Sell Strong', diffAmount: 5000, driftPercent: 0.5 }
+                    ]
+                }
+            },
+            {
+                displayName: 'Type B',
+                planning: {
+                    scenarioAmount: 0,
+                    scenarioSplit: [],
+                    targetCoverageLabel: null,
+                    buyCandidates: [
+                        { goalName: 'Retirement - Buy Strong', diffAmount: -7000, driftPercent: -0.42 }
+                    ],
+                    sellCandidates: [
+                        { goalName: 'Retirement - Sell Mild', diffAmount: 5000, driftPercent: 0.28 }
+                    ],
+                    materialBuys: [
+                        { goalName: 'Retirement - Buy Strong', diffAmount: -7000, driftPercent: -0.42 }
+                    ],
+                    materialSells: [
+                        { goalName: 'Retirement - Sell Mild', diffAmount: 5000, driftPercent: 0.28 }
+                    ]
+                }
+            }
+        ]);
+
+        expect(planning.suggestedBuys.map(item => item.goalName)).toEqual([
+            'Retirement - Buy Strong',
+            'Retirement - Buy Mild'
+        ]);
+        expect(planning.suggestedSells.map(item => item.goalName)).toEqual([
+            'Retirement - Sell Strong',
+            'Retirement - Sell Mild'
+        ]);
     });
 
     test('should map per-goal window returns with fallback', () => {

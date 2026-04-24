@@ -1365,10 +1365,12 @@ function buildFundingRecommendations(triggerTrades, oppositeTrades) {
         if (amount <= 0) {
             return;
         }
-        runningTotal += amount;
+        const remainingAmount = Math.max(targetAmount - runningTotal, 0);
+        const recommendedAmount = Math.min(amount, remainingAmount || amount);
+        runningTotal += recommendedAmount;
         recommendations.push({
             ...item,
-            recommendedAmount: amount
+            recommendedAmount: Number(recommendedAmount.toFixed(2))
         });
     });
     return recommendations;
@@ -1384,6 +1386,10 @@ function buildPlanningRecommendations({ buys, sells }) {
         suggestedSells: materialBuys.length > 0
             ? buildFundingRecommendations(materialBuys, selectPlanningTradesByDrift(sells, 'sell'))
             : [],
+        buyCandidates: selectPlanningTradesByDrift(buys, 'buy'),
+        sellCandidates: selectPlanningTradesByDrift(sells, 'sell'),
+        materialBuys,
+        materialSells,
         hasMaterialDrift: materialBuys.length > 0 || materialSells.length > 0
     };
 }
@@ -1463,16 +1469,10 @@ function buildPlanningModel(goalTypeModel) {
     const overweightCandidates = goalModels
         .filter(goal => Number.isFinite(goal?.diffAmount) && goal.diffAmount > 0)
         .sort((left, right) => Math.abs(right.diffAmount) - Math.abs(left.diffAmount));
-    const materialBuys = selectPlanningTradesByDrift(underweightCandidates, 'buy', { materialOnly: true });
-    const materialSells = selectPlanningTradesByDrift(overweightCandidates, 'sell', { materialOnly: true });
-    const allBuys = selectPlanningTradesByDrift(underweightCandidates, 'buy');
-    const allSells = selectPlanningTradesByDrift(overweightCandidates, 'sell');
-    const suggestedBuys = materialSells.length > 0
-        ? buildFundingRecommendations(materialSells, allBuys)
-        : [];
-    const suggestedSells = materialBuys.length > 0
-        ? buildFundingRecommendations(materialBuys, allSells)
-        : [];
+    const planningRecommendations = buildPlanningRecommendations({
+        buys: underweightCandidates,
+        sells: overweightCandidates
+    });
 
     const projectedAmount = toFiniteNumber(goalTypeModel?.projectedAmount, 0);
     const scenarioAmount = projectedAmount > 0 ? projectedAmount : 0;
@@ -1484,9 +1484,13 @@ function buildPlanningModel(goalTypeModel) {
         targetCoverageLabel: coverageLabel,
         scenarioAmount,
         scenarioSplit,
-        suggestedBuys,
-        suggestedSells,
-        hasMaterialDrift: materialBuys.length > 0 || materialSells.length > 0
+        suggestedBuys: planningRecommendations.suggestedBuys,
+        suggestedSells: planningRecommendations.suggestedSells,
+        buyCandidates: planningRecommendations.buyCandidates,
+        sellCandidates: planningRecommendations.sellCandidates,
+        materialBuys: planningRecommendations.materialBuys,
+        materialSells: planningRecommendations.materialSells,
+        hasMaterialDrift: planningRecommendations.hasMaterialDrift
     };
 }
 
@@ -1498,8 +1502,10 @@ function buildBucketPlanningModel(goalTypeModels) {
     const coverageIssues = [];
     const scenarioByGoal = {};
     let scenarioAmount = 0;
-    const suggestedBuyCandidates = [];
-    const suggestedSellCandidates = [];
+    const bucketBuyCandidates = [];
+    const bucketSellCandidates = [];
+    const bucketMaterialBuys = [];
+    const bucketMaterialSells = [];
 
     models.forEach(goalTypeModel => {
         const planning = goalTypeModel?.planning;
@@ -1525,8 +1531,10 @@ function buildBucketPlanningModel(goalTypeModels) {
             }
             scenarioByGoal[goalId].amount += toFiniteNumber(item?.amount, 0);
         });
-        suggestedBuyCandidates.push(...(Array.isArray(planning.suggestedBuys) ? planning.suggestedBuys : []));
-        suggestedSellCandidates.push(...(Array.isArray(planning.suggestedSells) ? planning.suggestedSells : []));
+        bucketBuyCandidates.push(...(Array.isArray(planning.buyCandidates) ? planning.buyCandidates : []));
+        bucketSellCandidates.push(...(Array.isArray(planning.sellCandidates) ? planning.sellCandidates : []));
+        bucketMaterialBuys.push(...(Array.isArray(planning.materialBuys) ? planning.materialBuys : []));
+        bucketMaterialSells.push(...(Array.isArray(planning.materialSells) ? planning.materialSells : []));
     });
 
     const scenarioSplit = Object.values(scenarioByGoal)
@@ -1536,21 +1544,18 @@ function buildBucketPlanningModel(goalTypeModels) {
             ...item,
             amount: Number(item.amount.toFixed(2))
         }));
+    const sortedBucketBuyCandidates = selectPlanningTradesByDrift(bucketBuyCandidates, 'buy');
+    const sortedBucketSellCandidates = selectPlanningTradesByDrift(bucketSellCandidates, 'sell');
+    const sortedBucketMaterialBuys = selectPlanningTradesByDrift(bucketMaterialBuys, 'buy', { materialOnly: true });
+    const sortedBucketMaterialSells = selectPlanningTradesByDrift(bucketMaterialSells, 'sell', { materialOnly: true });
 
     return {
         coverageIssues,
         scenarioAmount,
         scenarioSplit,
-        suggestedBuys: buildFundingRecommendations(
-            selectPlanningTradesByDrift(suggestedSellCandidates, 'sell', { materialOnly: true }),
-            selectPlanningTradesByDrift(suggestedBuyCandidates, 'buy')
-        ),
-        suggestedSells: buildFundingRecommendations(
-            selectPlanningTradesByDrift(suggestedBuyCandidates, 'buy', { materialOnly: true }),
-            selectPlanningTradesByDrift(suggestedSellCandidates, 'sell')
-        ),
-        hasMaterialDrift: selectPlanningTradesByDrift(suggestedBuyCandidates, 'buy', { materialOnly: true }).length > 0
-            || selectPlanningTradesByDrift(suggestedSellCandidates, 'sell', { materialOnly: true }).length > 0
+        suggestedBuys: buildFundingRecommendations(sortedBucketMaterialSells, sortedBucketBuyCandidates),
+        suggestedSells: buildFundingRecommendations(sortedBucketMaterialBuys, sortedBucketSellCandidates),
+        hasMaterialDrift: sortedBucketMaterialBuys.length > 0 || sortedBucketMaterialSells.length > 0
     };
 }
 
@@ -13002,6 +13007,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             buildPlanningTradeLines,
             buildPlanningRecommendations,
             buildPlanningModel,
+            buildBucketPlanningModel,
             collectGoalIds,
             collectAllGoalIds,
             buildGoalTargetById,
