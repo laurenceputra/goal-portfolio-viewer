@@ -19,6 +19,7 @@ const {
     buildAttentionDriftReason,
     buildPlanningModel,
     buildPlanningTradeLines,
+    buildPlanningRecommendations,
     collectGoalIds,
     collectAllGoalIds,
     buildGoalTargetById,
@@ -106,29 +107,65 @@ describe('projected and goal helpers', () => {
         expect(diffData.diffClassName).toBe('gpv-diff-cell');
     });
 
-    test('should describe top planning buys and sells clearly', () => {
+    test('should describe suggested buys and sells clearly', () => {
         expect(buildPlanningTradeLines({
-            topBuys: [
-                { goalName: 'VWRA', diffAmount: -4618.04 },
-                { goalName: 'ES3', diffAmount: -1200 }
+            suggestedBuys: [
+                { goalName: 'VWRA', recommendedAmount: 4618.04 },
+                { goalName: 'ES3', recommendedAmount: 1200 }
             ],
-            topSells: [
-                { displayTicker: 'ALZP64', driftAmount: 12509.12 },
-                { displayTicker: 'MBH', driftAmount: 2500.5 }
+            suggestedSells: [
+                { displayTicker: 'ALZP64', recommendedAmount: 12509.12 },
+                { displayTicker: 'MBH', recommendedAmount: 2500.5 }
             ]
         })).toEqual([
-            'Top buys: VWRA SGD\u00A04,618.04 | ES3 SGD\u00A01,200.00',
-            'Top sells: ALZP64 SGD\u00A012,509.12 | MBH SGD\u00A02,500.50'
+            'Suggested buys: VWRA SGD\u00A04,618.04 | ES3 SGD\u00A01,200.00',
+            'Suggested sells: ALZP64 SGD\u00A012,509.12 | MBH SGD\u00A02,500.50'
         ]);
     });
 
     test('should omit empty planning trade groups', () => {
         expect(buildPlanningTradeLines({
-            topBuys: [],
-            topSells: [{ displayTicker: 'ALZP64', driftAmount: 12509.12 }]
+            suggestedBuys: [],
+            suggestedSells: [{ displayTicker: 'ALZP64', recommendedAmount: 12509.12 }]
         })).toEqual([
-            'Top sells: ALZP64 SGD\u00A012,509.12'
+            'Suggested sells: ALZP64 SGD\u00A012,509.12'
         ]);
+    });
+
+    test('should build suggested buys from material sells using drift order', () => {
+        const result = buildPlanningRecommendations({
+            buys: [
+                { goalName: 'Buy A', diffAmount: -7000, driftPercent: -0.18 },
+                { goalName: 'Buy B', diffAmount: -5000, driftPercent: -0.42 },
+                { goalName: 'Buy C', diffAmount: -4000, driftPercent: -0.31 }
+            ],
+            sells: [
+                { displayTicker: 'Sell A', driftAmount: 10000, driftPercent: 0.51 },
+                { displayTicker: 'Sell B', driftAmount: 2000, driftPercent: 0.27 }
+            ]
+        });
+
+        expect(result.suggestedBuys.map(item => item.goalName)).toEqual(['Buy B', 'Buy C', 'Buy A']);
+        expect(result.suggestedBuys.reduce((sum, item) => sum + item.recommendedAmount, 0)).toBeGreaterThanOrEqual(10800);
+        expect(result.suggestedSells.map(item => item.displayTicker)).toEqual(['Sell A']);
+    });
+
+    test('should build suggested sells from material buys using drift order', () => {
+        const result = buildPlanningRecommendations({
+            buys: [
+                { goalName: 'Buy A', diffAmount: -10000, driftPercent: -0.52 },
+                { goalName: 'Buy B', diffAmount: -2000, driftPercent: -0.29 }
+            ],
+            sells: [
+                { displayTicker: 'Sell A', driftAmount: 3000, driftPercent: 0.18 },
+                { displayTicker: 'Sell B', driftAmount: 5000, driftPercent: 0.33 },
+                { displayTicker: 'Sell C', driftAmount: 4000, driftPercent: 0.28 }
+            ]
+        });
+
+        expect(result.suggestedSells.map(item => item.displayTicker)).toEqual(['Sell B', 'Sell C', 'Sell A']);
+        expect(result.suggestedSells.reduce((sum, item) => sum + item.recommendedAmount, 0)).toBeGreaterThanOrEqual(10800);
+        expect(result.suggestedBuys.map(item => item.goalName)).toEqual(['Buy A']);
     });
 });
 

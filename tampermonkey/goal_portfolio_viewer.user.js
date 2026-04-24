@@ -1305,14 +1305,22 @@ function isMaterialDriftCandidate(item) {
     return Math.abs(item.driftPercent) > MATERIAL_DRIFT_RATIO;
 }
 
+function getPlanningTradeAmount(item) {
+    return Math.abs(toFiniteNumber(item?.diffAmount ?? item?.driftAmount, 0));
+}
+
+function getPlanningTradeName(item) {
+    return item?.displayTicker || item?.goalName || item?.name || item?.code || null;
+}
+
 function formatPlanningTradeLine(label, items) {
     const safeItems = Array.isArray(items) ? items.filter(Boolean) : [];
     if (safeItems.length === 0) {
         return null;
     }
     const formattedItems = safeItems.map(item => {
-        const name = item.displayTicker || item.goalName || item.name || item.code;
-        const amount = Math.abs(toFiniteNumber(item.diffAmount ?? item.driftAmount, 0));
+        const name = getPlanningTradeName(item);
+        const amount = toFiniteNumber(item?.recommendedAmount, null) ?? getPlanningTradeAmount(item);
         if (!name || amount <= 0) {
             return null;
         }
@@ -1324,21 +1332,60 @@ function formatPlanningTradeLine(label, items) {
     return `${label}: ${formattedItems.join(' | ')}`;
 }
 
-function buildPlanningTradeLines({ topBuys, topSells }) {
+function buildPlanningTradeLines({ suggestedBuys, suggestedSells }) {
     return [
-        formatPlanningTradeLine('Top buys', topBuys),
-        formatPlanningTradeLine('Top sells', topSells)
+        formatPlanningTradeLine('Suggested buys', suggestedBuys),
+        formatPlanningTradeLine('Suggested sells', suggestedSells)
     ].filter(Boolean);
 }
 
-function selectTopMaterialPlanningTrades(items, direction) {
+function selectPlanningTradesByDrift(items, direction, { materialOnly = false } = {}) {
     const comparator = direction === 'buy'
         ? item => toFiniteNumber(item?.diffAmount ?? item?.driftAmount, 0) < 0
         : item => toFiniteNumber(item?.diffAmount ?? item?.driftAmount, 0) > 0;
     return (Array.isArray(items) ? items : [])
-        .filter(item => comparator(item) && isMaterialDriftCandidate(item))
-        .sort((left, right) => Math.abs(toFiniteNumber(right?.diffAmount ?? right?.driftAmount, 0)) - Math.abs(toFiniteNumber(left?.diffAmount ?? left?.driftAmount, 0)))
-        .slice(0, 2);
+        .filter(item => comparator(item) && (!materialOnly || isMaterialDriftCandidate(item)))
+        .sort((left, right) => Math.abs(toFiniteNumber(right?.driftPercent, 0)) - Math.abs(toFiniteNumber(left?.driftPercent, 0)));
+}
+
+function buildFundingRecommendations(triggerTrades, oppositeTrades) {
+    const triggerTotal = (Array.isArray(triggerTrades) ? triggerTrades : [])
+        .reduce((sum, item) => sum + getPlanningTradeAmount(item), 0);
+    if (triggerTotal <= 0) {
+        return [];
+    }
+    const targetAmount = triggerTotal * 0.9;
+    let runningTotal = 0;
+    const recommendations = [];
+    (Array.isArray(oppositeTrades) ? oppositeTrades : []).forEach(item => {
+        if (runningTotal >= targetAmount) {
+            return;
+        }
+        const amount = getPlanningTradeAmount(item);
+        if (amount <= 0) {
+            return;
+        }
+        runningTotal += amount;
+        recommendations.push({
+            ...item,
+            recommendedAmount: amount
+        });
+    });
+    return recommendations;
+}
+
+function buildPlanningRecommendations({ buys, sells }) {
+    const materialBuys = selectPlanningTradesByDrift(buys, 'buy', { materialOnly: true });
+    const materialSells = selectPlanningTradesByDrift(sells, 'sell', { materialOnly: true });
+    return {
+        suggestedBuys: materialSells.length > 0
+            ? buildFundingRecommendations(materialSells, selectPlanningTradesByDrift(buys, 'buy'))
+            : [],
+        suggestedSells: materialBuys.length > 0
+            ? buildFundingRecommendations(materialBuys, selectPlanningTradesByDrift(sells, 'sell'))
+            : [],
+        hasMaterialDrift: materialBuys.length > 0 || materialSells.length > 0
+    };
 }
 
 function buildTargetCoverageLabel(targetTotalPercent) {
@@ -1416,8 +1463,16 @@ function buildPlanningModel(goalTypeModel) {
     const overweightCandidates = goalModels
         .filter(goal => Number.isFinite(goal?.diffAmount) && goal.diffAmount > 0)
         .sort((left, right) => Math.abs(right.diffAmount) - Math.abs(left.diffAmount));
-    const topBuys = selectTopMaterialPlanningTrades(underweightCandidates, 'buy');
-    const topSells = selectTopMaterialPlanningTrades(overweightCandidates, 'sell');
+    const materialBuys = selectPlanningTradesByDrift(underweightCandidates, 'buy', { materialOnly: true });
+    const materialSells = selectPlanningTradesByDrift(overweightCandidates, 'sell', { materialOnly: true });
+    const allBuys = selectPlanningTradesByDrift(underweightCandidates, 'buy');
+    const allSells = selectPlanningTradesByDrift(overweightCandidates, 'sell');
+    const suggestedBuys = materialSells.length > 0
+        ? buildFundingRecommendations(materialSells, allBuys)
+        : [];
+    const suggestedSells = materialBuys.length > 0
+        ? buildFundingRecommendations(materialBuys, allSells)
+        : [];
 
     const projectedAmount = toFiniteNumber(goalTypeModel?.projectedAmount, 0);
     const scenarioAmount = projectedAmount > 0 ? projectedAmount : 0;
@@ -1429,9 +1484,9 @@ function buildPlanningModel(goalTypeModel) {
         targetCoverageLabel: coverageLabel,
         scenarioAmount,
         scenarioSplit,
-        topBuys,
-        topSells,
-        hasMaterialDrift: topBuys.length > 0 || topSells.length > 0
+        suggestedBuys,
+        suggestedSells,
+        hasMaterialDrift: materialBuys.length > 0 || materialSells.length > 0
     };
 }
 
@@ -1443,8 +1498,8 @@ function buildBucketPlanningModel(goalTypeModels) {
     const coverageIssues = [];
     const scenarioByGoal = {};
     let scenarioAmount = 0;
-    const topBuyCandidates = [];
-    const topSellCandidates = [];
+    const suggestedBuyCandidates = [];
+    const suggestedSellCandidates = [];
 
     models.forEach(goalTypeModel => {
         const planning = goalTypeModel?.planning;
@@ -1470,8 +1525,8 @@ function buildBucketPlanningModel(goalTypeModels) {
             }
             scenarioByGoal[goalId].amount += toFiniteNumber(item?.amount, 0);
         });
-        topBuyCandidates.push(...(Array.isArray(planning.topBuys) ? planning.topBuys : []));
-        topSellCandidates.push(...(Array.isArray(planning.topSells) ? planning.topSells : []));
+        suggestedBuyCandidates.push(...(Array.isArray(planning.suggestedBuys) ? planning.suggestedBuys : []));
+        suggestedSellCandidates.push(...(Array.isArray(planning.suggestedSells) ? planning.suggestedSells : []));
     });
 
     const scenarioSplit = Object.values(scenarioByGoal)
@@ -1486,10 +1541,16 @@ function buildBucketPlanningModel(goalTypeModels) {
         coverageIssues,
         scenarioAmount,
         scenarioSplit,
-        topBuys: selectTopMaterialPlanningTrades(topBuyCandidates, 'buy'),
-        topSells: selectTopMaterialPlanningTrades(topSellCandidates, 'sell'),
-        hasMaterialDrift: selectTopMaterialPlanningTrades(topBuyCandidates, 'buy').length > 0
-            || selectTopMaterialPlanningTrades(topSellCandidates, 'sell').length > 0
+        suggestedBuys: buildFundingRecommendations(
+            selectPlanningTradesByDrift(suggestedSellCandidates, 'sell', { materialOnly: true }),
+            selectPlanningTradesByDrift(suggestedBuyCandidates, 'buy')
+        ),
+        suggestedSells: buildFundingRecommendations(
+            selectPlanningTradesByDrift(suggestedBuyCandidates, 'buy', { materialOnly: true }),
+            selectPlanningTradesByDrift(suggestedSellCandidates, 'sell')
+        ),
+        hasMaterialDrift: selectPlanningTradesByDrift(suggestedBuyCandidates, 'buy', { materialOnly: true }).length > 0
+            || selectPlanningTradesByDrift(suggestedSellCandidates, 'sell', { materialOnly: true }).length > 0
     };
 }
 
@@ -11055,15 +11116,17 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             .filter(row => Number.isFinite(row?.driftAmount) && row.driftAmount > 0)
             .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount));
         const scenarioAmount = 0;
-        const topBuys = selectTopMaterialPlanningTrades(underweightCandidates, 'buy');
-        const topSells = selectTopMaterialPlanningTrades(overweightCandidates, 'sell');
+        const planningRecommendations = buildPlanningRecommendations({
+            buys: underweightCandidates,
+            sells: overweightCandidates
+        });
         return {
             targetCoverageLabel: safeSummary.targetCoverageLabel || null,
             scenarioAmount,
             scenarioSplit: calculateRecommendedContributionSplitForFsm(safeRows, scenarioAmount),
-            topBuys,
-            topSells,
-            hasMaterialDrift: topBuys.length > 0 || topSells.length > 0
+            suggestedBuys: planningRecommendations.suggestedBuys,
+            suggestedSells: planningRecommendations.suggestedSells,
+            hasMaterialDrift: planningRecommendations.hasMaterialDrift
         };
     }
 
@@ -12937,6 +13000,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             buildHealthStatus,
             buildAttentionDriftReason,
             buildPlanningTradeLines,
+            buildPlanningRecommendations,
             buildPlanningModel,
             collectGoalIds,
             collectAllGoalIds,
