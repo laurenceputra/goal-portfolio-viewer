@@ -239,7 +239,7 @@ describe('sync settings UI', () => {
         expectClassTokens(cancelBtn, ['gpv-sync-btn', 'gpv-sync-btn-secondary']);
     });
 
-    test('renders remember-key control for trusted device persistence', () => {
+    test('renders remember-key control as explicit opt-in by default', () => {
         const { createSyncSettingsHTML } = exportsModule;
         seedStatus();
 
@@ -247,7 +247,17 @@ describe('sync settings UI', () => {
 
         const rememberKey = document.getElementById('gpv-sync-remember-key');
         expect(rememberKey).toBeTruthy();
-        expect(rememberKey.checked).toBe(true);
+        expect(rememberKey.checked).toBe(false);
+    });
+
+    test('preserves existing remember-key preference in settings', () => {
+        const { createSyncSettingsHTML } = exportsModule;
+        seedStatus();
+        storage.set('sync_remember_key', true);
+
+        document.body.innerHTML = createSyncSettingsHTML();
+
+        expect(document.getElementById('gpv-sync-remember-key').checked).toBe(true);
     });
 
     test('login and sign up stay disabled when sync activation is off', () => {
@@ -294,7 +304,7 @@ describe('sync settings UI', () => {
         expect(enableSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 password: 'supersecure',
-                rememberKey: true
+                rememberKey: false
             })
         );
     });
@@ -328,7 +338,7 @@ describe('sync settings UI', () => {
         expect(enableSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 password: 'supersecure',
-                rememberKey: true
+                rememberKey: false
             })
         );
     });

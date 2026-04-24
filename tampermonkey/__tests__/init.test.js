@@ -1212,6 +1212,120 @@ describe('initialization and URL monitoring', () => {
         expect(targetInput.disabled).toBe(true);
     });
 
+    test('FSM migrated legacy target can be cleared without falling back', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+        ]));
+        storage.set('fsm_target_pct_AAA', 35);
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings')).click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        let targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
+        expect(targetInput.value).toBe('35.00');
+
+        targetInput.value = '';
+        targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
+        expect(storage.has('fsm_target_pct_AAA')).toBe(false);
+        expect(storage.has('fsm_target_pct_AAA|sub:AAPL')).toBe(false);
+        expect(targetInput.value).toBe('');
+    });
+
+    test('FSM migrated legacy fixed flag can be unchecked without falling back', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+        ]));
+        storage.set('fsm_fixed_AAA', true);
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings')).click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        let fixedCheckbox = overlay.querySelector('input[aria-label^="Fixed allocation"]');
+        expect(fixedCheckbox.checked).toBe(true);
+
+        fixedCheckbox.checked = false;
+        fixedCheckbox.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        fixedCheckbox = overlay.querySelector('input[aria-label^="Fixed allocation"]');
+        expect(storage.has('fsm_fixed_AAA')).toBe(false);
+        expect(storage.get('fsm_fixed_AAA|sub:AAPL')).toBe(false);
+        expect(fixedCheckbox.checked).toBe(false);
+    });
+
     test('FSM target input rejects invalid values without persisting', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });

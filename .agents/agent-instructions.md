@@ -101,6 +101,8 @@ Loop contract:
 9. Update the Review Response Matrix with disposition, fix commit, verification evidence, and residual risk.
 10. Push and watch checks when the loop affects CI-covered behavior or is the final loop.
 
+All required review-fix loop steps, including PR artifact updates, must be complete before the final push and PR completion gate.
+
 Non-blocking suggestions may be addressed in the loop or explicitly deferred with rationale.
 
 ### CI Failure Triage

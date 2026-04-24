@@ -43,6 +43,8 @@ Run this sequence for each `blocking` or `important` finding:
 9. Update the PR artifact.
 10. Push and watch checks when the loop affects CI-covered behavior or is the final loop.
 
+All required loop steps, including PR artifact updates, must be complete before the final push and PR completion gate.
+
 ## Severity Routing
 
 - `blocking`: fresh assessment subagent and post-fix review subagent are required.

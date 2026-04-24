@@ -431,6 +431,21 @@ describe('SyncManager', () => {
         })).rejects.toThrow('HTTPS');
     });
 
+    test('getStatus treats stored insecure sync URL as unconfigured without throwing', () => {
+        storage.set('sync_enabled', true);
+        storage.set('sync_server_url', 'http://sync.example.com');
+        storage.set('sync_user_id', 'user@example.com');
+        storage.set('sync_refresh_token', 'refresh-token');
+        storage.set('sync_refresh_token_expiry', Date.now() + 120_000);
+
+        const { SyncManager } = loadModule();
+
+        expect(() => SyncManager.getStatus()).not.toThrow();
+        expect(SyncManager.getStatus()).toEqual(expect.objectContaining({
+            isConfigured: false
+        }));
+    });
+
 
     test('applyConfigData migrates legacy v1 payload to Endowus keys', () => {
         const { SyncManager, storageKeys } = loadModule();
