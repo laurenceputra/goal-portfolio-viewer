@@ -263,8 +263,8 @@ describe('conflict diff helpers', () => {
         const fsmItems = buildFsmConflictDiffItems(conflict, { fsmHoldings: [] });
         const assignmentRow = fsmItems.find(item => item.section === 'assignment');
         expect(assignmentRow.settingName).toBe('BBB');
-        expect(assignmentRow.localDisplay).toBe('Core (core) · Target 5.00% · Fixed No · Tag growth');
-        expect(assignmentRow.remoteDisplay).toBe('Income (income) · Target 10.00% · Fixed No · Tag growth');
+        expect(assignmentRow.localDisplay).toBe('Core (core) · Target 5.00% · Fixed No');
+        expect(assignmentRow.remoteDisplay).toBe('Income (income) · Target 10.00% · Fixed No');
     });
 
     it('formats FSM assignment rows with readable labels', () => {
@@ -306,8 +306,8 @@ describe('conflict diff helpers', () => {
         });
         const assignmentRow = fsmItems.find(item => item.section === 'assignment');
         expect(assignmentRow.settingName).toBe('Global Equity Fund (AAA)');
-        expect(assignmentRow.localDisplay).toBe('Core (core) · Target 12.00% · Fixed Yes · Tag income');
-        expect(assignmentRow.remoteDisplay).toBe('Income (income) · Target 20.00% · Fixed No · Tag -');
+        expect(assignmentRow.localDisplay).toBe('Core (core) · Target 12.00% · Fixed Yes');
+        expect(assignmentRow.remoteDisplay).toBe('Income (income) · Target 20.00% · Fixed No');
     });
 
     it('keeps duplicate FSM codes distinct with subcode identities', () => {

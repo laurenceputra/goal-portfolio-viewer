@@ -1087,7 +1087,7 @@ describe('initialization and URL monitoring', () => {
                 profitPercentLcy: 10
             },
             {
-                code: 'BBB',
+                code: 'AAA',
                 subcode: 'BOND',
                 name: 'Fund B',
                 productType: 'UNIT_TRUST',

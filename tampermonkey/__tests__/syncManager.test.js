@@ -355,25 +355,17 @@ describe('SyncManager', () => {
         const { SyncManager, storageKeys } = loadModule();
         const fsmTarget = storageKeys.fsmTarget('AAA');
         const fsmFixed = storageKeys.fsmFixed('BBB');
-        const fsmTag = storageKeys.fsmTag('AAA');
-        const fsmSetting = storageKeys.fsmDriftSetting('warningPct');
 
         storage.set(fsmTarget, 12);
         storage.set(fsmFixed, true);
-        storage.set(fsmTag, 'cash');
-        storage.set(fsmSetting, 10);
         storage.set('fsm_portfolios', JSON.stringify([{ id: 'core', name: 'Core', archived: false }]));
         storage.set('fsm_assignment_by_code', JSON.stringify({ AAA: 'core', BBB: 'unknown' }));
-        storage.set('fsm_tag_catalog', JSON.stringify(['cash']));
-        global.GM_listValues = () => [fsmTarget, fsmFixed, fsmTag, fsmSetting, 'fsm_tag_catalog', 'fsm_portfolios', 'fsm_assignment_by_code'];
+        global.GM_listValues = () => [fsmTarget, fsmFixed, 'fsm_portfolios', 'fsm_assignment_by_code'];
 
         const config = SyncManager.collectConfigData();
 
         expect(config.platforms.fsm.targetsByCode).toEqual({ AAA: 12 });
         expect(config.platforms.fsm.fixedByCode).toEqual({ BBB: true });
-        expect(config.platforms.fsm.tagsByCode).toEqual({ AAA: 'cash' });
-        expect(config.platforms.fsm.tagCatalog).toEqual(['cash']);
-        expect(config.platforms.fsm.driftSettings).toEqual({ warningPct: 10 });
         expect(config.platforms.fsm.portfolios).toEqual([{ id: 'core', name: 'Core', archived: false }]);
         expect(config.platforms.fsm.assignmentByCode).toEqual({ AAA: 'core', BBB: 'unassigned' });
     });
@@ -387,11 +379,8 @@ describe('SyncManager', () => {
                 fsm: {
                     targetsByCode: {},
                     fixedByCode: {},
-                    tagsByCode: {},
-                    tagCatalog: [],
                     portfolios: [{ id: 'income', name: 'Income', archived: false }],
                     assignmentByCode: { AAPL: 'income', BOND: 'missing' },
-                    driftSettings: {},
                     timestamp: Date.now()
                 }
             },

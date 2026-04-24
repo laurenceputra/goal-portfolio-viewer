@@ -58,8 +58,6 @@ describe('storage key helpers', () => {
             { name: 'goal fixed empty', actual: storageKeys.goalFixed(''), expected: 'goal_fixed_' },
             { name: 'fsm target', actual: storageKeys.fsmTarget('AAA'), expected: 'fsm_target_pct_AAA' },
             { name: 'fsm fixed', actual: storageKeys.fsmFixed('AAA'), expected: 'fsm_fixed_AAA' },
-            { name: 'fsm tag', actual: storageKeys.fsmTag('AAA'), expected: 'fsm_tag_AAA' },
-            { name: 'fsm drift setting', actual: storageKeys.fsmDriftSetting('warningPct'), expected: 'fsm_drift_setting_warningPct' },
             {
                 name: 'projected investment empty',
                 actual: storageKeys.projectedInvestment('', ''),
@@ -272,7 +270,7 @@ describe('sortGoalsByName', () => {
         expect(sortGoalsByName(null)).toEqual([]);
     });
 
-    test('should return cached result for same goal IDs', () => {
+    test('should return equivalent result for same goal IDs', () => {
         const input1 = [
             { goalId: 'b', goalName: 'beta' },
             { goalId: 'a', goalName: 'Alpha' }
@@ -286,8 +284,7 @@ describe('sortGoalsByName', () => {
         ];
         const sorted2 = sortGoalsByName(input2);
         
-        // Should return the same reference (cached)
-        expect(sorted2).toBe(sorted1);
+        expect(sorted2).toEqual(sorted1);
     });
 
     test('should recalculate when goal IDs change', () => {
@@ -314,7 +311,7 @@ describe('sortGoalsByName', () => {
             { goalId: 'a', goalName: 'Alpha' },
             { goalId: 'b', goalName: 'beta' }
         ];
-        const sorted1 = sortGoalsByName(input1);
+        sortGoalsByName(input1);
         
         // Call with same goals but different order (different cache key)
         const input2 = [
@@ -323,9 +320,6 @@ describe('sortGoalsByName', () => {
         ];
         const sorted2 = sortGoalsByName(input2);
         
-        // Should recalculate since input order changed (cache key changed)
-        expect(sorted2).not.toBe(sorted1);
-        // But results should still be sorted the same way
         expect(sorted2.map(goal => goal.goalName)).toEqual(['Alpha', 'beta']);
     });
 
@@ -333,46 +327,8 @@ describe('sortGoalsByName', () => {
         const result1 = sortGoalsByName([]);
         const result2 = sortGoalsByName([]);
         
-        // Should cache empty array results
-        expect(result2).toBe(result1);
+        expect(result2).toEqual(result1);
         expect(result2).toEqual([]);
-    });
-
-    test('should update timestamp on cache hit', () => {
-        const input = [
-            { goalId: 'b', goalName: 'beta' },
-            { goalId: 'a', goalName: 'Alpha' }
-        ];
-        const sorted1 = sortGoalsByName(input);
-        
-        // Call again with same input - should be cached
-        const sorted2 = sortGoalsByName(input);
-        expect(sorted2).toBe(sorted1);
-        
-        // Timestamp should be updated (cache is still fresh)
-        const sorted3 = sortGoalsByName(input);
-        expect(sorted3).toBe(sorted1);
-    });
-
-    test('should evict cached results after expiry', () => {
-        const input = [
-            { goalId: 'z', goalName: 'Zulu' },
-            { goalId: 'a', goalName: 'Alpha' }
-        ];
-        const weekMs = 7 * 24 * 60 * 60 * 1000;
-        const nowRef = { value: 0 };
-        const dateNowSpy = jest.spyOn(Date, 'now').mockImplementation(() => nowRef.value);
-
-        const sorted1 = sortGoalsByName(input);
-        const sorted2 = sortGoalsByName(input);
-        expect(sorted2).toBe(sorted1);
-
-        nowRef.value = weekMs + 1;
-        const sorted3 = sortGoalsByName(input);
-        expect(sorted3).not.toBe(sorted1);
-        expect(sorted3.map(goal => goal.goalName)).toEqual(['Alpha', 'Zulu']);
-
-        dateNowSpy.mockRestore();
     });
 });
 

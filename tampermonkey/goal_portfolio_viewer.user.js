@@ -10,7 +10,6 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_listValues
-// @grant        GM_cookie
 // @grant        GM_xmlhttpRequest
 // @connect      goal-portfolio-sync.laurenceputra.workers.dev
 // @connect      localhost
@@ -36,7 +35,6 @@
     const FSM_ALL_PORTFOLIO_ID = 'all';
     const FSM_MAX_PORTFOLIO_NAME_LENGTH = 64;
     const DEBUG_AUTH = false;
-    const SORT_CACHE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
 
     const UNKNOWN_GOAL_TYPE = 'UNKNOWN_GOAL_TYPE';
     const PROJECTED_KEY_SEPARATOR = '|';
@@ -64,9 +62,6 @@
         goalBucket: 'goal_bucket_name_',
         fsmTarget: 'fsm_target_pct_',
         fsmFixed: 'fsm_fixed_',
-        fsmTag: 'fsm_tag_',
-        fsmDriftSetting: 'fsm_drift_setting_',
-        fsmTagCatalog: 'fsm_tag_catalog',
         performanceCache: 'gpv_performance_',
         collapseState: 'gpv_collapse_'
     };
@@ -294,12 +289,6 @@
         },
         fsmFixed(code) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.fsmFixed, code ?? '');
-        },
-        fsmTag(code) {
-            return buildStorageKey(STORAGE_KEY_PREFIXES.fsmTag, code ?? '');
-        },
-        fsmDriftSetting(settingKey) {
-            return buildStorageKey(STORAGE_KEY_PREFIXES.fsmDriftSetting, settingKey ?? '');
         },
         performanceCache(goalId) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.performanceCache, goalId ?? '');
@@ -614,43 +603,63 @@
         return numericValue >= 0 ? 'positive' : 'negative';
     }
 
-    function calculatePercentOfType(amount, total) {
+    function calculateAllocationRatio(amount, total) {
         const numericValues = getFiniteNumbers([amount, total]);
         if (!numericValues) {
-            return 0;
+            return null;
         }
         const [numericAmount, numericTotal] = numericValues;
         if (numericTotal <= 0) {
-            return 0;
+            return null;
         }
-        return (numericAmount / numericTotal) * 100;
+        return numericAmount / numericTotal;
     }
 
-    function calculateGoalDiff(currentAmount, targetPercent, adjustedTypeTotal) {
+    function calculateAllocationDrift(currentAmount, targetPercent, total) {
         if (targetPercent === null || targetPercent === undefined) {
-            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
+            return null;
         }
-        const numericValues = getFiniteNumbers([currentAmount, targetPercent, adjustedTypeTotal]);
+        const numericValues = getFiniteNumbers([currentAmount, targetPercent, total]);
         if (!numericValues) {
-            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
+            return null;
         }
         const [numericCurrent, numericTarget, numericTotal] = numericValues;
         if (numericTotal <= 0) {
-            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
+            return null;
         }
         const targetAmount = (numericTarget / 100) * numericTotal;
         if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
+            return null;
+        }
+        const driftAmount = numericCurrent - targetAmount;
+        const driftPercent = driftAmount / targetAmount;
+        if (!Number.isFinite(driftPercent) || !Number.isFinite(driftAmount)) {
+            return null;
+        }
+        return { driftPercent, driftAmount };
+    }
+
+    function calculatePercentOfType(amount, total) {
+        const ratio = calculateAllocationRatio(amount, total);
+        if (ratio === null) {
+            return 0;
+        }
+        return ratio * 100;
+    }
+
+    function calculateGoalDiff(currentAmount, targetPercent, adjustedTypeTotal) {
+        const drift = calculateAllocationDrift(currentAmount, targetPercent, adjustedTypeTotal);
+        if (!drift) {
             return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
         }
-        const diffAmount = numericCurrent - targetAmount;
-        const driftPercent = diffAmount / targetAmount;
-        const threshold = numericCurrent * 0.05;
+        const diffAmount = drift.driftAmount;
+        const threshold = Number(currentAmount) * 0.05;
         const diffClass = Math.abs(diffAmount) > threshold ? 'negative' : 'positive';
         return {
             diffAmount,
             diffClass,
-            driftPercent: Number.isFinite(driftPercent) ? driftPercent : null,
-            driftAmount: Number.isFinite(diffAmount) ? diffAmount : null
+            driftPercent: drift.driftPercent,
+            driftAmount: diffAmount
         };
     }
 
@@ -787,45 +796,9 @@
         return numericRemaining > numericThreshold;
     }
 
-    // Cache for sortGoalsByName memoization
-    let sortedGoalsCache = null;
-    let sortedGoalsCacheKey = null;
-    let sortedGoalsCacheTimestamp = null;
-
-    function clearSortCacheIfExpired() {
-        if (sortedGoalsCacheTimestamp === null) {
-            return;
-        }
-        const now = Date.now();
-        const age = now - sortedGoalsCacheTimestamp;
-        if (age > SORT_CACHE_EXPIRY_MS) {
-            sortedGoalsCache = null;
-            sortedGoalsCacheKey = null;
-            sortedGoalsCacheTimestamp = null;
-            logDebug('[Goal Portfolio Viewer] Cleared expired sort cache');
-        }
-    }
-
     function sortGoalsByName(goals) {
         const safeGoals = Array.isArray(goals) ? goals : [];
-        
-        // Generate cache key from goal IDs
-        const cacheKey = safeGoals
-            .map(goal => `${goal?.goalId || ''}:${goal?.goalName || ''}`)
-            .join(',');
-        
-        // Check if cache has expired
-        clearSortCacheIfExpired();
-        
-        // Return cached result if available
-        if (sortedGoalsCacheKey === cacheKey && sortedGoalsCache !== null) {
-            // Update timestamp on cache hit
-            sortedGoalsCacheTimestamp = Date.now();
-            return sortedGoalsCache;
-        }
-        
-        // Perform sort and cache result
-        const sorted = safeGoals.slice().sort((left, right) => {
+        return safeGoals.slice().sort((left, right) => {
             const leftName = String(left?.goalName || '');
             const rightName = String(right?.goalName || '');
             const nameCompare = leftName.localeCompare(rightName, 'en', { sensitivity: 'base' });
@@ -836,11 +809,6 @@
             const rightId = String(right?.goalId || '');
             return leftId.localeCompare(rightId, 'en', { sensitivity: 'base' });
         });
-        
-        sortedGoalsCache = sorted;
-        sortedGoalsCacheKey = cacheKey;
-        sortedGoalsCacheTimestamp = Date.now();
-        return sorted;
     }
 
     function buildGoalModel(goal, totalTypeAmount, adjustedTotal, goalTargets, goalFixed) {
@@ -3176,26 +3144,12 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const fsm = {
             targetsByCode: {},
             fixedByCode: {},
-            tagsByCode: {},
-            tagCatalog: [],
             portfolios: [],
             assignmentByCode: {},
-            driftSettings: {},
             timestamp: Date.now()
         };
         const allKeys = GM_listValues ? GM_listValues() : [];
         for (const key of allKeys) {
-            if (key === STORAGE_KEY_PREFIXES.fsmTagCatalog) {
-                const catalog = Storage.readJson(
-                    STORAGE_KEY_PREFIXES.fsmTagCatalog,
-                    data => Array.isArray(data),
-                    'Error loading FSM tag catalog'
-                );
-                if (Array.isArray(catalog)) {
-                    fsm.tagCatalog = catalog.map(item => utils.normalizeString(item, '')).filter(Boolean);
-                }
-                continue;
-            }
             if (key.startsWith(STORAGE_KEY_PREFIXES.fsmTarget)) {
                 const code = key.substring(STORAGE_KEY_PREFIXES.fsmTarget.length);
                 const value = Storage.get(key, null);
@@ -3208,21 +3162,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 const code = key.substring(STORAGE_KEY_PREFIXES.fsmFixed.length);
                 fsm.fixedByCode[code] = Storage.get(key, false) === true;
                 continue;
-            }
-            if (key.startsWith(STORAGE_KEY_PREFIXES.fsmTag)) {
-                const code = key.substring(STORAGE_KEY_PREFIXES.fsmTag.length);
-                const value = utils.normalizeString(Storage.get(key, ''), '');
-                if (value) {
-                    fsm.tagsByCode[code] = value;
-                }
-                continue;
-            }
-            if (key.startsWith(STORAGE_KEY_PREFIXES.fsmDriftSetting)) {
-                const settingKey = key.substring(STORAGE_KEY_PREFIXES.fsmDriftSetting.length);
-                const value = Storage.get(key, null);
-                if (value !== null) {
-                    fsm.driftSettings[settingKey] = value;
-                }
             }
         }
         Object.entries(fsm.fixedByCode).forEach(([code, isFixed]) => {
@@ -3262,7 +3201,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 : { goalTargets: {}, goalFixed: {}, timestamp: config.timestamp || Date.now() };
             const fsm = config.platforms.fsm && typeof config.platforms.fsm === 'object'
                 ? config.platforms.fsm
-                : { targetsByCode: {}, fixedByCode: {}, tagsByCode: {}, tagCatalog: [], driftSettings: {}, timestamp: config.timestamp || Date.now() };
+                : { targetsByCode: {}, fixedByCode: {}, timestamp: config.timestamp || Date.now() };
             return {
                 version: 2,
                 platforms: {
@@ -3276,11 +3215,8 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     fsm: {
                         targetsByCode: fsm.targetsByCode && typeof fsm.targetsByCode === 'object' ? fsm.targetsByCode : {},
                         fixedByCode: fsm.fixedByCode && typeof fsm.fixedByCode === 'object' ? fsm.fixedByCode : {},
-                        tagsByCode: fsm.tagsByCode && typeof fsm.tagsByCode === 'object' ? fsm.tagsByCode : {},
-                        tagCatalog: Array.isArray(fsm.tagCatalog) ? fsm.tagCatalog : [],
                         portfolios: normalizeFsmPortfolios(Array.isArray(fsm.portfolios) ? fsm.portfolios : []),
                         assignmentByCode: fsm.assignmentByCode && typeof fsm.assignmentByCode === 'object' ? fsm.assignmentByCode : {},
-                        driftSettings: fsm.driftSettings && typeof fsm.driftSettings === 'object' ? fsm.driftSettings : {},
                         timestamp: typeof fsm.timestamp === 'number' ? fsm.timestamp : (config.timestamp || Date.now())
                     }
                 },
@@ -3301,11 +3237,8 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 fsm: {
                     targetsByCode: {},
                     fixedByCode: {},
-                    tagsByCode: {},
-                    tagCatalog: [],
                     portfolios: [],
                     assignmentByCode: {},
-                    driftSettings: {},
                     timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
                 }
             },
@@ -3418,8 +3351,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const fsm = normalized.platforms.fsm || {};
         const fsmTargets = fsm.targetsByCode && typeof fsm.targetsByCode === 'object' ? fsm.targetsByCode : {};
         const fsmFixed = fsm.fixedByCode && typeof fsm.fixedByCode === 'object' ? fsm.fixedByCode : {};
-        const fsmTags = fsm.tagsByCode && typeof fsm.tagsByCode === 'object' ? fsm.tagsByCode : {};
-        const fsmDriftSettings = fsm.driftSettings && typeof fsm.driftSettings === 'object' ? fsm.driftSettings : {};
         const fsmPortfolios = normalizeFsmPortfolios(Array.isArray(fsm.portfolios) ? fsm.portfolios : []);
         const fsmAssignmentByCode = fsm.assignmentByCode && typeof fsm.assignmentByCode === 'object' ? fsm.assignmentByCode : {};
 
@@ -3433,17 +3364,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             new Set(Object.keys(fsmFixed)),
             'Error deleting stale FSM fixed flag'
         );
-        removeStalePrefixedKeys(
-            STORAGE_KEY_PREFIXES.fsmTag,
-            new Set(Object.keys(fsmTags)),
-            'Error deleting stale FSM tag'
-        );
-        removeStalePrefixedKeys(
-            STORAGE_KEY_PREFIXES.fsmDriftSetting,
-            new Set(Object.keys(fsmDriftSettings)),
-            'Error deleting stale FSM drift setting'
-        );
-
         for (const [code, value] of Object.entries(fsmTargets)) {
             if (fsmFixed[code] === true) {
                 continue;
@@ -3453,21 +3373,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
         for (const [code, value] of Object.entries(fsmFixed)) {
             Storage.set(storageKeys.fsmFixed(code), value === true);
-        }
-
-        for (const [code, tag] of Object.entries(fsmTags)) {
-            const normalizedTag = utils.normalizeString(tag, '');
-            if (!normalizedTag) {
-                continue;
-            }
-            Storage.set(storageKeys.fsmTag(code), normalizedTag);
-        }
-
-        const tagCatalog = Array.isArray(fsm.tagCatalog) ? fsm.tagCatalog.map(item => utils.normalizeString(item, '')).filter(Boolean) : [];
-        Storage.writeJson(STORAGE_KEY_PREFIXES.fsmTagCatalog, tagCatalog, 'Error saving FSM tag catalog');
-
-        for (const [key, value] of Object.entries(fsmDriftSettings)) {
-            Storage.set(storageKeys.fsmDriftSetting(key), value);
         }
 
         const validPortfolioIds = new Set(fsmPortfolios.filter(item => item.archived !== true).map(item => item.id));
@@ -3491,7 +3396,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             endowusBuckets: Object.keys(endowusBuckets).length,
             fsmTargets: Object.keys(fsmTargets).length,
             fsmFixed: Object.keys(fsmFixed).length,
-            fsmTags: Object.keys(fsmTags).length,
             fsmPortfolios: fsmPortfolios.length,
             fsmAssignments: Object.keys(sanitizedAssignments).length
         });
@@ -4463,7 +4367,7 @@ function getEndowusSyncView(config) {
 
 function getFsmSyncView(config) {
     if (!config || typeof config !== 'object') {
-        return { targetsByCode: {}, fixedByCode: {}, tagsByCode: {}, tagCatalog: [], portfolios: [], assignmentByCode: {}, driftSettings: {} };
+        return { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} };
     }
     if (config.platforms && typeof config.platforms === 'object') {
         const fsm = config.platforms.fsm && typeof config.platforms.fsm === 'object'
@@ -4472,14 +4376,11 @@ function getFsmSyncView(config) {
         return {
             targetsByCode: fsm.targetsByCode && typeof fsm.targetsByCode === 'object' ? fsm.targetsByCode : {},
             fixedByCode: fsm.fixedByCode && typeof fsm.fixedByCode === 'object' ? fsm.fixedByCode : {},
-            tagsByCode: fsm.tagsByCode && typeof fsm.tagsByCode === 'object' ? fsm.tagsByCode : {},
-            tagCatalog: Array.isArray(fsm.tagCatalog) ? fsm.tagCatalog : [],
             portfolios: normalizeFsmPortfolios(Array.isArray(fsm.portfolios) ? fsm.portfolios : []),
-            assignmentByCode: fsm.assignmentByCode && typeof fsm.assignmentByCode === 'object' ? fsm.assignmentByCode : {},
-            driftSettings: fsm.driftSettings && typeof fsm.driftSettings === 'object' ? fsm.driftSettings : {}
+            assignmentByCode: fsm.assignmentByCode && typeof fsm.assignmentByCode === 'object' ? fsm.assignmentByCode : {}
         };
     }
-    return { targetsByCode: {}, fixedByCode: {}, tagsByCode: {}, tagCatalog: [], portfolios: [], assignmentByCode: {}, driftSettings: {} };
+    return { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} };
 }
 
 function formatSyncValue(value) {
@@ -4558,10 +4459,9 @@ function formatFsmInstrumentLabel(holdingId, holdingsByCode) {
     return readableIdentity;
 }
 
-function formatFsmAssignmentDisplay({ portfolioId, target, fixed, tag }, portfolioNameMap) {
+function formatFsmAssignmentDisplay({ portfolioId, target, fixed }, portfolioNameMap) {
     const portfolioLabel = formatFsmPortfolioLabel(portfolioId, portfolioNameMap);
-    const tagLabel = utils.normalizeString(tag, '') || '-';
-    return `${portfolioLabel} · Target ${formatSyncTarget(target)} · Fixed ${formatSyncFixed(fixed === true)} · Tag ${tagLabel}`;
+    return `${portfolioLabel} · Target ${formatSyncTarget(target)} · Fixed ${formatSyncFixed(fixed === true)}`;
 }
 
 function buildFsmConflictDiffItems(conflict, options = {}) {
@@ -4582,9 +4482,7 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
         ...Object.keys(localFsm.targetsByCode || {}),
         ...Object.keys(remoteFsm.targetsByCode || {}),
         ...Object.keys(localFsm.fixedByCode || {}),
-        ...Object.keys(remoteFsm.fixedByCode || {}),
-        ...Object.keys(localFsm.tagsByCode || {}),
-        ...Object.keys(remoteFsm.tagsByCode || {})
+        ...Object.keys(remoteFsm.fixedByCode || {})
     ]);
 
     Array.from(codes).sort().forEach(code => {
@@ -4592,48 +4490,16 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
         const remoteTarget = remoteFsm.targetsByCode?.[code];
         const localFixed = localFsm.fixedByCode?.[code] === true;
         const remoteFixed = remoteFsm.fixedByCode?.[code] === true;
-        const localTag = localFsm.tagsByCode?.[code] || '-';
-        const remoteTag = remoteFsm.tagsByCode?.[code] || '-';
         const targetChanged = localTarget !== remoteTarget;
         const fixedChanged = localFixed !== remoteFixed;
-        const tagChanged = localTag !== remoteTag;
-        if (!targetChanged && !fixedChanged && !tagChanged) {
+        if (!targetChanged && !fixedChanged) {
             return;
         }
         rows.push({
             section: 'instrument',
             settingName: `Instrument ${formatFsmInstrumentLabel(code, holdingsByCode)}`,
-            localDisplay: `Target ${formatSyncTarget(localTarget)} · Fixed ${formatSyncFixed(localFixed)} · Tag ${localTag}`,
-            remoteDisplay: `Target ${formatSyncTarget(remoteTarget)} · Fixed ${formatSyncFixed(remoteFixed)} · Tag ${remoteTag}`
-        });
-    });
-
-    const localCatalog = Array.isArray(localFsm.tagCatalog) ? [...localFsm.tagCatalog].sort() : [];
-    const remoteCatalog = Array.isArray(remoteFsm.tagCatalog) ? [...remoteFsm.tagCatalog].sort() : [];
-    if (JSON.stringify(localCatalog) !== JSON.stringify(remoteCatalog)) {
-        rows.push({
-            section: 'tag-catalog',
-            settingName: 'Tag Catalog',
-            localDisplay: formatSyncValue(localCatalog),
-            remoteDisplay: formatSyncValue(remoteCatalog)
-        });
-    }
-
-    const driftKeys = new Set([
-        ...Object.keys(localFsm.driftSettings || {}),
-        ...Object.keys(remoteFsm.driftSettings || {})
-    ]);
-    Array.from(driftKeys).sort().forEach(key => {
-        const localValue = localFsm.driftSettings?.[key];
-        const remoteValue = remoteFsm.driftSettings?.[key];
-        if (localValue === remoteValue) {
-            return;
-        }
-        rows.push({
-            section: 'drift-setting',
-            settingName: `Drift Setting: ${key}`,
-            localDisplay: formatSyncValue(localValue),
-            remoteDisplay: formatSyncValue(remoteValue)
+            localDisplay: `Target ${formatSyncTarget(localTarget)} · Fixed ${formatSyncFixed(localFixed)}`,
+            remoteDisplay: `Target ${formatSyncTarget(remoteTarget)} · Fixed ${formatSyncFixed(remoteFixed)}`
         });
     });
 
@@ -4662,8 +4528,6 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
         const remoteTarget = remoteFsm.targetsByCode?.[code];
         const localFixed = localFsm.fixedByCode?.[code] === true;
         const remoteFixed = remoteFsm.fixedByCode?.[code] === true;
-        const localTag = localFsm.tagsByCode?.[code];
-        const remoteTag = remoteFsm.tagsByCode?.[code];
         rows.push({
             section: 'assignment',
             settingName: formatFsmInstrumentLabel(code, holdingsByCode),
@@ -4671,8 +4535,7 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
                 {
                     portfolioId: localPortfolio,
                     target: localTarget,
-                    fixed: localFixed,
-                    tag: localTag
+                    fixed: localFixed
                 },
                 localPortfolioNameById
             ),
@@ -4680,8 +4543,7 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
                 {
                     portfolioId: remotePortfolio,
                     target: remoteTarget,
-                    fixed: remoteFixed,
-                    tag: remoteTag
+                    fixed: remoteFixed
                 },
                 remotePortfolioNameById
             )
@@ -4807,9 +4669,7 @@ let GoalTargetStore;
             })
         },
         auth: {
-            requestHeaders: null,
-            gmCookieAuthToken: null,
-            gmCookieDumped: false
+            requestHeaders: null
         },
         ui: {
             portfolioButton: null,
@@ -5228,139 +5088,6 @@ let GoalTargetStore;
         return null;
     }
 
-    function getCookieValue(name) {
-        if (typeof document === 'undefined' || !document.cookie) {
-            return null;
-        }
-        const entries = document.cookie.split(';').map(entry => entry.trim());
-        const match = entries.find(entry => entry.startsWith(`${name}=`));
-        if (!match) {
-            return null;
-        }
-        const value = match.slice(name.length + 1);
-        if (!value) {
-            return null;
-        }
-        try {
-            return decodeURIComponent(value);
-        } catch (_error) {
-            // Fallback to raw value if decoding fails due to malformed encoding
-            return value;
-        }
-    }
-
-    function selectAuthCookieToken(cookies) {
-        if (!Array.isArray(cookies) || !cookies.length) {
-            return null;
-        }
-        const httpOnlyCookie = cookies.find(cookie => cookie?.httpOnly);
-        return (httpOnlyCookie || cookies[0])?.value || null;
-    }
-
-    function findCookieValue(cookies, name) {
-        if (!Array.isArray(cookies)) {
-            return null;
-        }
-        return cookies.find(cookie => cookie?.name === name)?.value || null;
-    }
-
-    function getCookieValueByNames(names) {
-        for (const name of names) {
-            const value = getCookieValue(name);
-            if (value) {
-                return { name, value };
-            }
-        }
-        return null;
-    }
-
-    function listCookieByQuery(query) {
-        return new Promise(resolve => {
-            GM_cookie.list(query, cookies => resolve(cookies || []));
-        });
-    }
-
-    function dumpAvailableCookies() {
-        if (state.auth.gmCookieDumped || !DEBUG_AUTH) {
-            return;
-        }
-        state.auth.gmCookieDumped = true;
-        listCookieByQuery({})
-            .then(cookies => {
-                // Debug-only: log a safe summary of available GM_cookie entries
-                const summary = cookies.map(cookie => ({
-                    domain: cookie.domain,
-                    path: cookie.path,
-                    name: cookie.name
-                }));
-                logAuthDebug('[Goal Portfolio Viewer][DEBUG_AUTH] Available GM_cookie entries:', summary);
-            })
-            .catch(error => {
-                console.error('[Goal Portfolio Viewer][DEBUG_AUTH] Failed to list GM_cookie entries:', error);
-            });
-    }
-
-    function getAuthTokenFromGMCookie() {
-        if (state.auth.gmCookieAuthToken) {
-            return Promise.resolve(state.auth.gmCookieAuthToken);
-        }
-        if (typeof GM_cookie === 'undefined' || typeof GM_cookie.list !== 'function') {
-            return Promise.resolve(null);
-        }
-        return new Promise(resolve => {
-            dumpAvailableCookies();
-            const cookieNames = ['webapp-sg-access-token', 'webapp-sg-accessToken'];
-            const queries = [
-                { domain: '.endowus.com', path: '/', name: cookieNames[0] },
-                { domain: '.endowus.com', path: '/', name: cookieNames[1] },
-                { domain: 'app.sg.endowus.com', path: '/', name: cookieNames[0] },
-                { domain: 'app.sg.endowus.com', path: '/', name: cookieNames[1] }
-            ];
-            const tryNext = index => {
-                if (index >= queries.length) {
-                    resolve(null);
-                    return;
-                }
-                listCookieByQuery(queries[index]).then(cookies => {
-                    const token = selectAuthCookieToken(cookies) || findCookieValue(cookies, cookieNames[1]);
-                    if (token) {
-                        state.auth.gmCookieAuthToken = token;
-                        resolve(token);
-                        return;
-                    }
-                    tryNext(index + 1);
-                });
-            };
-            tryNext(0);
-        });
-    }
-
-    function buildAuthorizationValue(token) {
-        if (!token || typeof token !== 'string') {
-            return null;
-        }
-        if (token.toLowerCase().startsWith('bearer ')) {
-            return token;
-        }
-        return `Bearer ${token}`;
-    }
-
-    async function getFallbackAuthHeaders() {
-        const gmCookieToken = await getAuthTokenFromGMCookie();
-        const cookieNames = ['webapp-sg-access-token', 'webapp-sg-accessToken'];
-        const cookieValue = getCookieValueByNames(cookieNames);
-        const token = gmCookieToken || cookieValue?.value || null;
-        const deviceId = getCookieValue('webapp-deviceId');
-        // Policy: do not read localStorage for auth-related identifiers.
-        const clientId = null;
-
-        return {
-            authorization: buildAuthorizationValue(token),
-            'client-id': clientId,
-            'device-id': deviceId
-        };
-    }
-
     function extractAuthHeaders(requestUrl, requestInit) {
         const url = typeof requestUrl === 'string' ? requestUrl : requestUrl?.url;
         if (!url || !url.includes('endowus.com')) {
@@ -5393,24 +5120,15 @@ let GoalTargetStore;
         }
     }
 
-    async function buildPerformanceRequestHeaders() {
+    function buildPerformanceRequestHeaders() {
         const headers = new Headers();
-        const fallbackHeaders = await getFallbackAuthHeaders();
-        const mergedHeaders = {
-            ...fallbackHeaders
-        };
         if (state.auth.requestHeaders) {
             Object.entries(state.auth.requestHeaders).forEach(([key, value]) => {
                 if (value) {
-                    mergedHeaders[key] = value;
+                    headers.set(key, value);
                 }
             });
         }
-        Object.entries(mergedHeaders).forEach(([key, value]) => {
-            if (value) {
-                headers.set(key, value);
-            }
-        });
         return headers;
     }
 
@@ -6408,6 +6126,36 @@ let GoalTargetStore;
         return bucketHeader;
     }
 
+    function appendPlanningDetails(panel, planning, {
+        scopeLabel = null,
+        coverageText = null,
+        showScenarioPrompt = false
+    } = {}) {
+        if (scopeLabel) {
+            panel.appendChild(createElement('p', 'gpv-planning-copy', `Scope: ${scopeLabel}`));
+        }
+        if (coverageText) {
+            panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
+        }
+        if (showScenarioPrompt) {
+            if (planning.scenarioAmount > 0) {
+                panel.appendChild(createElement('p', 'gpv-planning-copy', `Projected Investment: ${formatMoney(planning.scenarioAmount)}`));
+            } else {
+                panel.appendChild(createElement('p', 'gpv-planning-copy', 'Set a projected investment amount to see a what-if split.'));
+            }
+            if (Array.isArray(planning.scenarioSplit) && planning.scenarioSplit.length > 0) {
+                const splitList = createElement('ul', 'gpv-planning-list');
+                planning.scenarioSplit.forEach(item => {
+                    splitList.appendChild(createElement('li', 'gpv-planning-item', `${item.goalName}: ${formatMoney(item.amount)}`));
+                });
+                panel.appendChild(splitList);
+            }
+        }
+        buildPlanningTradeLines(planning).forEach(line => {
+            panel.appendChild(createElement('p', 'gpv-planning-copy', line));
+        });
+    }
+
     function renderPlanningPanel(contentDiv, bucketViewModel, { beforeNode = null } = {}) {
         if (!contentDiv || !bucketViewModel) {
             return;
@@ -6432,26 +6180,9 @@ let GoalTargetStore;
         const coverageText = planning.coverageIssues.length > 0
             ? planning.coverageIssues.join(' | ')
             : null;
-        if (coverageText) {
-            panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
-        }
-
-        if (planning.scenarioAmount > 0) {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', `Projected Investment: ${formatMoney(planning.scenarioAmount)}`));
-        } else {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', 'Set a projected investment amount to see a what-if split.'));
-        }
-
-        if (Array.isArray(planning.scenarioSplit) && planning.scenarioSplit.length > 0) {
-            const splitList = createElement('ul', 'gpv-planning-list');
-            planning.scenarioSplit.forEach(item => {
-                splitList.appendChild(createElement('li', 'gpv-planning-item', `${item.goalName}: ${formatMoney(item.amount)}`));
-            });
-            panel.appendChild(splitList);
-        }
-
-        buildPlanningTradeLines(planning).forEach(line => {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', line));
+        appendPlanningDetails(panel, planning, {
+            coverageText,
+            showScenarioPrompt: true
         });
 
         appendPanel();
@@ -11248,35 +10979,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         };
     }
 
-    function calculateRecommendedContributionSplitForFsm(rows, additionalAmount) {
-        const numericAmount = toFiniteNumber(additionalAmount, null);
-        if (numericAmount === null || numericAmount <= 0 || !Array.isArray(rows)) {
-            return [];
-        }
-        const candidates = rows
-            .filter(row => row && row.fixed !== true && Number.isFinite(row.driftAmount) && row.driftAmount < 0)
-            .map(row => ({
-                goalId: row.holdingId || row.code,
-                goalName: row.displayTicker || row.name || row.code,
-                neededAmount: Math.abs(row.driftAmount)
-            }));
-        const totalNeed = candidates.reduce((sum, item) => sum + item.neededAmount, 0);
-        if (totalNeed <= 0) {
-            return [];
-        }
-        return candidates
-            .map(item => {
-                const share = item.neededAmount / totalNeed;
-                return {
-                    goalId: item.goalId,
-                    goalName: item.goalName,
-                    amount: Number((numericAmount * share).toFixed(2))
-                };
-            })
-            .sort((left, right) => right.amount - left.amount)
-            .slice(0, 4);
-    }
-
     function buildFsmPlanningModel(rows, summary) {
         const safeRows = Array.isArray(rows) ? rows : [];
         const safeSummary = summary || {};
@@ -11286,15 +10988,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const overweightCandidates = safeRows
             .filter(row => Number.isFinite(row?.driftAmount) && row.driftAmount > 0)
             .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount));
-        const scenarioAmount = 0;
         const planningRecommendations = buildPlanningRecommendations({
             buys: underweightCandidates,
             sells: overweightCandidates
         });
         return {
             targetCoverageLabel: safeSummary.targetCoverageLabel || null,
-            scenarioAmount,
-            scenarioSplit: calculateRecommendedContributionSplitForFsm(safeRows, scenarioAmount),
             suggestedBuys: planningRecommendations.suggestedBuys,
             suggestedSells: planningRecommendations.suggestedSells,
             triggerBuys: planningRecommendations.triggerBuys,
@@ -11304,15 +11003,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function calculateFsmCurrentAllocation(total, row) {
-        const numericTotal = toFiniteNumber(total, null);
-        if (numericTotal === null || numericTotal <= 0) {
-            return null;
-        }
-        const currentValue = toFiniteNumber(row?.currentValueLcy, null);
-        if (currentValue === null) {
-            return null;
-        }
-        return currentValue / numericTotal;
+        return calculateAllocationRatio(row?.currentValueLcy, total);
     }
 
     function buildFsmHeader({ overlay, cleanupCallbacks }) {
@@ -11353,28 +11044,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function calculateFsmRowDrift(total, row) {
-        const numericTotal = toFiniteNumber(total, null);
-        if (numericTotal === null || numericTotal <= 0) {
-            return null;
-        }
-        const targetPercent = toFiniteNumber(row?.targetPercent, null);
-        if (targetPercent === null) {
-            return null;
-        }
-        const targetAmount = (targetPercent / 100) * numericTotal;
-        if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
-            return null;
-        }
-        const currentValue = toFiniteNumber(row?.currentValueLcy, 0);
-        const driftAmount = currentValue - targetAmount;
-        const driftPercent = driftAmount / targetAmount;
-        if (!Number.isFinite(driftPercent) || !Number.isFinite(driftAmount)) {
-            return null;
-        }
-        return {
-            driftPercent,
-            driftAmount
-        };
+        return calculateAllocationDrift(row?.currentValueLcy, row?.targetPercent, total);
     }
 
     function buildFsmDisplayRows(rows, total) {
@@ -11700,27 +11370,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     function buildFsmPlanningPanel(planning, scopeLabel) {
         const panel = createElement('div', 'gpv-planning-panel');
         panel.appendChild(createElement('h3', 'gpv-planning-title', 'Planning'));
-        panel.appendChild(createElement('p', 'gpv-planning-copy', `Scope: ${scopeLabel}`));
-        const coverageText = planning?.targetCoverageLabel || null;
-        if (coverageText) {
-            panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
-        }
-
-        const scenarioAmount = toFiniteNumber(planning?.scenarioAmount, 0);
-        if (scenarioAmount > 0) {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', `Projected Investment: ${formatMoney(scenarioAmount)}`));
-        }
-
-        if (Array.isArray(planning?.scenarioSplit) && planning.scenarioSplit.length > 0) {
-            const splitList = createElement('ul', 'gpv-planning-list');
-            planning.scenarioSplit.forEach(item => {
-                splitList.appendChild(createElement('li', 'gpv-planning-item', `${item.goalName}: ${formatMoney(item.amount)}`));
-            });
-            panel.appendChild(splitList);
-        }
-
-        buildPlanningTradeLines(planning).forEach(line => {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', line));
+        appendPlanningDetails(panel, planning || {}, {
+            scopeLabel,
+            coverageText: planning?.targetCoverageLabel || null
         });
         return panel;
     }
@@ -13112,13 +12764,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         // Load stored API data
         loadStoredData(state);
 
-        // Clear expired sort cache on startup
-        clearSortCacheIfExpired();
-
-        if (DEBUG_AUTH) {
-            getAuthTokenFromGMCookie();
-        }
-        
         if (document.body) {
             injectStyles();
             startUrlMonitoring();
@@ -13179,6 +12824,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             getFsmProfitClass,
             formatGrowthPercentFromEndingBalance,
             getReturnClass,
+            calculateAllocationRatio,
+            calculateAllocationDrift,
             calculatePercentOfType,
             calculateGoalDiff,
             isDashboardRoute,
@@ -13249,7 +12896,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             buildFsmConflictDiffItems,
             formatSyncTarget,
             formatSyncFixed,
-            clearSortCacheIfExpired,
             injectStyles: testingHooks?.injectStyles,
             showOverlay: testingHooks?.showOverlay,
             startUrlMonitoring: testingHooks?.startUrlMonitoring,
