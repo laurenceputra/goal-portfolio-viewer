@@ -804,6 +804,31 @@ describe('initialization and URL monitoring', () => {
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Portfolio Viewer');
         expect(overlay.textContent).toContain('Summary View');
+
+        const select = overlay.querySelector('.gpv-select');
+        const bucketValue = Array.from(select.options).find(option => option.value !== 'SUMMARY')?.value;
+        select.value = bucketValue;
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Retirement');
+        expect(select.value).toBe(bucketValue);
+
+        global.fetch.mockResolvedValueOnce(responseFactory([]));
+        await window.fetch('/v1/goals/performance');
+
+        global.fetch.mockResolvedValueOnce(responseFactory([]));
+        await window.fetch('/v2/goals/investible');
+
+        global.fetch.mockResolvedValueOnce(responseFactory([]));
+        await window.fetch('/v1/goals');
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Summary View');
+        expect(overlay.textContent).not.toContain('Retirement');
+        expect(overlay.querySelector('.gpv-select').value).toBe('SUMMARY');
     });
 
     test('showOverlay opens Endowus view when intercepted datasets are empty arrays', () => {

@@ -542,11 +542,11 @@
         // where principal = ending balance - return
         // Example: if you invested $100 and now have $110, return is $10
         // Growth = 10 / 100 * 100 = 10%
-        const numericValues = getFiniteNumbers([totalReturn, endingBalance]);
-        if (!numericValues) {
+        const numericReturn = toOptionalFiniteNumber(totalReturn);
+        const numericEndingBalance = toOptionalFiniteNumber(endingBalance);
+        if (numericReturn === null || numericEndingBalance === null) {
             return '-';
         }
-        const [numericReturn, numericEndingBalance] = numericValues;
         const principal = numericEndingBalance - numericReturn;
         if (principal <= 0) {
             return '-';
@@ -758,7 +758,9 @@
         const safeGoals = Array.isArray(goals) ? goals : [];
         
         // Generate cache key from goal IDs
-        const cacheKey = safeGoals.map(g => g?.goalId || '').join(',');
+        const cacheKey = safeGoals
+            .map(goal => `${goal?.goalId || ''}:${goal?.goalName || ''}`)
+            .join(',');
         
         // Check if cache has expired
         clearSortCacheIfExpired();
@@ -806,7 +808,7 @@
             && Number.isFinite(goal.simpleRateOfReturnPercent)
             ? goal.simpleRateOfReturnPercent
             : null;
-        const returnValue = goal.totalCumulativeReturn || 0;
+        const returnValue = toFiniteNumber(goal.totalCumulativeReturn, null);
         return {
             goalId: goal.goalId,
             goalName: goal.goalName,
@@ -949,7 +951,10 @@ function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
         const goalTypes = Object.keys(bucketObj).filter(key => key !== '_meta');
         const bucketTotalReturn = goalTypes.reduce((total, goalType) => {
             const value = bucketObj[goalType]?.totalCumulativeReturn;
-            return total + (Number.isFinite(value) ? value : 0);
+            if (total === null || !Number.isFinite(value)) {
+                return null;
+            }
+            return total + value;
         }, 0);
         const orderedTypes = sortGoalTypes(goalTypes);
         const endingBalanceTotal = bucketObj._meta?.endingBalanceTotal || 0;
@@ -986,7 +991,9 @@ function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
                         if (!group) {
                             return null;
                         }
-                        const typeReturn = group.totalCumulativeReturn || 0;
+                        const typeReturn = group.totalCumulativeReturn === null
+                            ? null
+                            : toFiniteNumber(group.totalCumulativeReturn, null);
                         const projectedAmount = getProjectedInvestmentValue(
                             projectedInvestments,
                             bucketName,
@@ -1122,7 +1129,9 @@ function buildBucketDetailViewModel({
 }
 
 function buildBucketDetailGoalTypeModel({ goalType, group, projectedAmount, allocationModel }) {
-    const typeReturn = group.totalCumulativeReturn || 0;
+    const typeReturn = group.totalCumulativeReturn === null
+        ? null
+        : toFiniteNumber(group.totalCumulativeReturn, null);
     const endingBalanceAmount = group.endingBalanceAmount || 0;
     return {
         goalType,
@@ -1778,7 +1787,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             }
             const cumulativeReturn = extractAmount(perf.totalCumulativeReturn);
             const safeEndingBalanceAmount = Number.isFinite(endingBalanceAmount) ? endingBalanceAmount : 0;
-            const safeCumulativeReturn = Number.isFinite(cumulativeReturn) ? cumulativeReturn : 0;
             
             const goalObj = {
                 goalId,
@@ -1815,7 +1823,11 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
             bucketMap[goalBucket][goalObj.goalType].endingBalanceAmount += safeEndingBalanceAmount;
             bucketMap[goalBucket]._meta.endingBalanceTotal += safeEndingBalanceAmount;
-            bucketMap[goalBucket][goalObj.goalType].totalCumulativeReturn += safeCumulativeReturn;
+            if (bucketMap[goalBucket][goalObj.goalType].totalCumulativeReturn !== null && Number.isFinite(cumulativeReturn)) {
+                bucketMap[goalBucket][goalObj.goalType].totalCumulativeReturn += cumulativeReturn;
+            } else {
+                bucketMap[goalBucket][goalObj.goalType].totalCumulativeReturn = null;
+            }
         });
 
         return bucketMap;
@@ -12700,7 +12712,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             mergedInvestmentDataState = refreshedReadiness.mergedInvestmentDataState;
             const selectedValue = select.value;
             refreshBucketSelectOptions(selectedValue);
-            renderView(selectedValue, { useCacheOnly: true });
+            renderView(select.value, { useCacheOnly: true });
         });
         cleanupCallbacks.push(unsubscribeOverlayUpdates);
 

@@ -462,6 +462,50 @@ describe('view model builders', () => {
         expect(goalTypeModel.goals[0].returnPercentDisplay).toBe('10.00%');
     });
 
+    test('should hide aggregate return displays when bucket performance is incomplete', () => {
+        const bucketMap = {
+            Retirement: {
+                _meta: { endingBalanceTotal: 1400 },
+                GENERAL_WEALTH_ACCUMULATION: {
+                    endingBalanceAmount: 1400,
+                    totalCumulativeReturn: null,
+                    goals: [
+                        {
+                            goalId: 'g1',
+                            goalName: 'Retirement - Portfolio',
+                            endingBalanceAmount: 1000,
+                            totalCumulativeReturn: 100,
+                            simpleRateOfReturnPercent: 0.1
+                        },
+                        {
+                            goalId: 'g2',
+                            goalName: 'Retirement - Satellite',
+                            endingBalanceAmount: 400,
+                            totalCumulativeReturn: null,
+                            simpleRateOfReturnPercent: null
+                        }
+                    ]
+                }
+            }
+        };
+        const summaryViewModel = buildSummaryViewModel(bucketMap, null, null, null);
+        const detailViewModel = buildBucketDetailViewModel({
+            bucketName: 'Retirement',
+            bucketMap,
+            projectedInvestmentsState: null,
+            goalTargetById: null,
+            goalFixedById: null
+        });
+        expect(summaryViewModel.buckets[0].returnDisplay).toBe('-');
+        expect(summaryViewModel.buckets[0].growthDisplay).toBe('-');
+        expect(summaryViewModel.buckets[0].goalTypes[0].returnDisplay).toBe('-');
+        expect(summaryViewModel.buckets[0].goalTypes[0].growthDisplay).toBe('-');
+        expect(detailViewModel.returnDisplay).toBe('-');
+        expect(detailViewModel.growthDisplay).toBe('-');
+        expect(detailViewModel.goalTypes[0].returnDisplay).toBe('-');
+        expect(detailViewModel.goalTypes[0].growthDisplay).toBe('-');
+    });
+
     test('should apply remaining target to diff when single target is missing', () => {
         const bucketMap = {
             Solo: {
