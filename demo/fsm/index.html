@@ -113,16 +113,16 @@
                 GM_setValue('fsm_target_pct_ESG001', 35.5);
                 GM_setValue('fsm_fixed_ESG002', true);
                 GM_setValue('fsm_tag_ESG003', 'Core');
-                GM_setValue('fsm_tag_catalog', ['Core', 'Satellite']);
-                GM_setValue('fsm_portfolios', [
+                GM_setValue('fsm_tag_catalog', JSON.stringify(['Core', 'Satellite']));
+                GM_setValue('fsm_portfolios', JSON.stringify([
                     { id: 'demo-fsm-core', name: 'Core Portfolio', archived: false },
                     { id: 'demo-fsm-growth', name: 'Growth Portfolio', archived: false }
-                ]);
-                GM_setValue('fsm_assignment_by_code', {
+                ]));
+                GM_setValue('fsm_assignment_by_code', JSON.stringify({
                     ESG001: 'demo-fsm-core',
                     ESG002: 'demo-fsm-growth',
                     ESG003: 'demo-fsm-core'
-                });
+                }));
             }
             return payload;
         }
