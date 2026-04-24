@@ -2987,6 +2987,20 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return sessionMasterKey;
     }
 
+    function clearCryptoLockError() {
+        const message = String(lastError || lastErrorMeta?.userMessage || '');
+        const isCryptoLockError = lastErrorMeta?.category === 'crypto' &&
+            /unlock (?:sync|encryption key)|encryption key (?:not set|required)/i.test(message);
+        if (!isCryptoLockError) {
+            return;
+        }
+        lastError = null;
+        lastErrorMeta = null;
+        if (syncStatus === SYNC_STATUS.error) {
+            syncStatus = SYNC_STATUS.idle;
+        }
+    }
+
     async function hashConfigData(config) {
         if (!config || typeof config !== 'object') {
             return null;
@@ -4159,6 +4173,8 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         if (!sessionMasterKey) {
             throw new Error('Encryption key required to unlock sync for this session');
         }
+
+        clearCryptoLockError();
 
         const previousUserId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
         const previousServerUrl = Storage.get(SYNC_STORAGE_KEYS.serverUrl, null);

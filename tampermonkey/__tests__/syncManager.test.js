@@ -322,6 +322,75 @@ describe('SyncManager', () => {
         expect(SyncManager.getStatus().hasSessionKey).toBe(true);
     });
 
+    test('enable clears stale crypto lock error after unlocking session key', async () => {
+        seedConfiguredState();
+        const { SyncManager } = loadModule();
+
+        SyncManager.scheduleSyncOnChange('target-update');
+        expect(SyncManager.getStatus()).toEqual(expect.objectContaining({
+            lastError: 'Sync is locked. Enter your password and save settings to unlock encryption key.',
+            hasSessionKey: false
+        }));
+        expect(SyncManager.getStatus().lastErrorMeta).toEqual(expect.objectContaining({
+            category: 'crypto'
+        }));
+
+        await SyncManager.enable({
+            serverUrl: 'https://sync.example.com',
+            userId: 'user@example.com',
+            password: 'password123'
+        });
+
+        expect(SyncManager.getStatus()).toEqual(expect.objectContaining({
+            status: 'idle',
+            lastError: null,
+            lastErrorMeta: null,
+            hasSessionKey: true,
+            lastSync: null
+        }));
+    });
+
+    test('enable preserves unrelated auth errors after unlocking session key', async () => {
+        seedConfiguredState();
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        global.GM_xmlhttpRequest = jest.fn(({ url, method, onload }) => {
+            if (url.includes('/sync/') && method === 'GET') {
+                onload({
+                    status: 403,
+                    responseText: JSON.stringify({
+                        error: 'AUTH_LOCKED',
+                        message: 'Account locked'
+                    }),
+                    responseHeaders: ''
+                });
+                return;
+            }
+            onload({ status: 200, responseText: '{}', responseHeaders: '' });
+        });
+
+        await expect(SyncManager.performSync({ direction: 'download' })).rejects.toThrow('Account locked');
+        expect(SyncManager.getStatus().lastErrorMeta).toEqual(expect.objectContaining({
+            category: 'auth'
+        }));
+
+        await SyncManager.enable({
+            serverUrl: 'https://sync.example.com',
+            userId: 'user@example.com',
+            password: 'password123'
+        });
+
+        expect(SyncManager.getStatus()).toEqual(expect.objectContaining({
+            lastError: 'Account locked',
+            hasSessionKey: true
+        }));
+        expect(SyncManager.getStatus().lastErrorMeta).toEqual(expect.objectContaining({
+            category: 'auth'
+        }));
+        consoleErrorSpy.mockRestore();
+    });
+
     test('sync server URLs require HTTPS except localhost development URLs', async () => {
         const { SyncManager, utils } = loadModule();
 
