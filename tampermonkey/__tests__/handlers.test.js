@@ -81,6 +81,7 @@ describe('handlers and cache', () => {
     test('handleGoalTargetChange stores target and updates diff', () => {
         const { handleGoalTargetChange } = exportsModule;
         if (typeof handleGoalTargetChange !== 'function') return;
+        const scheduleSpy = jest.spyOn(exportsModule.SyncManager, 'scheduleSyncOnChange').mockImplementation(() => {});
 
         const bucket = 'Retirement';
         const goalType = 'GENERAL_WEALTH_ACCUMULATION';
@@ -120,6 +121,7 @@ describe('handlers and cache', () => {
         expect(storage.get('goal_target_pct_g1')).toBe(50);
         expect(diffCell.textContent).toMatch(/100\.00/);
         expect(diffCell.className).toContain('gpv-diff-cell');
+        expect(scheduleSpy).toHaveBeenCalledWith('target-update');
     });
 
     test('handleGoalTargetChange clears target on empty input', () => {
@@ -331,6 +333,7 @@ describe('handlers and cache', () => {
     test('handleGoalFixedToggle disables target input and stores flag', () => {
         const { handleGoalFixedToggle } = exportsModule;
         if (typeof handleGoalFixedToggle !== 'function') return;
+        const scheduleSpy = jest.spyOn(exportsModule.SyncManager, 'scheduleSyncOnChange').mockImplementation(() => {});
 
         const bucket = 'Retirement';
         const goalType = 'GENERAL_WEALTH_ACCUMULATION';
@@ -370,6 +373,7 @@ describe('handlers and cache', () => {
 
         expect(storage.get('goal_fixed_g1')).toBe(true);
         expect(targetInput.disabled).toBe(true);
+        expect(scheduleSpy).toHaveBeenCalledWith('fixed-update');
     });
 
     test('handleProjectedInvestmentChange stores and clears projected investment', () => {
@@ -683,7 +687,7 @@ describe('handlers and cache', () => {
     });
 
     test('fetch interception stores performance data', async () => {
-        const body = { performance: true };
+        const body = [{ goalId: 'goal-1', totalCumulativeReturn: { amount: 100 }, simpleRateOfReturnPercent: 0.1 }];
         const responseFactory = data => ({
             clone: () => responseFactory(data),
             json: () => Promise.resolve(data),
@@ -695,7 +699,7 @@ describe('handlers and cache', () => {
         await window.fetch('/v1/goals/performance');
         const stored = storage.get('api_performance');
         expect(stored).toBeDefined();
-        expect(JSON.parse(stored).performance).toBe(true);
+        expect(JSON.parse(stored)).toEqual(body);
     });
 
     test('hydrateVisibleGoalMetricRows updates all matching rows', () => {

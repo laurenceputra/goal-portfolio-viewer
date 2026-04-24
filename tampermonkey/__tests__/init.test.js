@@ -836,9 +836,8 @@ describe('initialization and URL monitoring', () => {
         await new Promise(resolve => setTimeout(resolve, 0));
 
         overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).toContain('Fetching Endowus portfolio data');
-        expect(overlay.textContent).toContain('Goal performance');
-        expect(overlay.textContent).not.toContain('Summary View');
+        expect(overlay.textContent).toContain('Summary View');
+        expect(overlay.textContent).not.toContain('Fetching Endowus portfolio data');
     });
 
     test('showOverlay opens Endowus view when intercepted datasets are empty arrays', () => {
@@ -1233,6 +1232,66 @@ describe('initialization and URL monitoring', () => {
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Enter target between 0 and 100');
         expect(storage.has('fsm_target_pct_AAA')).toBe(false);
+    });
+
+    test('FSM inline edits schedule sync updates', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+        ]));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        const scheduleSpy = jest.spyOn(exportsModule.SyncManager, 'scheduleSyncOnChange').mockImplementation(() => {});
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        viewAllBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
+        targetInput.value = '35';
+        targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        const fixedCheckbox = overlay.querySelector('input[aria-label^="Fixed allocation"]');
+        fixedCheckbox.checked = true;
+        fixedCheckbox.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(scheduleSpy).toHaveBeenCalledWith('fsm-target-update');
+        expect(scheduleSpy).toHaveBeenCalledWith('fsm-fixed-update');
     });
 
     test('Endowus planning warning refreshes after target edits resolve the remainder', () => {

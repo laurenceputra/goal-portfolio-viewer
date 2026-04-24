@@ -4757,6 +4757,9 @@ let GoalTargetStore;
 
     const ENDPOINT_HANDLERS = {
         performance: data => {
+            if (!Array.isArray(data)) {
+                return;
+            }
             state.apiData.performance = data;
             state.readiness.endowus.performanceLoaded = true;
             Storage.writeJson(STORAGE_KEYS.performance, data, 'Error saving performance data');
@@ -4764,6 +4767,9 @@ let GoalTargetStore;
             notifyDataUpdates();
         },
         investible: data => {
+            if (!Array.isArray(data)) {
+                return;
+            }
             state.apiData.investible = data;
             state.readiness.endowus.investibleLoaded = true;
             Storage.writeJson(STORAGE_KEYS.investible, data, 'Error saving investible data');
@@ -4818,8 +4824,7 @@ let GoalTargetStore;
             return { valid: false, reason: 'Expected object payload' };
         }
         if (!Array.isArray(data) && endpointKey !== 'fsmHoldings') {
-            // Some tests/mocks use object payloads; accept and defer to endpoint handlers.
-            return { valid: true, reason: null };
+            return { valid: false, reason: `Expected array payload for ${endpointKey}` };
         }
         if (endpointKey === 'performance') {
             const isValid = data.every(item => item && typeof item === 'object' && item.goalId);
@@ -11073,6 +11078,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const safePortfolios = normalizeFsmPortfolios(portfolios);
         Storage.writeJson(STORAGE_KEYS.fsmPortfolios, safePortfolios, 'Error saving FSM portfolios');
         Storage.writeJson(STORAGE_KEYS.fsmAssignmentByCode, assignmentByCode || {}, 'Error saving FSM assignments');
+        if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
+            SyncManager.scheduleSyncOnChange('fsm-portfolio-config-update');
+        }
     }
 
     function getFsmTarget(code) {
@@ -12239,10 +12247,16 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     }
                     delete targetErrorsByCode[row.code];
                     Storage.set(storageKeys.fsmTarget(row.code), Number(parsed.toFixed(2)));
+                    if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
+                        SyncManager.scheduleSyncOnChange('fsm-target-update');
+                    }
                     rerender();
                 },
                 onFixedChange: (code, isFixed) => {
                     Storage.set(storageKeys.fsmFixed(code), isFixed);
+                    if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
+                        SyncManager.scheduleSyncOnChange('fsm-fixed-update');
+                    }
                     if (isFixed) {
                         Storage.remove(storageKeys.fsmTarget(code));
                         delete targetErrorsByCode[code];
