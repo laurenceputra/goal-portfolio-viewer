@@ -239,15 +239,15 @@ describe('sync settings UI', () => {
         expectClassTokens(cancelBtn, ['gpv-sync-btn', 'gpv-sync-btn-secondary']);
     });
 
-    test('does not render persistent remember-key controls', () => {
+    test('renders remember-key control for trusted device persistence', () => {
         const { createSyncSettingsHTML } = exportsModule;
         seedStatus();
 
         document.body.innerHTML = createSyncSettingsHTML();
 
-        expect(document.getElementById('gpv-sync-remember-hint')).toBeNull();
-        expect(document.getElementById('gpv-sync-remember-wrapper')).toBeNull();
-        expect(document.getElementById('gpv-sync-remember-key')).toBeNull();
+        const rememberKey = document.getElementById('gpv-sync-remember-key');
+        expect(rememberKey).toBeTruthy();
+        expect(rememberKey.checked).toBe(true);
     });
 
     test('login and sign up stay disabled when sync activation is off', () => {
@@ -293,7 +293,8 @@ describe('sync settings UI', () => {
         expect(loginSpy).toHaveBeenCalledWith('https://sync.example.com', 'user@example.com', 'supersecure');
         expect(enableSpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                password: 'supersecure'
+                password: 'supersecure',
+                rememberKey: true
             })
         );
     });
@@ -326,7 +327,8 @@ describe('sync settings UI', () => {
         expect(loginSpy).toHaveBeenCalledWith('https://sync.example.com', 'new@example.com', 'supersecure');
         expect(enableSpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                password: 'supersecure'
+                password: 'supersecure',
+                rememberKey: true
             })
         );
     });

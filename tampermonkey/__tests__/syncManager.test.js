@@ -305,7 +305,7 @@ describe('SyncManager', () => {
         expect(storage.get(keptFsmTarget)).toBe(25);
     });
 
-    test('enable clears legacy remembered master key storage instead of reusing it', async () => {
+    test('enable persists remembered master key when remember-key is enabled', async () => {
         const { SyncManager } = loadModule();
         storage.set('sync_remember_key', true);
         storage.set('sync_master_key', btoa(String.fromCharCode(1, 2, 3, 4)));
@@ -317,9 +317,34 @@ describe('SyncManager', () => {
             rememberKey: true
         })).resolves.toBeUndefined();
 
-        expect(storage.has('sync_remember_key')).toBe(false);
-        expect(storage.has('sync_master_key')).toBe(false);
+        expect(storage.get('sync_remember_key')).toBe(true);
+        expect(typeof storage.get('sync_master_key')).toBe('string');
         expect(SyncManager.getStatus().hasSessionKey).toBe(true);
+    });
+
+    test('hydrates session key from remembered storage on module load', () => {
+        storage.set('sync_remember_key', true);
+        storage.set('sync_master_key', btoa(String.fromCharCode(7, 8, 9, 10)));
+
+        const { SyncManager } = loadModule();
+
+        expect(SyncManager.getStatus().hasSessionKey).toBe(true);
+    });
+
+    test('enable clears remembered key when remember-key is disabled', async () => {
+        storage.set('sync_remember_key', true);
+        storage.set('sync_master_key', btoa(String.fromCharCode(7, 8, 9, 10)));
+        const { SyncManager } = loadModule();
+
+        await SyncManager.enable({
+            serverUrl: 'https://sync.example.com',
+            userId: 'user@example.com',
+            password: 'password123',
+            rememberKey: false
+        });
+
+        expect(storage.get('sync_remember_key')).toBe(false);
+        expect(storage.has('sync_master_key')).toBe(false);
     });
 
     test('enable clears stale crypto lock error after unlocking session key', async () => {

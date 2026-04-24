@@ -2599,8 +2599,52 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         Storage.set(key, isCollapsed ? 'true' : 'false', 'Error writing collapse state');
     }
 
+    function bytesToBase64(bytes) {
+        if (!bytes || !(bytes instanceof Uint8Array)) {
+            return '';
+        }
+        return btoa(String.fromCharCode(...bytes));
+    }
+
+    function base64ToBytes(base64) {
+        if (!base64 || typeof base64 !== 'string') {
+            return null;
+        }
+        try {
+            return new Uint8Array(atob(base64).split('').map(char => char.charCodeAt(0)));
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    function getRememberedMasterKey() {
+        const remember = Storage.get(SYNC_STORAGE_KEYS.rememberKey, false) === true;
+        if (!remember) {
+            return null;
+        }
+        const stored = Storage.get(SYNC_STORAGE_KEYS.rememberedMasterKey, null);
+        const bytes = base64ToBytes(stored);
+        if (bytes && bytes.length) {
+            return bytes;
+        }
+        clearRememberedMasterKey();
+        return null;
+    }
+
+    function setRememberedMasterKey(masterKey, remember) {
+        if (!remember) {
+            clearRememberedMasterKey();
+            return;
+        }
+        if (!masterKey || !(masterKey instanceof Uint8Array) || !masterKey.length) {
+            return;
+        }
+        Storage.set(SYNC_STORAGE_KEYS.rememberKey, true);
+        Storage.set(SYNC_STORAGE_KEYS.rememberedMasterKey, bytesToBase64(masterKey));
+    }
+
     function clearRememberedMasterKey() {
-        Storage.remove(SYNC_STORAGE_KEYS.rememberKey);
+        Storage.set(SYNC_STORAGE_KEYS.rememberKey, false);
         Storage.remove(SYNC_STORAGE_KEYS.rememberedMasterKey);
     }
 
@@ -2904,7 +2948,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     let autoSyncTimer = null;
     let syncOnChangeTimer = null;
     let syncOnChangeRetryTimer = null;
-    let sessionMasterKey = null;
+    let sessionMasterKey = getRememberedMasterKey();
 
     function getStoredServerUrl(fallback = '') {
         const stored = Storage.get(SYNC_STORAGE_KEYS.serverUrl, fallback);
@@ -3047,8 +3091,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         Storage.remove(SYNC_STORAGE_KEYS.accessTokenExpiry);
         Storage.remove(SYNC_STORAGE_KEYS.refreshTokenExpiry);
     }
-
-    clearRememberedMasterKey();
 
     async function refreshAccessToken() {
         const serverUrl = getStoredServerUrl(SYNC_DEFAULTS.serverUrl);
@@ -4196,7 +4238,11 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             Storage.set(SYNC_STORAGE_KEYS.syncInterval, config.syncInterval);
         }
 
-        clearRememberedMasterKey();
+        if (config.rememberKey === true) {
+            setRememberedMasterKey(sessionMasterKey, true);
+        } else if (config.rememberKey === false) {
+            clearRememberedMasterKey();
+        }
 
         startAutoSync();
         logDebug('[Goal Portfolio Viewer] Sync enabled');
@@ -7236,6 +7282,7 @@ function getSyncFormState() {
     const serverUrl = utils.normalizeServerUrl(rawServerUrl);
     const userId = document.getElementById('gpv-sync-user-id')?.value.trim() || '';
     const password = document.getElementById('gpv-sync-password')?.value || '';
+    const rememberKey = document.getElementById('gpv-sync-remember-key')?.checked === true;
     const autoSync = document.getElementById('gpv-sync-auto')?.checked === true;
     const intervalValue = document.getElementById('gpv-sync-interval')?.value;
     const syncInterval = Number.parseInt(intervalValue, 10) || SYNC_DEFAULTS.syncInterval;
@@ -7245,6 +7292,7 @@ function getSyncFormState() {
         serverUrl,
         userId,
         password,
+        rememberKey,
         autoSync,
         syncInterval
     };
@@ -7347,6 +7395,7 @@ function withButtonState(button, busyText, action) {
         const hasValidRefreshToken = syncStatus.hasValidRefreshToken;
         const serverUrl = utils.normalizeServerUrl(Storage.get(SYNC_STORAGE_KEYS.serverUrl, SYNC_DEFAULTS.serverUrl)) || SYNC_DEFAULTS.serverUrl;
         const userId = Storage.get(SYNC_STORAGE_KEYS.userId, '');
+        const rememberKey = Storage.get(SYNC_STORAGE_KEYS.rememberKey, true) !== false;
         const autoSync = Storage.get(SYNC_STORAGE_KEYS.autoSync, SYNC_DEFAULTS.autoSync);
         const syncInterval = Storage.get(SYNC_STORAGE_KEYS.syncInterval, SYNC_DEFAULTS.syncInterval);
         const lastSyncTimestamp = syncStatus.lastSync;
@@ -7358,6 +7407,7 @@ function withButtonState(button, busyText, action) {
             hasValidRefreshToken,
             serverUrl,
             userId,
+            rememberKey,
             autoSync,
             syncInterval,
             lastSyncText: lastSyncTimestamp
@@ -7499,6 +7549,23 @@ function withButtonState(button, busyText, action) {
         `;
     }
 
+    function renderRememberKeySection({ isEnabled, cryptoSupported, rememberKey }) {
+        return `
+            <div class="gpv-sync-form-group">
+                <label class="gpv-sync-toggle">
+                    <input
+                        type="checkbox"
+                        id="gpv-sync-remember-key"
+                        ${rememberKey ? 'checked' : ''}
+                        ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
+                    />
+                    <span>Remember encryption key on this device</span>
+                </label>
+                <p class="gpv-sync-help">Trusted devices only. Keeps sync unlocked across browser sessions.</p>
+            </div>
+        `;
+    }
+
     function renderAutoSyncSection({ autoSync, syncInterval, isEnabled, cryptoSupported }) {
         return `
             <div class="gpv-sync-form-group">
@@ -7602,6 +7669,7 @@ function withButtonState(button, busyText, action) {
                     ${renderServerUrlField(state)}
                     ${renderUserIdField(state)}
                     ${renderPasswordField(state)}
+                    ${renderRememberKeySection(state)}
                     ${renderSyncAuthButtons(state)}
                     ${renderSyncPrimaryAction({
                         isEnabled: state.isEnabled,
@@ -7645,7 +7713,7 @@ function withButtonState(button, busyText, action) {
     const enabledCheckbox = document.getElementById('gpv-sync-enabled');
 
     function updateSyncActivationControls(isEnabled) {
-        const inputs = document.querySelectorAll('.gpv-sync-input, #gpv-sync-auto, #gpv-sync-interval');
+        const inputs = document.querySelectorAll('.gpv-sync-input, #gpv-sync-auto, #gpv-sync-interval, #gpv-sync-remember-key');
         inputs.forEach(input => {
             input.disabled = !isEnabled;
         });
@@ -7697,6 +7765,7 @@ function withButtonState(button, busyText, action) {
                         serverUrl,
                         userId,
                         password,
+                        rememberKey,
                         autoSync,
                         syncInterval
                     } = getSyncFormState();
@@ -7723,6 +7792,7 @@ function withButtonState(button, busyText, action) {
                             serverUrl,
                             userId,
                             password: password || null,
+                            rememberKey,
                             autoSync,
                             syncInterval
                         });
@@ -7755,6 +7825,7 @@ function withButtonState(button, busyText, action) {
                         serverUrl,
                         userId,
                         password,
+                        rememberKey,
                         autoSync,
                         syncInterval
                     } = getSyncFormState();
@@ -7777,6 +7848,7 @@ function withButtonState(button, busyText, action) {
                         serverUrl,
                         userId,
                         password,
+                        rememberKey,
                         autoSync,
                         syncInterval
                     });
@@ -7803,6 +7875,7 @@ function withButtonState(button, busyText, action) {
                         serverUrl,
                         userId,
                         password,
+                        rememberKey,
                         autoSync,
                         syncInterval
                     } = getSyncFormState();
@@ -7820,6 +7893,7 @@ function withButtonState(button, busyText, action) {
                         serverUrl,
                         userId,
                         password,
+                        rememberKey,
                         autoSync,
                         syncInterval
                     });
