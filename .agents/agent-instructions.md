@@ -20,7 +20,9 @@ Use the full high-ceremony workflow for every change, including small fixes and 
 
 ### Workflow Phases
 
-`PLANNING -> DESIGN -> RISK -> IMPLEMENT -> QA -> SELF-REVIEW -> REVIEW -> FIX -> QA -> SELF-REVIEW -> REVIEW -> MERGE`
+`PLANNING -> DESIGN -> RISK -> IMPLEMENT -> QA -> SELF-REVIEW -> REVIEW -> REVIEW-FIX LOOP -> PR COMPLETION -> MERGE`
+
+`REVIEW-FIX LOOP` is skipped only when review has no unresolved `important` or `blocking` findings. `PR COMPLETION` is always required before a PR is declared ready or merged.
 
 Owners:
 
@@ -31,7 +33,8 @@ Owners:
 - `QA`: QA Engineer
 - `SELF-REVIEW`: Staff Engineer
 - `REVIEW`: Code Reviewer
-- `FIX`: Staff Engineer
+- `REVIEW-FIX LOOP`: Staff Engineer with Code Reviewer and QA Engineer support
+- `PR COMPLETION`: Staff Engineer with Release/Docs support
 
 ### Phase Gates
 
@@ -64,31 +67,72 @@ Owners:
   - `approved with non-blocking suggestions`
   - `changes requested`
 
-8. `FIX`
+8. `REVIEW-FIX LOOP`
 - Required whenever review returns any `important` or `blocking` finding.
 - Every finding receives a disposition in the Review Response Matrix.
+- Use the `review-fix-loop` skill.
+- Required fresh-context subagent review must run according to finding severity.
+- QA evidence and self-review evidence must be newer than the latest fix.
 
-9. `MERGE`
+9. `PR COMPLETION`
+- Use the `pr-completion` skill before declaring the PR ready, complete, mergeable, or finished.
+- All review-fix and CI-triage loops are closed or explicitly waived.
+- Required checks are watched after the final push.
+
+10. `MERGE`
 - Allowed only when the latest review has no unresolved `important` or `blocking` findings.
 - QA evidence and self-review evidence must be newer than the latest fix.
+- Required checks pass, are expectedly skipped with rationale, or are explicitly waived.
 
 ### Review-Fix Loop
 
-The review-fix loop is mandatory whenever review produces any `important` or `blocking` feedback.
+The review-fix loop is mandatory whenever review produces any `important` or `blocking` feedback. Use `.agents/skills/review-fix-loop/SKILL.md` as the detailed operating procedure.
 
 Loop contract:
 
-1. `REVIEW` returns `changes requested`.
-2. `FIX` updates code, docs, tests, or config as needed.
-3. Update the Review Response Matrix with one of:
-   - `fixed`
-   - `deferred`
-   - `declined with rationale`
-4. Re-run `QA`.
-5. Re-run `SELF-REVIEW`.
-6. Re-run `REVIEW`.
+1. Capture the review finding with source, severity, expected behavior, and affected surface.
+2. Classify the finding as `blocking`, `important`, `minor`, `invalid`, or `duplicate`.
+3. For `blocking` findings, run both fresh-context subagent assessment and post-fix subagent review.
+4. For `important` findings, run post-fix subagent review and consider fresh-context assessment when the fix is risky or cross-surface.
+5. Implement the smallest correct fix without reverting unrelated work.
+6. Run focused QA for the changed behavior.
+7. Run broader QA for the affected repo surface.
+8. Re-run main-agent self-review after QA.
+9. Update the Review Response Matrix with disposition, fix commit, verification evidence, and residual risk.
+10. Push and watch checks when the loop affects CI-covered behavior or is the final loop.
 
-Non-blocking suggestions may be addressed in the loop or explicitly deferred.
+Non-blocking suggestions may be addressed in the loop or explicitly deferred with rationale.
+
+### CI Failure Triage
+
+Use `.agents/skills/ci-failure-triage/SKILL.md` whenever a GitHub check fails, is unexpectedly cancelled, is inconclusive, or local verification disagrees with CI.
+
+Triage contract:
+
+1. Inspect failed job logs and capture the workflow run or job URL.
+2. Download and inspect artifacts when available before guessing at a fix.
+3. Classify the failure as product regression, test regression, visual baseline drift, infra/environment, dependency/security, lint/format, or flaky/inconclusive.
+4. Choose the remediation path: code fix, test fix, baseline refresh, infra note, dependency action, or rerun.
+5. Run relevant local verification when the environment supports it.
+6. Push changed files and re-watch PR checks to completion.
+7. Update the PR artifact when scope, baselines, verification, or residual risk changed.
+
+Visual regression failures must compare actual, baseline, and diff artifacts. Refresh screenshot baselines only when the visual change is confirmed intentional and record the rationale.
+
+### PR Completion Gate
+
+Use `.agents/skills/pr-completion/SKILL.md` before declaring a PR ready, complete, mergeable, or finished.
+
+Completion contract:
+
+1. Confirm branch and PR number.
+2. Confirm relevant commits are pushed.
+3. Confirm unrelated dirty or untracked files were not committed.
+4. Confirm required PR artifacts are current.
+5. Confirm review-fix loops and CI-triage loops are closed or explicitly waived.
+6. Watch required PR checks after the final push.
+7. Explain expected skipped checks.
+8. Report final status as `ready`, `not ready`, or `blocked` with latest commit hash and verification evidence.
 
 ## Spec-Clarity Gate
 
@@ -132,9 +176,17 @@ Every PR or change record must include these sections:
 5. Self-Review Evidence
 6. Skill Alignment Notes
 
-If a review-fix loop occurred, also include:
+If a review-fix loop occurred or review findings were explicitly deferred or declined, also include:
 
 7. Review Response Matrix
+
+If CI failure triage occurred, also include:
+
+8. CI Failure Triage
+
+Before final readiness is claimed, also include:
+
+9. Final PR Completion
 
 ### Artifact Expectations
 
@@ -175,6 +227,23 @@ If a review-fix loop occurred, also include:
 - Disposition
 - Fix location
 - Verification evidence
+- Residual risk
+
+#### CI Failure Triage
+- Check name and run or job URL
+- Failure classification
+- Artifact or log evidence
+- Remediation path
+- Verification evidence
+- Residual risk
+
+#### Final PR Completion
+- Latest pushed commit
+- Required check status after the final push
+- Expected skipped checks and rationale
+- Local verification evidence
+- Open review-fix or CI-triage loops
+- Final status: `ready`, `not ready`, or `blocked`
 
 ## Agent Interaction Model
 
@@ -235,10 +304,21 @@ Recommended mapping:
 | Risk | `security-risk` |
 | Implementation | `debugging-assistant`, `refactoring-expert` |
 | QA | `qa-testing`, `ux-accessibility`, `network-resilience` |
-| Review | `code-review`, `security-risk` |
-| Release/Docs | `release-management`, `documentation` |
+| Review | `code-review`, `security-risk`, `review-fix-loop` |
+| CI Failure | `ci-failure-triage`, `debugging-assistant`, `qa-testing` |
+| PR Completion | `pr-completion`, `release-management`, `documentation` |
+| Release/Docs | `release-management`, `documentation`, `pr-completion` |
 
 If no matching skill exists, note the gap in the PR body and continue.
+
+Mandatory skill rules:
+
+- Use `review-fix-loop` for every `important` or `blocking` review finding.
+- Use `ci-failure-triage` whenever a GitHub check fails, is unexpectedly cancelled, or is inconclusive.
+- Use `pr-completion` before declaring a PR ready, complete, mergeable, or finished.
+- Use `security-risk` for sync, auth, storage, interception, encryption, or remote data handling changes.
+- Use `ux-accessibility` for UI controls, warnings, visual states, or layout changes.
+- Use `qa-testing` when behavior, tests, or verification strategy changes.
 
 ## Surface-Specific Expectations
 
@@ -283,6 +363,7 @@ Pick checks based on the touched surface and change type.
 ### Workflow/docs/process changes
 - Check markdown references and template consistency.
 - Confirm PR template and canonical docs agree.
+- Confirm new or changed skills are listed in `AGENTS.md` and mapped in the Skill Alignment section.
 
 ## Command Conventions
 
@@ -306,4 +387,6 @@ A change is done only when:
 - The relevant QA checks have run.
 - Self-review evidence is recorded.
 - Review has no unresolved `important` or `blocking` findings.
+- Any CI failures have completed `ci-failure-triage`.
+- The `pr-completion` gate has run before final readiness is claimed.
 - Docs and commands match the actual repo shape.

@@ -30,6 +30,8 @@
 - Implementation:
 - QA:
 - Review:
+- CI Failure:
+- PR Completion:
 
 ## Verification Matrix
 
@@ -47,8 +49,26 @@
 
 ## Review Response Matrix
 
-Fill this section only if review produced any `important` or `blocking` findings.
+Fill this section if review produced findings that entered a review-fix loop or were explicitly deferred/declined.
 
-| Finding | Severity | Disposition | Fix Location | Verification Evidence |
-| --- | --- | --- | --- | --- |
-|  |  |  |  |  |
+| Finding | Severity | Disposition | Fix Location | Verification Evidence | Residual Risk |
+| --- | --- | --- | --- | --- | --- |
+|  |  |  |  |  |  |
+
+## CI Failure Triage
+
+Fill this section if a GitHub check failed, was unexpectedly cancelled, was inconclusive, or local verification disagreed with CI.
+
+| Check | Run / Job | Classification | Evidence | Remediation | Verification | Residual Risk |
+| --- | --- | --- | --- | --- | --- | --- |
+|  |  |  |  |  |  |  |
+
+## Final PR Completion
+
+- Latest pushed commit:
+- Required checks:
+- Expected skipped checks:
+- Local verification evidence:
+- Open review-fix loops:
+- Open CI-triage loops:
+- Final status: `ready` / `not ready` / `blocked`

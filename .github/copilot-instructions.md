@@ -14,7 +14,7 @@ applies_to:
 
 ## Canonical Process
 
-- Follow [`.agents/agent-instructions.md`](../.agents/agent-instructions.md) for workflow phases, gates, required artifacts, the review-fix loop, and verification expectations.
+- Follow [`.agents/agent-instructions.md`](../.agents/agent-instructions.md) for workflow phases, gates, required artifacts, the review-fix loop, CI failure triage, PR completion, and verification expectations.
 - Treat the repository as a workspace with these primary surfaces:
   - `tampermonkey/` for the userscript
   - `workers/` for the optional sync backend
@@ -26,6 +26,7 @@ applies_to:
 - Do not introduce data egress unless it is explicitly part of the opt-in sync surface and documented.
 - Run the required QA and self-review checks after every meaningful change.
 - Record the required artifacts in the PR body using the repository template.
+- Use the required workflow skills for review fixes, failed or inconclusive CI, and PR completion before declaring work ready.
 
 ## Role Guides
 

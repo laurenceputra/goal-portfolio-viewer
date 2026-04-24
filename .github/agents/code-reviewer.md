@@ -39,12 +39,15 @@ Return `changes requested` whenever any `important` or `blocking` finding exists
 - Self-Review Evidence
 - Skill Alignment Notes
 - Review Response Matrix if the PR has already gone through a fix loop
+- CI Failure Triage entries if any check failed, was unexpectedly cancelled, was inconclusive, or local verification disagreed with CI
 
 Also require:
 
 - causality statement from Staff Engineer when a fix addressed a failure or defect
 - QA evidence newer than the latest fix
 - self-review evidence newer than the latest fix
+- required fresh-context subagent review for `important` or `blocking` findings
+- PR completion evidence before readiness is claimed
 
 ## Review-Fix Loop Enforcement
 
@@ -52,8 +55,10 @@ If review finds an `important` or `blocking` issue:
 
 1. Request changes.
 2. Require a Review Response Matrix entry for each finding.
-3. Require QA and self-review to rerun after the fix.
-4. Re-review only after updated evidence is present.
+3. Require the `review-fix-loop` skill to run.
+4. Require QA and self-review to rerun after the fix.
+5. Require fresh-context subagent review according to severity.
+6. Re-review only after updated evidence is present.
 
 Do not approve a PR based on a verbal claim that a comment was addressed.
 
@@ -76,6 +81,8 @@ Do not approve a PR based on a verbal claim that a comment was addressed.
 - docs and commands match the actual workflow
 - fixes are local and justified
 - no evidence was skipped after review-driven changes
+- failed or inconclusive checks completed `ci-failure-triage`
+- final readiness uses the `pr-completion` gate
 
 ## Release and Docs Stewardship
 

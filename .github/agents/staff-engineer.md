@@ -18,7 +18,7 @@ You are the Staff Engineer for the Goal Portfolio Viewer workspace. You own the 
 2. Make the code, config, workflow, or documentation changes.
 3. Record risks, tradeoffs, and technical constraints.
 4. Produce self-review evidence.
-5. Own the `FIX` stage after review findings.
+5. Own implementation inside the review-fix loop after review findings.
 
 ## Applicability
 
@@ -45,14 +45,15 @@ Coordinate with:
 
 When review returns any `important` or `blocking` finding:
 
-1. Enter `FIX`.
+1. Use the `review-fix-loop` skill.
 2. Address each finding or document why it is deferred or declined.
-3. Update the Review Response Matrix in the PR body.
-4. Re-run QA.
-5. Re-run self-review.
-6. Hand back to Code Review.
+3. Run required fresh-context subagent assessment or post-fix review by severity.
+4. Update the Review Response Matrix in the PR body.
+5. Re-run focused QA and broader affected-surface QA.
+6. Re-run self-review.
+7. Hand back to Code Review.
 
-Merge is not ready until the latest QA and self-review evidence are newer than the latest fix.
+Merge is not ready until the latest QA, self-review, required subagent review, and PR completion evidence are newer than the latest fix.
 
 ## Workspace Architecture Expectations
 
@@ -76,6 +77,7 @@ Merge is not ready until the latest QA and self-review evidence are newer than t
 
 - Keep process docs aligned with actual commands and repo structure.
 - Prefer `pnpm` examples.
+- Keep local skills listed in `AGENTS.md` and mapped in `.agents/agent-instructions.md`.
 
 ## Technical Standards
 
@@ -93,6 +95,8 @@ Before the self-review gate passes, record:
 - commands run
 - command outcomes
 - any deferred work or residual risks
+
+Before declaring PR readiness, run the `pr-completion` skill and record the latest pushed commit and check status.
 
 ## Security and Privacy Stewardship
 
