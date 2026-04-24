@@ -110,22 +110,32 @@ describe('projected and goal helpers', () => {
 
     test('should describe suggested buys and sells clearly', () => {
         expect(buildPlanningTradeLines({
+            triggerBuys: [
+                { goalName: 'BND', recommendedAmount: 4000 }
+            ],
+            triggerSells: [
+                { displayTicker: 'ALZP64', recommendedAmount: 12509.12 },
+                { displayTicker: 'MBH', recommendedAmount: 2500.5 }
+            ],
             suggestedBuys: [
                 { goalName: 'VWRA', recommendedAmount: 4618.04 },
                 { goalName: 'ES3', recommendedAmount: 1200 }
             ],
             suggestedSells: [
-                { displayTicker: 'ALZP64', recommendedAmount: 12509.12 },
-                { displayTicker: 'MBH', recommendedAmount: 2500.5 }
+                { displayTicker: 'A35', recommendedAmount: 3500 }
             ]
         })).toEqual([
+            'Trigger sells: ALZP64 SGD\u00A012,509.12 | MBH SGD\u00A02,500.50',
             'Suggested buys: VWRA SGD\u00A04,618.04 | ES3 SGD\u00A01,200.00',
-            'Suggested sells: ALZP64 SGD\u00A012,509.12 | MBH SGD\u00A02,500.50'
+            'Trigger buys: BND SGD\u00A04,000.00',
+            'Suggested sells: A35 SGD\u00A03,500.00'
         ]);
     });
 
     test('should omit empty planning trade groups', () => {
         expect(buildPlanningTradeLines({
+            triggerBuys: [],
+            triggerSells: [{ displayTicker: 'ALZP64', recommendedAmount: 12509.12 }],
             suggestedBuys: [],
             suggestedSells: [{ displayTicker: 'ALZP64', recommendedAmount: 12509.12 }]
         })).toEqual([
@@ -150,6 +160,7 @@ describe('projected and goal helpers', () => {
         expect(result.suggestedBuys.reduce((sum, item) => sum + item.recommendedAmount, 0)).toBe(10800);
         expect(result.suggestedBuys[2].recommendedAmount).toBe(1800);
         expect(result.suggestedSells.map(item => item.displayTicker)).toEqual(['Sell A']);
+        expect(result.triggerSells.map(item => item.displayTicker)).toEqual(['Sell A', 'Sell B']);
     });
 
     test('should build suggested sells from material buys using drift order', () => {
@@ -169,6 +180,7 @@ describe('projected and goal helpers', () => {
         expect(result.suggestedSells.reduce((sum, item) => sum + item.recommendedAmount, 0)).toBe(10800);
         expect(result.suggestedSells[2].recommendedAmount).toBe(1800);
         expect(result.suggestedBuys.map(item => item.goalName)).toEqual(['Buy A']);
+        expect(result.triggerBuys.map(item => item.goalName)).toEqual(['Buy A', 'Buy B']);
     });
 });
 

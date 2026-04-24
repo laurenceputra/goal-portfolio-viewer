@@ -1332,11 +1332,24 @@ function formatPlanningTradeLine(label, items) {
     return `${label}: ${formattedItems.join(' | ')}`;
 }
 
-function buildPlanningTradeLines({ suggestedBuys, suggestedSells }) {
-    return [
-        formatPlanningTradeLine('Suggested buys', suggestedBuys),
-        formatPlanningTradeLine('Suggested sells', suggestedSells)
-    ].filter(Boolean);
+function buildPlanningTradeLines({
+    suggestedBuys,
+    suggestedSells,
+    triggerBuys,
+    triggerSells
+}) {
+    const hasSuggestedBuys = Array.isArray(suggestedBuys) && suggestedBuys.length > 0;
+    const hasSuggestedSells = Array.isArray(suggestedSells) && suggestedSells.length > 0;
+    const lines = [];
+    if (hasSuggestedBuys) {
+        lines.push(formatPlanningTradeLine('Trigger sells', triggerSells));
+        lines.push(formatPlanningTradeLine('Suggested buys', suggestedBuys));
+    }
+    if (hasSuggestedSells) {
+        lines.push(formatPlanningTradeLine('Trigger buys', triggerBuys));
+        lines.push(formatPlanningTradeLine('Suggested sells', suggestedSells));
+    }
+    return lines.filter(Boolean);
 }
 
 function selectPlanningTradesByDrift(items, direction, { materialOnly = false } = {}) {
@@ -1386,6 +1399,8 @@ function buildPlanningRecommendations({ buys, sells }) {
         suggestedSells: materialBuys.length > 0
             ? buildFundingRecommendations(materialBuys, selectPlanningTradesByDrift(sells, 'sell'))
             : [],
+        triggerBuys: materialBuys,
+        triggerSells: materialSells,
         buyCandidates: selectPlanningTradesByDrift(buys, 'buy'),
         sellCandidates: selectPlanningTradesByDrift(sells, 'sell'),
         materialBuys,
@@ -1486,6 +1501,8 @@ function buildPlanningModel(goalTypeModel) {
         scenarioSplit,
         suggestedBuys: planningRecommendations.suggestedBuys,
         suggestedSells: planningRecommendations.suggestedSells,
+        triggerBuys: planningRecommendations.triggerBuys,
+        triggerSells: planningRecommendations.triggerSells,
         buyCandidates: planningRecommendations.buyCandidates,
         sellCandidates: planningRecommendations.sellCandidates,
         materialBuys: planningRecommendations.materialBuys,
@@ -1555,6 +1572,8 @@ function buildBucketPlanningModel(goalTypeModels) {
         scenarioSplit,
         suggestedBuys: buildFundingRecommendations(sortedBucketMaterialSells, sortedBucketBuyCandidates),
         suggestedSells: buildFundingRecommendations(sortedBucketMaterialBuys, sortedBucketSellCandidates),
+        triggerBuys: sortedBucketMaterialBuys,
+        triggerSells: sortedBucketMaterialSells,
         hasMaterialDrift: sortedBucketMaterialBuys.length > 0 || sortedBucketMaterialSells.length > 0
     };
 }
@@ -11131,6 +11150,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             scenarioSplit: calculateRecommendedContributionSplitForFsm(safeRows, scenarioAmount),
             suggestedBuys: planningRecommendations.suggestedBuys,
             suggestedSells: planningRecommendations.suggestedSells,
+            triggerBuys: planningRecommendations.triggerBuys,
+            triggerSells: planningRecommendations.triggerSells,
             hasMaterialDrift: planningRecommendations.hasMaterialDrift
         };
     }
