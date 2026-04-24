@@ -12192,7 +12192,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 toolbarSection.hidden = true;
                 setElementsDisabled(detailToolbarControls, true);
                 summarySection.appendChild(buildFsmSummaryRow(viewState.overviewModel.allSummary, {
-                    showDrift: true,
+                    showDrift: false,
                     showProfit: true,
                     showFixed: false
                 }));

@@ -386,6 +386,7 @@ describe('initialization and URL monitoring', () => {
         storage.set('api_fsm_holdings', JSON.stringify([
             { code: 'AAA', subcode: 'AAPL', name: 'Alpha', productType: 'UNIT_TRUST', currentValueLcy: 1000 }
         ]));
+        storage.set('fsm_target_pct_AAA', 50);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -404,6 +405,13 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Needs Attention');
         expect(overlay.querySelector('.gpv-health-badge')).toBeTruthy();
         expect(overlay.querySelector('.gpv-health-badge').textContent).not.toMatch(/\(\d+\)/);
+        const topSummaryDriftCard = Array.from(overlay.querySelectorAll('.gpv-summary-row .gpv-summary-card')).find(card =>
+            card.textContent.includes('Drift:')
+        );
+        expect(topSummaryDriftCard).toBeFalsy();
+        const overviewCard = overlay.querySelector('.gpv-fsm-overview-card');
+        expect(overviewCard.textContent).toContain('Drift');
+        expect(overviewCard.textContent).toContain('100.00%');
 
         const manageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage portfolios'));
         manageBtn.click();
