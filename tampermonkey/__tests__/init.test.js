@@ -386,7 +386,7 @@ describe('initialization and URL monitoring', () => {
         storage.set('api_fsm_holdings', JSON.stringify([
             { code: 'AAA', subcode: 'AAPL', name: 'Alpha', productType: 'UNIT_TRUST', currentValueLcy: 1000 }
         ]));
-        storage.set('fsm_target_pct_AAA', 50);
+        storage.set('fsm_target_pct_AAA|sub:AAPL', 50);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -979,7 +979,7 @@ describe('initialization and URL monitoring', () => {
                 profitPercentLcy: 10
             },
             {
-                code: 'BBB',
+                code: 'AAA',
                 subcode: 'BOND',
                 name: 'Fund B',
                 productType: 'UNIT_TRUST',
@@ -1028,7 +1028,7 @@ describe('initialization and URL monitoring', () => {
         rowSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         let assignments = JSON.parse(storage.get('fsm_assignment_by_code'));
-        expect(assignments.AAA).toBe('core');
+        expect(assignments['AAA|sub:AAPL']).toBe('core');
 
         overlay = document.querySelector('#gpv-overlay');
         const archiveSelect = overlay.querySelector('.gpv-fsm-portfolio-list select');
@@ -1040,7 +1040,7 @@ describe('initialization and URL monitoring', () => {
         expect(archived.archived).toBe(true);
 
         assignments = JSON.parse(storage.get('fsm_assignment_by_code'));
-        expect(assignments.AAA).toBe('unassigned');
+        expect(assignments['AAA|sub:AAPL']).toBe('unassigned');
     });
 
     test('FSM bulk assignment applies to all filtered holdings', () => {
@@ -1150,8 +1150,8 @@ describe('initialization and URL monitoring', () => {
         applyBulkBtn.click();
 
         const assignments = JSON.parse(storage.get('fsm_assignment_by_code'));
-        expect(assignments.AAA).toBe('core');
-        expect(assignments.BBB).toBe('core');
+        expect(assignments['AAA|sub:AAPL']).toBe('core');
+        expect(assignments['AAA|sub:BOND']).toBe('core');
     });
 
     test('FSM fixed clears target value and disables input', () => {
@@ -1190,7 +1190,7 @@ describe('initialization and URL monitoring', () => {
         storage.set('api_fsm_holdings', JSON.stringify([
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
         ]));
-        storage.set('fsm_target_pct_AAA', 35);
+        storage.set('fsm_target_pct_AAA|sub:AAPL', 35);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -1207,8 +1207,8 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         const targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
-        expect(storage.has('fsm_target_pct_AAA')).toBe(false);
-        expect(storage.get('fsm_fixed_AAA')).toBe(true);
+        expect(storage.has('fsm_target_pct_AAA|sub:AAPL')).toBe(false);
+        expect(storage.get('fsm_fixed_AAA|sub:AAPL')).toBe(true);
         expect(targetInput.disabled).toBe(true);
     });
 
@@ -1264,7 +1264,7 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Enter target between 0 and 100');
-        expect(storage.has('fsm_target_pct_AAA')).toBe(false);
+        expect(storage.has('fsm_target_pct_AAA|sub:AAPL')).toBe(false);
     });
 
     test('FSM inline edits schedule sync updates', () => {
@@ -1475,11 +1475,11 @@ describe('initialization and URL monitoring', () => {
                 profitPercentLcy: 5
             }
         ]));
-        storage.set('fsm_target_pct_AAA', 60);
+        storage.set('fsm_target_pct_AAA|sub:AAPL', 60);
         storage.set('fsm_portfolios', JSON.stringify([
             { id: 'core', name: 'Core', archived: false }
         ]));
-        storage.set('fsm_assignment_by_code', JSON.stringify({ AAA: 'core', BBB: 'unassigned' }));
+        storage.set('fsm_assignment_by_code', JSON.stringify({ 'AAA|sub:AAPL': 'core', 'BBB|sub:BOND': 'unassigned' }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -1571,8 +1571,8 @@ describe('initialization and URL monitoring', () => {
                 profitPercentLcy: 5
             }
         ]));
-        storage.set('fsm_target_pct_AAA', 10);
-        storage.set('fsm_target_pct_BBB', 90);
+        storage.set('fsm_target_pct_AAA|sub:AAPL', 10);
+        storage.set('fsm_target_pct_BBB|sub:BOND', 90);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -1707,7 +1707,7 @@ describe('initialization and URL monitoring', () => {
         storage.set('api_fsm_holdings', JSON.stringify([
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
         ]));
-        storage.set('fsm_fixed_AAA', true);
+        storage.set('fsm_fixed_AAA|sub:AAPL', true);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -1762,8 +1762,8 @@ describe('initialization and URL monitoring', () => {
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 600 },
             { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 400 }
         ]));
-        storage.set('fsm_target_pct_AAA', 0);
-        storage.set('fsm_target_pct_BBB', 0);
+        storage.set('fsm_target_pct_AAA|sub:AAPL', 0);
+        storage.set('fsm_target_pct_BBB|sub:BOND', 0);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -1812,8 +1812,8 @@ describe('initialization and URL monitoring', () => {
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 800 },
             { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 1700 }
         ]));
-        storage.set('fsm_target_pct_AAA', 40);
-        storage.set('fsm_target_pct_BBB', 60);
+        storage.set('fsm_target_pct_AAA|sub:AAPL', 40);
+        storage.set('fsm_target_pct_BBB|sub:BOND', 60);
 
         let exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -1838,8 +1838,8 @@ describe('initialization and URL monitoring', () => {
         global.XMLHttpRequest = FakeXHR;
         window.__GPV_DISABLE_AUTO_INIT = true;
 
-        storage.set('fsm_target_pct_AAA', 80);
-        storage.set('fsm_target_pct_BBB', 20);
+        storage.set('fsm_target_pct_AAA|sub:AAPL', 80);
+        storage.set('fsm_target_pct_BBB|sub:BOND', 20);
 
         exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();

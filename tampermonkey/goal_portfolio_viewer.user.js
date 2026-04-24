@@ -120,6 +120,7 @@
         syncInterval: 30 // minutes
     };
     const SYNC_REQUEST_TIMEOUT_MS = 15000;
+    const FSM_HOLDING_ID_SEPARATOR = '|sub:';
 
     const utils = {
         normalizeServerUrl(serverUrl) {
@@ -209,6 +210,34 @@
             return bucket || 'Uncategorized';
         }
     };
+
+    function getFsmHoldingIdentity(rowOrCode, maybeSubcode) {
+        const isRow = rowOrCode && typeof rowOrCode === 'object';
+        const code = utils.normalizeString(isRow ? rowOrCode.code : rowOrCode, '');
+        const subcode = utils.normalizeString(isRow ? (rowOrCode.subcode ?? rowOrCode.subCode) : maybeSubcode, '');
+        if (!code) {
+            return '';
+        }
+        if (!subcode) {
+            return code;
+        }
+        return `${encodeURIComponent(code)}${FSM_HOLDING_ID_SEPARATOR}${encodeURIComponent(subcode)}`;
+    }
+
+    function formatFsmHoldingIdentity(identity) {
+        const normalized = utils.normalizeString(identity, '');
+        if (!normalized.includes(FSM_HOLDING_ID_SEPARATOR)) {
+            return normalized;
+        }
+        const [encodedCode, encodedSubcode] = normalized.split(FSM_HOLDING_ID_SEPARATOR);
+        try {
+            const code = decodeURIComponent(encodedCode || '');
+            const subcode = decodeURIComponent(encodedSubcode || '');
+            return subcode ? `${code} / ${subcode}` : code;
+        } catch (_error) {
+            return normalized;
+        }
+    }
 
     const SYNC_STATUS = {
         idle: 'idle',
@@ -4480,13 +4509,13 @@ function getFsmHoldingsFromStorage() {
 function buildFsmHoldingsNameMap(fsmHoldings) {
     const rows = Array.isArray(fsmHoldings) ? fsmHoldings : [];
     return rows.reduce((acc, row) => {
-        const code = utils.normalizeString(row?.code, '');
-        if (!code) {
+        const holdingId = getFsmHoldingIdentity(row);
+        if (!holdingId) {
             return acc;
         }
         const name = utils.normalizeString(row?.name, '');
         if (name) {
-            acc[code] = name;
+            acc[holdingId] = name;
         }
         return acc;
     }, {});
@@ -4516,16 +4545,17 @@ function formatFsmPortfolioLabel(portfolioId, portfolioNameMap) {
     return normalizedId;
 }
 
-function formatFsmInstrumentLabel(code, holdingsByCode) {
-    const normalizedCode = utils.normalizeString(code, '');
-    if (!normalizedCode) {
+function formatFsmInstrumentLabel(holdingId, holdingsByCode) {
+    const normalizedHoldingId = utils.normalizeString(holdingId, '');
+    if (!normalizedHoldingId) {
         return '-';
     }
-    const name = utils.normalizeString(holdingsByCode?.[normalizedCode], '');
+    const readableIdentity = formatFsmHoldingIdentity(normalizedHoldingId);
+    const name = utils.normalizeString(holdingsByCode?.[normalizedHoldingId], '');
     if (name) {
-        return `${name} (${normalizedCode})`;
+        return `${name} (${readableIdentity})`;
     }
-    return normalizedCode;
+    return readableIdentity;
 }
 
 function formatFsmAssignmentDisplay({ portfolioId, target, fixed, tag }, portfolioNameMap) {
@@ -4572,7 +4602,7 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
         }
         rows.push({
             section: 'instrument',
-            settingName: `Instrument ${code}`,
+            settingName: `Instrument ${formatFsmInstrumentLabel(code, holdingsByCode)}`,
             localDisplay: `Target ${formatSyncTarget(localTarget)} · Fixed ${formatSyncFixed(localFixed)} · Tag ${localTag}`,
             remoteDisplay: `Target ${formatSyncTarget(remoteTarget)} · Fixed ${formatSyncFixed(remoteFixed)} · Tag ${remoteTag}`
         });
@@ -11092,12 +11122,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const validPortfolioIds = new Set(portfolios.filter(item => item.archived !== true).map(item => item.id));
         const sanitizedAssignments = {};
         (Array.isArray(fsmHoldings) ? fsmHoldings : []).forEach(row => {
-            const code = utils.normalizeString(row?.code, '');
-            if (!code) {
+            const holdingId = getFsmHoldingIdentity(row);
+            if (!holdingId) {
                 return;
             }
-            const assigned = utils.normalizeString(assignmentByCode[code], '');
-            sanitizedAssignments[code] = validPortfolioIds.has(assigned) ? assigned : FSM_UNASSIGNED_PORTFOLIO_ID;
+            const assigned = utils.normalizeString(assignmentByCode[holdingId], '');
+            sanitizedAssignments[holdingId] = validPortfolioIds.has(assigned) ? assigned : FSM_UNASSIGNED_PORTFOLIO_ID;
         });
         return {
             portfolios,
@@ -11128,21 +11158,23 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return (Array.isArray(fsmHoldings) ? fsmHoldings : []).map(row => {
             const code = utils.normalizeString(row?.code, '');
             const subcode = utils.normalizeString(row?.subcode ?? row?.subCode, '');
+            const holdingId = getFsmHoldingIdentity(code, subcode);
             const currentValue = Number(row?.currentValueLcy);
             const profitValue = toOptionalFiniteNumber(row?.profitValueLcy);
             const profitPercent = toOptionalFiniteNumber(row?.profitPercentLcy);
             return {
                 ...row,
                 code,
+                holdingId,
                 displayTicker: subcode || code,
                 name: utils.normalizeString(row?.name, '-'),
                 productType: utils.normalizeString(row?.productType, '-'),
                 currentValueLcy: Number.isFinite(currentValue) ? currentValue : 0,
                 profitValueLcy: profitValue,
                 profitPercentLcy: profitPercent,
-                portfolioId: assignmentByCode[code] || FSM_UNASSIGNED_PORTFOLIO_ID,
-                targetPercent: getFsmTarget(code),
-                fixed: getFsmFixed(code)
+                portfolioId: assignmentByCode[holdingId] || FSM_UNASSIGNED_PORTFOLIO_ID,
+                targetPercent: getFsmTarget(holdingId),
+                fixed: getFsmFixed(holdingId)
             };
         });
     }
@@ -11224,7 +11256,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const candidates = rows
             .filter(row => row && row.fixed !== true && Number.isFinite(row.driftAmount) && row.driftAmount < 0)
             .map(row => ({
-                goalId: row.code,
+                goalId: row.holdingId || row.code,
                 goalName: row.displayTicker || row.name || row.code,
                 neededAmount: Math.abs(row.driftAmount)
             }));
@@ -11802,10 +11834,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
     function buildFsmHoldingsTable({
         filteredRows,
-        selectedCodes,
+        selectedHoldingIds,
         selectAllFiltered,
         activePortfolios,
-        targetErrorsByCode,
+        targetErrorsByHoldingId,
         showDrift,
         onSelectAllChange,
         onRowSelectChange,
@@ -11848,7 +11880,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const tbody = table.querySelector('tbody');
         filteredRows.forEach(row => {
             const tr = document.createElement('tr');
-            const checked = selectedCodes.has(row.code);
+            const holdingId = row.holdingId || row.code;
+            const checked = selectedHoldingIds.has(holdingId);
             tr.innerHTML = `
                 <td data-col="select"><input type="checkbox" ${checked ? 'checked' : ''} aria-label="Select holding ${escapeHtml(row.displayTicker || row.code)}" /></td>
                 <td data-col="ticker">${escapeHtml(row.displayTicker || '-')}</td>
@@ -11865,7 +11898,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const checkbox = tr.querySelector('input[type="checkbox"]');
             checkbox.addEventListener('change', () => {
                 if (typeof onRowSelectChange === 'function') {
-                    onRowSelectChange(row.code, checkbox.checked);
+                    onRowSelectChange(holdingId, checkbox.checked);
                 }
             });
 
@@ -11892,8 +11925,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 }
             };
             targetCell.appendChild(targetInput);
-            if (targetErrorsByCode[row.code]) {
-                const err = createElement('div', 'gpv-conflict-diff-empty', targetErrorsByCode[row.code]);
+            if (targetErrorsByHoldingId[holdingId]) {
+                const err = createElement('div', 'gpv-conflict-diff-empty', targetErrorsByHoldingId[holdingId]);
                 targetCell.appendChild(err);
             }
 
@@ -11908,7 +11941,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             fixedCheckbox.setAttribute('aria-label', `Fixed allocation for ${row.displayTicker || row.code}`);
             fixedCheckbox.onchange = () => {
                 if (typeof onFixedChange === 'function') {
-                    onFixedChange(row.code, fixedCheckbox.checked === true);
+                    onFixedChange(holdingId, fixedCheckbox.checked === true);
                 }
             };
             fixedCell.appendChild(fixedCheckbox);
@@ -11929,7 +11962,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             select.value = row.portfolioId;
             select.onchange = () => {
                 if (typeof onPortfolioChange === 'function') {
-                    onPortfolioChange(row.code, select.value);
+                    onPortfolioChange(holdingId, select.value);
                 }
             };
             selectCell.appendChild(select);
@@ -11962,12 +11995,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         let selectedScope = FSM_ALL_PORTFOLIO_ID;
         let filterTerm = '';
         let bulkPortfolioId = FSM_UNASSIGNED_PORTFOLIO_ID;
-        let selectedCodes = new Set();
+        let selectedHoldingIds = new Set();
         let isPortfolioManagerExpanded = false;
         let editingPortfolioId = null;
         let viewMode = 'overview';
         let nextFocusTarget = null;
-        const targetErrorsByCode = {};
+        const targetErrorsByHoldingId = {};
 
         const activePortfolios = () => portfolios.filter(item => item.archived !== true);
 
@@ -11985,13 +12018,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 viewMode = 'overview';
                 filterTerm = '';
                 selectedScope = FSM_ALL_PORTFOLIO_ID;
-                selectedCodes = new Set();
+                selectedHoldingIds = new Set();
                 nextFocusTarget = 'overview';
                 rerender();
             },
             onScopeChange: value => {
                 selectedScope = value;
-                selectedCodes = new Set();
+                selectedHoldingIds = new Set();
                 rerender();
             },
             onFilterChange: value => {
@@ -12020,20 +12053,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const rows = buildFsmRowsWithAssignment(fsmHoldings, assignmentByCode);
             const activePortfolioIds = activePortfolios().map(item => item.id);
             const activePortfolioSet = new Set(activePortfolioIds);
-            const validCodes = new Set();
+            const validHoldingIds = new Set();
 
             rows.forEach(row => {
-                if (!row.code) {
+                const holdingId = row.holdingId || row.code;
+                if (!holdingId) {
                     return;
                 }
-                validCodes.add(row.code);
+                validHoldingIds.add(holdingId);
                 if (!activePortfolioSet.has(row.portfolioId)) {
-                    assignmentByCode[row.code] = FSM_UNASSIGNED_PORTFOLIO_ID;
+                    assignmentByCode[holdingId] = FSM_UNASSIGNED_PORTFOLIO_ID;
                     row.portfolioId = FSM_UNASSIGNED_PORTFOLIO_ID;
                 }
             });
 
-            selectedCodes = new Set(Array.from(selectedCodes).filter(code => validCodes.has(code)));
+            selectedHoldingIds = new Set(Array.from(selectedHoldingIds).filter(holdingId => validHoldingIds.has(holdingId)));
 
             const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
             const scopeOptions = [
@@ -12067,9 +12101,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     || row.productType.toLowerCase().includes(normalizedFilter);
             });
 
-            const filteredCodeSet = new Set(filteredRows.map(row => row.code).filter(Boolean));
-            const selectedCount = Array.from(selectedCodes).filter(code => filteredCodeSet.has(code)).length;
-            const selectAllFiltered = filteredRows.length > 0 && filteredRows.every(row => row.code && selectedCodes.has(row.code));
+            const filteredHoldingIdSet = new Set(filteredRows.map(row => row.holdingId || row.code).filter(Boolean));
+            const selectedCount = Array.from(selectedHoldingIds).filter(holdingId => filteredHoldingIdSet.has(holdingId)).length;
+            const selectAllFiltered = filteredRows.length > 0 && filteredRows.every(row => {
+                const holdingId = row.holdingId || row.code;
+                return holdingId && selectedHoldingIds.has(holdingId);
+            });
             const showDrift = selectedScope !== FSM_ALL_PORTFOLIO_ID;
             const summary = buildFsmScopedSummary(scopedRows);
             const displayRows = buildFsmDisplayRows(filteredRows, summary.total);
@@ -12081,7 +12118,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 unassignedCount,
                 scopeOptions,
                 filteredRows,
-                filteredCodeSet,
+                filteredHoldingIdSet,
                 selectedCount,
                 selectAllFiltered,
                 showDrift,
@@ -12171,7 +12208,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     onSelectScope: scopeId => {
                         selectedScope = scopeId;
                         filterTerm = '';
-                        selectedCodes = new Set();
+                        selectedHoldingIds = new Set();
                         viewMode = 'detail';
                         nextFocusTarget = 'detail';
                         rerender();
@@ -12179,7 +12216,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     onOpenAll: () => {
                         selectedScope = FSM_ALL_PORTFOLIO_ID;
                         filterTerm = '';
-                        selectedCodes = new Set();
+                        selectedHoldingIds = new Set();
                         viewMode = 'detail';
                         nextFocusTarget = 'detail';
                         rerender();
@@ -12211,14 +12248,15 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 filteredCount: viewState.filteredRows.length,
                 onSelectAllChange: value => {
                     viewState.filteredRows.forEach(row => {
-                        if (!row.code) {
+                        const holdingId = row.holdingId || row.code;
+                        if (!holdingId) {
                             return;
                         }
                         if (value) {
-                            selectedCodes.add(row.code);
+                            selectedHoldingIds.add(holdingId);
                             return;
                         }
-                        selectedCodes.delete(row.code);
+                        selectedHoldingIds.delete(holdingId);
                     });
                     rerender();
                 },
@@ -12226,9 +12264,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     bulkPortfolioId = value;
                 },
                 onApplyBulk: () => {
-                    const targetCodes = Array.from(selectedCodes).filter(code => viewState.filteredCodeSet.has(code));
-                    targetCodes.forEach(code => {
-                        assignmentByCode[code] = bulkPortfolioId;
+                    const targetHoldingIds = Array.from(selectedHoldingIds).filter(holdingId => viewState.filteredHoldingIdSet.has(holdingId));
+                    targetHoldingIds.forEach(holdingId => {
+                        assignmentByCode[holdingId] = bulkPortfolioId;
                     });
                     saveFsmPortfolioConfig(portfolios, assignmentByCode);
                     rerender();
@@ -12237,36 +12275,38 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
             const table = buildFsmHoldingsTable({
                 filteredRows: viewState.displayRows,
-                selectedCodes,
+                selectedHoldingIds,
                 selectAllFiltered: viewState.selectAllFiltered,
                 activePortfolios: activePortfolios(),
-                targetErrorsByCode,
+                targetErrorsByHoldingId,
                 showDrift: viewState.showDrift,
                 onSelectAllChange: value => {
                     viewState.filteredRows.forEach(row => {
-                        if (!row.code) {
+                        const holdingId = row.holdingId || row.code;
+                        if (!holdingId) {
                             return;
                         }
                         if (value) {
-                            selectedCodes.add(row.code);
+                            selectedHoldingIds.add(holdingId);
                             return;
                         }
-                        selectedCodes.delete(row.code);
+                        selectedHoldingIds.delete(holdingId);
                     });
                     rerender();
                 },
-                onRowSelectChange: (code, checked) => {
+                onRowSelectChange: (holdingId, checked) => {
                     if (checked) {
-                        selectedCodes.add(code);
+                        selectedHoldingIds.add(holdingId);
                     } else {
-                        selectedCodes.delete(code);
+                        selectedHoldingIds.delete(holdingId);
                     }
                     rerender();
                 },
                 onTargetChange: (row, rawValue) => {
+                    const holdingId = row.holdingId || row.code;
                     if (!rawValue) {
-                        delete targetErrorsByCode[row.code];
-                        Storage.remove(storageKeys.fsmTarget(row.code));
+                        delete targetErrorsByHoldingId[holdingId];
+                        Storage.remove(storageKeys.fsmTarget(holdingId));
                         if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                             SyncManager.scheduleSyncOnChange('fsm-target-clear');
                         }
@@ -12275,30 +12315,30 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     }
                     const parsed = Number(rawValue);
                     if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
-                        targetErrorsByCode[row.code] = 'Enter target between 0 and 100';
+                        targetErrorsByHoldingId[holdingId] = 'Enter target between 0 and 100';
                         rerender();
                         return;
                     }
-                    delete targetErrorsByCode[row.code];
-                    Storage.set(storageKeys.fsmTarget(row.code), Number(parsed.toFixed(2)));
+                    delete targetErrorsByHoldingId[holdingId];
+                    Storage.set(storageKeys.fsmTarget(holdingId), Number(parsed.toFixed(2)));
                     if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                         SyncManager.scheduleSyncOnChange('fsm-target-update');
                     }
                     rerender();
                 },
-                onFixedChange: (code, isFixed) => {
-                    Storage.set(storageKeys.fsmFixed(code), isFixed);
+                onFixedChange: (holdingId, isFixed) => {
+                    Storage.set(storageKeys.fsmFixed(holdingId), isFixed);
                     if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                         SyncManager.scheduleSyncOnChange('fsm-fixed-update');
                     }
                     if (isFixed) {
-                        Storage.remove(storageKeys.fsmTarget(code));
-                        delete targetErrorsByCode[code];
+                        Storage.remove(storageKeys.fsmTarget(holdingId));
+                        delete targetErrorsByHoldingId[holdingId];
                     }
                     rerender();
                 },
-                onPortfolioChange: (code, value) => {
-                    assignmentByCode[code] = value;
+                onPortfolioChange: (holdingId, value) => {
+                    assignmentByCode[holdingId] = value;
                     saveFsmPortfolioConfig(portfolios, assignmentByCode);
                     rerender();
                 }
@@ -13128,6 +13168,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const baseExports = {
             utils,
             storageKeys,
+            getFsmHoldingIdentity,
+            formatFsmHoldingIdentity,
             getDisplayGoalType,
             sortGoalTypes,
             formatMoney,

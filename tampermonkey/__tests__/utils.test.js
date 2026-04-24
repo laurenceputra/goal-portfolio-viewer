@@ -9,6 +9,8 @@
 const {
     utils,
     storageKeys,
+    getFsmHoldingIdentity,
+    formatFsmHoldingIdentity,
     getDisplayGoalType,
     sortGoalTypes,
     sortGoalsByName,
@@ -73,6 +75,25 @@ describe('storage key helpers', () => {
         cases.forEach(({ name: _name, actual, expected }) => {
             expect(actual).toBe(expected);
         });
+    });
+});
+
+describe('FSM holding identity helpers', () => {
+    test('use code-only identity when subcode is absent', () => {
+        expect(getFsmHoldingIdentity({ code: 'AAA' })).toBe('AAA');
+        expect(getFsmHoldingIdentity('AAA')).toBe('AAA');
+    });
+
+    test('include subcode or subCode in identity when present', () => {
+        expect(getFsmHoldingIdentity({ code: 'AAA', subcode: 'AAPL' })).toBe('AAA|sub:AAPL');
+        expect(getFsmHoldingIdentity({ code: 'AAA', subCode: 'CASH' })).toBe('AAA|sub:CASH');
+        expect(formatFsmHoldingIdentity('AAA|sub:CASH')).toBe('AAA / CASH');
+    });
+
+    test('encodes special characters in composite identities', () => {
+        const identity = getFsmHoldingIdentity('A/A', 'S G');
+        expect(identity).toBe('A%2FA|sub:S%20G');
+        expect(formatFsmHoldingIdentity(identity)).toBe('A/A / S G');
     });
 });
 
