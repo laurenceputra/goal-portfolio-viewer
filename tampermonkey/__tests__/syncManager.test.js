@@ -191,6 +191,21 @@ describe('SyncManager', () => {
         expect(scheduleSpy).toHaveBeenCalledWith('fixed-clear');
     });
 
+    test('collectConfigData and applyConfigData preserve cleared Endowus bucket markers', () => {
+        const { SyncManager, GoalTargetStore, storageKeys } = loadModule();
+        GoalTargetStore.clearBucket('goal-1', { suppressSync: true });
+        global.GM_listValues = () => [storageKeys.goalBucketCleared('goal-1')];
+
+        const config = SyncManager.collectConfigData();
+        expect(config.platforms.endowus.clearedGoalBuckets).toEqual({ 'goal-1': true });
+
+        storage.clear();
+        SyncManager.applyConfigData(config);
+
+        expect(storage.has(storageKeys.goalBucket('goal-1'))).toBe(false);
+        expect(storage.get(storageKeys.goalBucketCleared('goal-1'))).toBe(true);
+    });
+
     test('collectConfigData emits v2 payload and excludes Endowus targets for fixed goals', () => {
         const { SyncManager, storageKeys } = loadModule();
         const targetKey = storageKeys.goalTarget('goal-1');

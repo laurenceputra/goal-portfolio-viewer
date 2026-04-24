@@ -15,10 +15,17 @@ const {
     resolveGoalTypeActionTarget,
     buildSummaryViewModel,
     buildBucketDetailViewModel,
+    buildHealthStatus,
+    buildAttentionDriftReason,
+    buildPlanningModel,
+    buildPlanningTradeLines,
+    buildPlanningRecommendations,
     collectGoalIds,
     collectAllGoalIds,
     buildGoalTargetById,
     buildGoalFixedById,
+    buildMergedInvestmentData,
+    buildBucketPlanningModel,
     getPerformanceCacheKey,
     getBucketViewModePreference,
     setBucketViewModePreference,
@@ -100,6 +107,83 @@ describe('projected and goal helpers', () => {
         expect(diffData.diffDisplay).toBe('-');
         expect(diffData.diffClassName).toBe('gpv-diff-cell');
     });
+
+    test('should describe suggested buys and sells clearly', () => {
+        expect(buildPlanningTradeLines({
+            triggerBuys: [
+                { goalName: 'BND', recommendedAmount: 3500 }
+            ],
+            triggerSells: [
+                { displayTicker: 'ALZP64', recommendedAmount: 4618.04 },
+                { displayTicker: 'MBH', recommendedAmount: 1200 }
+            ],
+            suggestedBuys: [
+                { goalName: 'VWRA', recommendedAmount: 4618.04 },
+                { goalName: 'ES3', recommendedAmount: 1200 }
+            ],
+            suggestedSells: [
+                { displayTicker: 'A35', recommendedAmount: 3500 }
+            ]
+        })).toEqual([
+            'Trigger sells: ALZP64 SGD\u00A04,618.04 | MBH SGD\u00A01,200.00',
+            'Suggested buys: VWRA SGD\u00A04,618.04 | ES3 SGD\u00A01,200.00',
+            'Trigger buys: BND SGD\u00A03,500.00',
+            'Suggested sells: A35 SGD\u00A03,500.00'
+        ]);
+    });
+
+    test('should omit empty planning trade groups', () => {
+        expect(buildPlanningTradeLines({
+            triggerBuys: [],
+            triggerSells: [{ displayTicker: 'ALZP64', recommendedAmount: 12509.12 }],
+            suggestedBuys: [],
+            suggestedSells: [{ displayTicker: 'ALZP64', recommendedAmount: 12509.12 }]
+        })).toEqual([
+            'Suggested sells: ALZP64 SGD\u00A012,509.12'
+        ]);
+    });
+
+    test('should build suggested buys from material sells using drift order', () => {
+        const result = buildPlanningRecommendations({
+            buys: [
+                { goalName: 'Buy A', diffAmount: -7000, driftPercent: -0.18 },
+                { goalName: 'Buy B', diffAmount: -5000, driftPercent: -0.42 },
+                { goalName: 'Buy C', diffAmount: -4000, driftPercent: -0.31 }
+            ],
+            sells: [
+                { displayTicker: 'Sell A', driftAmount: 10000, driftPercent: 0.51 },
+                { displayTicker: 'Sell B', driftAmount: 2000, driftPercent: 0.27 }
+            ]
+        });
+
+        expect(result.suggestedBuys.map(item => item.goalName)).toEqual(['Buy B', 'Buy C', 'Buy A']);
+        expect(result.suggestedBuys.reduce((sum, item) => sum + item.recommendedAmount, 0)).toBe(10800);
+        expect(result.suggestedBuys[2].recommendedAmount).toBe(1800);
+        expect(result.suggestedSells.map(item => item.displayTicker)).toEqual(['Sell A']);
+        expect(result.triggerSells.map(item => item.displayTicker)).toEqual(['Sell A', 'Sell B']);
+        expect(result.triggerSells.map(item => item.recommendedAmount)).toEqual([10000, 800]);
+    });
+
+    test('should build suggested sells from material buys using drift order', () => {
+        const result = buildPlanningRecommendations({
+            buys: [
+                { goalName: 'Buy A', diffAmount: -10000, driftPercent: -0.52 },
+                { goalName: 'Buy B', diffAmount: -2000, driftPercent: -0.29 }
+            ],
+            sells: [
+                { displayTicker: 'Sell A', driftAmount: 3000, driftPercent: 0.18 },
+                { displayTicker: 'Sell B', driftAmount: 5000, driftPercent: 0.33 },
+                { displayTicker: 'Sell C', driftAmount: 4000, driftPercent: 0.28 }
+            ]
+        });
+
+        expect(result.suggestedSells.map(item => item.displayTicker)).toEqual(['Sell B', 'Sell C', 'Sell A']);
+        expect(result.suggestedSells.reduce((sum, item) => sum + item.recommendedAmount, 0)).toBe(10800);
+        expect(result.suggestedSells[2].recommendedAmount).toBe(1800);
+        expect(result.suggestedBuys.map(item => item.goalName)).toEqual(['Buy A']);
+        expect(result.triggerBuys.map(item => item.goalName)).toEqual(['Buy A', 'Buy B']);
+        expect(result.triggerBuys.map(item => item.recommendedAmount)).toEqual([10000, 800]);
+    });
 });
 
 describe('resolveGoalTypeActionTarget', () => {
@@ -148,6 +232,11 @@ describe('view model builders', () => {
         expect(retirement.goalTypes[1].returnClass).toBe('negative');
         expect(retirement.goalTypes[0].allocationDriftDisplay).toBe('20.00%');
         expect(retirement.goalTypes[0].allocationDriftClass).toBe('gpv-drift--green');
+        expect(Array.isArray(viewModel.attentionItems)).toBe(true);
+        expect(viewModel.attentionItems.length).toBeGreaterThan(0);
+        expect(retirement.health.label).toBe('Needs Setup');
+        expect(retirement.health.reasons.length).toBeGreaterThan(0);
+        expect(retirement.health.score).toBeUndefined();
     });
 
     test('should build bucket detail view model with projections', () => {
@@ -174,6 +263,10 @@ describe('view model builders', () => {
         expect(goalTypeModel.remainingTargetIsHigh).toBe(true);
         expect(goalTypeModel.allocationDriftDisplay).toBe('20.00%');
         expect(goalTypeModel.allocationDriftClass).toBe('gpv-drift--green');
+        expect(goalTypeModel.planning).toBeTruthy();
+        expect(goalTypeModel.planning.targetCoverageLabel).toContain('Target total is');
+        expect(viewModel.health.label).toBe('Needs Setup');
+        expect(viewModel.health.score).toBeUndefined();
         const firstGoal = goalTypeModel.goals[0];
         expect(firstGoal.percentOfType).toBe(60);
         expect(firstGoal.diffDisplay).toMatch(/0\.00/);
@@ -181,6 +274,108 @@ describe('view model builders', () => {
         expect(firstGoal.isFixed).toBe(true);
         expect(firstGoal.driftDisplay).toBe('0.00% (SGD\u00A00.00)');
         expect(firstGoal.driftClass).toBe('gpv-drift--green');
+    });
+
+    test('should surface severe drift in goal type health reasons', () => {
+        const bucketMap = {
+            Watchlist: {
+                _meta: { endingBalanceTotal: 1000 },
+                GENERAL_WEALTH_ACCUMULATION: {
+                    endingBalanceAmount: 1000,
+                    totalCumulativeReturn: 0,
+                    goals: [
+                        {
+                            goalId: 'w1',
+                            goalName: 'Watchlist - Overweight',
+                            endingBalanceAmount: 900,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 'w2',
+                            goalName: 'Watchlist - Underweight',
+                            endingBalanceAmount: 100,
+                            totalCumulativeReturn: 0
+                        }
+                    ]
+                }
+            }
+        };
+        const viewModel = buildBucketDetailViewModel({
+            bucketName: 'Watchlist',
+            bucketMap,
+            projectedInvestmentsState: null,
+            goalTargetById: { w1: 5, w2: 95 },
+            goalFixedById: {}
+        });
+        expect(viewModel.goalTypes[0].health.label).toBe('Needs Review');
+        expect(viewModel.goalTypes[0].health.reasons).toContain('Largest underweight: Watchlist - Underweight');
+        expect(viewModel.goalTypes[0].health.reasons).toContain('Largest overweight: Watchlist - Overweight');
+    });
+
+    test('should sort bucket-level planning recommendations across goal types by drift severity', () => {
+        const planning = buildBucketPlanningModel([
+            {
+                displayName: 'Type A',
+                planning: {
+                    scenarioAmount: 0,
+                    scenarioSplit: [],
+                    targetCoverageLabel: null,
+                    buyCandidates: [
+                        { goalName: 'Retirement - Buy Mild', diffAmount: -4000, driftPercent: -0.31 }
+                    ],
+                    sellCandidates: [
+                        { goalName: 'Retirement - Sell Strong', diffAmount: 5000, driftPercent: 0.5 }
+                    ],
+                    materialBuys: [
+                        { goalName: 'Retirement - Buy Mild', diffAmount: -4000, driftPercent: -0.31 }
+                    ],
+                    materialSells: [
+                        { goalName: 'Retirement - Sell Strong', diffAmount: 5000, driftPercent: 0.5 }
+                    ]
+                }
+            },
+            {
+                displayName: 'Type B',
+                planning: {
+                    scenarioAmount: 0,
+                    scenarioSplit: [],
+                    targetCoverageLabel: null,
+                    buyCandidates: [
+                        { goalName: 'Retirement - Buy Strong', diffAmount: -7000, driftPercent: -0.42 }
+                    ],
+                    sellCandidates: [
+                        { goalName: 'Retirement - Sell Mild', diffAmount: 5000, driftPercent: 0.28 }
+                    ],
+                    materialBuys: [
+                        { goalName: 'Retirement - Buy Strong', diffAmount: -7000, driftPercent: -0.42 }
+                    ],
+                    materialSells: [
+                        { goalName: 'Retirement - Sell Mild', diffAmount: 5000, driftPercent: 0.28 }
+                    ]
+                }
+            }
+        ]);
+
+        expect(planning.suggestedBuys.map(item => item.goalName)).toEqual([
+            'Retirement - Buy Strong',
+            'Retirement - Buy Mild'
+        ]);
+        expect(planning.suggestedBuys.map(item => item.recommendedAmount)).toEqual([7000, 2000]);
+        expect(planning.triggerSells.map(item => item.goalName)).toEqual([
+            'Retirement - Sell Strong',
+            'Retirement - Sell Mild'
+        ]);
+        expect(planning.triggerSells.map(item => item.recommendedAmount)).toEqual([5000, 4000]);
+        expect(planning.suggestedSells.map(item => item.goalName)).toEqual([
+            'Retirement - Sell Strong',
+            'Retirement - Sell Mild'
+        ]);
+        expect(planning.suggestedSells.map(item => item.recommendedAmount)).toEqual([5000, 4900]);
+        expect(planning.triggerBuys.map(item => item.goalName)).toEqual([
+            'Retirement - Buy Strong',
+            'Retirement - Buy Mild'
+        ]);
+        expect(planning.triggerBuys.map(item => item.recommendedAmount)).toEqual([7000, 2900]);
     });
 
     test('should map per-goal window returns with fallback', () => {
@@ -227,8 +422,16 @@ describe('view model builders', () => {
     });
 
     test('should return empty buckets for invalid summary input', () => {
-        expect(buildSummaryViewModel(null)).toEqual({ buckets: [], showAllocationDriftHint: false });
-        expect(buildSummaryViewModel('invalid')).toEqual({ buckets: [], showAllocationDriftHint: false });
+        expect(buildSummaryViewModel(null)).toEqual({
+            buckets: [],
+            showAllocationDriftHint: false,
+            attentionItems: []
+        });
+        expect(buildSummaryViewModel('invalid')).toEqual({
+            buckets: [],
+            showAllocationDriftHint: false,
+            attentionItems: []
+        });
     });
 
     test('should handle summary buckets without meta or goal types', () => {
@@ -257,6 +460,50 @@ describe('view model builders', () => {
         expect(goalTypeModel.remainingTargetIsHigh).toBe(true);
         expect(goalTypeModel.goals[0].targetDisplay).toBe('');
         expect(goalTypeModel.goals[0].returnPercentDisplay).toBe('10.00%');
+    });
+
+    test('should hide aggregate return displays when bucket performance is incomplete', () => {
+        const bucketMap = {
+            Retirement: {
+                _meta: { endingBalanceTotal: 1400 },
+                GENERAL_WEALTH_ACCUMULATION: {
+                    endingBalanceAmount: 1400,
+                    totalCumulativeReturn: null,
+                    goals: [
+                        {
+                            goalId: 'g1',
+                            goalName: 'Retirement - Portfolio',
+                            endingBalanceAmount: 1000,
+                            totalCumulativeReturn: 100,
+                            simpleRateOfReturnPercent: 0.1
+                        },
+                        {
+                            goalId: 'g2',
+                            goalName: 'Retirement - Satellite',
+                            endingBalanceAmount: 400,
+                            totalCumulativeReturn: null,
+                            simpleRateOfReturnPercent: null
+                        }
+                    ]
+                }
+            }
+        };
+        const summaryViewModel = buildSummaryViewModel(bucketMap, null, null, null);
+        const detailViewModel = buildBucketDetailViewModel({
+            bucketName: 'Retirement',
+            bucketMap,
+            projectedInvestmentsState: null,
+            goalTargetById: null,
+            goalFixedById: null
+        });
+        expect(summaryViewModel.buckets[0].returnDisplay).toBe('-');
+        expect(summaryViewModel.buckets[0].growthDisplay).toBe('-');
+        expect(summaryViewModel.buckets[0].goalTypes[0].returnDisplay).toBe('-');
+        expect(summaryViewModel.buckets[0].goalTypes[0].growthDisplay).toBe('-');
+        expect(detailViewModel.returnDisplay).toBe('-');
+        expect(detailViewModel.growthDisplay).toBe('-');
+        expect(detailViewModel.goalTypes[0].returnDisplay).toBe('-');
+        expect(detailViewModel.goalTypes[0].growthDisplay).toBe('-');
     });
 
     test('should apply remaining target to diff when single target is missing', () => {
@@ -295,6 +542,222 @@ describe('view model builders', () => {
         const missingGoal = goalTypeModel.goals.find(goal => goal.goalId === 'g2');
         expect(missingGoal.targetDisplay).toBe('');
         expect(missingGoal.diffDisplay).toMatch(/0\.00/);
+    });
+
+    test('should treat fixed goal coverage as assigned in planning health', () => {
+        const bucketMap = {
+            FixedOnly: {
+                _meta: { endingBalanceTotal: 1000 },
+                GENERAL_WEALTH_ACCUMULATION: {
+                    endingBalanceAmount: 1000,
+                    totalCumulativeReturn: 20,
+                    goals: [
+                        {
+                            goalId: 'fixed-1',
+                            goalName: 'FixedOnly - Core',
+                            endingBalanceAmount: 1000,
+                            totalCumulativeReturn: 20
+                        }
+                    ]
+                }
+            }
+        };
+        const viewModel = buildBucketDetailViewModel({
+            bucketName: 'FixedOnly',
+            bucketMap,
+            projectedInvestmentsState: null,
+            goalTargetById: {},
+            goalFixedById: { 'fixed-1': true }
+        });
+        expect(viewModel.health.label).toBe('Healthy');
+        expect(viewModel.health.reasons).toEqual([]);
+        expect(viewModel.goalTypes[0].planning.targetCoverageLabel).toBeNull();
+    });
+
+    test('should not flag all-zero targets as setup intent', () => {
+        const bucketMap = {
+            Zeroed: {
+                _meta: { endingBalanceTotal: 1000 },
+                GENERAL_WEALTH_ACCUMULATION: {
+                    endingBalanceAmount: 1000,
+                    totalCumulativeReturn: 0,
+                    goals: [
+                        {
+                            goalId: 'z1',
+                            goalName: 'Zeroed - One',
+                            endingBalanceAmount: 600,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 'z2',
+                            goalName: 'Zeroed - Two',
+                            endingBalanceAmount: 400,
+                            totalCumulativeReturn: 0
+                        }
+                    ]
+                }
+            }
+        };
+        const viewModel = buildBucketDetailViewModel({
+            bucketName: 'Zeroed',
+            bucketMap,
+            projectedInvestmentsState: null,
+            goalTargetById: { z1: 0, z2: 0 },
+            goalFixedById: {}
+        });
+        expect(viewModel.health.label).toBe('Healthy');
+        expect(viewModel.health.reasons).toEqual([]);
+        expect(viewModel.goalTypes[0].planning.targetCoverageLabel).toBeNull();
+    });
+
+    test('should not flag implicit remaining target as unallocated', () => {
+        const bucketMap = {
+            Remainder: {
+                _meta: { endingBalanceTotal: 1000 },
+                GENERAL_WEALTH_ACCUMULATION: {
+                    endingBalanceAmount: 1000,
+                    totalCumulativeReturn: 0,
+                    goals: [
+                        {
+                            goalId: 'r1',
+                            goalName: 'Remainder - Fixed',
+                            endingBalanceAmount: 200,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 'r2',
+                            goalName: 'Remainder - Explicit',
+                            endingBalanceAmount: 300,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 'r3',
+                            goalName: 'Remainder - Blank',
+                            endingBalanceAmount: 500,
+                            totalCumulativeReturn: 0
+                        }
+                    ]
+                }
+            }
+        };
+        const viewModel = buildBucketDetailViewModel({
+            bucketName: 'Remainder',
+            bucketMap,
+            projectedInvestmentsState: null,
+            goalTargetById: { r2: 30 },
+            goalFixedById: { r1: true }
+        });
+        expect(viewModel.health.label).toBe('Healthy');
+        expect(viewModel.health.reasons).toEqual([]);
+        expect(viewModel.goalTypes[0].planning.targetCoverageLabel).toBeNull();
+    });
+
+    test('should assign remainder when fixed and explicit targets leave one blank goal', () => {
+        const bucketMap = {
+            Investment: {
+                _meta: { endingBalanceTotal: 1000 },
+                GENERAL_WEALTH_ACCUMULATION: {
+                    endingBalanceAmount: 1000,
+                    totalCumulativeReturn: 0,
+                    goals: [
+                        {
+                            goalId: 'f1',
+                            goalName: 'Investment - Fixed One',
+                            endingBalanceAmount: 100,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 'f2',
+                            goalName: 'Investment - Fixed Two',
+                            endingBalanceAmount: 150,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 'f3',
+                            goalName: 'Investment - Fixed Three',
+                            endingBalanceAmount: 150,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 't1',
+                            goalName: 'Investment - Target One',
+                            endingBalanceAmount: 150,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 't2',
+                            goalName: 'Investment - Target Two',
+                            endingBalanceAmount: 150,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 't3',
+                            goalName: 'Investment - Target Three',
+                            endingBalanceAmount: 100,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 'blank',
+                            goalName: 'Investment - Blank',
+                            endingBalanceAmount: 200,
+                            totalCumulativeReturn: 0
+                        }
+                    ]
+                }
+            }
+        };
+        const viewModel = buildBucketDetailViewModel({
+            bucketName: 'Investment',
+            bucketMap,
+            projectedInvestmentsState: null,
+            goalTargetById: { t1: 10, t2: 10, t3: 10 },
+            goalFixedById: { f1: true, f2: true, f3: true }
+        });
+        const goalType = viewModel.goalTypes[0];
+        const blankGoal = goalType.goals.find(goal => goal.goalId === 'blank');
+        expect(goalType.remainingTargetDisplay).toBe('0.00%');
+        expect(blankGoal.targetDisplay).toBe('');
+        expect(blankGoal.diffDisplay).toMatch(/0\.00/);
+        expect(goalType.planning.targetCoverageLabel).toBeNull();
+        expect(viewModel.health.reasons).toEqual([]);
+    });
+
+    test('should only add Endowus drift attention for red severity', () => {
+        const planning = buildPlanningModel({
+            adjustedTotal: 2500,
+            projectedAmount: 0,
+            goals: [
+                {
+                    goalId: 'y1',
+                    goalName: 'Yellow - One',
+                    endingBalanceAmount: 800,
+                    targetPercent: 40
+                },
+                {
+                    goalId: 'y2',
+                    goalName: 'Yellow - Two',
+                    endingBalanceAmount: 1700,
+                    targetPercent: 60
+                }
+            ]
+        });
+        expect(planning.scenarioAmount).toBe(0);
+        expect(buildAttentionDriftReason('gpv-drift--yellow', 'x')).toBeNull();
+        expect(buildAttentionDriftReason('gpv-drift--green', 'x')).toBeNull();
+        expect(buildAttentionDriftReason('gpv-drift--red', 'x')).toBe('x');
+    });
+
+    test('should keep health status labels without scores', () => {
+        expect(buildHealthStatus({ reasons: [], setupRequired: false })).toEqual({
+            label: 'Healthy',
+            className: 'gpv-health--healthy',
+            reasons: []
+        });
+        expect(buildHealthStatus({ reasons: ['Missing target'], setupRequired: true })).toEqual({
+            label: 'Needs Setup',
+            className: 'gpv-health--setup',
+            reasons: ['Missing target']
+        });
     });
 
     test('should keep diff empty when remaining target is negative', () => {
@@ -352,6 +815,37 @@ describe('view model builders', () => {
             goalTargetById: {},
             goalFixedById: {}
         })).toBeNull();
+    });
+
+    test('should honor explicit goal bucket assignment over goal name bucket', () => {
+        const performanceData = [{
+            goalId: 'goal-1',
+            totalInvestmentValue: { amount: 1000 },
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal-1',
+            goalName: 'Retirement - Core',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal-1',
+            goalName: 'Retirement - Core',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        const defaultBuckets = buildMergedInvestmentData(performanceData, investibleData, summaryData);
+        expect(Object.keys(defaultBuckets)).toEqual(['Retirement']);
+
+        const assignedBuckets = buildMergedInvestmentData(
+            performanceData,
+            investibleData,
+            summaryData,
+            { 'goal-1': 'Wealth Builder' }
+        );
+        expect(Object.keys(assignedBuckets)).toEqual(['Wealth Builder']);
     });
 });
 

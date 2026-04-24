@@ -1627,6 +1627,49 @@ describe('buildMergedInvestmentData', () => {
         expect(result.Emergency.CASH_MANAGEMENT.goals[0].totalCumulativeReturn).toBe(75);
     });
 
+    test('should include goals missing from performance payload', () => {
+        const performanceData = [
+            { goalId: 'goal1', totalCumulativeReturn: { amount: 100 } }
+        ];
+        const investibleData = [
+            {
+                goalId: 'goal1',
+                goalName: 'Retirement - Portfolio',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 1000 } }
+            },
+            {
+                goalId: 'goal2',
+                goalName: 'Retirement - Satellite',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 400 } }
+            }
+        ];
+        const summaryData = [
+            {
+                goalId: 'goal1',
+                goalName: 'Retirement - Portfolio',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+            },
+            {
+                goalId: 'goal2',
+                goalName: 'Retirement - Satellite',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+            }
+        ];
+
+        const result = buildMergedInvestmentData(performanceData, investibleData, summaryData);
+
+        expect(result.Retirement._meta.endingBalanceTotal).toBe(1400);
+        expect(result.Retirement.GENERAL_WEALTH_ACCUMULATION.goals.map(goal => goal.goalId).sort()).toEqual(['goal1', 'goal2']);
+        expect(result.Retirement.GENERAL_WEALTH_ACCUMULATION.goals.find(goal => goal.goalId === 'goal2')).toMatchObject({
+            goalName: 'Retirement - Satellite',
+            endingBalanceAmount: 400,
+            totalCumulativeReturn: null,
+            simpleRateOfReturnPercent: null
+        });
+    });
+
     test('should add pending processing amount to performance total investment value', () => {
         const performanceData = [
             {

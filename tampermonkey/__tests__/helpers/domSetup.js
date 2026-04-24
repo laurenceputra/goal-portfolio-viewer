@@ -31,6 +31,9 @@ function setupDom(options = {}) {
 }
 
 function teardownDom() {
+    if (global.window && typeof global.window.__gpvUrlMonitorCleanup === 'function') {
+        global.window.__gpvUrlMonitorCleanup();
+    }
     if (global.window && typeof global.window.close === 'function') {
         global.window.close();
     }

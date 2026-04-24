@@ -84,6 +84,10 @@ describe('sync settings UI', () => {
 
         expect(document.body.textContent).toContain('Connected (refresh active)');
         expect(document.body.textContent).toContain('Locked (enter password to unlock this device)');
+        expect(document.body.textContent).toContain('Quick setup');
+        expect(document.body.textContent).toContain('Advanced settings');
+        expect(document.body.textContent).toContain('Save Settings');
+        expect(document.body.textContent).toContain('Login and Sign Up validate credentials immediately');
     });
 
     test('uses styled sync button classes in settings actions', () => {
@@ -100,6 +104,33 @@ describe('sync settings UI', () => {
         expect(document.getElementById('gpv-sync-now-btn').className).toContain('gpv-sync-btn-secondary');
         expect(document.getElementById('gpv-sync-clear-btn').className).toContain('gpv-sync-btn');
         expect(document.getElementById('gpv-sync-clear-btn').className).toContain('gpv-sync-btn-danger');
+        expect(document.querySelector('.gpv-sync-advanced')).toBeTruthy();
+    });
+
+    test('renders sync now outside advanced settings', () => {
+        const { createSyncSettingsHTML } = exportsModule;
+        seedStatus();
+
+        document.body.innerHTML = createSyncSettingsHTML();
+
+        const syncNowBtn = document.getElementById('gpv-sync-now-btn');
+        const advanced = document.querySelector('.gpv-sync-advanced');
+        expect(syncNowBtn).toBeTruthy();
+        expect(advanced).toBeTruthy();
+        expect(advanced.contains(syncNowBtn)).toBe(false);
+        expect(syncNowBtn.disabled).toBe(true);
+    });
+
+    test('disables sync now when session key is missing after move', () => {
+        const { createSyncSettingsHTML } = exportsModule;
+        seedStatus();
+        storage.delete('sync_session_master_key');
+
+        document.body.innerHTML = createSyncSettingsHTML();
+
+        const syncNowBtn = document.getElementById('gpv-sync-now-btn');
+        expect(syncNowBtn).toBeTruthy();
+        expect(syncNowBtn.disabled).toBe(true);
     });
 
     test('renders sync settings containers with required class tokens', () => {
@@ -226,6 +257,23 @@ describe('sync settings UI', () => {
 
         expect(hint.style.display).toBe('none');
         expect(wrapper.style.display).toBe('block');
+    });
+
+    test('login and sign up stay disabled when sync activation is off', () => {
+        const { createSyncSettingsHTML, setupSyncSettingsListeners } = exportsModule;
+        seedStatusEnabledUnconfigured();
+        storage.delete('sync_refresh_token');
+        storage.delete('sync_refresh_token_expiry');
+
+        document.body.innerHTML = createSyncSettingsHTML();
+        setupSyncSettingsListeners();
+
+        const enabledCheckbox = document.getElementById('gpv-sync-enabled');
+        enabledCheckbox.checked = false;
+        enabledCheckbox.dispatchEvent(new window.Event('change'));
+
+        expect(document.getElementById('gpv-sync-login-btn').disabled).toBe(true);
+        expect(document.getElementById('gpv-sync-register-btn').disabled).toBe(true);
     });
 
     test('login enables sync with encryption by default and saves settings', async () => {

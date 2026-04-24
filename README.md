@@ -146,8 +146,11 @@ Our project uses specialized agents for different aspects of development:
 5. **QA** -> Build the verification matrix and record results
 6. **Self-Review** -> Inspect the diff and capture evidence
 7. **Review** -> Reviewer approves or requests changes
-8. **Fix** -> Required whenever review includes any `important` or `blocking` finding
-9. **QA -> Self-Review -> Review** repeat after every fix loop
+8. **Review-Fix Loop** -> Required whenever review includes any `important` or `blocking` finding
+9. **CI Failure Triage** -> Required whenever a GitHub check fails, is unexpectedly cancelled, is inconclusive, or local verification disagrees with CI
+10. **PR Completion** -> Required before a PR is declared ready, complete, mergeable, or finished
+
+Review-fix loops require post-fix QA, self-review, and required fresh-context subagent review. PR completion requires final PR artifact updates and green, expectedly skipped, or explicitly waived required checks.
 
 ### Required PR Artifacts
 
@@ -159,7 +162,9 @@ Every PR must include:
 - Verification Matrix
 - Self-Review Evidence
 - Skill Alignment Notes
-- Review Response Matrix when review changes are requested
+- Review Response Matrix when a review-fix loop occurs or findings are deferred/declined
+- CI Failure Triage when a check failure, inconclusive check, unexpected cancellation, or local/CI disagreement is investigated
+- Final PR Completion status before readiness is claimed
 
 ### Development Commands
 

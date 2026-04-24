@@ -218,6 +218,8 @@ async function runE2ETests() {
             server.close();
         }
     }
+
+    await finalizeSummary(summary);
 }
 
 if (require.main === module) {
@@ -245,6 +247,51 @@ async function openBucket(page, bucketName) {
         bucketName,
         { timeout: 5000 }
     );
+    await waitForBucketViewStability(page);
+}
+
+async function waitForBucketViewStability(page, { timeout = 7000, idleMs = 250 } = {}) {
+    await page.waitForLoadState('networkidle', { timeout }).catch(() => undefined);
+    await page.waitForFunction(() => {
+        const root = document.querySelector('#gpv-overlay .gpv-content');
+        if (!root) {
+            return false;
+        }
+        const loadingNodes = Array.from(root.querySelectorAll('.gpv-performance-loading'));
+        return loadingNodes.every(node => {
+            const text = (node.textContent || '').trim();
+            return !/^Loading performance data/i.test(text);
+        });
+    }, null, { timeout });
+    await page.evaluate(quietMs => {
+        return new Promise(resolve => {
+            const root = document.querySelector('#gpv-overlay .gpv-content');
+            if (!root) {
+                resolve();
+                return;
+            }
+            let settleTimer = null;
+            const observer = new MutationObserver(() => {
+                if (settleTimer) {
+                    clearTimeout(settleTimer);
+                }
+                settleTimer = setTimeout(() => {
+                    observer.disconnect();
+                    resolve();
+                }, quietMs);
+            });
+            observer.observe(root, {
+                childList: true,
+                subtree: true,
+                characterData: true,
+                attributes: true
+            });
+            settleTimer = setTimeout(() => {
+                observer.disconnect();
+                resolve();
+            }, quietMs);
+        });
+    }, idleMs);
 }
 
 async function clickButtonByRole(page, name, { timeout = 5000, retries = 1 } = {}) {
@@ -271,7 +318,23 @@ async function captureScreenshot(page, summary, outputDir, flowName) {
     const normalizedFlowName = normalizeName(flowName);
     const screenshotName = `e2e-${normalizedFlowName}.png`;
     const screenshotPath = path.join(outputDir, screenshotName);
-    await page.screenshot({ path: screenshotPath, fullPage: false });
+    await page.waitForFunction(
+        () => !document.fonts || document.fonts.status === 'loaded',
+        null,
+        { timeout: 5000 }
+    ).catch(() => undefined);
+    await page.evaluate(() => new Promise(resolve => {
+        const schedule = typeof requestAnimationFrame === 'function'
+            ? requestAnimationFrame
+            : callback => setTimeout(callback, 0);
+        schedule(() => schedule(resolve));
+    }));
+    const overlayContainer = page.locator('#gpv-overlay .gpv-container').first();
+    if (await overlayContainer.count() > 0) {
+        await overlayContainer.screenshot({ path: screenshotPath });
+    } else {
+        await page.screenshot({ path: screenshotPath, fullPage: false });
+    }
 
     if (!summary.flowsTested.includes(flowName)) {
         summary.flowsTested.push(flowName);
@@ -328,10 +391,28 @@ function recordAssertion(summary, flowName, assertionName, passed, message) {
     }
 }
 
-async function captureSyncScreens(page, outputDir, summary) {
-    const syncButtonSelector = '.gpv-header-buttons .gpv-sync-btn';
+async function finalizeSummary(summary) {
+    if (summary.status !== 'failed') {
+        return;
+    }
 
-    await page.click(syncButtonSelector);
+    const failingAssertions = Object.entries(summary.assertions || {}).flatMap(([flow, items]) =>
+        (Array.isArray(items) ? items : [])
+            .filter(item => item && item.passed === false)
+            .map(item => `${flow}:${item.name}`)
+    );
+    const failingDiffs = (Array.isArray(summary.diffs) ? summary.diffs : [])
+        .filter(diff => diff?.status === 'failed' || diff?.status === 'baseline-missing')
+        .map(diff => `${diff.flow}:${diff.status}`);
+    const failures = [...failingAssertions, ...failingDiffs];
+    throw new Error(`E2E regression recorded failures: ${failures.join(', ') || 'unknown failure'}`);
+}
+
+async function captureSyncScreens(page, outputDir, summary) {
+    const syncButtons = page.locator('.gpv-header-buttons .gpv-sync-btn').filter({ hasText: /sync/i });
+    const syncCount = await syncButtons.count();
+    assertCondition(syncCount > 0, 'Expected a Sync button in overlay header.');
+    await syncButtons.first().click();
     await page.waitForSelector('.gpv-sync-settings', { timeout: 5000 });
 
     await page.waitForFunction(() => {
@@ -347,21 +428,27 @@ async function captureSyncScreens(page, outputDir, summary) {
     await captureScreenshot(page, summary, outputDir, 'sync-unconfigured');
 
     await page.evaluate(() => {
-        const status = document.querySelector('.gpv-sync-status-bar');
-        if (status) {
-            status.insertAdjacentHTML(
-                'beforeend',
-                '<div class="gpv-sync-status-item"><span class="gpv-sync-label">Auth:</span><span class="gpv-sync-value">Connected (refresh active)</span></div>'
-            );
-        }
-        const actions = document.querySelector('.gpv-sync-actions');
-        if (actions && !actions.querySelector('#gpv-sync-now-btn')) {
-            actions.insertAdjacentHTML(
-                'beforeend',
-                '<button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-now-btn">Sync Now</button>'
-            );
+        const advanced = document.querySelector('.gpv-sync-advanced');
+        if (advanced) {
+            advanced.open = true;
         }
     });
+
+    await page.waitForFunction(() => {
+        const root = document.querySelector('.gpv-sync-settings');
+        if (!root) {
+            return false;
+        }
+        const advanced = root.querySelector('.gpv-sync-advanced');
+        if (!advanced) {
+            return false;
+        }
+        if (advanced.open !== true) {
+            return false;
+        }
+        const syncNow = root.querySelector('#gpv-sync-now-btn');
+        return Boolean(syncNow);
+    }, null, { timeout: 5000 });
 
     recordAssertion(summary, 'sync-configured', 'sync-actions', true, 'Sync actions rendered.');
     await captureScreenshot(page, summary, outputDir, 'sync-configured');
@@ -442,6 +529,10 @@ async function captureFsmFlow(page, summary, outputDir) {
     recordAssertion(summary, 'fsm-overlay', 'toolbar', true, 'FSM toolbar rendered.');
     await captureScreenshot(page, summary, outputDir, 'fsm-overlay');
 
+    await clickButtonByRole(page, /view all holdings/i);
+    await page.waitForSelector('.gpv-fsm-table-wrap .gpv-table', { timeout: 5000 });
+    await page.waitForSelector('.gpv-fsm-filter-toolbar', { timeout: 5000 });
+
     const managerToggle = page.getByRole('button', { name: /manage portfolios|hide portfolio manager/i }).first();
     if (await managerToggle.count() > 0) {
         await clickButtonByRole(page, /manage portfolios|hide portfolio manager/i);
@@ -458,11 +549,15 @@ async function captureFsmFlow(page, summary, outputDir) {
         summary.status = 'failed';
     }
 
-    const tableHeaders = await page.$$eval('.gpv-table thead th', nodes => nodes.map(node => node.textContent || '').map(text => text.trim()));
-    const hasTableHeaders = tableHeaders.includes('Ticker')
+    const tableHeaders = await page.$$eval(
+        '.gpv-fsm-table-wrap .gpv-table thead th',
+        nodes => nodes.map(node => node.textContent || '').map(text => text.trim())
+    );
+    const hasCoreHeaders = tableHeaders.includes('Ticker')
         && tableHeaders.includes('Current %')
-        && tableHeaders.includes('Drift %')
+        && tableHeaders.includes('Target %')
         && tableHeaders.includes('Portfolio');
+    const hasTableHeaders = hasCoreHeaders;
     recordAssertion(summary, 'fsm-overlay', 'table-headers', hasTableHeaders, 'FSM table headers present.');
     if (!hasTableHeaders) {
         summary.status = 'failed';

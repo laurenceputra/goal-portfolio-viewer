@@ -1,6 +1,6 @@
 # Goal Portfolio Viewer - Tampermonkey Script
 
-A modern Tampermonkey userscript that provides an enhanced portfolio viewing experience for investors using the Endowus (Singapore) platform. This script allows you to organize and visualize your portfolio by custom buckets with a beautiful, modern interface.
+A modern Tampermonkey userscript that provides an enhanced portfolio viewing experience for investors using Endowus (Singapore) and FSMOne. The script helps you organize portfolio scope, monitor allocation drift, and plan target actions with a modern interface.
 
 ## The Problem
 
@@ -19,12 +19,13 @@ Perfect for investors using strategies like Core + Satellite across multiple lif
 ## Features
 
 ### 🎯 Core Functionality
-- **Portfolio Bucket Organization**: Group your goals by buckets (e.g., "Retirement", "Education", "Emergency")
+- **Portfolio Scope Organization**: Group Endowus goals by buckets (e.g., "Retirement", "Education", "Emergency") and FSM holdings by portfolio scope
 - **Real-time Data Interception**: Automatically captures portfolio data using monkey patching techniques
 - **Comprehensive Analytics**: View ending balances, cumulative returns, and growth percentages
 - **Multi-level Views**: Toggle between summary view and detailed bucket views
 - **Performance Insights**: Per goal-type charts with responsive sizing (including dynamic height), recent return windows, and key metrics (including Total Return % with weighting context and Simple Return %)
 - **Declutter Controls**: Expand/shrink the overlay, switch between Allocation/Performance modes, and collapse heavy panels
+- **Action Guidance**: Needs Attention strip, health status with reasons, and planning panel with scenario and rebalance advisory text
 
 ### 🎨 Modern UX Design
 - **Beautiful Gradient UI**: Modern purple gradient theme with smooth animations
@@ -106,6 +107,8 @@ The script will automatically group all goals starting with the same bucket name
 #### Summary View
 - Shows all buckets with their totals, returns, and growth percentages
 - Displays breakdown by goal type (Investment, Cash, etc.) within each bucket, using **Unknown** when a type is missing
+- Highlights a **Needs Attention** strip when setup or allocation issues need action
+- Shows a health status badge with explicit reasons on each summary card
 - Perfect for a quick overview of your entire portfolio
 - Click any bucket card to jump directly to its detail view (syncs the dropdown selection)
 
@@ -113,6 +116,7 @@ The script will automatically group all goals starting with the same bucket name
 - Select a specific bucket from the dropdown (or click a bucket card in the summary view)
 - See detailed information about each goal within that bucket
 - View individual goal performance metrics
+- Use the planning panel to review target coverage, scenario contribution split, and rebalance summary
 - See a secondary per-goal TWR window row (1M/6M/YTD/1Y/3Y); missing windows show `-` until performance data is cached and refresh automatically once data loads in the current session
 - Use `Allocation` mode for planning fields (Fixed/Target/Diff) and `Performance` mode for return-focused views
 - Mode selection persists between sessions for quick switching
@@ -142,10 +146,10 @@ If you want to sync your goal configurations across devices:
 
 2. **Configure Sync**:
     - Click the sync indicator (bottom-right) or "Sync Settings" button
-    - Enable sync
-    - Enter your server URL, user ID, and password
+    - Use **Quick setup** to enable sync and enter server URL, user ID, and password
     - Click "Login" to obtain session tokens
-    - Click "Save Settings" then "Sync Now"
+    - Click "Save Settings"
+    - Use **Advanced settings** for auto-sync interval, connection test, and manual sync controls
 
 3. **Use on Other Devices**:
    - Install the UserScript on other devices
