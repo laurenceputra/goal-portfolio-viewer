@@ -276,6 +276,42 @@ describe('view model builders', () => {
         expect(firstGoal.driftClass).toBe('gpv-drift--green');
     });
 
+    test('should surface severe drift in goal type health reasons', () => {
+        const bucketMap = {
+            Watchlist: {
+                _meta: { endingBalanceTotal: 1000 },
+                GENERAL_WEALTH_ACCUMULATION: {
+                    endingBalanceAmount: 1000,
+                    totalCumulativeReturn: 0,
+                    goals: [
+                        {
+                            goalId: 'w1',
+                            goalName: 'Watchlist - Overweight',
+                            endingBalanceAmount: 900,
+                            totalCumulativeReturn: 0
+                        },
+                        {
+                            goalId: 'w2',
+                            goalName: 'Watchlist - Underweight',
+                            endingBalanceAmount: 100,
+                            totalCumulativeReturn: 0
+                        }
+                    ]
+                }
+            }
+        };
+        const viewModel = buildBucketDetailViewModel({
+            bucketName: 'Watchlist',
+            bucketMap,
+            projectedInvestmentsState: null,
+            goalTargetById: { w1: 5, w2: 95 },
+            goalFixedById: {}
+        });
+        expect(viewModel.goalTypes[0].health.label).toBe('Needs Review');
+        expect(viewModel.goalTypes[0].health.reasons).toContain('Largest underweight: Watchlist - Underweight');
+        expect(viewModel.goalTypes[0].health.reasons).toContain('Largest overweight: Watchlist - Overweight');
+    });
+
     test('should sort bucket-level planning recommendations across goal types by drift severity', () => {
         const planning = buildBucketPlanningModel([
             {

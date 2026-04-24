@@ -481,6 +481,60 @@ describe('initialization and URL monitoring', () => {
         expect(content.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
     });
 
+    test('Endowus bucket detail renders trigger-side planning context', () => {
+        const performanceData = [
+            {
+                goalId: 'goal1',
+                totalCumulativeReturn: { amount: 0 },
+                simpleRateOfReturnPercent: 0
+            },
+            {
+                goalId: 'goal2',
+                totalCumulativeReturn: { amount: 0 },
+                simpleRateOfReturnPercent: 0
+            }
+        ];
+        const investibleData = [
+            {
+                goalId: 'goal1',
+                goalName: 'Retirement - Core Portfolio',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 900 } }
+            },
+            {
+                goalId: 'goal2',
+                goalName: 'Retirement - Bond Sleeve',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 100 } }
+            }
+        ];
+        const summaryData = investibleData.map(goal => ({
+            goalId: goal.goalId,
+            goalName: goal.goalName,
+            investmentGoalType: goal.investmentGoalType
+        }));
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        global.GM_setValue('goal_target_pct_goal1', 10);
+        global.GM_setValue('goal_target_pct_goal2', 90);
+        global.alert = jest.fn();
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const bucketCard = overlay?.querySelector('.gpv-bucket-card');
+        expect(bucketCard).toBeTruthy();
+        bucketCard.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Trigger sells: Retirement - Core Portfolio SGD\u00A0720.00');
+        expect(overlay.textContent).toContain('Suggested buys: Retirement - Bond Sleeve SGD\u00A0720.00');
+    });
+
     test('performance mode auto-expands all collapsed performance panels', () => {
         const performanceData = [
             {
@@ -1392,6 +1446,14 @@ describe('initialization and URL monitoring', () => {
         let overlay = document.querySelector('#gpv-overlay');
         const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
         viewAllBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Trigger sells: AAPL SGD\u00A0900.00');
+        expect(overlay.textContent).toContain('Suggested buys: BOND SGD\u00A0900.00');
+
+        const filterInput = overlay.querySelector('input.gpv-fsm-filter-input');
+        filterInput.value = 'BO';
+        filterInput.dispatchEvent(new window.Event('input', { bubbles: true }));
 
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Trigger sells: AAPL SGD\u00A0900.00');

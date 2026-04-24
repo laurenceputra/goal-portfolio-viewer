@@ -1171,18 +1171,29 @@ function buildBucketDetailGoalRow(goal) {
 function enrichGoalTypeWithPlanning(goalTypeModel) {
     const planning = buildPlanningModel(goalTypeModel);
     const reasons = [];
+    const largestUnderweight = Array.isArray(planning.materialBuys) ? planning.materialBuys[0] : null;
+    const largestOverweight = Array.isArray(planning.materialSells) ? planning.materialSells[0] : null;
     if (planning.targetCoverageLabel) {
         reasons.push(planning.targetCoverageLabel);
     }
-    if (planning.underweight && buildAttentionDriftReason(planning.underweight.driftClass, '')) {
-        reasons.push(`Largest underweight: ${planning.underweight.goalName}`);
+    const underweightReason = largestUnderweight
+        ? buildAttentionDriftReason(
+            getDriftSeverityClass(largestUnderweight.driftPercent),
+            `Largest underweight: ${largestUnderweight.goalName}`
+        )
+        : null;
+    if (underweightReason) {
+        reasons.push(underweightReason);
     }
-    if (
-        planning.overweight
-        && Math.abs(planning.overweight.diffAmount || 0) > 0
-        && buildAttentionDriftReason(planning.overweight.driftClass, '')
-    ) {
-        reasons.push(`Largest overweight: ${planning.overweight.goalName}`);
+    const overweightReason = largestOverweight
+        && Math.abs(largestOverweight.diffAmount || largestOverweight.driftAmount || 0) > 0
+        ? buildAttentionDriftReason(
+            getDriftSeverityClass(largestOverweight.driftPercent),
+            `Largest overweight: ${largestOverweight.goalName}`
+        )
+        : null;
+    if (overweightReason) {
+        reasons.push(overweightReason);
     }
     return {
         ...goalTypeModel,
@@ -11962,7 +11973,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
 
             const normalizedFilter = filterTerm.trim().toLowerCase();
-            const filteredRows = rows.filter(row => {
+            const scopedRows = rows.filter(row => {
                 const portfolioMatch = selectedScope === FSM_ALL_PORTFOLIO_ID
                     ? true
                     : (selectedScope === FSM_UNASSIGNED_PORTFOLIO_ID
@@ -11971,6 +11982,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 if (!portfolioMatch) {
                     return false;
                 }
+                return true;
+            });
+
+            const filteredRows = scopedRows.filter(row => {
                 if (!normalizedFilter) {
                     return true;
                 }
@@ -11983,9 +11998,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const selectedCount = Array.from(selectedCodes).filter(code => filteredCodeSet.has(code)).length;
             const selectAllFiltered = filteredRows.length > 0 && filteredRows.every(row => row.code && selectedCodes.has(row.code));
             const showDrift = selectedScope !== FSM_ALL_PORTFOLIO_ID;
-            const summary = buildFsmScopedSummary(filteredRows);
+            const summary = buildFsmScopedSummary(scopedRows);
             const displayRows = buildFsmDisplayRows(filteredRows, summary.total);
-            const planning = buildFsmPlanningModel(displayRows, summary);
+            const planning = buildFsmPlanningModel(buildFsmDisplayRows(scopedRows, summary.total), summary);
             const selectedScopeOption = scopeOptions.find(option => option.id === selectedScope);
             return {
                 rows,
