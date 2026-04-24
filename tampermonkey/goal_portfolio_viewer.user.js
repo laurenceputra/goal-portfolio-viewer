@@ -1245,7 +1245,8 @@ function buildGoalBucketAssignmentMap({
     performanceData,
     investibleData,
     summaryData,
-    getAssignedBucket
+    getAssignedBucket,
+    seedAssignedBucket
 }) {
     const goalIds = collectGoalIdSetFromApiData(performanceData, investibleData, summaryData);
     if (goalIds.size === 0) {
@@ -1254,6 +1255,7 @@ function buildGoalBucketAssignmentMap({
     const investibleMap = utils.indexBy(investibleData, item => item?.goalId);
     const summaryMap = utils.indexBy(summaryData, item => item?.goalId);
     const getBucket = typeof getAssignedBucket === 'function' ? getAssignedBucket : () => null;
+    const seedBucket = typeof seedAssignedBucket === 'function' ? seedAssignedBucket : null;
     const bucketById = {};
 
     Array.from(goalIds).forEach(goalId => {
@@ -1270,6 +1272,9 @@ function buildGoalBucketAssignmentMap({
             return;
         }
         bucketById[goalId] = derivedBucket;
+        if (seedBucket) {
+            seedBucket(goalId, derivedBucket, { suppressSync: true });
+        }
     });
 
     return bucketById;
@@ -4866,6 +4871,9 @@ let GoalTargetStore;
             const validation = validateEndpointPayload(endpointKey, data);
             if (!validation.valid) {
                 console.warn(`[Goal Portfolio Viewer] Ignoring ${endpointKey} payload: ${validation.reason}`);
+                if (endpointKey === 'performance' || endpointKey === 'investible' || endpointKey === 'summary') {
+                    showNotification('Latest Endowus refresh failed validation. Showing last synced portfolio data.', 'error');
+                }
                 return;
             }
             handler(data);
@@ -12236,6 +12244,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     if (!rawValue) {
                         delete targetErrorsByCode[row.code];
                         Storage.remove(storageKeys.fsmTarget(row.code));
+                        if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
+                            SyncManager.scheduleSyncOnChange('fsm-target-clear');
+                        }
                         rerender();
                         return;
                     }

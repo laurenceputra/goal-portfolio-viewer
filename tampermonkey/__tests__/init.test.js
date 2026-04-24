@@ -211,7 +211,7 @@ describe('initialization and URL monitoring', () => {
         expect(storage.get('goal_bucket_name_goal1')).toBe('Wealth Builder');
     });
 
-    test('opening Endowus overlay does not persist derived bucket assignments', () => {
+    test('opening Endowus overlay seeds derived bucket assignments for legacy goals', () => {
         const performanceData = [{
             goalId: 'goal1',
             totalCumulativeReturn: { amount: 100 },
@@ -237,10 +237,10 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        expect(storage.has('goal_bucket_name_goal1')).toBe(false);
+        expect(storage.get('goal_bucket_name_goal1')).toBe('Retirement');
     });
 
-    test('bucket manager blur does not persist unchanged derived bucket assignment', () => {
+    test('bucket manager blur preserves seeded legacy bucket assignment', () => {
         const performanceData = [{
             goalId: 'goal1',
             totalCumulativeReturn: { amount: 100 },
@@ -275,7 +275,7 @@ describe('initialization and URL monitoring', () => {
         expect(bucketInput.value).toBe('Retirement');
         bucketInput.dispatchEvent(new window.Event('blur', { bubbles: true }));
 
-        expect(storage.has('goal_bucket_name_goal1')).toBe(false);
+        expect(storage.get('goal_bucket_name_goal1')).toBe('Retirement');
         expect(bucketInput.value).toBe('Retirement');
     });
 
@@ -838,6 +838,7 @@ describe('initialization and URL monitoring', () => {
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Summary View');
         expect(overlay.textContent).not.toContain('Fetching Endowus portfolio data');
+        expect(document.body.textContent).toContain('Latest Endowus refresh failed validation. Showing last synced portfolio data.');
     });
 
     test('showOverlay opens Endowus view when intercepted datasets are empty arrays', () => {

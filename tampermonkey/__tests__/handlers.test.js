@@ -127,6 +127,7 @@ describe('handlers and cache', () => {
     test('handleGoalTargetChange clears target on empty input', () => {
         const { handleGoalTargetChange } = exportsModule;
         if (typeof handleGoalTargetChange !== 'function') return;
+        const scheduleSpy = jest.spyOn(exportsModule.SyncManager, 'scheduleSyncOnChange').mockImplementation(() => {});
 
         const bucket = 'Retirement';
         const goalType = 'GENERAL_WEALTH_ACCUMULATION';
@@ -167,6 +168,7 @@ describe('handlers and cache', () => {
         expect(storage.has('goal_target_pct_g1')).toBe(false);
         expect(diffCell.textContent).toBe('-');
         expect(diffCell.className).toBe('gpv-diff-cell');
+        expect(scheduleSpy).toHaveBeenCalledWith('target-clear');
     });
 
     test('handleGoalTargetChange clamps target percent to 0-100', () => {
