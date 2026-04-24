@@ -12707,6 +12707,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
             const refreshedReadiness = getEndowusReadinessState();
             if (!refreshedReadiness.ready) {
+                showOverlay();
                 return;
             }
             mergedInvestmentDataState = refreshedReadiness.mergedInvestmentDataState;

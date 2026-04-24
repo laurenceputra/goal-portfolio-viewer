@@ -829,6 +829,16 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Summary View');
         expect(overlay.textContent).not.toContain('Retirement');
         expect(overlay.querySelector('.gpv-select').value).toBe('SUMMARY');
+
+        global.fetch.mockResolvedValueOnce(responseFactory({ stale: true }));
+        await window.fetch('/v1/goals/performance');
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Fetching Endowus portfolio data');
+        expect(overlay.textContent).toContain('Goal performance');
+        expect(overlay.textContent).not.toContain('Summary View');
     });
 
     test('showOverlay opens Endowus view when intercepted datasets are empty arrays', () => {
