@@ -6280,17 +6280,24 @@ let GoalTargetStore;
         return bucketHeader;
     }
 
-    function renderPlanningPanel(contentDiv, bucketViewModel) {
+    function renderPlanningPanel(contentDiv, bucketViewModel, { beforeNode = null } = {}) {
         if (!contentDiv || !bucketViewModel) {
             return;
         }
         const panel = createElement('div', 'gpv-planning-panel');
+        const appendPanel = () => {
+            if (beforeNode && beforeNode.parentNode === contentDiv) {
+                contentDiv.insertBefore(panel, beforeNode);
+                return;
+            }
+            contentDiv.appendChild(panel);
+        };
         panel.appendChild(createElement('h3', 'gpv-planning-title', 'Planning'));
 
         const planning = buildBucketPlanningModel(bucketViewModel.goalTypes);
         if (!planning) {
             panel.appendChild(createElement('p', 'gpv-planning-empty', 'Planning insights appear once targets and balances are available.'));
-            contentDiv.appendChild(panel);
+            appendPanel();
             return;
         }
 
@@ -6319,7 +6326,7 @@ let GoalTargetStore;
             panel.appendChild(createElement('p', 'gpv-planning-copy', line));
         });
 
-        contentDiv.appendChild(panel);
+        appendPanel();
     }
 
     function renderAllocationDriftHint(contentDiv, bucketViewModel) {
@@ -7005,10 +7012,11 @@ let GoalTargetStore;
         }
 
         const existingPanel = contentDiv.querySelector('.gpv-planning-panel');
+        const nextSibling = existingPanel?.nextSibling || null;
         if (existingPanel) {
             existingPanel.remove();
         }
-        renderPlanningPanel(contentDiv, bucketViewModel);
+        renderPlanningPanel(contentDiv, bucketViewModel, { beforeNode: nextSibling });
     }
 
     function flashInputBorder(input, variant) {
