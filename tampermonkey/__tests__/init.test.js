@@ -1278,6 +1278,7 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Target total is 60.00% (40.00% unallocated)');
+        expect(overlay.querySelector('.gpv-detail-header .gpv-health-badge')?.textContent).toBe('Needs Setup');
 
         const targetInput = overlay.querySelector('input.gpv-target-input[data-goal-id="t3"]');
         targetInput.value = '10';
@@ -1285,6 +1286,7 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).not.toContain('Target total is 60.00% (40.00% unallocated)');
+        expect(overlay.querySelector('.gpv-detail-header .gpv-health-badge')?.textContent).toBe('Healthy');
     });
 
     test('FSM row allocation and drift use selected scope totals', () => {

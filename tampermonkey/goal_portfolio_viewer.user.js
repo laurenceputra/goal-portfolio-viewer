@@ -1749,14 +1749,21 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
         const investibleMap = utils.indexBy(investibleData, item => item?.goalId);
         const summaryMap = utils.indexBy(summaryData, item => item?.goalId);
+        const performanceMap = utils.indexBy(performanceData, item => item?.goalId);
+        const goalIds = Array.from(new Set([
+            ...performanceData.map(item => utils.normalizeString(item?.goalId, '')).filter(Boolean),
+            ...investibleData.map(item => utils.normalizeString(item?.goalId, '')).filter(Boolean),
+            ...summaryData.map(item => utils.normalizeString(item?.goalId, '')).filter(Boolean)
+        ]));
 
         const bucketMap = {};
 
-        performanceData.forEach(perf => {
-            const invest = investibleMap[perf.goalId] || {};
-            const summary = summaryMap[perf.goalId] || {};
+        goalIds.forEach(goalId => {
+            const perf = performanceMap[goalId] || {};
+            const invest = investibleMap[goalId] || {};
+            const summary = summaryMap[goalId] || {};
             const goalName = utils.normalizeString(invest.goalName || summary.goalName || '', '');
-            const configuredBucket = utils.normalizeString(goalBucketById?.[perf.goalId], '');
+            const configuredBucket = utils.normalizeString(goalBucketById?.[goalId], '');
             // Extract bucket name using "Bucket Name - Goal Description" convention
             const goalBucket = configuredBucket || utils.extractBucketName(goalName);
             // Note: investible API `totalInvestmentAmount` is misnamed and represents ending balance.
@@ -1774,7 +1781,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             const safeCumulativeReturn = Number.isFinite(cumulativeReturn) ? cumulativeReturn : 0;
             
             const goalObj = {
-                goalId: perf.goalId,
+                goalId,
                 goalName: goalName,
                 goalBucket: goalBucket,
                 goalType: utils.normalizeString(
@@ -6988,6 +6995,13 @@ let GoalTargetStore;
         });
         if (!bucketViewModel) {
             return;
+        }
+
+        const detailHeader = contentDiv.querySelector('.gpv-detail-header');
+        const healthBadge = detailHeader?.querySelector('.gpv-health-badge');
+        if (healthBadge) {
+            healthBadge.className = `gpv-health-badge ${bucketViewModel.health?.className || 'gpv-health--healthy'}`;
+            healthBadge.textContent = `${bucketViewModel.health?.label || 'Healthy'}`;
         }
 
         const existingPanel = contentDiv.querySelector('.gpv-planning-panel');
