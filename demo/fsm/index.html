@@ -110,19 +110,22 @@
                 ? payload.data.flatMap(group => Array.isArray(group?.holdings) ? group.holdings : [])
                 : [];
             if (rows.length > 0) {
-                GM_setValue('fsm_target_pct_ESG001', 35.5);
-                GM_setValue('fsm_fixed_ESG002', true);
-                GM_setValue('fsm_tag_ESG003', 'Core');
-                GM_setValue('fsm_tag_catalog', ['Core', 'Satellite']);
-                GM_setValue('fsm_portfolios', [
+                const equityId = 'ESG001|sub:ESG1';
+                const bondId = 'ESG002|sub:ESG2';
+                const growthId = 'ESG003|sub:ESG3';
+                GM_setValue(`fsm_target_pct_${equityId}`, 35.5);
+                GM_setValue(`fsm_fixed_${bondId}`, true);
+                GM_setValue(`fsm_tag_${growthId}`, 'Core');
+                GM_setValue('fsm_tag_catalog', JSON.stringify(['Core', 'Satellite']));
+                GM_setValue('fsm_portfolios', JSON.stringify([
                     { id: 'demo-fsm-core', name: 'Core Portfolio', archived: false },
                     { id: 'demo-fsm-growth', name: 'Growth Portfolio', archived: false }
-                ]);
-                GM_setValue('fsm_assignment_by_code', {
-                    ESG001: 'demo-fsm-core',
-                    ESG002: 'demo-fsm-growth',
-                    ESG003: 'demo-fsm-core'
-                });
+                ]));
+                GM_setValue('fsm_assignment_by_code', JSON.stringify({
+                    [equityId]: 'demo-fsm-core',
+                    [bondId]: 'demo-fsm-growth',
+                    [growthId]: 'demo-fsm-core'
+                }));
             }
             return payload;
         }

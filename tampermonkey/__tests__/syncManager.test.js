@@ -125,9 +125,8 @@ describe('SyncManager', () => {
         return exportsModule;
     }
 
-    function seedRememberedKey() {
-        storage.set('sync_remember_key', true);
-        storage.set('sync_master_key', btoa(String.fromCharCode(1, 2, 3, 4)));
+    function unlockSync(SyncManager) {
+        SyncManager.__test.setSessionMasterKey(new Uint8Array([1, 2, 3, 4]));
     }
 
     function seedConfiguredState() {
@@ -153,7 +152,6 @@ describe('SyncManager', () => {
     test('startAutoSync does not schedule when auto-sync disabled', () => {
         jest.spyOn(global, 'setInterval');
         seedConfiguredState();
-        seedRememberedKey();
         storage.set('sync_auto_sync', false);
         const { SyncManager } = loadModule();
 
@@ -164,8 +162,8 @@ describe('SyncManager', () => {
 
     test('scheduleSyncOnChange schedules a buffered sync', () => {
         jest.useFakeTimers();
-        seedRememberedKey();
         const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
         seedConfiguredState();
         storage.set('sync_auto_sync', true);
 
@@ -176,7 +174,6 @@ describe('SyncManager', () => {
     });
 
     test('GoalTargetStore methods call scheduleSyncOnChange when available', () => {
-        seedRememberedKey();
         const { SyncManager, GoalTargetStore } = loadModule();
         const scheduleSpy = jest.spyOn(SyncManager, 'scheduleSyncOnChange').mockImplementation(() => {});
 
@@ -252,6 +249,203 @@ describe('SyncManager', () => {
         expect(storage.get(fixedKey)).toBe(true);
     });
 
+    test('applyConfigData removes stale local keys absent from remote config', () => {
+        const { SyncManager, storageKeys } = loadModule();
+        const staleEndowusTarget = storageKeys.goalTarget('old-goal');
+        const keptEndowusTarget = storageKeys.goalTarget('kept-goal');
+        const staleBucket = storageKeys.goalBucket('old-goal');
+        const staleFsmTarget = storageKeys.fsmTarget('OLD');
+        const keptFsmTarget = storageKeys.fsmTarget('AAA');
+        const staleFsmFixed = storageKeys.fsmFixed('OLD');
+
+        storage.set(staleEndowusTarget, 20);
+        storage.set(keptEndowusTarget, 30);
+        storage.set(staleBucket, 'Old Bucket');
+        storage.set(staleFsmTarget, 10);
+        storage.set(keptFsmTarget, 15);
+        storage.set(staleFsmFixed, true);
+        global.GM_listValues = () => [
+            staleEndowusTarget,
+            keptEndowusTarget,
+            staleBucket,
+            staleFsmTarget,
+            keptFsmTarget,
+            staleFsmFixed
+        ];
+
+        SyncManager.applyConfigData({
+            version: 2,
+            platforms: {
+                endowus: {
+                    goalTargets: { 'kept-goal': 35 },
+                    goalFixed: {},
+                    goalBuckets: {},
+                    clearedGoalBuckets: {},
+                    timestamp: Date.now()
+                },
+                fsm: {
+                    targetsByCode: { AAA: 25 },
+                    fixedByCode: {},
+                    tagsByCode: {},
+                    tagCatalog: [],
+                    driftSettings: {},
+                    portfolios: [],
+                    assignmentByCode: {},
+                    timestamp: Date.now()
+                }
+            },
+            timestamp: Date.now()
+        });
+
+        expect(storage.has(staleEndowusTarget)).toBe(false);
+        expect(storage.has(staleBucket)).toBe(false);
+        expect(storage.has(staleFsmTarget)).toBe(false);
+        expect(storage.has(staleFsmFixed)).toBe(false);
+        expect(storage.get(keptEndowusTarget)).toBe(35);
+        expect(storage.get(keptFsmTarget)).toBe(25);
+    });
+
+    test('enable persists remembered master key when remember-key is enabled', async () => {
+        const { SyncManager } = loadModule();
+        storage.set('sync_remember_key', true);
+        storage.set('sync_master_key', btoa(String.fromCharCode(1, 2, 3, 4)));
+
+        await expect(SyncManager.enable({
+            serverUrl: 'https://sync.example.com',
+            userId: 'user@example.com',
+            password: 'password123',
+            rememberKey: true
+        })).resolves.toBeUndefined();
+
+        expect(storage.get('sync_remember_key')).toBe(true);
+        expect(typeof storage.get('sync_master_key')).toBe('string');
+        expect(SyncManager.getStatus().hasSessionKey).toBe(true);
+    });
+
+    test('hydrates session key from remembered storage on module load', () => {
+        storage.set('sync_remember_key', true);
+        storage.set('sync_master_key', btoa(String.fromCharCode(7, 8, 9, 10)));
+
+        const { SyncManager } = loadModule();
+
+        expect(SyncManager.getStatus().hasSessionKey).toBe(true);
+    });
+
+    test('enable clears remembered key when remember-key is disabled', async () => {
+        storage.set('sync_remember_key', true);
+        storage.set('sync_master_key', btoa(String.fromCharCode(7, 8, 9, 10)));
+        const { SyncManager } = loadModule();
+
+        await SyncManager.enable({
+            serverUrl: 'https://sync.example.com',
+            userId: 'user@example.com',
+            password: 'password123',
+            rememberKey: false
+        });
+
+        expect(storage.get('sync_remember_key')).toBe(false);
+        expect(storage.has('sync_master_key')).toBe(false);
+    });
+
+    test('enable clears stale crypto lock error after unlocking session key', async () => {
+        seedConfiguredState();
+        const { SyncManager } = loadModule();
+
+        SyncManager.scheduleSyncOnChange('target-update');
+        expect(SyncManager.getStatus()).toEqual(expect.objectContaining({
+            lastError: 'Sync is locked. Enter your password and save settings to unlock encryption key.',
+            hasSessionKey: false
+        }));
+        expect(SyncManager.getStatus().lastErrorMeta).toEqual(expect.objectContaining({
+            category: 'crypto'
+        }));
+
+        await SyncManager.enable({
+            serverUrl: 'https://sync.example.com',
+            userId: 'user@example.com',
+            password: 'password123'
+        });
+
+        expect(SyncManager.getStatus()).toEqual(expect.objectContaining({
+            status: 'idle',
+            lastError: null,
+            lastErrorMeta: null,
+            hasSessionKey: true,
+            lastSync: null
+        }));
+    });
+
+    test('enable preserves unrelated auth errors after unlocking session key', async () => {
+        seedConfiguredState();
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        global.GM_xmlhttpRequest = jest.fn(({ url, method, onload }) => {
+            if (url.includes('/sync/') && method === 'GET') {
+                onload({
+                    status: 403,
+                    responseText: JSON.stringify({
+                        error: 'AUTH_LOCKED',
+                        message: 'Account locked'
+                    }),
+                    responseHeaders: ''
+                });
+                return;
+            }
+            onload({ status: 200, responseText: '{}', responseHeaders: '' });
+        });
+
+        await expect(SyncManager.performSync({ direction: 'download' })).rejects.toThrow('Account locked');
+        expect(SyncManager.getStatus().lastErrorMeta).toEqual(expect.objectContaining({
+            category: 'auth'
+        }));
+
+        await SyncManager.enable({
+            serverUrl: 'https://sync.example.com',
+            userId: 'user@example.com',
+            password: 'password123'
+        });
+
+        expect(SyncManager.getStatus()).toEqual(expect.objectContaining({
+            lastError: 'Account locked',
+            hasSessionKey: true
+        }));
+        expect(SyncManager.getStatus().lastErrorMeta).toEqual(expect.objectContaining({
+            category: 'auth'
+        }));
+        consoleErrorSpy.mockRestore();
+    });
+
+    test('sync server URLs require HTTPS except localhost development URLs', async () => {
+        const { SyncManager, utils } = loadModule();
+
+        expect(utils.isAllowedSyncServerUrl('https://sync.example.com')).toBe(true);
+        expect(utils.isAllowedSyncServerUrl('http://localhost:8787')).toBe(true);
+        expect(utils.isAllowedSyncServerUrl('http://127.0.0.1:8787')).toBe(true);
+        expect(utils.isAllowedSyncServerUrl('http://sync.example.com')).toBe(false);
+
+        await expect(SyncManager.enable({
+            serverUrl: 'http://sync.example.com',
+            userId: 'user@example.com',
+            password: 'password123'
+        })).rejects.toThrow('HTTPS');
+    });
+
+    test('getStatus treats stored insecure sync URL as unconfigured without throwing', () => {
+        storage.set('sync_enabled', true);
+        storage.set('sync_server_url', 'http://sync.example.com');
+        storage.set('sync_user_id', 'user@example.com');
+        storage.set('sync_refresh_token', 'refresh-token');
+        storage.set('sync_refresh_token_expiry', Date.now() + 120_000);
+
+        const { SyncManager } = loadModule();
+
+        expect(() => SyncManager.getStatus()).not.toThrow();
+        expect(SyncManager.getStatus()).toEqual(expect.objectContaining({
+            isConfigured: false
+        }));
+    });
+
 
     test('applyConfigData migrates legacy v1 payload to Endowus keys', () => {
         const { SyncManager, storageKeys } = loadModule();
@@ -270,25 +464,17 @@ describe('SyncManager', () => {
         const { SyncManager, storageKeys } = loadModule();
         const fsmTarget = storageKeys.fsmTarget('AAA');
         const fsmFixed = storageKeys.fsmFixed('BBB');
-        const fsmTag = storageKeys.fsmTag('AAA');
-        const fsmSetting = storageKeys.fsmDriftSetting('warningPct');
 
         storage.set(fsmTarget, 12);
         storage.set(fsmFixed, true);
-        storage.set(fsmTag, 'cash');
-        storage.set(fsmSetting, 10);
         storage.set('fsm_portfolios', JSON.stringify([{ id: 'core', name: 'Core', archived: false }]));
         storage.set('fsm_assignment_by_code', JSON.stringify({ AAA: 'core', BBB: 'unknown' }));
-        storage.set('fsm_tag_catalog', JSON.stringify(['cash']));
-        global.GM_listValues = () => [fsmTarget, fsmFixed, fsmTag, fsmSetting, 'fsm_tag_catalog', 'fsm_portfolios', 'fsm_assignment_by_code'];
+        global.GM_listValues = () => [fsmTarget, fsmFixed, 'fsm_portfolios', 'fsm_assignment_by_code'];
 
         const config = SyncManager.collectConfigData();
 
         expect(config.platforms.fsm.targetsByCode).toEqual({ AAA: 12 });
         expect(config.platforms.fsm.fixedByCode).toEqual({ BBB: true });
-        expect(config.platforms.fsm.tagsByCode).toEqual({ AAA: 'cash' });
-        expect(config.platforms.fsm.tagCatalog).toEqual(['cash']);
-        expect(config.platforms.fsm.driftSettings).toEqual({ warningPct: 10 });
         expect(config.platforms.fsm.portfolios).toEqual([{ id: 'core', name: 'Core', archived: false }]);
         expect(config.platforms.fsm.assignmentByCode).toEqual({ AAA: 'core', BBB: 'unassigned' });
     });
@@ -302,11 +488,8 @@ describe('SyncManager', () => {
                 fsm: {
                     targetsByCode: {},
                     fixedByCode: {},
-                    tagsByCode: {},
-                    tagCatalog: [],
                     portfolios: [{ id: 'income', name: 'Income', archived: false }],
                     assignmentByCode: { AAPL: 'income', BOND: 'missing' },
-                    driftSettings: {},
                     timestamp: Date.now()
                 }
             },
@@ -320,9 +503,9 @@ describe('SyncManager', () => {
     describe('multi-device reconciliation', () => {
         test('resolveConflict(local) forces overwrite and stores server timestamp', async () => {
             seedConfiguredState();
-            seedRememberedKey();
             global.GM_xmlhttpRequest = undefined;
             const { SyncManager } = loadModule();
+            unlockSync(SyncManager);
 
             const serverTimestamp = 2_000_000_000_000;
             const now = serverTimestamp + 5000;
@@ -406,9 +589,9 @@ describe('SyncManager', () => {
         test('performSync(both) treats identical content from another device as up to date', async () => {
             seedConfiguredState();
             storage.set('sync_access_token_expiry', Date.now() - 1_000);
-            seedRememberedKey();
             global.GM_xmlhttpRequest = undefined;
             const { SyncManager, SyncEncryption, storageKeys } = loadModule();
+            unlockSync(SyncManager);
 
             const targetKey = storageKeys.goalTarget('goal-1');
             storage.set(targetKey, 25);
@@ -524,9 +707,9 @@ describe('SyncManager', () => {
         test('performSync(download) stores server timestamp as lastSync metadata', async () => {
             seedConfiguredState();
             storage.set('sync_access_token_expiry', Date.now() - 1_000);
-            seedRememberedKey();
             global.GM_xmlhttpRequest = undefined;
             const { SyncManager, SyncEncryption, storageKeys } = loadModule();
+            unlockSync(SyncManager);
 
             const serverUrl = 'https://sync.example.com';
 

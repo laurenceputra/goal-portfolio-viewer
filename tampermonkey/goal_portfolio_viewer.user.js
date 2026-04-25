@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.4
+// @version      2.14.5
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -10,7 +10,6 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_listValues
-// @grant        GM_cookie
 // @grant        GM_xmlhttpRequest
 // @connect      goal-portfolio-sync.laurenceputra.workers.dev
 // @connect      localhost
@@ -36,7 +35,6 @@
     const FSM_ALL_PORTFOLIO_ID = 'all';
     const FSM_MAX_PORTFOLIO_NAME_LENGTH = 64;
     const DEBUG_AUTH = false;
-    const SORT_CACHE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
 
     const UNKNOWN_GOAL_TYPE = 'UNKNOWN_GOAL_TYPE';
     const PROJECTED_KEY_SEPARATOR = '|';
@@ -64,9 +62,6 @@
         goalBucket: 'goal_bucket_name_',
         fsmTarget: 'fsm_target_pct_',
         fsmFixed: 'fsm_fixed_',
-        fsmTag: 'fsm_tag_',
-        fsmDriftSetting: 'fsm_drift_setting_',
-        fsmTagCatalog: 'fsm_tag_catalog',
         performanceCache: 'gpv_performance_',
         collapseState: 'gpv_collapse_'
     };
@@ -120,6 +115,7 @@
         syncInterval: 30 // minutes
     };
     const SYNC_REQUEST_TIMEOUT_MS = 15000;
+    const FSM_HOLDING_ID_SEPARATOR = '|sub:';
 
     const utils = {
         normalizeServerUrl(serverUrl) {
@@ -127,6 +123,26 @@
                 return '';
             }
             return serverUrl.trim().replace(/\/+$/, '');
+        },
+        isAllowedSyncServerUrl(serverUrl) {
+            const normalized = this.normalizeServerUrl(serverUrl);
+            if (!normalized) {
+                return false;
+            }
+            try {
+                const url = new URL(normalized);
+                if (url.protocol === 'https:') {
+                    return true;
+                }
+                return url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
+            } catch (_error) {
+                return false;
+            }
+        },
+        assertAllowedSyncServerUrl(serverUrl) {
+            if (!this.isAllowedSyncServerUrl(serverUrl)) {
+                throw new Error('Sync server URL must use HTTPS, except localhost/127.0.0.1 for development');
+            }
         },
         normalizeString(value, fallback = '') {
             if (value === null || value === undefined) {
@@ -190,6 +206,34 @@
         }
     };
 
+    function getFsmHoldingIdentity(rowOrCode, maybeSubcode) {
+        const isRow = rowOrCode && typeof rowOrCode === 'object';
+        const code = utils.normalizeString(isRow ? rowOrCode.code : rowOrCode, '');
+        const subcode = utils.normalizeString(isRow ? (rowOrCode.subcode ?? rowOrCode.subCode) : maybeSubcode, '');
+        if (!code) {
+            return '';
+        }
+        if (!subcode) {
+            return code;
+        }
+        return `${encodeURIComponent(code)}${FSM_HOLDING_ID_SEPARATOR}${encodeURIComponent(subcode)}`;
+    }
+
+    function formatFsmHoldingIdentity(identity) {
+        const normalized = utils.normalizeString(identity, '');
+        if (!normalized.includes(FSM_HOLDING_ID_SEPARATOR)) {
+            return normalized;
+        }
+        const [encodedCode, encodedSubcode] = normalized.split(FSM_HOLDING_ID_SEPARATOR);
+        try {
+            const code = decodeURIComponent(encodedCode || '');
+            const subcode = decodeURIComponent(encodedSubcode || '');
+            return subcode ? `${code} / ${subcode}` : code;
+        } catch (_error) {
+            return normalized;
+        }
+    }
+
     const SYNC_STATUS = {
         idle: 'idle',
         syncing: 'syncing',
@@ -245,12 +289,6 @@
         },
         fsmFixed(code) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.fsmFixed, code ?? '');
-        },
-        fsmTag(code) {
-            return buildStorageKey(STORAGE_KEY_PREFIXES.fsmTag, code ?? '');
-        },
-        fsmDriftSetting(settingKey) {
-            return buildStorageKey(STORAGE_KEY_PREFIXES.fsmDriftSetting, settingKey ?? '');
         },
         performanceCache(goalId) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.performanceCache, goalId ?? '');
@@ -565,43 +603,63 @@
         return numericValue >= 0 ? 'positive' : 'negative';
     }
 
-    function calculatePercentOfType(amount, total) {
+    function calculateAllocationRatio(amount, total) {
         const numericValues = getFiniteNumbers([amount, total]);
         if (!numericValues) {
-            return 0;
+            return null;
         }
         const [numericAmount, numericTotal] = numericValues;
         if (numericTotal <= 0) {
-            return 0;
+            return null;
         }
-        return (numericAmount / numericTotal) * 100;
+        return numericAmount / numericTotal;
     }
 
-    function calculateGoalDiff(currentAmount, targetPercent, adjustedTypeTotal) {
+    function calculateAllocationDrift(currentAmount, targetPercent, total) {
         if (targetPercent === null || targetPercent === undefined) {
-            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
+            return null;
         }
-        const numericValues = getFiniteNumbers([currentAmount, targetPercent, adjustedTypeTotal]);
+        const numericValues = getFiniteNumbers([currentAmount, targetPercent, total]);
         if (!numericValues) {
-            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
+            return null;
         }
         const [numericCurrent, numericTarget, numericTotal] = numericValues;
         if (numericTotal <= 0) {
-            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
+            return null;
         }
         const targetAmount = (numericTarget / 100) * numericTotal;
         if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
+            return null;
+        }
+        const driftAmount = numericCurrent - targetAmount;
+        const driftPercent = driftAmount / targetAmount;
+        if (!Number.isFinite(driftPercent) || !Number.isFinite(driftAmount)) {
+            return null;
+        }
+        return { driftPercent, driftAmount };
+    }
+
+    function calculatePercentOfType(amount, total) {
+        const ratio = calculateAllocationRatio(amount, total);
+        if (ratio === null) {
+            return 0;
+        }
+        return ratio * 100;
+    }
+
+    function calculateGoalDiff(currentAmount, targetPercent, adjustedTypeTotal) {
+        const drift = calculateAllocationDrift(currentAmount, targetPercent, adjustedTypeTotal);
+        if (!drift) {
             return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
         }
-        const diffAmount = numericCurrent - targetAmount;
-        const driftPercent = diffAmount / targetAmount;
-        const threshold = numericCurrent * 0.05;
+        const diffAmount = drift.driftAmount;
+        const threshold = Number(currentAmount) * 0.05;
         const diffClass = Math.abs(diffAmount) > threshold ? 'negative' : 'positive';
         return {
             diffAmount,
             diffClass,
-            driftPercent: Number.isFinite(driftPercent) ? driftPercent : null,
-            driftAmount: Number.isFinite(diffAmount) ? diffAmount : null
+            driftPercent: drift.driftPercent,
+            driftAmount: diffAmount
         };
     }
 
@@ -738,45 +796,9 @@
         return numericRemaining > numericThreshold;
     }
 
-    // Cache for sortGoalsByName memoization
-    let sortedGoalsCache = null;
-    let sortedGoalsCacheKey = null;
-    let sortedGoalsCacheTimestamp = null;
-
-    function clearSortCacheIfExpired() {
-        if (sortedGoalsCacheTimestamp === null) {
-            return;
-        }
-        const now = Date.now();
-        const age = now - sortedGoalsCacheTimestamp;
-        if (age > SORT_CACHE_EXPIRY_MS) {
-            sortedGoalsCache = null;
-            sortedGoalsCacheKey = null;
-            sortedGoalsCacheTimestamp = null;
-            logDebug('[Goal Portfolio Viewer] Cleared expired sort cache');
-        }
-    }
-
     function sortGoalsByName(goals) {
         const safeGoals = Array.isArray(goals) ? goals : [];
-        
-        // Generate cache key from goal IDs
-        const cacheKey = safeGoals
-            .map(goal => `${goal?.goalId || ''}:${goal?.goalName || ''}`)
-            .join(',');
-        
-        // Check if cache has expired
-        clearSortCacheIfExpired();
-        
-        // Return cached result if available
-        if (sortedGoalsCacheKey === cacheKey && sortedGoalsCache !== null) {
-            // Update timestamp on cache hit
-            sortedGoalsCacheTimestamp = Date.now();
-            return sortedGoalsCache;
-        }
-        
-        // Perform sort and cache result
-        const sorted = safeGoals.slice().sort((left, right) => {
+        return safeGoals.slice().sort((left, right) => {
             const leftName = String(left?.goalName || '');
             const rightName = String(right?.goalName || '');
             const nameCompare = leftName.localeCompare(rightName, 'en', { sensitivity: 'base' });
@@ -787,11 +809,6 @@
             const rightId = String(right?.goalId || '');
             return leftId.localeCompare(rightId, 'en', { sensitivity: 'base' });
         });
-        
-        sortedGoalsCache = sorted;
-        sortedGoalsCacheKey = cacheKey;
-        sortedGoalsCacheTimestamp = Date.now();
-        return sorted;
     }
 
     function buildGoalModel(goal, totalTypeAmount, adjustedTotal, goalTargets, goalFixed) {
@@ -2485,6 +2502,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     // ============================================
 
     const Storage = {
+        missing: Object.freeze({ __gpvStorageMissing: true }),
         get(key, fallback, context) {
             try {
                 return GM_getValue(key, fallback);
@@ -2493,6 +2511,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 console.error(`[Goal Portfolio Viewer] ${label}:`, error);
                 return fallback;
             }
+        },
+        has(key, context) {
+            return Storage.get(key, Storage.missing, context) !== Storage.missing;
         },
         set(key, value, context) {
             try {
@@ -2601,19 +2622,22 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     }
 
     function getRememberedMasterKey() {
-        const remember = Storage.get(SYNC_STORAGE_KEYS.rememberKey, false);
+        const remember = Storage.get(SYNC_STORAGE_KEYS.rememberKey, false) === true;
         if (!remember) {
             return null;
         }
         const stored = Storage.get(SYNC_STORAGE_KEYS.rememberedMasterKey, null);
         const bytes = base64ToBytes(stored);
-        return bytes && bytes.length ? bytes : null;
+        if (bytes && bytes.length) {
+            return bytes;
+        }
+        clearRememberedMasterKey();
+        return null;
     }
 
     function setRememberedMasterKey(masterKey, remember) {
         if (!remember) {
-            Storage.set(SYNC_STORAGE_KEYS.rememberKey, false);
-            Storage.remove(SYNC_STORAGE_KEYS.rememberedMasterKey);
+            clearRememberedMasterKey();
             return;
         }
         if (!masterKey || !(masterKey instanceof Uint8Array) || !masterKey.length) {
@@ -2930,9 +2954,14 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     let syncOnChangeRetryTimer = null;
     let sessionMasterKey = getRememberedMasterKey();
 
-    function getStoredServerUrl(fallback = '') {
+    function getStoredServerUrl(fallback = '', options = {}) {
+        const enforceAllowed = options.enforceAllowed !== false;
         const stored = Storage.get(SYNC_STORAGE_KEYS.serverUrl, fallback);
-        return utils.normalizeServerUrl(stored || '');
+        const normalized = utils.normalizeServerUrl(stored || '');
+        if (normalized && enforceAllowed) {
+            utils.assertAllowedSyncServerUrl(normalized);
+        }
+        return normalized;
     }
 
     function decodeBase64Url(value) {
@@ -3005,6 +3034,20 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             throw new Error('Encryption key not set for this session. Enter your password and save settings to unlock sync.');
         }
         return sessionMasterKey;
+    }
+
+    function clearCryptoLockError() {
+        const message = String(lastError || lastErrorMeta?.userMessage || '');
+        const isCryptoLockError = lastErrorMeta?.category === 'crypto' &&
+            /unlock (?:sync|encryption key)|encryption key (?:not set|required)/i.test(message);
+        if (!isCryptoLockError) {
+            return;
+        }
+        lastError = null;
+        lastErrorMeta = null;
+        if (syncStatus === SYNC_STATUS.error) {
+            syncStatus = SYNC_STATUS.idle;
+        }
     }
 
     async function hashConfigData(config) {
@@ -3101,9 +3144,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      * Check if sync is configured
      */
     function isConfigured() {
-        const serverUrl = getStoredServerUrl('');
+        const serverUrl = getStoredServerUrl('', { enforceAllowed: false });
         const userId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
-        return Boolean(serverUrl && userId && hasValidRefreshToken());
+        return Boolean(serverUrl && utils.isAllowedSyncServerUrl(serverUrl) && userId && hasValidRefreshToken());
     }
 
     /**
@@ -3162,26 +3205,12 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const fsm = {
             targetsByCode: {},
             fixedByCode: {},
-            tagsByCode: {},
-            tagCatalog: [],
             portfolios: [],
             assignmentByCode: {},
-            driftSettings: {},
             timestamp: Date.now()
         };
         const allKeys = GM_listValues ? GM_listValues() : [];
         for (const key of allKeys) {
-            if (key === STORAGE_KEY_PREFIXES.fsmTagCatalog) {
-                const catalog = Storage.readJson(
-                    STORAGE_KEY_PREFIXES.fsmTagCatalog,
-                    data => Array.isArray(data),
-                    'Error loading FSM tag catalog'
-                );
-                if (Array.isArray(catalog)) {
-                    fsm.tagCatalog = catalog.map(item => utils.normalizeString(item, '')).filter(Boolean);
-                }
-                continue;
-            }
             if (key.startsWith(STORAGE_KEY_PREFIXES.fsmTarget)) {
                 const code = key.substring(STORAGE_KEY_PREFIXES.fsmTarget.length);
                 const value = Storage.get(key, null);
@@ -3194,21 +3223,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 const code = key.substring(STORAGE_KEY_PREFIXES.fsmFixed.length);
                 fsm.fixedByCode[code] = Storage.get(key, false) === true;
                 continue;
-            }
-            if (key.startsWith(STORAGE_KEY_PREFIXES.fsmTag)) {
-                const code = key.substring(STORAGE_KEY_PREFIXES.fsmTag.length);
-                const value = utils.normalizeString(Storage.get(key, ''), '');
-                if (value) {
-                    fsm.tagsByCode[code] = value;
-                }
-                continue;
-            }
-            if (key.startsWith(STORAGE_KEY_PREFIXES.fsmDriftSetting)) {
-                const settingKey = key.substring(STORAGE_KEY_PREFIXES.fsmDriftSetting.length);
-                const value = Storage.get(key, null);
-                if (value !== null) {
-                    fsm.driftSettings[settingKey] = value;
-                }
             }
         }
         Object.entries(fsm.fixedByCode).forEach(([code, isFixed]) => {
@@ -3248,7 +3262,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 : { goalTargets: {}, goalFixed: {}, timestamp: config.timestamp || Date.now() };
             const fsm = config.platforms.fsm && typeof config.platforms.fsm === 'object'
                 ? config.platforms.fsm
-                : { targetsByCode: {}, fixedByCode: {}, tagsByCode: {}, tagCatalog: [], driftSettings: {}, timestamp: config.timestamp || Date.now() };
+                : { targetsByCode: {}, fixedByCode: {}, timestamp: config.timestamp || Date.now() };
             return {
                 version: 2,
                 platforms: {
@@ -3262,11 +3276,8 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     fsm: {
                         targetsByCode: fsm.targetsByCode && typeof fsm.targetsByCode === 'object' ? fsm.targetsByCode : {},
                         fixedByCode: fsm.fixedByCode && typeof fsm.fixedByCode === 'object' ? fsm.fixedByCode : {},
-                        tagsByCode: fsm.tagsByCode && typeof fsm.tagsByCode === 'object' ? fsm.tagsByCode : {},
-                        tagCatalog: Array.isArray(fsm.tagCatalog) ? fsm.tagCatalog : [],
                         portfolios: normalizeFsmPortfolios(Array.isArray(fsm.portfolios) ? fsm.portfolios : []),
                         assignmentByCode: fsm.assignmentByCode && typeof fsm.assignmentByCode === 'object' ? fsm.assignmentByCode : {},
-                        driftSettings: fsm.driftSettings && typeof fsm.driftSettings === 'object' ? fsm.driftSettings : {},
                         timestamp: typeof fsm.timestamp === 'number' ? fsm.timestamp : (config.timestamp || Date.now())
                     }
                 },
@@ -3287,17 +3298,28 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 fsm: {
                     targetsByCode: {},
                     fixedByCode: {},
-                    tagsByCode: {},
-                    tagCatalog: [],
                     portfolios: [],
                     assignmentByCode: {},
-                    driftSettings: {},
                     timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
                 }
             },
             metadata: {},
             timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
         };
+    }
+
+    function removeStalePrefixedKeys(prefix, activeSuffixes, errorMessage = 'Error deleting stale sync key') {
+        const allKeys = GM_listValues ? GM_listValues() : [];
+        const active = activeSuffixes instanceof Set ? activeSuffixes : new Set(activeSuffixes || []);
+        for (const key of allKeys) {
+            if (!key.startsWith(prefix)) {
+                continue;
+            }
+            const suffix = key.substring(prefix.length);
+            if (!active.has(suffix)) {
+                Storage.remove(key, errorMessage);
+            }
+        }
     }
 
     /**
@@ -3341,6 +3363,25 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const endowusBuckets = endowus.goalBuckets && typeof endowus.goalBuckets === 'object' ? endowus.goalBuckets : {};
         const clearedGoalBuckets = endowus.clearedGoalBuckets && typeof endowus.clearedGoalBuckets === 'object' ? endowus.clearedGoalBuckets : {};
 
+        removeStalePrefixedKeys(
+            STORAGE_KEY_PREFIXES.goalTarget,
+            new Set(Object.keys(endowusTargets).filter(goalId => endowusFixed[goalId] !== true)),
+            'Error deleting stale Endowus target'
+        );
+        removeStalePrefixedKeys(
+            STORAGE_KEY_PREFIXES.goalFixed,
+            new Set(Object.keys(endowusFixed)),
+            'Error deleting stale Endowus fixed flag'
+        );
+        removeStalePrefixedKeys(
+            STORAGE_KEY_PREFIXES.goalBucket,
+            new Set([
+                ...Object.keys(endowusBuckets),
+                ...Object.keys(clearedGoalBuckets).filter(goalId => clearedGoalBuckets[goalId] === true).map(goalId => `${goalId}__cleared`)
+            ]),
+            'Error deleting stale Endowus bucket setting'
+        );
+
         for (const [goalId, value] of Object.entries(endowusTargets)) {
             if (endowusFixed[goalId] === true) {
                 continue;
@@ -3371,11 +3412,19 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const fsm = normalized.platforms.fsm || {};
         const fsmTargets = fsm.targetsByCode && typeof fsm.targetsByCode === 'object' ? fsm.targetsByCode : {};
         const fsmFixed = fsm.fixedByCode && typeof fsm.fixedByCode === 'object' ? fsm.fixedByCode : {};
-        const fsmTags = fsm.tagsByCode && typeof fsm.tagsByCode === 'object' ? fsm.tagsByCode : {};
-        const fsmDriftSettings = fsm.driftSettings && typeof fsm.driftSettings === 'object' ? fsm.driftSettings : {};
         const fsmPortfolios = normalizeFsmPortfolios(Array.isArray(fsm.portfolios) ? fsm.portfolios : []);
         const fsmAssignmentByCode = fsm.assignmentByCode && typeof fsm.assignmentByCode === 'object' ? fsm.assignmentByCode : {};
 
+        removeStalePrefixedKeys(
+            STORAGE_KEY_PREFIXES.fsmTarget,
+            new Set(Object.keys(fsmTargets).filter(code => fsmFixed[code] !== true)),
+            'Error deleting stale FSM target'
+        );
+        removeStalePrefixedKeys(
+            STORAGE_KEY_PREFIXES.fsmFixed,
+            new Set(Object.keys(fsmFixed)),
+            'Error deleting stale FSM fixed flag'
+        );
         for (const [code, value] of Object.entries(fsmTargets)) {
             if (fsmFixed[code] === true) {
                 continue;
@@ -3385,21 +3434,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
         for (const [code, value] of Object.entries(fsmFixed)) {
             Storage.set(storageKeys.fsmFixed(code), value === true);
-        }
-
-        for (const [code, tag] of Object.entries(fsmTags)) {
-            const normalizedTag = utils.normalizeString(tag, '');
-            if (!normalizedTag) {
-                continue;
-            }
-            Storage.set(storageKeys.fsmTag(code), normalizedTag);
-        }
-
-        const tagCatalog = Array.isArray(fsm.tagCatalog) ? fsm.tagCatalog.map(item => utils.normalizeString(item, '')).filter(Boolean) : [];
-        Storage.writeJson(STORAGE_KEY_PREFIXES.fsmTagCatalog, tagCatalog, 'Error saving FSM tag catalog');
-
-        for (const [key, value] of Object.entries(fsmDriftSettings)) {
-            Storage.set(storageKeys.fsmDriftSetting(key), value);
         }
 
         const validPortfolioIds = new Set(fsmPortfolios.filter(item => item.archived !== true).map(item => item.id));
@@ -3423,7 +3457,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             endowusBuckets: Object.keys(endowusBuckets).length,
             fsmTargets: Object.keys(fsmTargets).length,
             fsmFixed: Object.keys(fsmFixed).length,
-            fsmTags: Object.keys(fsmTags).length,
             fsmPortfolios: fsmPortfolios.length,
             fsmAssignments: Object.keys(sanitizedAssignments).length
         });
@@ -4175,22 +4208,20 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         if (!config || !normalizedServerUrl || !config.userId) {
             throw new Error('Invalid sync configuration: serverUrl and userId required');
         }
+        utils.assertAllowedSyncServerUrl(normalizedServerUrl);
 
         if (config.masterKey) {
             setSessionMasterKey(config.masterKey);
         } else if (config.password) {
             const derivedKey = await SyncEncryption.deriveMasterKey(config.password);
             setSessionMasterKey(derivedKey);
-        } else if (!sessionMasterKey) {
-            const storedKey = getRememberedMasterKey();
-            if (storedKey) {
-                setSessionMasterKey(storedKey);
-            }
         }
 
         if (!sessionMasterKey) {
             throw new Error('Encryption key required to unlock sync for this session');
         }
+
+        clearCryptoLockError();
 
         const previousUserId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
         const previousServerUrl = Storage.get(SYNC_STORAGE_KEYS.serverUrl, null);
@@ -4230,6 +4261,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         if (!normalizedServerUrl || !userId || !password) {
             throw new Error('serverUrl, userId, and password are required');
         }
+        utils.assertAllowedSyncServerUrl(normalizedServerUrl);
 
         if (password.length < 8) {
             throw new Error('Password must be at least 8 characters');
@@ -4272,6 +4304,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         if (!normalizedServerUrl || !userId || !password) {
             throw new Error('serverUrl, userId, and password are required');
         }
+        utils.assertAllowedSyncServerUrl(normalizedServerUrl);
 
         // Hash password for authentication
         const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
@@ -4349,6 +4382,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             isTokenValid,
             refreshAccessToken,
             getAccessToken,
+            setSessionMasterKey,
             storeTokens,
             clearTokens
         }
@@ -4400,7 +4434,7 @@ function getEndowusSyncView(config) {
 
 function getFsmSyncView(config) {
     if (!config || typeof config !== 'object') {
-        return { targetsByCode: {}, fixedByCode: {}, tagsByCode: {}, tagCatalog: [], portfolios: [], assignmentByCode: {}, driftSettings: {} };
+        return { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} };
     }
     if (config.platforms && typeof config.platforms === 'object') {
         const fsm = config.platforms.fsm && typeof config.platforms.fsm === 'object'
@@ -4409,14 +4443,11 @@ function getFsmSyncView(config) {
         return {
             targetsByCode: fsm.targetsByCode && typeof fsm.targetsByCode === 'object' ? fsm.targetsByCode : {},
             fixedByCode: fsm.fixedByCode && typeof fsm.fixedByCode === 'object' ? fsm.fixedByCode : {},
-            tagsByCode: fsm.tagsByCode && typeof fsm.tagsByCode === 'object' ? fsm.tagsByCode : {},
-            tagCatalog: Array.isArray(fsm.tagCatalog) ? fsm.tagCatalog : [],
             portfolios: normalizeFsmPortfolios(Array.isArray(fsm.portfolios) ? fsm.portfolios : []),
-            assignmentByCode: fsm.assignmentByCode && typeof fsm.assignmentByCode === 'object' ? fsm.assignmentByCode : {},
-            driftSettings: fsm.driftSettings && typeof fsm.driftSettings === 'object' ? fsm.driftSettings : {}
+            assignmentByCode: fsm.assignmentByCode && typeof fsm.assignmentByCode === 'object' ? fsm.assignmentByCode : {}
         };
     }
-    return { targetsByCode: {}, fixedByCode: {}, tagsByCode: {}, tagCatalog: [], portfolios: [], assignmentByCode: {}, driftSettings: {} };
+    return { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} };
 }
 
 function formatSyncValue(value) {
@@ -4446,13 +4477,13 @@ function getFsmHoldingsFromStorage() {
 function buildFsmHoldingsNameMap(fsmHoldings) {
     const rows = Array.isArray(fsmHoldings) ? fsmHoldings : [];
     return rows.reduce((acc, row) => {
-        const code = utils.normalizeString(row?.code, '');
-        if (!code) {
+        const holdingId = getFsmHoldingIdentity(row);
+        if (!holdingId) {
             return acc;
         }
         const name = utils.normalizeString(row?.name, '');
         if (name) {
-            acc[code] = name;
+            acc[holdingId] = name;
         }
         return acc;
     }, {});
@@ -4482,22 +4513,22 @@ function formatFsmPortfolioLabel(portfolioId, portfolioNameMap) {
     return normalizedId;
 }
 
-function formatFsmInstrumentLabel(code, holdingsByCode) {
-    const normalizedCode = utils.normalizeString(code, '');
-    if (!normalizedCode) {
+function formatFsmInstrumentLabel(holdingId, holdingsByCode) {
+    const normalizedHoldingId = utils.normalizeString(holdingId, '');
+    if (!normalizedHoldingId) {
         return '-';
     }
-    const name = utils.normalizeString(holdingsByCode?.[normalizedCode], '');
+    const readableIdentity = formatFsmHoldingIdentity(normalizedHoldingId);
+    const name = utils.normalizeString(holdingsByCode?.[normalizedHoldingId], '');
     if (name) {
-        return `${name} (${normalizedCode})`;
+        return `${name} (${readableIdentity})`;
     }
-    return normalizedCode;
+    return readableIdentity;
 }
 
-function formatFsmAssignmentDisplay({ portfolioId, target, fixed, tag }, portfolioNameMap) {
+function formatFsmAssignmentDisplay({ portfolioId, target, fixed }, portfolioNameMap) {
     const portfolioLabel = formatFsmPortfolioLabel(portfolioId, portfolioNameMap);
-    const tagLabel = utils.normalizeString(tag, '') || '-';
-    return `${portfolioLabel} · Target ${formatSyncTarget(target)} · Fixed ${formatSyncFixed(fixed === true)} · Tag ${tagLabel}`;
+    return `${portfolioLabel} · Target ${formatSyncTarget(target)} · Fixed ${formatSyncFixed(fixed === true)}`;
 }
 
 function buildFsmConflictDiffItems(conflict, options = {}) {
@@ -4518,9 +4549,7 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
         ...Object.keys(localFsm.targetsByCode || {}),
         ...Object.keys(remoteFsm.targetsByCode || {}),
         ...Object.keys(localFsm.fixedByCode || {}),
-        ...Object.keys(remoteFsm.fixedByCode || {}),
-        ...Object.keys(localFsm.tagsByCode || {}),
-        ...Object.keys(remoteFsm.tagsByCode || {})
+        ...Object.keys(remoteFsm.fixedByCode || {})
     ]);
 
     Array.from(codes).sort().forEach(code => {
@@ -4528,48 +4557,16 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
         const remoteTarget = remoteFsm.targetsByCode?.[code];
         const localFixed = localFsm.fixedByCode?.[code] === true;
         const remoteFixed = remoteFsm.fixedByCode?.[code] === true;
-        const localTag = localFsm.tagsByCode?.[code] || '-';
-        const remoteTag = remoteFsm.tagsByCode?.[code] || '-';
         const targetChanged = localTarget !== remoteTarget;
         const fixedChanged = localFixed !== remoteFixed;
-        const tagChanged = localTag !== remoteTag;
-        if (!targetChanged && !fixedChanged && !tagChanged) {
+        if (!targetChanged && !fixedChanged) {
             return;
         }
         rows.push({
             section: 'instrument',
-            settingName: `Instrument ${code}`,
-            localDisplay: `Target ${formatSyncTarget(localTarget)} · Fixed ${formatSyncFixed(localFixed)} · Tag ${localTag}`,
-            remoteDisplay: `Target ${formatSyncTarget(remoteTarget)} · Fixed ${formatSyncFixed(remoteFixed)} · Tag ${remoteTag}`
-        });
-    });
-
-    const localCatalog = Array.isArray(localFsm.tagCatalog) ? [...localFsm.tagCatalog].sort() : [];
-    const remoteCatalog = Array.isArray(remoteFsm.tagCatalog) ? [...remoteFsm.tagCatalog].sort() : [];
-    if (JSON.stringify(localCatalog) !== JSON.stringify(remoteCatalog)) {
-        rows.push({
-            section: 'tag-catalog',
-            settingName: 'Tag Catalog',
-            localDisplay: formatSyncValue(localCatalog),
-            remoteDisplay: formatSyncValue(remoteCatalog)
-        });
-    }
-
-    const driftKeys = new Set([
-        ...Object.keys(localFsm.driftSettings || {}),
-        ...Object.keys(remoteFsm.driftSettings || {})
-    ]);
-    Array.from(driftKeys).sort().forEach(key => {
-        const localValue = localFsm.driftSettings?.[key];
-        const remoteValue = remoteFsm.driftSettings?.[key];
-        if (localValue === remoteValue) {
-            return;
-        }
-        rows.push({
-            section: 'drift-setting',
-            settingName: `Drift Setting: ${key}`,
-            localDisplay: formatSyncValue(localValue),
-            remoteDisplay: formatSyncValue(remoteValue)
+            settingName: `Instrument ${formatFsmInstrumentLabel(code, holdingsByCode)}`,
+            localDisplay: `Target ${formatSyncTarget(localTarget)} · Fixed ${formatSyncFixed(localFixed)}`,
+            remoteDisplay: `Target ${formatSyncTarget(remoteTarget)} · Fixed ${formatSyncFixed(remoteFixed)}`
         });
     });
 
@@ -4598,8 +4595,6 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
         const remoteTarget = remoteFsm.targetsByCode?.[code];
         const localFixed = localFsm.fixedByCode?.[code] === true;
         const remoteFixed = remoteFsm.fixedByCode?.[code] === true;
-        const localTag = localFsm.tagsByCode?.[code];
-        const remoteTag = remoteFsm.tagsByCode?.[code];
         rows.push({
             section: 'assignment',
             settingName: formatFsmInstrumentLabel(code, holdingsByCode),
@@ -4607,8 +4602,7 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
                 {
                     portfolioId: localPortfolio,
                     target: localTarget,
-                    fixed: localFixed,
-                    tag: localTag
+                    fixed: localFixed
                 },
                 localPortfolioNameById
             ),
@@ -4616,8 +4610,7 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
                 {
                     portfolioId: remotePortfolio,
                     target: remoteTarget,
-                    fixed: remoteFixed,
-                    tag: remoteTag
+                    fixed: remoteFixed
                 },
                 remotePortfolioNameById
             )
@@ -4743,9 +4736,7 @@ let GoalTargetStore;
             })
         },
         auth: {
-            requestHeaders: null,
-            gmCookieAuthToken: null,
-            gmCookieDumped: false
+            requestHeaders: null
         },
         ui: {
             portfolioButton: null,
@@ -4940,7 +4931,9 @@ let GoalTargetStore;
         extractAuthHeaders(args[0], args[1]);
         const response = await originalFetch.apply(this, args);
         const url = args[0];
-        void handleInterceptedResponse(url, () => response.clone().json());
+        if (response?.ok) {
+            void handleInterceptedResponse(url, () => response.clone().json());
+        }
         return response;
     };
 
@@ -4964,7 +4957,10 @@ let GoalTargetStore;
         
         if (url && typeof url === 'string') {
             this.addEventListener('load', function() {
-                handleInterceptedResponse(url, () => Promise.resolve(parseJsonSafely(this.responseText)));
+                const status = Number(this.status);
+                if (!Number.isFinite(status) || (status >= 200 && status < 300)) {
+                    handleInterceptedResponse(url, () => Promise.resolve(parseJsonSafely(this.responseText)));
+                }
             });
         }
         
@@ -5159,139 +5155,6 @@ let GoalTargetStore;
         return null;
     }
 
-    function getCookieValue(name) {
-        if (typeof document === 'undefined' || !document.cookie) {
-            return null;
-        }
-        const entries = document.cookie.split(';').map(entry => entry.trim());
-        const match = entries.find(entry => entry.startsWith(`${name}=`));
-        if (!match) {
-            return null;
-        }
-        const value = match.slice(name.length + 1);
-        if (!value) {
-            return null;
-        }
-        try {
-            return decodeURIComponent(value);
-        } catch (_error) {
-            // Fallback to raw value if decoding fails due to malformed encoding
-            return value;
-        }
-    }
-
-    function selectAuthCookieToken(cookies) {
-        if (!Array.isArray(cookies) || !cookies.length) {
-            return null;
-        }
-        const httpOnlyCookie = cookies.find(cookie => cookie?.httpOnly);
-        return (httpOnlyCookie || cookies[0])?.value || null;
-    }
-
-    function findCookieValue(cookies, name) {
-        if (!Array.isArray(cookies)) {
-            return null;
-        }
-        return cookies.find(cookie => cookie?.name === name)?.value || null;
-    }
-
-    function getCookieValueByNames(names) {
-        for (const name of names) {
-            const value = getCookieValue(name);
-            if (value) {
-                return { name, value };
-            }
-        }
-        return null;
-    }
-
-    function listCookieByQuery(query) {
-        return new Promise(resolve => {
-            GM_cookie.list(query, cookies => resolve(cookies || []));
-        });
-    }
-
-    function dumpAvailableCookies() {
-        if (state.auth.gmCookieDumped || !DEBUG_AUTH) {
-            return;
-        }
-        state.auth.gmCookieDumped = true;
-        listCookieByQuery({})
-            .then(cookies => {
-                // Debug-only: log a safe summary of available GM_cookie entries
-                const summary = cookies.map(cookie => ({
-                    domain: cookie.domain,
-                    path: cookie.path,
-                    name: cookie.name
-                }));
-                logAuthDebug('[Goal Portfolio Viewer][DEBUG_AUTH] Available GM_cookie entries:', summary);
-            })
-            .catch(error => {
-                console.error('[Goal Portfolio Viewer][DEBUG_AUTH] Failed to list GM_cookie entries:', error);
-            });
-    }
-
-    function getAuthTokenFromGMCookie() {
-        if (state.auth.gmCookieAuthToken) {
-            return Promise.resolve(state.auth.gmCookieAuthToken);
-        }
-        if (typeof GM_cookie === 'undefined' || typeof GM_cookie.list !== 'function') {
-            return Promise.resolve(null);
-        }
-        return new Promise(resolve => {
-            dumpAvailableCookies();
-            const cookieNames = ['webapp-sg-access-token', 'webapp-sg-accessToken'];
-            const queries = [
-                { domain: '.endowus.com', path: '/', name: cookieNames[0] },
-                { domain: '.endowus.com', path: '/', name: cookieNames[1] },
-                { domain: 'app.sg.endowus.com', path: '/', name: cookieNames[0] },
-                { domain: 'app.sg.endowus.com', path: '/', name: cookieNames[1] }
-            ];
-            const tryNext = index => {
-                if (index >= queries.length) {
-                    resolve(null);
-                    return;
-                }
-                listCookieByQuery(queries[index]).then(cookies => {
-                    const token = selectAuthCookieToken(cookies) || findCookieValue(cookies, cookieNames[1]);
-                    if (token) {
-                        state.auth.gmCookieAuthToken = token;
-                        resolve(token);
-                        return;
-                    }
-                    tryNext(index + 1);
-                });
-            };
-            tryNext(0);
-        });
-    }
-
-    function buildAuthorizationValue(token) {
-        if (!token || typeof token !== 'string') {
-            return null;
-        }
-        if (token.toLowerCase().startsWith('bearer ')) {
-            return token;
-        }
-        return `Bearer ${token}`;
-    }
-
-    async function getFallbackAuthHeaders() {
-        const gmCookieToken = await getAuthTokenFromGMCookie();
-        const cookieNames = ['webapp-sg-access-token', 'webapp-sg-accessToken'];
-        const cookieValue = getCookieValueByNames(cookieNames);
-        const token = gmCookieToken || cookieValue?.value || null;
-        const deviceId = getCookieValue('webapp-deviceId');
-        // Policy: do not read localStorage for auth-related identifiers.
-        const clientId = null;
-
-        return {
-            authorization: buildAuthorizationValue(token),
-            'client-id': clientId,
-            'device-id': deviceId
-        };
-    }
-
     function extractAuthHeaders(requestUrl, requestInit) {
         const url = typeof requestUrl === 'string' ? requestUrl : requestUrl?.url;
         if (!url || !url.includes('endowus.com')) {
@@ -5324,24 +5187,15 @@ let GoalTargetStore;
         }
     }
 
-    async function buildPerformanceRequestHeaders() {
+    function buildPerformanceRequestHeaders() {
         const headers = new Headers();
-        const fallbackHeaders = await getFallbackAuthHeaders();
-        const mergedHeaders = {
-            ...fallbackHeaders
-        };
         if (state.auth.requestHeaders) {
             Object.entries(state.auth.requestHeaders).forEach(([key, value]) => {
                 if (value) {
-                    mergedHeaders[key] = value;
+                    headers.set(key, value);
                 }
             });
         }
-        Object.entries(mergedHeaders).forEach(([key, value]) => {
-            if (value) {
-                headers.set(key, value);
-            }
-        });
         return headers;
     }
 
@@ -6339,6 +6193,36 @@ let GoalTargetStore;
         return bucketHeader;
     }
 
+    function appendPlanningDetails(panel, planning, {
+        scopeLabel = null,
+        coverageText = null,
+        showScenarioPrompt = false
+    } = {}) {
+        if (scopeLabel) {
+            panel.appendChild(createElement('p', 'gpv-planning-copy', `Scope: ${scopeLabel}`));
+        }
+        if (coverageText) {
+            panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
+        }
+        if (showScenarioPrompt) {
+            if (planning.scenarioAmount > 0) {
+                panel.appendChild(createElement('p', 'gpv-planning-copy', `Projected Investment: ${formatMoney(planning.scenarioAmount)}`));
+            } else {
+                panel.appendChild(createElement('p', 'gpv-planning-copy', 'Set a projected investment amount to see a what-if split.'));
+            }
+            if (Array.isArray(planning.scenarioSplit) && planning.scenarioSplit.length > 0) {
+                const splitList = createElement('ul', 'gpv-planning-list');
+                planning.scenarioSplit.forEach(item => {
+                    splitList.appendChild(createElement('li', 'gpv-planning-item', `${item.goalName}: ${formatMoney(item.amount)}`));
+                });
+                panel.appendChild(splitList);
+            }
+        }
+        buildPlanningTradeLines(planning).forEach(line => {
+            panel.appendChild(createElement('p', 'gpv-planning-copy', line));
+        });
+    }
+
     function renderPlanningPanel(contentDiv, bucketViewModel, { beforeNode = null } = {}) {
         if (!contentDiv || !bucketViewModel) {
             return;
@@ -6363,26 +6247,9 @@ let GoalTargetStore;
         const coverageText = planning.coverageIssues.length > 0
             ? planning.coverageIssues.join(' | ')
             : null;
-        if (coverageText) {
-            panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
-        }
-
-        if (planning.scenarioAmount > 0) {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', `Projected Investment: ${formatMoney(planning.scenarioAmount)}`));
-        } else {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', 'Set a projected investment amount to see a what-if split.'));
-        }
-
-        if (Array.isArray(planning.scenarioSplit) && planning.scenarioSplit.length > 0) {
-            const splitList = createElement('ul', 'gpv-planning-list');
-            planning.scenarioSplit.forEach(item => {
-                splitList.appendChild(createElement('li', 'gpv-planning-item', `${item.goalName}: ${formatMoney(item.amount)}`));
-            });
-            panel.appendChild(splitList);
-        }
-
-        buildPlanningTradeLines(planning).forEach(line => {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', line));
+        appendPlanningDetails(panel, planning, {
+            coverageText,
+            showScenarioPrompt: true
         });
 
         appendPanel();
@@ -7533,7 +7400,7 @@ function withButtonState(button, busyText, action) {
         const hasValidRefreshToken = syncStatus.hasValidRefreshToken;
         const serverUrl = utils.normalizeServerUrl(Storage.get(SYNC_STORAGE_KEYS.serverUrl, SYNC_DEFAULTS.serverUrl)) || SYNC_DEFAULTS.serverUrl;
         const userId = Storage.get(SYNC_STORAGE_KEYS.userId, '');
-        const rememberKey = Storage.get(SYNC_STORAGE_KEYS.rememberKey, false);
+        const rememberKey = Storage.get(SYNC_STORAGE_KEYS.rememberKey, false) === true;
         const autoSync = Storage.get(SYNC_STORAGE_KEYS.autoSync, SYNC_DEFAULTS.autoSync);
         const syncInterval = Storage.get(SYNC_STORAGE_KEYS.syncInterval, SYNC_DEFAULTS.syncInterval);
         const lastSyncTimestamp = syncStatus.lastSync;
@@ -7687,24 +7554,20 @@ function withButtonState(button, busyText, action) {
         `;
     }
 
-    function renderRememberKeySection({ isEnabled, cryptoSupported, hasSessionKey, rememberKey }) {
-        const shouldShowRememberKey = isEnabled && cryptoSupported && (hasSessionKey || rememberKey);
+    function renderRememberKeySection({ isEnabled, cryptoSupported, rememberKey }) {
         return `
-            <div class="gpv-sync-form-group" id="gpv-sync-remember-wrapper" style="display: ${shouldShowRememberKey ? 'block' : 'none'};">
+            <div class="gpv-sync-form-group">
                 <label class="gpv-sync-toggle">
-                    <input 
-                        type="checkbox" 
+                    <input
+                        type="checkbox"
                         id="gpv-sync-remember-key"
                         ${rememberKey ? 'checked' : ''}
                         ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
                     />
                     <span>Remember encryption key on this device</span>
                 </label>
-                <p class="gpv-sync-help">Keeps sync unlocked between sessions on this device only.</p>
+                <p class="gpv-sync-help">Trusted devices only. Keeps sync unlocked across browser sessions.</p>
             </div>
-            <p class="gpv-sync-help" id="gpv-sync-remember-hint" style="display: ${shouldShowRememberKey || !isEnabled || !cryptoSupported ? 'none' : 'block'};">
-                Save settings after entering your password to unlock sync.
-            </p>
         `;
     }
 
@@ -7836,7 +7699,7 @@ function withButtonState(button, busyText, action) {
     if (serverUrlInput) {
         serverUrlInput.addEventListener('blur', () => {
             const normalized = utils.normalizeServerUrl(serverUrlInput.value);
-            if (normalized) {
+            if (normalized && utils.isAllowedSyncServerUrl(normalized)) {
                 Storage.set(SYNC_STORAGE_KEYS.serverUrl, normalized);
             }
         });
@@ -7852,40 +7715,10 @@ function withButtonState(button, busyText, action) {
         });
     }
 
-    const passwordInput = document.getElementById('gpv-sync-password');
-    const rememberKeyWrapper = document.getElementById('gpv-sync-remember-wrapper');
-    const rememberKeyHint = document.getElementById('gpv-sync-remember-hint');
     const enabledCheckbox = document.getElementById('gpv-sync-enabled');
 
-    function updateRememberKeyVisibility() {
-        const status = SyncManager.getStatus();
-        const isEnabled = enabledCheckbox ? enabledCheckbox.checked : status.isEnabled;
-        const isValidPassword = Boolean(passwordInput?.value && passwordInput.value.length >= 8);
-        const rememberKeyCheckbox = document.getElementById('gpv-sync-remember-key');
-        const shouldShow = isEnabled && status.cryptoSupported && (status.hasSessionKey || isValidPassword || rememberKeyCheckbox?.checked);
-
-        if (rememberKeyWrapper) {
-            rememberKeyWrapper.style.display = shouldShow ? 'block' : 'none';
-        }
-        if (rememberKeyHint) {
-            rememberKeyHint.style.display = shouldShow || !isEnabled || !status.cryptoSupported ? 'none' : 'block';
-        }
-    }
-
-    const rememberKeyCheckbox = document.getElementById('gpv-sync-remember-key');
-    let rememberKeyTouched = false;
-    if (rememberKeyCheckbox) {
-        rememberKeyCheckbox.addEventListener('change', (e) => {
-            rememberKeyTouched = true;
-            if (!e.target.checked) {
-                clearRememberedMasterKey();
-            }
-            updateRememberKeyVisibility();
-        });
-    }
-
     function updateSyncActivationControls(isEnabled) {
-        const inputs = document.querySelectorAll('.gpv-sync-input, #gpv-sync-auto, #gpv-sync-interval');
+        const inputs = document.querySelectorAll('.gpv-sync-input, #gpv-sync-auto, #gpv-sync-interval, #gpv-sync-remember-key');
         inputs.forEach(input => {
             input.disabled = !isEnabled;
         });
@@ -7909,12 +7742,7 @@ function withButtonState(button, busyText, action) {
     if (enabledCheckbox) {
         enabledCheckbox.addEventListener('change', (e) => {
             updateSyncActivationControls(e.target.checked);
-            updateRememberKeyVisibility();
         });
-    }
-
-    if (passwordInput) {
-        passwordInput.addEventListener('input', updateRememberKeyVisibility);
     }
 
     // Auto-sync toggle
@@ -7929,7 +7757,6 @@ function withButtonState(button, busyText, action) {
     }
 
     updateSyncActivationControls(enabledCheckbox?.checked === true);
-    updateRememberKeyVisibility();
 
     // Save settings
     const saveBtn = document.getElementById('gpv-sync-save-btn');
@@ -7955,7 +7782,7 @@ function withButtonState(button, busyText, action) {
                             throw new Error('Server URL and User ID are required when sync is activated');
                         }
                         if (!password && !hasSessionKey) {
-                            throw new Error('Password is required to unlock sync for this session (or enable remember key)');
+                            throw new Error('Password is required to unlock sync for this session');
                         }
                         if (password && password.length < 8) {
                             throw new Error('Password must be at least 8 characters');
@@ -7970,9 +7797,9 @@ function withButtonState(button, busyText, action) {
                             serverUrl,
                             userId,
                             password: password || null,
+                            rememberKey,
                             autoSync,
-                            syncInterval,
-                            rememberKey
+                            syncInterval
                         });
                         const successMessage = 'Sync settings saved successfully!';
                         showSuccessMessage(successMessage);
@@ -8003,6 +7830,7 @@ function withButtonState(button, busyText, action) {
                         serverUrl,
                         userId,
                         password,
+                        rememberKey,
                         autoSync,
                         syncInterval
                     } = getSyncFormState();
@@ -8025,9 +7853,9 @@ function withButtonState(button, busyText, action) {
                         serverUrl,
                         userId,
                         password,
+                        rememberKey,
                         autoSync,
-                        syncInterval,
-                        rememberKey: true
+                        syncInterval
                     });
                     const successMessage = '✅ Account created and sync enabled with encryption by default.';
                     showSuccessMessage(successMessage);
@@ -8052,13 +7880,10 @@ function withButtonState(button, busyText, action) {
                         serverUrl,
                         userId,
                         password,
+                        rememberKey,
                         autoSync,
                         syncInterval
                     } = getSyncFormState();
-                    const rememberKeyCheckbox = document.getElementById('gpv-sync-remember-key');
-                    const rememberKey = rememberKeyTouched
-                        ? rememberKeyCheckbox?.checked === true
-                        : true;
 
                     if (!enabled) {
                         throw new Error('Activate Sync before logging in');
@@ -8073,9 +7898,9 @@ function withButtonState(button, busyText, action) {
                         serverUrl,
                         userId,
                         password,
+                        rememberKey,
                         autoSync,
-                        syncInterval,
-                        rememberKey
+                        syncInterval
                     });
                     const successMessage = '✅ Login successful! Sync enabled with encryption by default.';
                     showSuccessMessage(successMessage);
@@ -8104,6 +7929,7 @@ function withButtonState(button, busyText, action) {
                     if (!serverUrl) {
                         throw new Error('Server URL is required to test the connection');
                     }
+                    utils.assertAllowedSyncServerUrl(serverUrl);
                     Storage.set(SYNC_STORAGE_KEYS.serverUrl, serverUrl);
                     const response = await SyncManager.requestJson(`${serverUrl}/health`);
                     const data = await response.json().catch(() => ({}));
@@ -11121,13 +10947,18 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         ) || {};
         const validPortfolioIds = new Set(portfolios.filter(item => item.archived !== true).map(item => item.id));
         const sanitizedAssignments = {};
+        const codeCounts = buildFsmCodeCounts(fsmHoldings);
         (Array.isArray(fsmHoldings) ? fsmHoldings : []).forEach(row => {
             const code = utils.normalizeString(row?.code, '');
-            if (!code) {
+            const holdingId = getFsmHoldingIdentity(row);
+            if (!holdingId) {
                 return;
             }
-            const assigned = utils.normalizeString(assignmentByCode[code], '');
-            sanitizedAssignments[code] = validPortfolioIds.has(assigned) ? assigned : FSM_UNASSIGNED_PORTFOLIO_ID;
+            const legacyAssigned = isFsmLegacyCodeFallbackAllowed(code, holdingId, codeCounts)
+                ? assignmentByCode[code]
+                : null;
+            const assigned = utils.normalizeString(assignmentByCode[holdingId] || legacyAssigned, '');
+            sanitizedAssignments[holdingId] = validPortfolioIds.has(assigned) ? assigned : FSM_UNASSIGNED_PORTFOLIO_ID;
         });
         return {
             portfolios,
@@ -11145,34 +10976,62 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function getFsmTarget(code) {
-        const value = Storage.get(storageKeys.fsmTarget(code), null);
+        const key = storageKeys.fsmTarget(code);
+        if (!Storage.has(key)) {
+            return null;
+        }
+        const value = Storage.get(key, null);
         const parsed = Number(value);
         return Number.isFinite(parsed) ? parsed : null;
     }
 
-    function getFsmFixed(code) {
-        return Storage.get(storageKeys.fsmFixed(code), false) === true;
+    function getFsmFixedValue(code) {
+        const key = storageKeys.fsmFixed(code);
+        if (!Storage.has(key)) {
+            return null;
+        }
+        return Storage.get(key, false) === true;
+    }
+
+    function buildFsmCodeCounts(fsmHoldings) {
+        return (Array.isArray(fsmHoldings) ? fsmHoldings : []).reduce((acc, row) => {
+            const code = utils.normalizeString(row?.code, '');
+            if (code) {
+                acc[code] = (acc[code] || 0) + 1;
+            }
+            return acc;
+        }, {});
+    }
+
+    function isFsmLegacyCodeFallbackAllowed(code, holdingId, codeCounts) {
+        return Boolean(code && holdingId && holdingId !== code && codeCounts?.[code] === 1);
     }
 
     function buildFsmRowsWithAssignment(fsmHoldings, assignmentByCode) {
+        const codeCounts = buildFsmCodeCounts(fsmHoldings);
         return (Array.isArray(fsmHoldings) ? fsmHoldings : []).map(row => {
             const code = utils.normalizeString(row?.code, '');
             const subcode = utils.normalizeString(row?.subcode ?? row?.subCode, '');
+            const holdingId = getFsmHoldingIdentity(code, subcode);
+            const allowLegacyFallback = isFsmLegacyCodeFallbackAllowed(code, holdingId, codeCounts);
             const currentValue = Number(row?.currentValueLcy);
             const profitValue = toOptionalFiniteNumber(row?.profitValueLcy);
             const profitPercent = toOptionalFiniteNumber(row?.profitPercentLcy);
+            const targetPercent = getFsmTarget(holdingId);
+            const fixed = getFsmFixedValue(holdingId);
             return {
                 ...row,
                 code,
+                holdingId,
                 displayTicker: subcode || code,
                 name: utils.normalizeString(row?.name, '-'),
                 productType: utils.normalizeString(row?.productType, '-'),
                 currentValueLcy: Number.isFinite(currentValue) ? currentValue : 0,
                 profitValueLcy: profitValue,
                 profitPercentLcy: profitPercent,
-                portfolioId: assignmentByCode[code] || FSM_UNASSIGNED_PORTFOLIO_ID,
-                targetPercent: getFsmTarget(code),
-                fixed: getFsmFixed(code)
+                portfolioId: assignmentByCode[holdingId] || FSM_UNASSIGNED_PORTFOLIO_ID,
+                targetPercent: targetPercent ?? (allowLegacyFallback ? getFsmTarget(code) : null),
+                fixed: fixed ?? (allowLegacyFallback ? getFsmFixedValue(code) : null) ?? false
             };
         });
     }
@@ -11246,35 +11105,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         };
     }
 
-    function calculateRecommendedContributionSplitForFsm(rows, additionalAmount) {
-        const numericAmount = toFiniteNumber(additionalAmount, null);
-        if (numericAmount === null || numericAmount <= 0 || !Array.isArray(rows)) {
-            return [];
-        }
-        const candidates = rows
-            .filter(row => row && row.fixed !== true && Number.isFinite(row.driftAmount) && row.driftAmount < 0)
-            .map(row => ({
-                goalId: row.code,
-                goalName: row.displayTicker || row.name || row.code,
-                neededAmount: Math.abs(row.driftAmount)
-            }));
-        const totalNeed = candidates.reduce((sum, item) => sum + item.neededAmount, 0);
-        if (totalNeed <= 0) {
-            return [];
-        }
-        return candidates
-            .map(item => {
-                const share = item.neededAmount / totalNeed;
-                return {
-                    goalId: item.goalId,
-                    goalName: item.goalName,
-                    amount: Number((numericAmount * share).toFixed(2))
-                };
-            })
-            .sort((left, right) => right.amount - left.amount)
-            .slice(0, 4);
-    }
-
     function buildFsmPlanningModel(rows, summary) {
         const safeRows = Array.isArray(rows) ? rows : [];
         const safeSummary = summary || {};
@@ -11284,15 +11114,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const overweightCandidates = safeRows
             .filter(row => Number.isFinite(row?.driftAmount) && row.driftAmount > 0)
             .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount));
-        const scenarioAmount = 0;
         const planningRecommendations = buildPlanningRecommendations({
             buys: underweightCandidates,
             sells: overweightCandidates
         });
         return {
             targetCoverageLabel: safeSummary.targetCoverageLabel || null,
-            scenarioAmount,
-            scenarioSplit: calculateRecommendedContributionSplitForFsm(safeRows, scenarioAmount),
             suggestedBuys: planningRecommendations.suggestedBuys,
             suggestedSells: planningRecommendations.suggestedSells,
             triggerBuys: planningRecommendations.triggerBuys,
@@ -11302,15 +11129,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function calculateFsmCurrentAllocation(total, row) {
-        const numericTotal = toFiniteNumber(total, null);
-        if (numericTotal === null || numericTotal <= 0) {
-            return null;
-        }
-        const currentValue = toFiniteNumber(row?.currentValueLcy, null);
-        if (currentValue === null) {
-            return null;
-        }
-        return currentValue / numericTotal;
+        return calculateAllocationRatio(row?.currentValueLcy, total);
     }
 
     function buildFsmHeader({ overlay, cleanupCallbacks }) {
@@ -11351,28 +11170,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function calculateFsmRowDrift(total, row) {
-        const numericTotal = toFiniteNumber(total, null);
-        if (numericTotal === null || numericTotal <= 0) {
-            return null;
-        }
-        const targetPercent = toFiniteNumber(row?.targetPercent, null);
-        if (targetPercent === null) {
-            return null;
-        }
-        const targetAmount = (targetPercent / 100) * numericTotal;
-        if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
-            return null;
-        }
-        const currentValue = toFiniteNumber(row?.currentValueLcy, 0);
-        const driftAmount = currentValue - targetAmount;
-        const driftPercent = driftAmount / targetAmount;
-        if (!Number.isFinite(driftPercent) || !Number.isFinite(driftAmount)) {
-            return null;
-        }
-        return {
-            driftPercent,
-            driftAmount
-        };
+        return calculateAllocationDrift(row?.currentValueLcy, row?.targetPercent, total);
     }
 
     function buildFsmDisplayRows(rows, total) {
@@ -11698,27 +11496,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     function buildFsmPlanningPanel(planning, scopeLabel) {
         const panel = createElement('div', 'gpv-planning-panel');
         panel.appendChild(createElement('h3', 'gpv-planning-title', 'Planning'));
-        panel.appendChild(createElement('p', 'gpv-planning-copy', `Scope: ${scopeLabel}`));
-        const coverageText = planning?.targetCoverageLabel || null;
-        if (coverageText) {
-            panel.appendChild(createElement('p', 'gpv-planning-coverage', coverageText));
-        }
-
-        const scenarioAmount = toFiniteNumber(planning?.scenarioAmount, 0);
-        if (scenarioAmount > 0) {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', `Projected Investment: ${formatMoney(scenarioAmount)}`));
-        }
-
-        if (Array.isArray(planning?.scenarioSplit) && planning.scenarioSplit.length > 0) {
-            const splitList = createElement('ul', 'gpv-planning-list');
-            planning.scenarioSplit.forEach(item => {
-                splitList.appendChild(createElement('li', 'gpv-planning-item', `${item.goalName}: ${formatMoney(item.amount)}`));
-            });
-            panel.appendChild(splitList);
-        }
-
-        buildPlanningTradeLines(planning).forEach(line => {
-            panel.appendChild(createElement('p', 'gpv-planning-copy', line));
+        appendPlanningDetails(panel, planning || {}, {
+            scopeLabel,
+            coverageText: planning?.targetCoverageLabel || null
         });
         return panel;
     }
@@ -11832,10 +11612,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
     function buildFsmHoldingsTable({
         filteredRows,
-        selectedCodes,
+        selectedHoldingIds,
         selectAllFiltered,
         activePortfolios,
-        targetErrorsByCode,
+        targetErrorsByHoldingId,
         showDrift,
         onSelectAllChange,
         onRowSelectChange,
@@ -11878,7 +11658,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const tbody = table.querySelector('tbody');
         filteredRows.forEach(row => {
             const tr = document.createElement('tr');
-            const checked = selectedCodes.has(row.code);
+            const holdingId = row.holdingId || row.code;
+            const checked = selectedHoldingIds.has(holdingId);
             tr.innerHTML = `
                 <td data-col="select"><input type="checkbox" ${checked ? 'checked' : ''} aria-label="Select holding ${escapeHtml(row.displayTicker || row.code)}" /></td>
                 <td data-col="ticker">${escapeHtml(row.displayTicker || '-')}</td>
@@ -11895,7 +11676,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const checkbox = tr.querySelector('input[type="checkbox"]');
             checkbox.addEventListener('change', () => {
                 if (typeof onRowSelectChange === 'function') {
-                    onRowSelectChange(row.code, checkbox.checked);
+                    onRowSelectChange(holdingId, checkbox.checked);
                 }
             });
 
@@ -11922,8 +11703,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 }
             };
             targetCell.appendChild(targetInput);
-            if (targetErrorsByCode[row.code]) {
-                const err = createElement('div', 'gpv-conflict-diff-empty', targetErrorsByCode[row.code]);
+            if (targetErrorsByHoldingId[holdingId]) {
+                const err = createElement('div', 'gpv-conflict-diff-empty', targetErrorsByHoldingId[holdingId]);
                 targetCell.appendChild(err);
             }
 
@@ -11938,7 +11719,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             fixedCheckbox.setAttribute('aria-label', `Fixed allocation for ${row.displayTicker || row.code}`);
             fixedCheckbox.onchange = () => {
                 if (typeof onFixedChange === 'function') {
-                    onFixedChange(row.code, fixedCheckbox.checked === true);
+                    onFixedChange(holdingId, fixedCheckbox.checked === true);
                 }
             };
             fixedCell.appendChild(fixedCheckbox);
@@ -11959,7 +11740,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             select.value = row.portfolioId;
             select.onchange = () => {
                 if (typeof onPortfolioChange === 'function') {
-                    onPortfolioChange(row.code, select.value);
+                    onPortfolioChange(holdingId, select.value);
                 }
             };
             selectCell.appendChild(select);
@@ -11992,14 +11773,28 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         let selectedScope = FSM_ALL_PORTFOLIO_ID;
         let filterTerm = '';
         let bulkPortfolioId = FSM_UNASSIGNED_PORTFOLIO_ID;
-        let selectedCodes = new Set();
+        let selectedHoldingIds = new Set();
         let isPortfolioManagerExpanded = false;
         let editingPortfolioId = null;
         let viewMode = 'overview';
         let nextFocusTarget = null;
-        const targetErrorsByCode = {};
+        const targetErrorsByHoldingId = {};
+        const fsmCodeCounts = buildFsmCodeCounts(fsmHoldings);
 
         const activePortfolios = () => portfolios.filter(item => item.archived !== true);
+
+        function clearLegacyFsmAllocationKeys(row, holdingId, options = {}) {
+            const code = utils.normalizeString(row?.code, '');
+            if (!isFsmLegacyCodeFallbackAllowed(code, holdingId, fsmCodeCounts)) {
+                return;
+            }
+            if (options.target === true) {
+                Storage.remove(storageKeys.fsmTarget(code));
+            }
+            if (options.fixed === true) {
+                Storage.remove(storageKeys.fsmFixed(code));
+            }
+        }
 
         const managerSection = createElement('div', 'gpv-fsm-section');
         const summarySection = createElement('div', 'gpv-fsm-section');
@@ -12015,13 +11810,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 viewMode = 'overview';
                 filterTerm = '';
                 selectedScope = FSM_ALL_PORTFOLIO_ID;
-                selectedCodes = new Set();
+                selectedHoldingIds = new Set();
                 nextFocusTarget = 'overview';
                 rerender();
             },
             onScopeChange: value => {
                 selectedScope = value;
-                selectedCodes = new Set();
+                selectedHoldingIds = new Set();
                 rerender();
             },
             onFilterChange: value => {
@@ -12050,20 +11845,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const rows = buildFsmRowsWithAssignment(fsmHoldings, assignmentByCode);
             const activePortfolioIds = activePortfolios().map(item => item.id);
             const activePortfolioSet = new Set(activePortfolioIds);
-            const validCodes = new Set();
+            const validHoldingIds = new Set();
 
             rows.forEach(row => {
-                if (!row.code) {
+                const holdingId = row.holdingId || row.code;
+                if (!holdingId) {
                     return;
                 }
-                validCodes.add(row.code);
+                validHoldingIds.add(holdingId);
                 if (!activePortfolioSet.has(row.portfolioId)) {
-                    assignmentByCode[row.code] = FSM_UNASSIGNED_PORTFOLIO_ID;
+                    assignmentByCode[holdingId] = FSM_UNASSIGNED_PORTFOLIO_ID;
                     row.portfolioId = FSM_UNASSIGNED_PORTFOLIO_ID;
                 }
             });
 
-            selectedCodes = new Set(Array.from(selectedCodes).filter(code => validCodes.has(code)));
+            selectedHoldingIds = new Set(Array.from(selectedHoldingIds).filter(holdingId => validHoldingIds.has(holdingId)));
 
             const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
             const scopeOptions = [
@@ -12097,9 +11893,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     || row.productType.toLowerCase().includes(normalizedFilter);
             });
 
-            const filteredCodeSet = new Set(filteredRows.map(row => row.code).filter(Boolean));
-            const selectedCount = Array.from(selectedCodes).filter(code => filteredCodeSet.has(code)).length;
-            const selectAllFiltered = filteredRows.length > 0 && filteredRows.every(row => row.code && selectedCodes.has(row.code));
+            const filteredHoldingIdSet = new Set(filteredRows.map(row => row.holdingId || row.code).filter(Boolean));
+            const selectedCount = Array.from(selectedHoldingIds).filter(holdingId => filteredHoldingIdSet.has(holdingId)).length;
+            const selectAllFiltered = filteredRows.length > 0 && filteredRows.every(row => {
+                const holdingId = row.holdingId || row.code;
+                return holdingId && selectedHoldingIds.has(holdingId);
+            });
             const showDrift = selectedScope !== FSM_ALL_PORTFOLIO_ID;
             const summary = buildFsmScopedSummary(scopedRows);
             const displayRows = buildFsmDisplayRows(filteredRows, summary.total);
@@ -12111,7 +11910,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 unassignedCount,
                 scopeOptions,
                 filteredRows,
-                filteredCodeSet,
+                filteredHoldingIdSet,
                 selectedCount,
                 selectAllFiltered,
                 showDrift,
@@ -12201,7 +12000,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     onSelectScope: scopeId => {
                         selectedScope = scopeId;
                         filterTerm = '';
-                        selectedCodes = new Set();
+                        selectedHoldingIds = new Set();
                         viewMode = 'detail';
                         nextFocusTarget = 'detail';
                         rerender();
@@ -12209,7 +12008,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     onOpenAll: () => {
                         selectedScope = FSM_ALL_PORTFOLIO_ID;
                         filterTerm = '';
-                        selectedCodes = new Set();
+                        selectedHoldingIds = new Set();
                         viewMode = 'detail';
                         nextFocusTarget = 'detail';
                         rerender();
@@ -12241,14 +12040,15 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 filteredCount: viewState.filteredRows.length,
                 onSelectAllChange: value => {
                     viewState.filteredRows.forEach(row => {
-                        if (!row.code) {
+                        const holdingId = row.holdingId || row.code;
+                        if (!holdingId) {
                             return;
                         }
                         if (value) {
-                            selectedCodes.add(row.code);
+                            selectedHoldingIds.add(holdingId);
                             return;
                         }
-                        selectedCodes.delete(row.code);
+                        selectedHoldingIds.delete(holdingId);
                     });
                     rerender();
                 },
@@ -12256,9 +12056,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     bulkPortfolioId = value;
                 },
                 onApplyBulk: () => {
-                    const targetCodes = Array.from(selectedCodes).filter(code => viewState.filteredCodeSet.has(code));
-                    targetCodes.forEach(code => {
-                        assignmentByCode[code] = bulkPortfolioId;
+                    const targetHoldingIds = Array.from(selectedHoldingIds).filter(holdingId => viewState.filteredHoldingIdSet.has(holdingId));
+                    targetHoldingIds.forEach(holdingId => {
+                        assignmentByCode[holdingId] = bulkPortfolioId;
                     });
                     saveFsmPortfolioConfig(portfolios, assignmentByCode);
                     rerender();
@@ -12267,36 +12067,39 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
             const table = buildFsmHoldingsTable({
                 filteredRows: viewState.displayRows,
-                selectedCodes,
+                selectedHoldingIds,
                 selectAllFiltered: viewState.selectAllFiltered,
                 activePortfolios: activePortfolios(),
-                targetErrorsByCode,
+                targetErrorsByHoldingId,
                 showDrift: viewState.showDrift,
                 onSelectAllChange: value => {
                     viewState.filteredRows.forEach(row => {
-                        if (!row.code) {
+                        const holdingId = row.holdingId || row.code;
+                        if (!holdingId) {
                             return;
                         }
                         if (value) {
-                            selectedCodes.add(row.code);
+                            selectedHoldingIds.add(holdingId);
                             return;
                         }
-                        selectedCodes.delete(row.code);
+                        selectedHoldingIds.delete(holdingId);
                     });
                     rerender();
                 },
-                onRowSelectChange: (code, checked) => {
+                onRowSelectChange: (holdingId, checked) => {
                     if (checked) {
-                        selectedCodes.add(code);
+                        selectedHoldingIds.add(holdingId);
                     } else {
-                        selectedCodes.delete(code);
+                        selectedHoldingIds.delete(holdingId);
                     }
                     rerender();
                 },
                 onTargetChange: (row, rawValue) => {
+                    const holdingId = row.holdingId || row.code;
                     if (!rawValue) {
-                        delete targetErrorsByCode[row.code];
-                        Storage.remove(storageKeys.fsmTarget(row.code));
+                        delete targetErrorsByHoldingId[holdingId];
+                        Storage.remove(storageKeys.fsmTarget(holdingId));
+                        clearLegacyFsmAllocationKeys(row, holdingId, { target: true });
                         if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                             SyncManager.scheduleSyncOnChange('fsm-target-clear');
                         }
@@ -12305,30 +12108,33 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     }
                     const parsed = Number(rawValue);
                     if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
-                        targetErrorsByCode[row.code] = 'Enter target between 0 and 100';
+                        targetErrorsByHoldingId[holdingId] = 'Enter target between 0 and 100';
                         rerender();
                         return;
                     }
-                    delete targetErrorsByCode[row.code];
-                    Storage.set(storageKeys.fsmTarget(row.code), Number(parsed.toFixed(2)));
+                    delete targetErrorsByHoldingId[holdingId];
+                    Storage.set(storageKeys.fsmTarget(holdingId), Number(parsed.toFixed(2)));
+                    clearLegacyFsmAllocationKeys(row, holdingId, { target: true });
                     if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                         SyncManager.scheduleSyncOnChange('fsm-target-update');
                     }
                     rerender();
                 },
-                onFixedChange: (code, isFixed) => {
-                    Storage.set(storageKeys.fsmFixed(code), isFixed);
+                onFixedChange: (holdingId, isFixed) => {
+                    Storage.set(storageKeys.fsmFixed(holdingId), isFixed);
+                    const row = viewState.rows.find(item => (item.holdingId || item.code) === holdingId);
+                    clearLegacyFsmAllocationKeys(row, holdingId, { target: isFixed, fixed: true });
                     if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                         SyncManager.scheduleSyncOnChange('fsm-fixed-update');
                     }
                     if (isFixed) {
-                        Storage.remove(storageKeys.fsmTarget(code));
-                        delete targetErrorsByCode[code];
+                        Storage.remove(storageKeys.fsmTarget(holdingId));
+                        delete targetErrorsByHoldingId[holdingId];
                     }
                     rerender();
                 },
-                onPortfolioChange: (code, value) => {
-                    assignmentByCode[code] = value;
+                onPortfolioChange: (holdingId, value) => {
+                    assignmentByCode[holdingId] = value;
                     saveFsmPortfolioConfig(portfolios, assignmentByCode);
                     rerender();
                 }
@@ -13102,13 +12908,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         // Load stored API data
         loadStoredData(state);
 
-        // Clear expired sort cache on startup
-        clearSortCacheIfExpired();
-
-        if (DEBUG_AUTH) {
-            getAuthTokenFromGMCookie();
-        }
-        
         if (document.body) {
             injectStyles();
             startUrlMonitoring();
@@ -13158,6 +12957,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const baseExports = {
             utils,
             storageKeys,
+            getFsmHoldingIdentity,
+            formatFsmHoldingIdentity,
             getDisplayGoalType,
             sortGoalTypes,
             formatMoney,
@@ -13167,6 +12968,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             getFsmProfitClass,
             formatGrowthPercentFromEndingBalance,
             getReturnClass,
+            calculateAllocationRatio,
+            calculateAllocationDrift,
             calculatePercentOfType,
             calculateGoalDiff,
             isDashboardRoute,
@@ -13237,7 +13040,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             buildFsmConflictDiffItems,
             formatSyncTarget,
             formatSyncFixed,
-            clearSortCacheIfExpired,
             injectStyles: testingHooks?.injectStyles,
             showOverlay: testingHooks?.showOverlay,
             startUrlMonitoring: testingHooks?.startUrlMonitoring,

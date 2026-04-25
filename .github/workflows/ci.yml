@@ -21,6 +21,8 @@ jobs:
       userscript: ${{ steps.filter.outputs.userscript }}
       workers: ${{ steps.filter.outputs.workers }}
       e2e: ${{ steps.filter.outputs.e2e }}
+      version: ${{ steps.filter.outputs.version }}
+      version_check: ${{ steps.filter.outputs.version_check }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -48,6 +50,39 @@ jobs:
               - 'pnpm-workspace.yaml'
               - 'pnpm-lock.yaml'
               - 'demo/package.json'
+            version:
+              # The published userscript source and @version metadata live in one file.
+              - 'package.json'
+              - 'tampermonkey/package.json'
+              - 'tampermonkey/goal_portfolio_viewer.user.js'
+            version_check:
+              - '.github/workflows/ci.yml'
+              - 'scripts/check-version-bump.js'
+              - 'scripts/check-version-bump.test.js'
+
+  version-bump:
+    name: Version Bump
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: changes
+    if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.draft && (needs.changes.outputs.version == 'true' || needs.changes.outputs.version_check == 'true') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+
+      - name: Test version bump checker
+        run: node --test scripts/check-version-bump.test.js
+
+      - name: Check version bump
+        if: ${{ needs.changes.outputs.version == 'true' }}
+        run: node scripts/check-version-bump.js "${{ github.event.pull_request.base.sha }}"
 
   lint:
     name: Lint

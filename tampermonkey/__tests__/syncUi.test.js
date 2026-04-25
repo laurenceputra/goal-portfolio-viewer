@@ -239,24 +239,25 @@ describe('sync settings UI', () => {
         expectClassTokens(cancelBtn, ['gpv-sync-btn', 'gpv-sync-btn-secondary']);
     });
 
-    test('shows remember-key toggle after valid password input', () => {
-        const { createSyncSettingsHTML, setupSyncSettingsListeners } = exportsModule;
+    test('renders remember-key control as explicit opt-in by default', () => {
+        const { createSyncSettingsHTML } = exportsModule;
         seedStatus();
 
         document.body.innerHTML = createSyncSettingsHTML();
-        setupSyncSettingsListeners();
 
-        const hint = document.getElementById('gpv-sync-remember-hint');
-        const wrapper = document.getElementById('gpv-sync-remember-wrapper');
-        expect(hint.style.display).toBe('block');
-        expect(wrapper.style.display).toBe('none');
+        const rememberKey = document.getElementById('gpv-sync-remember-key');
+        expect(rememberKey).toBeTruthy();
+        expect(rememberKey.checked).toBe(false);
+    });
 
-        const passwordInput = document.getElementById('gpv-sync-password');
-        passwordInput.value = '12345678';
-        passwordInput.dispatchEvent(new window.Event('input'));
+    test('preserves existing remember-key preference in settings', () => {
+        const { createSyncSettingsHTML } = exportsModule;
+        seedStatus();
+        storage.set('sync_remember_key', true);
 
-        expect(hint.style.display).toBe('none');
-        expect(wrapper.style.display).toBe('block');
+        document.body.innerHTML = createSyncSettingsHTML();
+
+        expect(document.getElementById('gpv-sync-remember-key').checked).toBe(true);
     });
 
     test('login and sign up stay disabled when sync activation is off', () => {
@@ -303,41 +304,6 @@ describe('sync settings UI', () => {
         expect(enableSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 password: 'supersecure',
-                rememberKey: true
-            })
-        );
-    });
-
-    test('login respects remember-key checkbox', async () => {
-        jest.useFakeTimers();
-        const { createSyncSettingsHTML, setupSyncSettingsListeners, SyncManager } = exportsModule;
-
-        seedStatusEnabledUnconfigured();
-        storage.delete('sync_refresh_token');
-        storage.delete('sync_refresh_token_expiry');
-
-        document.body.innerHTML = createSyncSettingsHTML();
-        setupSyncSettingsListeners();
-
-        const loginSpy = jest.spyOn(SyncManager, 'login').mockResolvedValue({});
-        const enableSpy = jest.spyOn(SyncManager, 'enable').mockResolvedValue();
-
-        document.getElementById('gpv-sync-server-url').value = 'https://sync.example.com';
-        document.getElementById('gpv-sync-user-id').value = 'user@example.com';
-        document.getElementById('gpv-sync-password').value = 'supersecure';
-
-        const rememberCheckbox = document.getElementById('gpv-sync-remember-key');
-        rememberCheckbox.checked = false;
-        rememberCheckbox.dispatchEvent(new window.Event('change'));
-
-        document.getElementById('gpv-sync-login-btn').click();
-        await Promise.resolve();
-        jest.runOnlyPendingTimers();
-        await Promise.resolve();
-
-        expect(loginSpy).toHaveBeenCalledWith('https://sync.example.com', 'user@example.com', 'supersecure');
-        expect(enableSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
                 rememberKey: false
             })
         );
@@ -372,7 +338,7 @@ describe('sync settings UI', () => {
         expect(enableSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 password: 'supersecure',
-                rememberKey: true
+                rememberKey: false
             })
         );
     });

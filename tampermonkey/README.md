@@ -305,6 +305,9 @@ Contributions are welcome! To contribute:
 
 ## Changelog
 
+### Version 2.14.5
+- Added CI validation to ensure release-impacting pull requests bump aligned userscript versions
+
 ### Version 2.14.4
 - Replaced the FSM overview fixed card with a profit card derived from holdings `profitValueLcy` and cost-basis weighted profit percent
 - Added a per-row FSM `Profit` table column that shows combined value and percent (`value (percent)`) with safe fallback when fields are missing

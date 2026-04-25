@@ -1,6 +1,6 @@
 {
   "name": "goal-portfolio-viewer",
-  "version": "2.14.4",
+  "version": "2.14.5",
   "description": "Goal Portfolio Viewer workspace",
   "private": true,
   "packageManager": "pnpm@9.12.3",
@@ -20,7 +20,8 @@
     "test": "pnpm --filter ./tampermonkey test",
     "test:watch": "pnpm --filter ./tampermonkey test:watch",
     "test:coverage": "pnpm --filter ./tampermonkey test:coverage",
-    "test:e2e": "pnpm --filter ./demo test:e2e"
+    "test:e2e": "pnpm --filter ./demo test:e2e",
+    "check:version-bump": "node scripts/check-version-bump.js"
   },
   "repository": {
     "type": "git",
