@@ -98,6 +98,8 @@
         userId: 'sync_user_id',
         deviceId: 'sync_device_id',
         lastSync: 'sync_last_sync',
+        lastDataTimestamp: 'sync_last_data_timestamp',
+        lastSyncMetadataVersion: 'sync_last_sync_metadata_version',
         lastSyncHash: 'sync_last_hash',
         autoSync: 'sync_auto_sync',
         syncInterval: 'sync_interval_minutes',
@@ -114,6 +116,7 @@
         autoSync: true,
         syncInterval: 30 // minutes
     };
+    const SYNC_METADATA_VERSION = 2;
     const SYNC_REQUEST_TIMEOUT_MS = 15000;
     const FSM_HOLDING_ID_SEPARATOR = '|sub:';
 
@@ -3074,6 +3077,10 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return SyncEncryption.hash(JSON.stringify(sanitized));
     }
 
+    function isFiniteTimestamp(value) {
+        return typeof value === 'number' && Number.isFinite(value);
+    }
+
     function storeTokens(tokens) {
         if (!tokens || typeof tokens !== 'object') {
             return;
@@ -3855,6 +3862,31 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return null;
     }
 
+    function getLastDataTimestamp() {
+        const dataTimestamp = Storage.get(SYNC_STORAGE_KEYS.lastDataTimestamp, null);
+        if (isFiniteTimestamp(dataTimestamp)) {
+            return dataTimestamp;
+        }
+
+        // Migration fallback: older versions used lastSync as the synced data timestamp.
+        if (Storage.get(SYNC_STORAGE_KEYS.lastSyncMetadataVersion, null) === SYNC_METADATA_VERSION) {
+            return null;
+        }
+        const legacyTimestamp = Storage.get(SYNC_STORAGE_KEYS.lastSync, null);
+        return isFiniteTimestamp(legacyTimestamp) ? legacyTimestamp : null;
+    }
+
+    function recordSuccessfulSync({ dataTimestamp = null, hash = null, syncedAt = Date.now() } = {}) {
+        Storage.set(SYNC_STORAGE_KEYS.lastSync, syncedAt);
+        Storage.set(SYNC_STORAGE_KEYS.lastSyncMetadataVersion, SYNC_METADATA_VERSION);
+        if (isFiniteTimestamp(dataTimestamp)) {
+            Storage.set(SYNC_STORAGE_KEYS.lastDataTimestamp, dataTimestamp);
+        }
+        if (hash) {
+            Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, hash);
+        }
+    }
+
     /**
      * Perform sync operation
      */
@@ -3886,16 +3918,15 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             const localConfig = collectConfigData();
             const localHash = await hashConfigData(localConfig);
             const lastSyncHash = Storage.get(SYNC_STORAGE_KEYS.lastSyncHash, null);
-            const lastSyncTimestamp = Storage.get(SYNC_STORAGE_KEYS.lastSync, null);
-            const hasLastSyncMetadata = typeof lastSyncTimestamp === 'number' && Number.isFinite(lastSyncTimestamp);
-            if (localHash && lastSyncHash === localHash && hasLastSyncMetadata) {
-                localConfig.timestamp = lastSyncTimestamp;
+            const lastDataTimestamp = getLastDataTimestamp();
+            const hasLastDataTimestamp = isFiniteTimestamp(lastDataTimestamp);
+            if (localHash && lastSyncHash === localHash && hasLastDataTimestamp) {
+                localConfig.timestamp = lastDataTimestamp;
             }
-            
+
             if (direction === 'upload') {
                 await uploadConfig(localConfig);
-                Storage.set(SYNC_STORAGE_KEYS.lastSync, localConfig.timestamp);
-                Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, localHash);
+                recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
 
                 syncStatus = SYNC_STATUS.success;
                 lastError = null;
@@ -3904,15 +3935,15 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             } else if (direction === 'download') {
                 const serverData = await downloadConfig();
                 if (!serverData) {
+                    recordSuccessfulSync();
                     syncStatus = SYNC_STATUS.success;
                     lastError = null;
                     lastErrorMeta = null;
                     logDebug('[Goal Portfolio Viewer] No server data to download');
                 } else {
                     applyConfigData(serverData.config);
-                    Storage.set(SYNC_STORAGE_KEYS.lastSync, serverData.metadata.timestamp);
                     const serverHash = await hashConfigData(serverData.config);
-                    Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, serverHash);
+                    recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
 
                     syncStatus = SYNC_STATUS.success;
                     lastError = null;
@@ -3924,8 +3955,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
                 if (!serverData) {
                     await uploadConfig(localConfig);
-                    Storage.set(SYNC_STORAGE_KEYS.lastSync, localConfig.timestamp);
-                    Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, localHash);
+                    recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
 
                     syncStatus = SYNC_STATUS.success;
                     lastError = null;
@@ -3934,18 +3964,19 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 } else {
                     const serverHash = await hashConfigData(serverData.config);
 
-                    if (!hasLastSyncMetadata) {
+                    if (!hasLastDataTimestamp) {
                         applyConfigData(serverData.config);
-                        Storage.set(SYNC_STORAGE_KEYS.lastSync, serverData.metadata.timestamp);
-                        Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, serverHash);
+                        recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
 
                         syncStatus = SYNC_STATUS.success;
                         lastError = null;
                         lastErrorMeta = null;
                         logDebug('[Goal Portfolio Viewer] Missing sync metadata, bootstrapped from server snapshot');
                     } else if (localHash && serverHash && localHash === serverHash) {
-                        Storage.set(SYNC_STORAGE_KEYS.lastSync, Math.max(localConfig.timestamp, serverData.metadata.timestamp));
-                        Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, localHash);
+                        recordSuccessfulSync({
+                            dataTimestamp: Math.max(localConfig.timestamp, serverData.metadata.timestamp),
+                            hash: localHash
+                        });
 
                         syncStatus = SYNC_STATUS.success;
                         lastError = null;
@@ -3964,8 +3995,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
                         if (localConfig.timestamp > serverData.metadata.timestamp) {
                             await uploadConfig(localConfig);
-                            Storage.set(SYNC_STORAGE_KEYS.lastSync, localConfig.timestamp);
-                            Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, localHash);
+                            recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
 
                             syncStatus = SYNC_STATUS.success;
                             lastError = null;
@@ -3973,14 +4003,14 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                             logDebug('[Goal Portfolio Viewer] Local config newer, uploaded to server');
                         } else if (localConfig.timestamp < serverData.metadata.timestamp) {
                             applyConfigData(serverData.config);
-                            Storage.set(SYNC_STORAGE_KEYS.lastSync, serverData.metadata.timestamp);
-                            Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, serverHash);
+                            recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
 
                             syncStatus = SYNC_STATUS.success;
                             lastError = null;
                             lastErrorMeta = null;
                             logDebug('[Goal Portfolio Viewer] Server config newer, applied locally');
                         } else {
+                            recordSuccessfulSync();
                             syncStatus = SYNC_STATUS.success;
                             lastError = null;
                             lastErrorMeta = null;
@@ -4049,15 +4079,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 const responseTimestamp = typeof response?.timestamp === 'number'
                     ? response.timestamp
                     : forcedTimestamp;
-                Storage.set(SYNC_STORAGE_KEYS.lastSync, responseTimestamp);
                 const hash = await hashConfigData(forcedConfig);
-                Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, hash);
+                recordSuccessfulSync({ dataTimestamp: responseTimestamp, hash });
             } else if (resolution === 'remote') {
                 // Apply remote, keep server
                 applyConfigData(conflict.remote);
-                Storage.set(SYNC_STORAGE_KEYS.lastSync, conflict.remoteTimestamp);
                 const hash = await hashConfigData(conflict.remote);
-                Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, hash);
+                recordSuccessfulSync({ dataTimestamp: conflict.remoteTimestamp, hash });
             } else {
                 throw new Error('Invalid resolution');
             }
@@ -4451,7 +4479,8 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 syncStatus = status;
             },
             getAutoSyncIntervalMs,
-            isStartupSyncDue
+            isStartupSyncDue,
+            getLastDataTimestamp
         }
         : null;
 
