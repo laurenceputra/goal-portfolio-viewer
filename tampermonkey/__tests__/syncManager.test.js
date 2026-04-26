@@ -160,6 +160,120 @@ describe('SyncManager', () => {
         expect(global.setInterval).not.toHaveBeenCalled();
     });
 
+    test('startAutoSync schedules an immediate first sync when last sync is missing', () => {
+        jest.useFakeTimers();
+        jest.spyOn(global, 'setTimeout');
+        seedConfiguredState();
+        storage.set('sync_auto_sync', true);
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+
+        SyncManager.startAutoSync();
+
+        expect(global.setTimeout).toHaveBeenCalledWith(expect.any(Function), 0);
+    });
+
+    test('startAutoSync schedules an immediate first sync when last sync exceeds configured interval', () => {
+        jest.useFakeTimers();
+        jest.spyOn(global, 'setTimeout');
+        const now = 2_000_000_000_000;
+        Date.now = jest.fn(() => now);
+        seedConfiguredState();
+        storage.set('sync_auto_sync', true);
+        storage.set('sync_interval_minutes', 45);
+        storage.set('sync_last_sync', now - (45 * 60 * 1000) - 1);
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+
+        SyncManager.startAutoSync();
+
+        expect(global.setTimeout).toHaveBeenCalledWith(expect.any(Function), 0);
+    });
+
+    test('startAutoSync does not schedule first sync when last sync is within configured interval', () => {
+        jest.useFakeTimers();
+        jest.spyOn(global, 'setTimeout');
+        const now = 2_000_000_000_000;
+        Date.now = jest.fn(() => now);
+        seedConfiguredState();
+        storage.set('sync_auto_sync', true);
+        storage.set('sync_interval_minutes', 45);
+        storage.set('sync_last_sync', now - (44 * 60 * 1000));
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+
+        SyncManager.startAutoSync();
+
+        expect(global.setTimeout).not.toHaveBeenCalledWith(expect.any(Function), 0);
+    });
+
+    test('stopAutoSync clears pending startup sync timer', () => {
+        jest.useFakeTimers();
+        seedConfiguredState();
+        storage.set('sync_auto_sync', true);
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+
+        SyncManager.startAutoSync();
+        expect(jest.getTimerCount()).toBeGreaterThan(0);
+
+        SyncManager.stopAutoSync();
+
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('startup sync retries when another sync is already in progress', () => {
+        jest.useFakeTimers();
+        const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
+        seedConfiguredState();
+        storage.set('sync_auto_sync', true);
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+        SyncManager.__test.setSyncStatus('syncing');
+
+        SyncManager.startAutoSync();
+        jest.advanceTimersByTime(0);
+
+        expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 3000);
+
+        SyncManager.__test.setSyncStatus('idle');
+        jest.advanceTimersByTime(3000);
+
+        expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 0);
+    });
+
+    test('stopAutoSync clears pending startup retry timer', () => {
+        jest.useFakeTimers();
+        seedConfiguredState();
+        storage.set('sync_auto_sync', true);
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+        SyncManager.__test.setSyncStatus('syncing');
+
+        SyncManager.startAutoSync();
+        jest.advanceTimersByTime(0);
+        expect(jest.getTimerCount()).toBeGreaterThan(0);
+
+        SyncManager.stopAutoSync();
+
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('startup sync staleness uses configured interval value', () => {
+        const now = 2_000_000_000_000;
+        Date.now = jest.fn(() => now);
+        seedConfiguredState();
+        storage.set('sync_interval_minutes', 10);
+        storage.set('sync_last_sync', now - (11 * 60 * 1000));
+        const { SyncManager } = loadModule();
+
+        expect(SyncManager.__test.getAutoSyncIntervalMs()).toBe(10 * 60 * 1000);
+        expect(SyncManager.__test.isStartupSyncDue()).toBe(true);
+
+        storage.set('sync_last_sync', now - (9 * 60 * 1000));
+        expect(SyncManager.__test.isStartupSyncDue()).toBe(false);
+    });
+
     test('scheduleSyncOnChange schedules a buffered sync', () => {
         jest.useFakeTimers();
         const { SyncManager } = loadModule();

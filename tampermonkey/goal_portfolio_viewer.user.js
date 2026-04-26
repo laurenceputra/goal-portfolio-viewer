@@ -2949,7 +2949,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     let lastError = null;
     let lastErrorMeta = null;
     const SYNC_ON_CHANGE_BUFFER_MS = 15000;
+    const STARTUP_SYNC_RETRY_DELAY_MS = 3000;
     let autoSyncTimer = null;
+    let startupSyncTimer = null;
     let syncOnChangeTimer = null;
     let syncOnChangeRetryTimer = null;
     let sessionMasterKey = getRememberedMasterKey();
@@ -4139,11 +4141,56 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     /**
      * Start automatic sync
      */
+    function getAutoSyncIntervalMs() {
+        const intervalMinutes = Number(Storage.get(SYNC_STORAGE_KEYS.syncInterval, SYNC_DEFAULTS.syncInterval));
+        const safeIntervalMinutes = Number.isFinite(intervalMinutes) && intervalMinutes > 0
+            ? intervalMinutes
+            : SYNC_DEFAULTS.syncInterval;
+        return safeIntervalMinutes * 60 * 1000;
+    }
+
+    function isStartupSyncDue(intervalMs = getAutoSyncIntervalMs()) {
+        const lastSync = Storage.get(SYNC_STORAGE_KEYS.lastSync, null);
+        if (typeof lastSync !== 'number' || !Number.isFinite(lastSync)) {
+            return true;
+        }
+        return Date.now() - lastSync >= intervalMs;
+    }
+
+    function scheduleStartupSyncIfDue(intervalMs) {
+        if (!isStartupSyncDue(intervalMs)) {
+            return;
+        }
+
+        startupSyncTimer = setTimeout(() => {
+            startupSyncTimer = null;
+            if (syncStatus === SYNC_STATUS.syncing) {
+                startupSyncTimer = setTimeout(() => {
+                    startupSyncTimer = null;
+                    scheduleStartupSyncIfDue(intervalMs);
+                }, STARTUP_SYNC_RETRY_DELAY_MS);
+                if (startupSyncTimer && typeof startupSyncTimer.unref === 'function') {
+                    startupSyncTimer.unref();
+                }
+                return;
+            }
+            performSync({ direction: 'both' }).catch(error => {
+                if (error?.code === 'SYNC_IN_PROGRESS') {
+                    return;
+                }
+                console.error('[Goal Portfolio Viewer] Startup sync failed:', error);
+            });
+        }, 0);
+        if (startupSyncTimer && typeof startupSyncTimer.unref === 'function') {
+            startupSyncTimer.unref();
+        }
+    }
+
     function startAutoSync() {
         stopAutoSync(); // Clear any existing timer
 
         const autoSync = Storage.get(SYNC_STORAGE_KEYS.autoSync, SYNC_DEFAULTS.autoSync);
-        const intervalMinutes = Storage.get(SYNC_STORAGE_KEYS.syncInterval, SYNC_DEFAULTS.syncInterval);
+        const intervalMs = getAutoSyncIntervalMs();
 
         if (!autoSync || !isEnabled() || !isConfigured()) {
             return;
@@ -4154,14 +4201,15 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             return;
         }
 
-        const intervalMs = intervalMinutes * 60 * 1000;
+        scheduleStartupSyncIfDue(intervalMs);
+
         autoSyncTimer = setInterval(() => {
             performSync({ direction: 'both' }).catch(error => {
                 console.error('[Goal Portfolio Viewer] Auto-sync failed:', error);
             });
         }, intervalMs);
 
-        logDebug(`[Goal Portfolio Viewer] Auto-sync started (interval: ${intervalMinutes} minutes)`);
+        logDebug(`[Goal Portfolio Viewer] Auto-sync started (interval: ${Math.round(intervalMs / 60000)} minutes)`);
     }
 
     /**
@@ -4172,6 +4220,10 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             clearInterval(autoSyncTimer);
             autoSyncTimer = null;
             logDebug('[Goal Portfolio Viewer] Auto-sync stopped');
+        }
+        if (startupSyncTimer) {
+            clearTimeout(startupSyncTimer);
+            startupSyncTimer = null;
         }
         if (syncOnChangeTimer) {
             clearTimeout(syncOnChangeTimer);
@@ -4384,7 +4436,12 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             getAccessToken,
             setSessionMasterKey,
             storeTokens,
-            clearTokens
+            clearTokens,
+            setSyncStatus: status => {
+                syncStatus = status;
+            },
+            getAutoSyncIntervalMs,
+            isStartupSyncDue
         }
         : null;
 
