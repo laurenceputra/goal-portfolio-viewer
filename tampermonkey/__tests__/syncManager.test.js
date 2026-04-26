@@ -814,7 +814,129 @@ describe('SyncManager', () => {
 
             const syncPostCalls = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth'));
             expect(syncPostCalls).toHaveLength(0);
-            expect(storage.get('sync_last_sync')).toBe(serverTimestamp + 1);
+            expect(storage.get('sync_last_sync')).toBe(serverTimestamp);
+            expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
+        });
+
+        test('performSync(both) bootstraps from remote when local sync metadata is missing', async () => {
+            seedConfiguredState();
+            storage.delete('sync_last_sync');
+            storage.delete('sync_last_hash');
+            storage.set('sync_access_token_expiry', Date.now() - 1_000);
+            global.GM_xmlhttpRequest = undefined;
+            const { SyncManager, SyncEncryption, storageKeys } = loadModule();
+            unlockSync(SyncManager);
+
+            const localTargetKey = storageKeys.goalTarget('local-goal');
+            storage.set(localTargetKey, 25);
+            global.GM_listValues = () => [localTargetKey];
+
+            const serverTimestamp = Date.now() + 60_000;
+            Date.now = jest.fn(() => serverTimestamp + 1);
+            storage.set('sync_refresh_token_expiry', serverTimestamp + 120_000);
+            const serverUrl = 'https://sync.example.com';
+            const serverConfig = {
+                version: 2,
+                platforms: {
+                    endowus: {
+                        goalTargets: { 'remote-goal': 45 },
+                        goalFixed: {},
+                        timestamp: serverTimestamp
+                    },
+                    fsm: {
+                        targetsByCode: {},
+                        fixedByCode: {},
+                        tagsByCode: {},
+                        tagCatalog: [],
+                        driftSettings: {},
+                        timestamp: serverTimestamp
+                    }
+                },
+                timestamp: serverTimestamp
+            };
+            const encryptedData = await SyncEncryption.encryptWithMasterKey(
+                JSON.stringify(serverConfig),
+                new Uint8Array([1, 2, 3, 4])
+            );
+
+            fetchMock = jest.fn((url, options = {}) => {
+                if (url === `${serverUrl}/auth/refresh`) {
+                    return Promise.resolve({
+                        status: 200,
+                        ok: true,
+                        json: () => Promise.resolve({
+                            success: true,
+                            tokens: {
+                                accessToken: 'access-token',
+                                refreshToken: 'refresh-token',
+                                accessExpiresAt: Date.now() + 60_000,
+                                refreshExpiresAt: Date.now() + 120_000
+                            }
+                        }),
+                        text: () => Promise.resolve(JSON.stringify({
+                            success: true,
+                            tokens: {
+                                accessToken: 'access-token',
+                                refreshToken: 'refresh-token',
+                                accessExpiresAt: Date.now() + 60_000,
+                                refreshExpiresAt: Date.now() + 120_000
+                            }
+                        })),
+                        headers: { get: () => null }
+                    });
+                }
+                if (url.includes('/sync/') && options.method === 'GET') {
+                    return Promise.resolve({
+                        status: 200,
+                        ok: true,
+                        json: () => Promise.resolve({
+                            success: true,
+                            data: {
+                                encryptedData,
+                                deviceId: 'other-device-id',
+                                timestamp: serverTimestamp,
+                                version: 2
+                            }
+                        }),
+                        text: () => Promise.resolve(JSON.stringify({
+                            success: true,
+                            data: {
+                                encryptedData,
+                                deviceId: 'other-device-id',
+                                timestamp: serverTimestamp,
+                                version: 2
+                            }
+                        })),
+                        headers: { get: () => null }
+                    });
+                }
+                if (url.includes('/sync') && options.method === 'POST') {
+                    return Promise.resolve({
+                        status: 200,
+                        ok: true,
+                        json: () => Promise.resolve({ success: true }),
+                        text: () => Promise.resolve('{"success":true}'),
+                        headers: { get: () => null }
+                    });
+                }
+                return Promise.resolve({
+                    status: 200,
+                    ok: true,
+                    json: () => Promise.resolve({}),
+                    text: () => Promise.resolve('{}'),
+                    headers: { get: () => null }
+                });
+            });
+            global.fetch = fetchMock;
+            window.fetch = fetchMock;
+
+            await expect(SyncManager.performSync({ direction: 'both' })).resolves.toEqual({ status: 'success' });
+
+            const syncPostCalls = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth'));
+            expect(syncPostCalls).toHaveLength(0);
+            expect(storage.has(localTargetKey)).toBe(false);
+            expect(storage.get(storageKeys.goalTarget('remote-goal'))).toBe(45);
+            expect(storage.get('sync_last_sync')).toBe(serverTimestamp);
             expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
         });
 

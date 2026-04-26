@@ -3887,7 +3887,8 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             const localHash = await hashConfigData(localConfig);
             const lastSyncHash = Storage.get(SYNC_STORAGE_KEYS.lastSyncHash, null);
             const lastSyncTimestamp = Storage.get(SYNC_STORAGE_KEYS.lastSync, null);
-            if (localHash && lastSyncHash === localHash && typeof lastSyncTimestamp === 'number') {
+            const hasLastSyncMetadata = typeof lastSyncTimestamp === 'number' && Number.isFinite(lastSyncTimestamp);
+            if (localHash && lastSyncHash === localHash && hasLastSyncMetadata) {
                 localConfig.timestamp = lastSyncTimestamp;
             }
             
@@ -3933,7 +3934,16 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 } else {
                     const serverHash = await hashConfigData(serverData.config);
 
-                    if (localHash && serverHash && localHash === serverHash) {
+                    if (!hasLastSyncMetadata) {
+                        applyConfigData(serverData.config);
+                        Storage.set(SYNC_STORAGE_KEYS.lastSync, serverData.metadata.timestamp);
+                        Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, serverHash);
+
+                        syncStatus = SYNC_STATUS.success;
+                        lastError = null;
+                        lastErrorMeta = null;
+                        logDebug('[Goal Portfolio Viewer] Missing sync metadata, bootstrapped from server snapshot');
+                    } else if (localHash && serverHash && localHash === serverHash) {
                         Storage.set(SYNC_STORAGE_KEYS.lastSync, Math.max(localConfig.timestamp, serverData.metadata.timestamp));
                         Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, localHash);
 
