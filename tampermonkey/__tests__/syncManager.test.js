@@ -160,6 +160,134 @@ describe('SyncManager', () => {
         expect(global.setInterval).not.toHaveBeenCalled();
     });
 
+    test('startAutoSync schedules an immediate first sync when last sync is missing', () => {
+        jest.useFakeTimers();
+        jest.spyOn(global, 'setTimeout');
+        seedConfiguredState();
+        storage.set('sync_auto_sync', true);
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+
+        SyncManager.startAutoSync();
+
+        expect(global.setTimeout).toHaveBeenCalledWith(expect.any(Function), 0);
+    });
+
+    test('startAutoSync schedules an immediate first sync when last sync exceeds configured interval', () => {
+        jest.useFakeTimers();
+        jest.spyOn(global, 'setTimeout');
+        const now = 2_000_000_000_000;
+        Date.now = jest.fn(() => now);
+        seedConfiguredState();
+        storage.set('sync_auto_sync', true);
+        storage.set('sync_interval_minutes', 45);
+        storage.set('sync_last_sync', now - (45 * 60 * 1000) - 1);
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+
+        SyncManager.startAutoSync();
+
+        expect(global.setTimeout).toHaveBeenCalledWith(expect.any(Function), 0);
+    });
+
+    test('startAutoSync does not schedule first sync when last sync is within configured interval', () => {
+        jest.useFakeTimers();
+        jest.spyOn(global, 'setTimeout');
+        const now = 2_000_000_000_000;
+        Date.now = jest.fn(() => now);
+        seedConfiguredState();
+        storage.set('sync_auto_sync', true);
+        storage.set('sync_interval_minutes', 45);
+        storage.set('sync_last_sync', now - (44 * 60 * 1000));
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+
+        SyncManager.startAutoSync();
+
+        expect(global.setTimeout).not.toHaveBeenCalledWith(expect.any(Function), 0);
+    });
+
+    test('stopAutoSync clears pending startup sync timer', () => {
+        jest.useFakeTimers();
+        seedConfiguredState();
+        storage.set('sync_auto_sync', true);
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+
+        SyncManager.startAutoSync();
+        expect(jest.getTimerCount()).toBeGreaterThan(0);
+
+        SyncManager.stopAutoSync();
+
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('startup sync retries when another sync is already in progress', () => {
+        jest.useFakeTimers();
+        const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
+        seedConfiguredState();
+        storage.set('sync_auto_sync', true);
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+        SyncManager.__test.setSyncStatus('syncing');
+
+        SyncManager.startAutoSync();
+        jest.advanceTimersByTime(0);
+
+        expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 3000);
+
+        SyncManager.__test.setSyncStatus('idle');
+        jest.advanceTimersByTime(3000);
+
+        expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 0);
+    });
+
+    test('stopAutoSync clears pending startup retry timer', () => {
+        jest.useFakeTimers();
+        seedConfiguredState();
+        storage.set('sync_auto_sync', true);
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+        SyncManager.__test.setSyncStatus('syncing');
+
+        SyncManager.startAutoSync();
+        jest.advanceTimersByTime(0);
+        expect(jest.getTimerCount()).toBeGreaterThan(0);
+
+        SyncManager.stopAutoSync();
+
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('startup sync staleness uses configured interval value', () => {
+        const now = 2_000_000_000_000;
+        Date.now = jest.fn(() => now);
+        seedConfiguredState();
+        storage.set('sync_interval_minutes', 10);
+        storage.set('sync_last_sync', now - (11 * 60 * 1000));
+        const { SyncManager } = loadModule();
+
+        expect(SyncManager.__test.getAutoSyncIntervalMs()).toBe(10 * 60 * 1000);
+        expect(SyncManager.__test.isStartupSyncDue()).toBe(true);
+
+        storage.set('sync_last_sync', now - (9 * 60 * 1000));
+        expect(SyncManager.__test.isStartupSyncDue()).toBe(false);
+    });
+
+    test('last data timestamp falls back only for legacy sync metadata', () => {
+        const legacyTimestamp = 2_000_000_000_000;
+        const { SyncManager } = loadModule();
+
+        storage.set('sync_last_sync', legacyTimestamp);
+        expect(SyncManager.__test.getLastDataTimestamp()).toBe(legacyTimestamp);
+
+        storage.set('sync_last_sync_metadata_version', 2);
+        expect(SyncManager.__test.getLastDataTimestamp()).toBeNull();
+
+        storage.set('sync_last_data_timestamp', legacyTimestamp - 1000);
+        expect(SyncManager.__test.getLastDataTimestamp()).toBe(legacyTimestamp - 1000);
+    });
+
     test('scheduleSyncOnChange schedules a buffered sync', () => {
         jest.useFakeTimers();
         const { SyncManager } = loadModule();
@@ -501,7 +629,7 @@ describe('SyncManager', () => {
     });
 
     describe('multi-device reconciliation', () => {
-        test('resolveConflict(local) forces overwrite and stores server timestamp', async () => {
+        test('resolveConflict(local) records attempt time separately from forced data timestamp', async () => {
             seedConfiguredState();
             global.GM_xmlhttpRequest = undefined;
             const { SyncManager } = loadModule();
@@ -582,7 +710,52 @@ describe('SyncManager', () => {
 
             expect(document.dispatchEvent).toHaveBeenCalled();
 
-            expect(storage.get('sync_last_sync')).toBe(serverTimestamp);
+            expect(storage.get('sync_last_sync')).toBe(now);
+            expect(storage.get('sync_last_sync_metadata_version')).toBe(2);
+            expect(storage.get('sync_last_data_timestamp')).toBe(serverTimestamp);
+            expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
+        });
+
+        test('resolveConflict(remote) records attempt time separately from remote data timestamp', async () => {
+            seedConfiguredState();
+            const { SyncManager, storageKeys } = loadModule();
+            unlockSync(SyncManager);
+
+            const remoteTimestamp = 2_000_000_000_000;
+            const now = remoteTimestamp + 5000;
+            Date.now = jest.fn(() => now);
+            document.dispatchEvent = jest.fn();
+
+            const conflict = {
+                local: {
+                    version: 2,
+                    platforms: {
+                        endowus: { goalTargets: { 'goal-1': 25 }, goalFixed: {}, timestamp: now - 10_000 },
+                        fsm: { targetsByCode: {}, fixedByCode: {}, tagsByCode: {}, tagCatalog: [], portfolios: [], assignmentByCode: {}, driftSettings: {}, timestamp: now - 10_000 }
+                    },
+                    metadata: { lastModified: now - 10_000 },
+                    timestamp: now - 10_000
+                },
+                remote: {
+                    version: 2,
+                    platforms: {
+                        endowus: { goalTargets: { 'goal-1': 50 }, goalFixed: {}, timestamp: remoteTimestamp },
+                        fsm: { targetsByCode: {}, fixedByCode: {}, tagsByCode: {}, tagCatalog: [], portfolios: [], assignmentByCode: {}, driftSettings: {}, timestamp: remoteTimestamp }
+                    },
+                    metadata: { lastModified: remoteTimestamp },
+                    timestamp: remoteTimestamp
+                },
+                localTimestamp: now - 10_000,
+                remoteTimestamp
+            };
+
+            await expect(SyncManager.resolveConflict('remote', conflict)).resolves.toBeUndefined();
+
+            expect(document.dispatchEvent).toHaveBeenCalled();
+            expect(storage.get(storageKeys.goalTarget('goal-1'))).toBe(50);
+            expect(storage.get('sync_last_sync')).toBe(now);
+            expect(storage.get('sync_last_sync_metadata_version')).toBe(2);
+            expect(storage.get('sync_last_data_timestamp')).toBe(remoteTimestamp);
             expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
         });
 
@@ -701,10 +874,272 @@ describe('SyncManager', () => {
             const syncPostCalls = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth'));
             expect(syncPostCalls).toHaveLength(0);
             expect(storage.get('sync_last_sync')).toBe(serverTimestamp + 1);
+            expect(storage.get('sync_last_data_timestamp')).toBe(serverTimestamp);
             expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
         });
 
-        test('performSync(download) stores server timestamp as lastSync metadata', async () => {
+        test('performSync(both) bootstraps from remote when local sync metadata is missing', async () => {
+            seedConfiguredState();
+            storage.delete('sync_last_sync');
+            storage.delete('sync_last_hash');
+            storage.set('sync_access_token_expiry', Date.now() - 1_000);
+            global.GM_xmlhttpRequest = undefined;
+            const { SyncManager, SyncEncryption, storageKeys } = loadModule();
+            unlockSync(SyncManager);
+
+            const localTargetKey = storageKeys.goalTarget('local-goal');
+            storage.set(localTargetKey, 25);
+            global.GM_listValues = () => [localTargetKey];
+
+            const serverTimestamp = Date.now() + 60_000;
+            Date.now = jest.fn(() => serverTimestamp + 1);
+            storage.set('sync_refresh_token_expiry', serverTimestamp + 120_000);
+            const serverUrl = 'https://sync.example.com';
+            const serverConfig = {
+                version: 2,
+                platforms: {
+                    endowus: {
+                        goalTargets: { 'remote-goal': 45 },
+                        goalFixed: {},
+                        timestamp: serverTimestamp
+                    },
+                    fsm: {
+                        targetsByCode: {},
+                        fixedByCode: {},
+                        tagsByCode: {},
+                        tagCatalog: [],
+                        driftSettings: {},
+                        timestamp: serverTimestamp
+                    }
+                },
+                timestamp: serverTimestamp
+            };
+            const encryptedData = await SyncEncryption.encryptWithMasterKey(
+                JSON.stringify(serverConfig),
+                new Uint8Array([1, 2, 3, 4])
+            );
+
+            fetchMock = jest.fn((url, options = {}) => {
+                if (url === `${serverUrl}/auth/refresh`) {
+                    return Promise.resolve({
+                        status: 200,
+                        ok: true,
+                        json: () => Promise.resolve({
+                            success: true,
+                            tokens: {
+                                accessToken: 'access-token',
+                                refreshToken: 'refresh-token',
+                                accessExpiresAt: Date.now() + 60_000,
+                                refreshExpiresAt: Date.now() + 120_000
+                            }
+                        }),
+                        text: () => Promise.resolve(JSON.stringify({
+                            success: true,
+                            tokens: {
+                                accessToken: 'access-token',
+                                refreshToken: 'refresh-token',
+                                accessExpiresAt: Date.now() + 60_000,
+                                refreshExpiresAt: Date.now() + 120_000
+                            }
+                        })),
+                        headers: { get: () => null }
+                    });
+                }
+                if (url.includes('/sync/') && options.method === 'GET') {
+                    return Promise.resolve({
+                        status: 200,
+                        ok: true,
+                        json: () => Promise.resolve({
+                            success: true,
+                            data: {
+                                encryptedData,
+                                deviceId: 'other-device-id',
+                                timestamp: serverTimestamp,
+                                version: 2
+                            }
+                        }),
+                        text: () => Promise.resolve(JSON.stringify({
+                            success: true,
+                            data: {
+                                encryptedData,
+                                deviceId: 'other-device-id',
+                                timestamp: serverTimestamp,
+                                version: 2
+                            }
+                        })),
+                        headers: { get: () => null }
+                    });
+                }
+                if (url.includes('/sync') && options.method === 'POST') {
+                    return Promise.resolve({
+                        status: 200,
+                        ok: true,
+                        json: () => Promise.resolve({ success: true }),
+                        text: () => Promise.resolve('{"success":true}'),
+                        headers: { get: () => null }
+                    });
+                }
+                return Promise.resolve({
+                    status: 200,
+                    ok: true,
+                    json: () => Promise.resolve({}),
+                    text: () => Promise.resolve('{}'),
+                    headers: { get: () => null }
+                });
+            });
+            global.fetch = fetchMock;
+            window.fetch = fetchMock;
+
+            await expect(SyncManager.performSync({ direction: 'both' })).resolves.toEqual({ status: 'success' });
+
+            const syncPostCalls = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth'));
+            expect(syncPostCalls).toHaveLength(0);
+            expect(storage.has(localTargetKey)).toBe(false);
+            expect(storage.get(storageKeys.goalTarget('remote-goal'))).toBe(45);
+            expect(storage.get('sync_last_sync')).toBe(serverTimestamp + 1);
+            expect(storage.get('sync_last_data_timestamp')).toBe(serverTimestamp);
+            expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
+        });
+
+        test('attempt-only sync after partial migration metadata does not become data freshness', async () => {
+            seedConfiguredState();
+            global.GM_xmlhttpRequest = undefined;
+            const { SyncManager, SyncEncryption, storageKeys } = loadModule();
+            unlockSync(SyncManager);
+
+            const localTargetKey = storageKeys.goalTarget('goal-1');
+            storage.set(localTargetKey, 25);
+            global.GM_listValues = () => [localTargetKey];
+
+            const initialTimestamp = 2_000_000_000_000;
+            const attemptTimestamp = initialTimestamp + 60_000;
+            const serverTimestamp = initialTimestamp + 30_000;
+            const serverUrl = 'https://sync.example.com';
+            const serverConfig = {
+                version: 2,
+                platforms: {
+                    endowus: {
+                        goalTargets: { 'goal-1': 50 },
+                        goalFixed: {},
+                        timestamp: serverTimestamp
+                    },
+                    fsm: {
+                        targetsByCode: {},
+                        fixedByCode: {},
+                        tagsByCode: {},
+                        tagCatalog: [],
+                        driftSettings: {},
+                        timestamp: serverTimestamp
+                    }
+                },
+                timestamp: serverTimestamp
+            };
+            const encryptedData = await SyncEncryption.encryptWithMasterKey(
+                JSON.stringify(serverConfig),
+                new Uint8Array([1, 2, 3, 4])
+            );
+
+            let phase = 'initial-upload';
+            Date.now = jest.fn(() => initialTimestamp);
+            storage.set('sync_access_token_expiry', attemptTimestamp + 120_000);
+            storage.set('sync_refresh_token_expiry', attemptTimestamp + 120_000);
+            fetchMock = jest.fn((url, options = {}) => {
+                if (url === `${serverUrl}/auth/refresh`) {
+                    return Promise.resolve({
+                        status: 200,
+                        ok: true,
+                        json: () => Promise.resolve({
+                            success: true,
+                            tokens: {
+                                accessToken: 'access-token',
+                                refreshToken: 'refresh-token',
+                                accessExpiresAt: Date.now() + 60_000,
+                                refreshExpiresAt: Date.now() + 120_000
+                            }
+                        }),
+                        text: () => Promise.resolve('{"success":true}'),
+                        headers: { get: () => null }
+                    });
+                }
+                if (url.includes('/sync/') && options.method === 'GET') {
+                    if (phase === 'remote-available') {
+                        return Promise.resolve({
+                            status: 200,
+                            ok: true,
+                            json: () => Promise.resolve({
+                                success: true,
+                                data: {
+                                    encryptedData,
+                                    deviceId: 'other-device-id',
+                                    timestamp: serverTimestamp,
+                                    version: 2
+                                }
+                            }),
+                            text: () => Promise.resolve(JSON.stringify({
+                                success: true,
+                                data: {
+                                    encryptedData,
+                                    deviceId: 'other-device-id',
+                                    timestamp: serverTimestamp,
+                                    version: 2
+                                }
+                            })),
+                            headers: { get: () => null }
+                        });
+                    }
+                    return Promise.resolve({
+                        status: 404,
+                        ok: false,
+                        json: () => Promise.resolve({}),
+                        text: () => Promise.resolve('{}'),
+                        headers: { get: () => null }
+                    });
+                }
+                if (url.includes('/sync') && options.method === 'POST') {
+                    return Promise.resolve({
+                        status: 200,
+                        ok: true,
+                        json: () => Promise.resolve({ success: true }),
+                        text: () => Promise.resolve('{"success":true}'),
+                        headers: { get: () => null }
+                    });
+                }
+                return Promise.resolve({
+                    status: 200,
+                    ok: true,
+                    json: () => Promise.resolve({}),
+                    text: () => Promise.resolve('{}'),
+                    headers: { get: () => null }
+                });
+            });
+            global.fetch = fetchMock;
+            window.fetch = fetchMock;
+
+            await expect(SyncManager.performSync({ direction: 'both' })).resolves.toEqual({ status: 'success' });
+            expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
+
+            storage.delete('sync_last_data_timestamp');
+            storage.delete('sync_last_sync_metadata_version');
+            Date.now = jest.fn(() => attemptTimestamp);
+            phase = 'attempt-only';
+            await expect(SyncManager.performSync({ direction: 'download' })).resolves.toEqual({ status: 'success' });
+            expect(storage.get('sync_last_sync')).toBe(attemptTimestamp);
+            expect(storage.get('sync_last_sync_metadata_version')).toBe(2);
+            expect(storage.has('sync_last_data_timestamp')).toBe(false);
+
+            phase = 'remote-available';
+            const postCountBeforeRemoteSync = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth')).length;
+
+            await expect(SyncManager.performSync({ direction: 'both' })).resolves.toEqual({ status: 'success' });
+
+            const postCountAfterRemoteSync = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth')).length;
+            expect(postCountAfterRemoteSync).toBe(postCountBeforeRemoteSync);
+            expect(storage.get(storageKeys.goalTarget('goal-1'))).toBe(50);
+            expect(storage.get('sync_last_sync')).toBe(attemptTimestamp);
+            expect(storage.get('sync_last_data_timestamp')).toBe(serverTimestamp);
+        });
+
+        test('performSync(download) stores attempt and data timestamps separately', async () => {
             seedConfiguredState();
             storage.set('sync_access_token_expiry', Date.now() - 1_000);
             global.GM_xmlhttpRequest = undefined;
@@ -800,7 +1235,8 @@ describe('SyncManager', () => {
 
             await expect(SyncManager.performSync({ direction: 'download' })).resolves.toEqual({ status: 'success' });
 
-            expect(storage.get('sync_last_sync')).toBe(serverTimestamp);
+            expect(storage.get('sync_last_sync')).toBe(serverTimestamp + 1);
+            expect(storage.get('sync_last_data_timestamp')).toBe(serverTimestamp);
             expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
             expect(storage.get(storageKeys.goalTarget('goal-2'))).toBe(40);
         });
