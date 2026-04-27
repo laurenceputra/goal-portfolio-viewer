@@ -181,9 +181,7 @@ describe('UI renderers', () => {
 
     test('balance copy controls apply filter/sort and announce success', async () => {
         const { buildBalanceCopyControls } = exportsModule;
-        if (typeof buildBalanceCopyControls !== 'function') {
-            return;
-        }
+        expect(typeof buildBalanceCopyControls).toBe('function');
 
         const writeText = jest.fn().mockResolvedValue(undefined);
         const previousNavigator = global.navigator;

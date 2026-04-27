@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.5
+// @version      2.14.7
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -6830,11 +6830,10 @@ let GoalTargetStore;
 
 
     async function copyTextToClipboard(text) {
-        if (typeof navigator !== 'undefined'
-            && navigator.clipboard
-            && typeof navigator.clipboard.writeText === 'function') {
+        const clipboard = typeof globalThis !== 'undefined' ? globalThis.navigator?.clipboard : null;
+        if (clipboard && typeof clipboard.writeText === 'function') {
             try {
-                await navigator.clipboard.writeText(text);
+                await clipboard.writeText(text);
                 return;
             } catch (_error) {
                 // Fall back to execCommand copy below.
@@ -13217,7 +13216,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             injectStyles,
             showOverlay,
             startUrlMonitoring,
-            init
+            init,
+            copyTextToClipboard,
+            setBalanceCopyFeedback,
+            buildBalanceCopyControls
         };
     }
 
@@ -13267,9 +13269,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             filterGoalsByName,
             sortGoalsForBalanceCopy,
             buildGoalBalancesTsvRow,
-            copyTextToClipboard,
-            setBalanceCopyFeedback,
-            buildBalanceCopyControls,
+            copyTextToClipboard: testingHooks?.copyTextToClipboard,
+            setBalanceCopyFeedback: testingHooks?.setBalanceCopyFeedback,
+            buildBalanceCopyControls: testingHooks?.buildBalanceCopyControls,
             resolveGoalTypeActionTarget,
             buildSummaryViewModel,
             buildBucketDetailViewModel,
