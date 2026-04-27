@@ -49,7 +49,7 @@ function loadUserscript(options = {}) {
     return require('../goal_portfolio_viewer.user.js');
 }
 
-describe('auth fallback behavior', () => {
+describe('performance auth header behavior', () => {
     afterEach(() => {
         jest.useRealTimers();
         teardownDom();
@@ -71,48 +71,64 @@ describe('auth fallback behavior', () => {
         await expect(listCookieByQuery({ name: 'webapp-sg-access-token' })).resolves.toEqual([]);
     });
 
-    test('buildPerformanceRequestHeaders uses fallback auth when captured authorization is absent and captured non-auth headers override fallback', async () => {
+    test('buildPerformanceRequestHeaders uses GM_cookie token for authorization only', async () => {
         const list = jest.fn((query, cb) => {
             const cookies = query?.name === 'webapp-sg-access-token'
                 ? [{ name: 'webapp-sg-access-token', value: 'fallback-token' }]
                 : [];
             return cb ? cb(cookies) : cookies;
         });
-        const {
-            extractAuthHeaders,
-            buildPerformanceRequestHeaders
-        } = loadUserscript({ gmCookieListImpl: list });
+        const { buildPerformanceRequestHeaders } = loadUserscript({ gmCookieListImpl: list });
 
-        document.cookie = 'webapp-deviceId=fallback-device-id';
-
-        extractAuthHeaders('https://app.sg.endowus.com/v1/goals/performance', {
-            headers: {
-                'client-id': 'request-client-id',
-                'device-id': 'request-device-id'
-            }
-        });
+        document.cookie = 'webapp-sg-access-token=document-cookie-token';
+        document.cookie = 'webapp-deviceId=document-cookie-device-id';
 
         const headers = await buildPerformanceRequestHeaders();
 
         expect(headers.get('authorization')).toBe('Bearer fallback-token');
-        expect(headers.get('client-id')).toBe('request-client-id');
-        expect(headers.get('device-id')).toBe('request-device-id');
+        expect(headers.get('client-id')).toBe(null);
+        expect(headers.get('device-id')).toBe(null);
         expect(list).toHaveBeenCalled();
     });
 
-    test('buildPerformanceRequestHeaders returns captured authorization without GM_cookie fallback when callback never fires', async () => {
+    test('buildPerformanceRequestHeaders respects GM_cookie token rotation', async () => {
+        let gmToken = 'token-a';
+        const list = jest.fn((query, cb) => {
+            const cookies = query?.name === 'webapp-sg-access-token'
+                ? [{ name: 'webapp-sg-access-token', value: gmToken }]
+                : [];
+            return cb ? cb(cookies) : cookies;
+        });
+        const { buildPerformanceRequestHeaders } = loadUserscript({ gmCookieListImpl: list });
+
+        const firstHeaders = await buildPerformanceRequestHeaders();
+        gmToken = 'token-b';
+        const secondHeaders = await buildPerformanceRequestHeaders();
+
+        expect(firstHeaders.get('authorization')).toBe('Bearer token-a');
+        expect(secondHeaders.get('authorization')).toBe('Bearer token-b');
+        expect(list).toHaveBeenCalled();
+    });
+
+    test('buildPerformanceRequestHeaders ignores document.cookie auth fallback on Endowus host', async () => {
+        const list = jest.fn((_, cb) => (cb ? cb([]) : []));
+        const { buildPerformanceRequestHeaders } = loadUserscript({ gmCookieListImpl: list });
+
+        document.cookie = 'webapp-sg-access-token=document-cookie-token';
+        document.cookie = 'webapp-deviceId=document-cookie-device-id';
+
+        const headers = await buildPerformanceRequestHeaders();
+
+        expect(headers.get('authorization')).toBe(null);
+        expect(headers.get('client-id')).toBe(null);
+        expect(headers.get('device-id')).toBe(null);
+        expect(list).toHaveBeenCalled();
+    });
+
+    test('buildPerformanceRequestHeaders is fail-closed when GM_cookie callback never fires', async () => {
         jest.useFakeTimers();
         const list = jest.fn(() => undefined);
-        const {
-            extractAuthHeaders,
-            buildPerformanceRequestHeaders
-        } = loadUserscript({ gmCookieListImpl: list });
-
-        extractAuthHeaders('https://app.sg.endowus.com/v1/goals/performance', {
-            headers: {
-                authorization: 'Bearer request-token'
-            }
-        });
+        const { buildPerformanceRequestHeaders } = loadUserscript({ gmCookieListImpl: list });
 
         let settled = false;
         const headersPromise = buildPerformanceRequestHeaders().then(headers => {
@@ -121,21 +137,23 @@ describe('auth fallback behavior', () => {
         });
 
         await Promise.resolve();
-        expect(settled).toBe(true);
-        expect(list).not.toHaveBeenCalled();
-
+        expect(settled).toBe(false);
+        jest.advanceTimersByTime(1000);
         const headers = await headersPromise;
 
-        expect(headers.get('authorization')).toBe('Bearer request-token');
+        expect(settled).toBe(true);
+        expect(list).toHaveBeenCalled();
+
+        expect(headers.get('authorization')).toBe(null);
         expect(headers.get('client-id')).toBe(null);
         expect(headers.get('device-id')).toBe(null);
     });
 
-    test('fallback auth skips Endowus cookie reads outside Endowus host', async () => {
+    test('buildPerformanceRequestHeaders skips GM_cookie outside Endowus host', async () => {
         const list = jest.fn((_, cb) => cb ? cb([{ name: 'webapp-sg-access-token', value: 'token' }]) : []);
         const {
             isEndowusAuthContext,
-            getFallbackAuthHeaders
+            buildPerformanceRequestHeaders
         } = loadUserscript({
             url: 'https://secure.fundsupermart.com/fsmone/dashboard',
             gmCookieListImpl: list
@@ -145,11 +163,10 @@ describe('auth fallback behavior', () => {
         document.cookie = 'webapp-deviceId=device-123';
 
         expect(isEndowusAuthContext()).toBe(false);
-        await expect(getFallbackAuthHeaders()).resolves.toEqual({
-            authorization: null,
-            'client-id': null,
-            'device-id': null
-        });
+        const headers = await buildPerformanceRequestHeaders();
+        expect(headers.get('authorization')).toBe(null);
+        expect(headers.get('client-id')).toBe(null);
+        expect(headers.get('device-id')).toBe(null);
         expect(list).not.toHaveBeenCalled();
     });
 });

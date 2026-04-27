@@ -4890,8 +4890,6 @@ let GoalTargetStore;
             })
         },
         auth: {
-            requestHeaders: null,
-            gmCookieAuthToken: null,
             gmCookieDumped: false
         },
         ui: {
@@ -5084,7 +5082,6 @@ let GoalTargetStore;
 
     // Fetch interception
     window.fetch = async function(...args) {
-        extractAuthHeaders(args[0], args[1]);
         const response = await originalFetch.apply(this, args);
         const url = args[0];
         if (response?.ok) {
@@ -5109,7 +5106,6 @@ let GoalTargetStore;
 
     XMLHttpRequest.prototype.send = function(...args) {
         const url = this._url;
-        extractAuthHeaders(url, { headers: this._headers });
         
         if (url && typeof url === 'string') {
             this.addEventListener('load', function() {
@@ -5298,40 +5294,6 @@ let GoalTargetStore;
     // Performance Data Fetching
     // ============================================
 
-    function getHeaderValue(headers, key) {
-        if (!headers) {
-            return null;
-        }
-        if (headers instanceof Headers) {
-            return headers.get(key);
-        }
-        if (typeof headers === 'object') {
-            return headers[key] || headers[key.toLowerCase()] || headers[key.toUpperCase()] || null;
-        }
-        return null;
-    }
-
-    function getCookieValue(name) {
-        if (typeof document === 'undefined' || !document.cookie) {
-            return null;
-        }
-        const entries = document.cookie.split(';').map(entry => entry.trim());
-        const match = entries.find(entry => entry.startsWith(`${name}=`));
-        if (!match) {
-            return null;
-        }
-        const value = match.slice(name.length + 1);
-        if (!value) {
-            return null;
-        }
-        try {
-            return decodeURIComponent(value);
-        } catch (_error) {
-            // Fallback to raw value if decoding fails due to malformed encoding
-            return value;
-        }
-    }
-
     function selectAuthCookieToken(cookies) {
         if (!Array.isArray(cookies) || !cookies.length) {
             return null;
@@ -5345,16 +5307,6 @@ let GoalTargetStore;
             return null;
         }
         return cookies.find(cookie => cookie?.name === name)?.value || null;
-    }
-
-    function getCookieValueByNames(names) {
-        for (const name of names) {
-            const value = getCookieValue(name);
-            if (value) {
-                return { name, value };
-            }
-        }
-        return null;
     }
 
     function isEndowusAuthContext() {
@@ -5423,9 +5375,6 @@ let GoalTargetStore;
         if (!isEndowusAuthContext()) {
             return Promise.resolve(null);
         }
-        if (state.auth.gmCookieAuthToken) {
-            return Promise.resolve(state.auth.gmCookieAuthToken);
-        }
         if (typeof GM_cookie === 'undefined' || typeof GM_cookie.list !== 'function') {
             return Promise.resolve(null);
         }
@@ -5442,7 +5391,6 @@ let GoalTargetStore;
             for (const cookies of cookieResults) {
                 const token = selectAuthCookieToken(cookies) || findCookieValue(cookies, cookieNames[1]);
                 if (token) {
-                    state.auth.gmCookieAuthToken = token;
                     return token;
                 }
             }
@@ -5460,92 +5408,13 @@ let GoalTargetStore;
         return `Bearer ${token}`;
     }
 
-    async function getFallbackAuthHeaders() {
-        if (!isEndowusAuthContext()) {
-            return {
-                authorization: null,
-                'client-id': null,
-                'device-id': null
-            };
-        }
-        const gmCookieToken = await getAuthTokenFromGMCookie();
-        const cookieNames = ['webapp-sg-access-token', 'webapp-sg-accessToken'];
-        const cookieValue = getCookieValueByNames(cookieNames);
-        const token = gmCookieToken || cookieValue?.value || null;
-        const deviceId = getCookieValue('webapp-deviceId');
-        // Policy: do not read localStorage for auth-related identifiers.
-        const clientId = null;
-
-        return {
-            authorization: buildAuthorizationValue(token),
-            'client-id': clientId,
-            'device-id': deviceId
-        };
-    }
-
-    function extractAuthHeaders(requestUrl, requestInit) {
-        const url = typeof requestUrl === 'string' ? requestUrl : requestUrl?.url;
-        if (!url || !url.includes('endowus.com')) {
-            if (DEBUG_AUTH && url) {
-                logAuthDebug('[Goal Portfolio Viewer][DEBUG_AUTH] Skipping header extraction for non-endowus.com URL:', url);
-            }
-            return;
-        }
-        const headers = requestInit?.headers || requestUrl?.headers || null;
-        const authorization = getHeaderValue(headers, 'authorization');
-        const clientId = getHeaderValue(headers, 'client-id');
-        const deviceId = getHeaderValue(headers, 'device-id');
-
-        if (authorization || clientId || deviceId) {
-            if (!state.auth.requestHeaders || typeof state.auth.requestHeaders !== 'object') {
-                state.auth.requestHeaders = {};
-            }
-            const nextHeaders = {
-                authorization,
-                'client-id': clientId,
-                'device-id': deviceId
-            };
-            Object.entries(nextHeaders).forEach(([key, value]) => {
-                if (value) {
-                    state.auth.requestHeaders[key] = value;
-                } else if (DEBUG_AUTH && value === '') {
-                    logAuthDebug('[Goal Portfolio Viewer][DEBUG_AUTH] Skipped empty auth header:', { key });
-                }
-            });
-        }
-    }
-
     async function buildPerformanceRequestHeaders() {
         const headers = new Headers();
-        const requestHeaders = state.auth.requestHeaders && typeof state.auth.requestHeaders === 'object'
-            ? state.auth.requestHeaders
-            : null;
-
-        if (requestHeaders?.authorization) {
-            Object.entries(requestHeaders).forEach(([key, value]) => {
-                if (value) {
-                    headers.set(key, value);
-                }
-            });
-            return headers;
+        const token = await getAuthTokenFromGMCookie();
+        const authorization = buildAuthorizationValue(token);
+        if (authorization) {
+            headers.set('authorization', authorization);
         }
-
-        const fallbackHeaders = await getFallbackAuthHeaders();
-        const mergedHeaders = {
-            ...fallbackHeaders
-        };
-        if (requestHeaders) {
-            Object.entries(requestHeaders).forEach(([key, value]) => {
-                if (value) {
-                    mergedHeaders[key] = value;
-                }
-            });
-        }
-        Object.entries(mergedHeaders).forEach(([key, value]) => {
-            if (value) {
-                headers.set(key, value);
-            }
-        });
         return headers;
     }
 
@@ -13379,9 +13248,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             buildBalanceCopyControls,
             isEndowusAuthContext,
             listCookieByQuery,
-            getAuthTokenFromGMCookie,
-            getFallbackAuthHeaders,
-            extractAuthHeaders,
             buildPerformanceRequestHeaders
         };
     }
@@ -13497,9 +13363,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             init: testingHooks?.init,
             isEndowusAuthContext: testingHooks?.isEndowusAuthContext,
             listCookieByQuery: testingHooks?.listCookieByQuery,
-            getAuthTokenFromGMCookie: testingHooks?.getAuthTokenFromGMCookie,
-            getFallbackAuthHeaders: testingHooks?.getFallbackAuthHeaders,
-            extractAuthHeaders: testingHooks?.extractAuthHeaders,
             buildPerformanceRequestHeaders: testingHooks?.buildPerformanceRequestHeaders
         };
 
