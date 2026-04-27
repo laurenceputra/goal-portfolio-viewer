@@ -11,6 +11,7 @@
 // @grant        GM_deleteValue
 // @grant        GM_listValues
 // @grant        GM_xmlhttpRequest
+// @grant        GM_cookie
 // @connect      goal-portfolio-sync.laurenceputra.workers.dev
 // @connect      localhost
 // @connect      127.0.0.1
@@ -4930,6 +4931,7 @@ let GoalTargetStore;
     const PERFORMANCE_CACHE_REFRESH_MIN_AGE_MS = 24 * 60 * 60 * 1000;
     const PERFORMANCE_CHART_WINDOW = PERFORMANCE_WINDOWS.oneYear.key;
     const PERFORMANCE_REQUEST_TIMEOUT_MS = 10000;
+    const GM_COOKIE_LIST_TIMEOUT_MS = 250;
 
     const state = {
         apiData: {
@@ -4946,7 +4948,9 @@ let GoalTargetStore;
             })
         },
         auth: {
-            requestHeaders: null
+            requestHeaders: null,
+            gmCookieAuthToken: null,
+            gmCookieDumped: false
         },
         ui: {
             portfolioButton: null,
@@ -5365,6 +5369,178 @@ let GoalTargetStore;
         return null;
     }
 
+    function getCookieValue(name) {
+        if (typeof document === 'undefined' || !document.cookie) {
+            return null;
+        }
+        const entries = document.cookie.split(';').map(entry => entry.trim());
+        const match = entries.find(entry => entry.startsWith(`${name}=`));
+        if (!match) {
+            return null;
+        }
+        const value = match.slice(name.length + 1);
+        if (!value) {
+            return null;
+        }
+        try {
+            return decodeURIComponent(value);
+        } catch (_error) {
+            // Fallback to raw value if decoding fails due to malformed encoding
+            return value;
+        }
+    }
+
+    function selectAuthCookieToken(cookies) {
+        if (!Array.isArray(cookies) || !cookies.length) {
+            return null;
+        }
+        const httpOnlyCookie = cookies.find(cookie => cookie?.httpOnly);
+        return (httpOnlyCookie || cookies[0])?.value || null;
+    }
+
+    function findCookieValue(cookies, name) {
+        if (!Array.isArray(cookies)) {
+            return null;
+        }
+        return cookies.find(cookie => cookie?.name === name)?.value || null;
+    }
+
+    function getCookieValueByNames(names) {
+        for (const name of names) {
+            const value = getCookieValue(name);
+            if (value) {
+                return { name, value };
+            }
+        }
+        return null;
+    }
+
+    function isEndowusAuthContext() {
+        const hostname = (window?.location?.hostname || '').toLowerCase();
+        return hostname === 'endowus.com' || hostname.endsWith('.endowus.com');
+    }
+
+    function listCookieByQuery(query) {
+        return new Promise(resolve => {
+            let settled = false;
+            let timeoutId = setTimeout(() => {
+                settle([]);
+            }, GM_COOKIE_LIST_TIMEOUT_MS);
+
+            const settle = cookies => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = null;
+                }
+                resolve(Array.isArray(cookies) ? cookies : []);
+            };
+
+            if (typeof GM_cookie === 'undefined' || typeof GM_cookie.list !== 'function') {
+                settle([]);
+                return;
+            }
+
+            try {
+                const maybePromise = GM_cookie.list(query, cookies => settle(cookies));
+                if (maybePromise && typeof maybePromise.then === 'function') {
+                    maybePromise
+                        .then(cookies => settle(cookies))
+                        .catch(() => settle([]));
+                }
+            } catch (_error) {
+                settle([]);
+            }
+        });
+    }
+
+    function dumpAvailableCookies() {
+        if (state.auth.gmCookieDumped || !DEBUG_AUTH) {
+            return;
+        }
+        state.auth.gmCookieDumped = true;
+        listCookieByQuery({})
+            .then(cookies => {
+                // Debug-only: log a safe summary of available GM_cookie entries
+                const summary = cookies.map(cookie => ({
+                    domain: cookie.domain,
+                    path: cookie.path,
+                    name: cookie.name
+                }));
+                logAuthDebug('[Goal Portfolio Viewer][DEBUG_AUTH] Available GM_cookie entries:', summary);
+            })
+            .catch(error => {
+                console.error('[Goal Portfolio Viewer][DEBUG_AUTH] Failed to list GM_cookie entries:', error);
+            });
+    }
+
+    function getAuthTokenFromGMCookie() {
+        if (!isEndowusAuthContext()) {
+            return Promise.resolve(null);
+        }
+        if (state.auth.gmCookieAuthToken) {
+            return Promise.resolve(state.auth.gmCookieAuthToken);
+        }
+        if (typeof GM_cookie === 'undefined' || typeof GM_cookie.list !== 'function') {
+            return Promise.resolve(null);
+        }
+        dumpAvailableCookies();
+        const cookieNames = ['webapp-sg-access-token', 'webapp-sg-accessToken'];
+        const queries = [
+            { domain: '.endowus.com', path: '/', name: cookieNames[0] },
+            { domain: '.endowus.com', path: '/', name: cookieNames[1] },
+            { domain: 'app.sg.endowus.com', path: '/', name: cookieNames[0] },
+            { domain: 'app.sg.endowus.com', path: '/', name: cookieNames[1] }
+        ];
+        const queryPromises = queries.map(query => listCookieByQuery(query));
+        return Promise.all(queryPromises).then(cookieResults => {
+            for (const cookies of cookieResults) {
+                const token = selectAuthCookieToken(cookies) || findCookieValue(cookies, cookieNames[1]);
+                if (token) {
+                    state.auth.gmCookieAuthToken = token;
+                    return token;
+                }
+            }
+            return null;
+        });
+    }
+
+    function buildAuthorizationValue(token) {
+        if (!token || typeof token !== 'string') {
+            return null;
+        }
+        if (token.toLowerCase().startsWith('bearer ')) {
+            return token;
+        }
+        return `Bearer ${token}`;
+    }
+
+    async function getFallbackAuthHeaders() {
+        if (!isEndowusAuthContext()) {
+            return {
+                authorization: null,
+                'client-id': null,
+                'device-id': null
+            };
+        }
+        const gmCookieToken = await getAuthTokenFromGMCookie();
+        const cookieNames = ['webapp-sg-access-token', 'webapp-sg-accessToken'];
+        const cookieValue = getCookieValueByNames(cookieNames);
+        const token = gmCookieToken || cookieValue?.value || null;
+        const deviceId = getCookieValue('webapp-deviceId');
+        // Policy: do not read localStorage for auth-related identifiers.
+        const clientId = null;
+
+        return {
+            authorization: buildAuthorizationValue(token),
+            'client-id': clientId,
+            'device-id': deviceId
+        };
+    }
+
     function extractAuthHeaders(requestUrl, requestInit) {
         const url = typeof requestUrl === 'string' ? requestUrl : requestUrl?.url;
         if (!url || !url.includes('endowus.com')) {
@@ -5397,15 +5573,37 @@ let GoalTargetStore;
         }
     }
 
-    function buildPerformanceRequestHeaders() {
+    async function buildPerformanceRequestHeaders() {
         const headers = new Headers();
-        if (state.auth.requestHeaders) {
-            Object.entries(state.auth.requestHeaders).forEach(([key, value]) => {
+        const requestHeaders = state.auth.requestHeaders && typeof state.auth.requestHeaders === 'object'
+            ? state.auth.requestHeaders
+            : null;
+
+        if (requestHeaders?.authorization) {
+            Object.entries(requestHeaders).forEach(([key, value]) => {
                 if (value) {
                     headers.set(key, value);
                 }
             });
+            return headers;
         }
+
+        const fallbackHeaders = await getFallbackAuthHeaders();
+        const mergedHeaders = {
+            ...fallbackHeaders
+        };
+        if (requestHeaders) {
+            Object.entries(requestHeaders).forEach(([key, value]) => {
+                if (value) {
+                    mergedHeaders[key] = value;
+                }
+            });
+        }
+        Object.entries(mergedHeaders).forEach(([key, value]) => {
+            if (value) {
+                headers.set(key, value);
+            }
+        });
         return headers;
     }
 
@@ -13315,7 +13513,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             init,
             copyTextToClipboard,
             setBalanceCopyFeedback,
-            buildBalanceCopyControls
+            buildBalanceCopyControls,
+            isEndowusAuthContext,
+            listCookieByQuery,
+            getAuthTokenFromGMCookie,
+            getFallbackAuthHeaders,
+            extractAuthHeaders,
+            buildPerformanceRequestHeaders
         };
     }
 
@@ -13429,7 +13633,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             injectStyles: testingHooks?.injectStyles,
             showOverlay: testingHooks?.showOverlay,
             startUrlMonitoring: testingHooks?.startUrlMonitoring,
-            init: testingHooks?.init
+            init: testingHooks?.init,
+            isEndowusAuthContext: testingHooks?.isEndowusAuthContext,
+            listCookieByQuery: testingHooks?.listCookieByQuery,
+            getAuthTokenFromGMCookie: testingHooks?.getAuthTokenFromGMCookie,
+            getFallbackAuthHeaders: testingHooks?.getFallbackAuthHeaders,
+            extractAuthHeaders: testingHooks?.extractAuthHeaders,
+            buildPerformanceRequestHeaders: testingHooks?.buildPerformanceRequestHeaders
         };
 
         if (chartHelpers && chartHelpers.buildPerformanceWindowGrid) {
