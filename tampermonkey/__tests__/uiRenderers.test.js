@@ -207,6 +207,7 @@ describe('UI renderers', () => {
             directionSelect.value = 'desc';
             copyButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
             await Promise.resolve();
+            await Promise.resolve();
 
             expect(writeText).toHaveBeenCalledWith('2.5000');
             expect(status.textContent).toBe('Copied 1 balances');
