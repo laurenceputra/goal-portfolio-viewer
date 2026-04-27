@@ -815,18 +815,6 @@
         });
     }
 
-    function filterGoalsByName(goals, filterText) {
-        const safeGoals = Array.isArray(goals) ? goals : [];
-        const normalizedFilter = utils.normalizeString(filterText, '').toLowerCase();
-        if (!normalizedFilter) {
-            return safeGoals.slice();
-        }
-        return safeGoals.filter(goal => {
-            const name = utils.normalizeString(goal?.goalName, '').toLowerCase();
-            return name.includes(normalizedFilter);
-        });
-    }
-
     function getGoalRawEndingBalanceAmount(goal) {
         const rawEndingBalanceAmount = goal?.rawEndingBalanceAmount;
         if (rawEndingBalanceAmount !== null && rawEndingBalanceAmount !== undefined) {
@@ -836,52 +824,6 @@
         return endingBalanceAmount === null || endingBalanceAmount === undefined
             ? undefined
             : endingBalanceAmount;
-    }
-
-    function sortGoalsForBalanceCopy(goals, sortBy, direction = 'asc') {
-        const safeGoals = Array.isArray(goals) ? goals : [];
-        const normalizedSortBy = sortBy === 'goalName' || sortBy === 'balance' ? sortBy : 'current';
-        const normalizedDirection = direction === 'desc' ? 'desc' : 'asc';
-        if (normalizedSortBy === 'current') {
-            const currentOrderGoals = safeGoals.slice();
-            if (normalizedDirection === 'desc') {
-                currentOrderGoals.reverse();
-            }
-            return currentOrderGoals;
-        }
-        const directionMultiplier = normalizedDirection === 'desc' ? -1 : 1;
-        return safeGoals
-            .map((goal, index) => ({ goal, index }))
-            .sort((left, right) => {
-                if (normalizedSortBy === 'goalName') {
-                    const leftName = utils.normalizeString(left.goal?.goalName, '');
-                    const rightName = utils.normalizeString(right.goal?.goalName, '');
-                    const compared = leftName.localeCompare(rightName, 'en', { sensitivity: 'base' });
-                    if (compared !== 0) {
-                        return compared * directionMultiplier;
-                    }
-                } else {
-                    const leftBalance = toFiniteNumber(getGoalRawEndingBalanceAmount(left.goal), null);
-                    const rightBalance = toFiniteNumber(getGoalRawEndingBalanceAmount(right.goal), null);
-                    if (leftBalance === null && rightBalance !== null) {
-                        return 1;
-                    }
-                    if (leftBalance !== null && rightBalance === null) {
-                        return -1;
-                    }
-                    if (leftBalance !== null && rightBalance !== null && leftBalance !== rightBalance) {
-                        return (leftBalance - rightBalance) * directionMultiplier;
-                    }
-                    const leftName = utils.normalizeString(left.goal?.goalName, '');
-                    const rightName = utils.normalizeString(right.goal?.goalName, '');
-                    const nameCompared = leftName.localeCompare(rightName, 'en', { sensitivity: 'base' });
-                    if (nameCompared !== 0) {
-                        return nameCompared;
-                    }
-                }
-                return left.index - right.index;
-            })
-            .map(entry => entry.goal);
     }
 
     function buildGoalBalancesTsvRow(goals) {
@@ -7163,41 +7105,8 @@ let GoalTargetStore;
         statusElement.setAttribute('aria-live', isError ? 'assertive' : 'polite');
     }
 
-    function getGoalBalancesForCopy(goals, options = {}) {
-        const filteredGoals = filterGoalsByName(goals, options.filterText);
-        return sortGoalsForBalanceCopy(filteredGoals, options.sortBy, options.direction);
-    }
-
     function buildBalanceCopyControls(goalTypeModel) {
         const controls = createElement('div', 'gpv-balance-copy-controls');
-
-        const filterInput = createElement('input', 'gpv-target-input gpv-balance-copy-filter');
-        filterInput.type = 'search';
-        filterInput.placeholder = 'Filter goals';
-        filterInput.setAttribute('aria-label', 'Filter goals by name');
-
-        const sortSelect = createElement('select', 'gpv-balance-copy-select');
-        sortSelect.setAttribute('aria-label', 'Sort goals by');
-        [
-            { value: 'current', label: 'Current order' },
-            { value: 'goalName', label: 'Goal name' },
-            { value: 'balance', label: 'Balance' }
-        ].forEach(optionData => {
-            const option = createElement('option', null, optionData.label);
-            option.value = optionData.value;
-            sortSelect.appendChild(option);
-        });
-
-        const directionSelect = createElement('select', 'gpv-balance-copy-select');
-        directionSelect.setAttribute('aria-label', 'Sort direction');
-        [
-            { value: 'asc', label: 'Asc' },
-            { value: 'desc', label: 'Desc' }
-        ].forEach(optionData => {
-            const option = createElement('option', null, optionData.label);
-            option.value = optionData.value;
-            directionSelect.appendChild(option);
-        });
 
         const copyButton = createElement('button', 'gpv-section-toggle gpv-balance-copy-button', 'Copy balances row');
         copyButton.type = 'button';
@@ -7206,21 +7115,10 @@ let GoalTargetStore;
         status.setAttribute('role', 'status');
         status.setAttribute('aria-live', 'polite');
 
-        const updateSortControls = () => {
-            directionSelect.disabled = false;
-        };
-
-        sortSelect.addEventListener('change', updateSortControls);
-        updateSortControls();
-
         copyButton.addEventListener('click', async () => {
-            const matchingGoals = getGoalBalancesForCopy(goalTypeModel?.goals, {
-                filterText: filterInput.value,
-                sortBy: sortSelect.value,
-                direction: directionSelect.value
-            });
+            const matchingGoals = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
             if (matchingGoals.length === 0) {
-                setBalanceCopyFeedback(status, 'No matching goals');
+                setBalanceCopyFeedback(status, 'No goals to copy');
                 return;
             }
             try {
@@ -7231,9 +7129,6 @@ let GoalTargetStore;
             }
         });
 
-        controls.appendChild(filterInput);
-        controls.appendChild(sortSelect);
-        controls.appendChild(directionSelect);
         controls.appendChild(copyButton);
         controls.appendChild(status);
         return controls;
@@ -9766,38 +9661,6 @@ syncUi.update = function updateSyncUI() {
                 align-items: center;
                 gap: 8px;
                 flex-wrap: wrap;
-            }
-
-            .gpv-balance-copy-filter {
-                width: 150px;
-            }
-
-            .gpv-balance-copy-select {
-                padding: 4px 8px;
-                border: 2px solid #e5e7eb;
-                border-radius: 6px;
-                font-size: 12px;
-                font-weight: 600;
-                color: #1f2937;
-                background: #ffffff;
-                cursor: pointer;
-                transition: all 0.2s ease;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            }
-
-            .gpv-balance-copy-select:focus {
-                outline: none;
-                border-color: #667eea;
-                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-            }
-
-            .gpv-balance-copy-select:hover {
-                border-color: #667eea;
-            }
-
-            .gpv-balance-copy-select:disabled {
-                opacity: 0.6;
-                cursor: not-allowed;
             }
 
             .gpv-balance-copy-button {
@@ -13566,8 +13429,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             getProjectedInvestmentValue,
             buildDiffCellData,
             sortGoalsByName,
-            filterGoalsByName,
-            sortGoalsForBalanceCopy,
             buildGoalBalancesTsvRow,
             copyTextToClipboard: testingHooks?.copyTextToClipboard,
             setBalanceCopyFeedback: testingHooks?.setBalanceCopyFeedback,

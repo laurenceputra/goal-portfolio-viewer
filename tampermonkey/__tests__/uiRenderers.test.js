@@ -179,7 +179,7 @@ describe('UI renderers', () => {
         expect(values[2].classList.contains('positive')).toBe(true);
     });
 
-    test('balance copy controls apply filter/sort and announce success', async () => {
+    test('balance copy controls copy TSV and announce success', async () => {
         const { buildBalanceCopyControls } = exportsModule;
         expect(typeof buildBalanceCopyControls).toBe('function');
 
@@ -196,21 +196,15 @@ describe('UI renderers', () => {
             });
             document.body.appendChild(controls);
 
-            const filterInput = controls.querySelector('.gpv-balance-copy-filter');
-            const sortSelect = controls.querySelectorAll('.gpv-balance-copy-select')[0];
-            const directionSelect = controls.querySelectorAll('.gpv-balance-copy-select')[1];
             const copyButton = controls.querySelector('.gpv-balance-copy-button');
             const status = controls.querySelector('.gpv-balance-copy-status');
 
-            filterInput.value = 'Goal B';
-            sortSelect.value = 'balance';
-            directionSelect.value = 'desc';
             copyButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
             await Promise.resolve();
             await Promise.resolve();
 
-            expect(writeText).toHaveBeenCalledWith('2.5000');
-            expect(status.textContent).toBe('Copied 1 balances');
+            expect(writeText).toHaveBeenCalledWith('1.1000\t2.5000');
+            expect(status.textContent).toBe('Copied 2 balances');
             expect(status.getAttribute('role')).toBe('status');
             expect(status.getAttribute('aria-live')).toBe('polite');
         } finally {
