@@ -811,8 +811,88 @@
         });
     }
 
+    function filterGoalsByName(goals, filterText) {
+        const safeGoals = Array.isArray(goals) ? goals : [];
+        const normalizedFilter = utils.normalizeString(filterText, '').toLowerCase();
+        if (!normalizedFilter) {
+            return safeGoals.slice();
+        }
+        return safeGoals.filter(goal => {
+            const name = utils.normalizeString(goal?.goalName, '').toLowerCase();
+            return name.includes(normalizedFilter);
+        });
+    }
+
+    function getGoalRawEndingBalanceAmount(goal) {
+        const rawEndingBalanceAmount = goal?.rawEndingBalanceAmount;
+        if (rawEndingBalanceAmount !== null && rawEndingBalanceAmount !== undefined) {
+            return rawEndingBalanceAmount;
+        }
+        const endingBalanceAmount = goal?.endingBalanceAmount;
+        return endingBalanceAmount === null || endingBalanceAmount === undefined
+            ? undefined
+            : endingBalanceAmount;
+    }
+
+    function sortGoalsForBalanceCopy(goals, sortBy, direction = 'asc') {
+        const safeGoals = Array.isArray(goals) ? goals : [];
+        const normalizedSortBy = sortBy === 'goalName' || sortBy === 'balance' ? sortBy : 'current';
+        const normalizedDirection = direction === 'desc' ? 'desc' : 'asc';
+        if (normalizedSortBy === 'current') {
+            const currentOrderGoals = safeGoals.slice();
+            if (normalizedDirection === 'desc') {
+                currentOrderGoals.reverse();
+            }
+            return currentOrderGoals;
+        }
+        const directionMultiplier = normalizedDirection === 'desc' ? -1 : 1;
+        return safeGoals
+            .map((goal, index) => ({ goal, index }))
+            .sort((left, right) => {
+                if (normalizedSortBy === 'goalName') {
+                    const leftName = utils.normalizeString(left.goal?.goalName, '');
+                    const rightName = utils.normalizeString(right.goal?.goalName, '');
+                    const compared = leftName.localeCompare(rightName, 'en', { sensitivity: 'base' });
+                    if (compared !== 0) {
+                        return compared * directionMultiplier;
+                    }
+                } else {
+                    const leftBalance = toFiniteNumber(getGoalRawEndingBalanceAmount(left.goal), null);
+                    const rightBalance = toFiniteNumber(getGoalRawEndingBalanceAmount(right.goal), null);
+                    if (leftBalance === null && rightBalance !== null) {
+                        return 1;
+                    }
+                    if (leftBalance !== null && rightBalance === null) {
+                        return -1;
+                    }
+                    if (leftBalance !== null && rightBalance !== null && leftBalance !== rightBalance) {
+                        return (leftBalance - rightBalance) * directionMultiplier;
+                    }
+                    const leftName = utils.normalizeString(left.goal?.goalName, '');
+                    const rightName = utils.normalizeString(right.goal?.goalName, '');
+                    const nameCompared = leftName.localeCompare(rightName, 'en', { sensitivity: 'base' });
+                    if (nameCompared !== 0) {
+                        return nameCompared;
+                    }
+                }
+                return left.index - right.index;
+            })
+            .map(entry => entry.goal);
+    }
+
+    function buildGoalBalancesTsvRow(goals) {
+        const safeGoals = Array.isArray(goals) ? goals : [];
+        return safeGoals.map(goal => {
+            const rawEndingBalanceAmount = getGoalRawEndingBalanceAmount(goal);
+            return rawEndingBalanceAmount === null || rawEndingBalanceAmount === undefined
+                ? ''
+                : String(rawEndingBalanceAmount);
+        }).join('\t');
+    }
+
     function buildGoalModel(goal, totalTypeAmount, adjustedTotal, goalTargets, goalFixed) {
         const endingBalanceAmount = goal.endingBalanceAmount || 0;
+        const rawEndingBalanceAmount = getGoalRawEndingBalanceAmount(goal);
         const percentOfType = calculatePercentOfType(
             endingBalanceAmount,
             totalTypeAmount
@@ -833,6 +913,7 @@
             goalId: goal.goalId,
             goalName: goal.goalName,
             endingBalanceAmount,
+            rawEndingBalanceAmount,
             percentOfType,
             isFixed,
             targetPercent,
@@ -1803,13 +1884,25 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             const goalBucket = configuredBucket || utils.extractBucketName(goalName);
             // Note: investible API `totalInvestmentAmount` is misnamed and represents ending balance.
             // We map it internally to endingBalanceAmount to avoid confusing it with principal invested.
+            const performanceEndingBalanceRaw = resolveRawAmountValue(perf.totalInvestmentValue);
             const performanceEndingBalance = extractAmount(perf.totalInvestmentValue);
             const pendingProcessingAmount = extractAmount(perf.pendingProcessingAmount);
+            const investEndingBalanceRaw = resolveRawAmountValue(invest.totalInvestmentAmount);
+            const investEndingBalance = extractAmount(invest.totalInvestmentAmount);
+            const usingPerformanceEndingBalance = performanceEndingBalance !== null;
             let endingBalanceAmount = performanceEndingBalance !== null
                 ? performanceEndingBalance
-                : extractAmount(invest.totalInvestmentAmount);
+                : investEndingBalance;
+            let rawEndingBalanceAmount = usingPerformanceEndingBalance
+                ? performanceEndingBalanceRaw
+                : investEndingBalanceRaw;
             if (Number.isFinite(endingBalanceAmount) && Number.isFinite(pendingProcessingAmount)) {
                 endingBalanceAmount += pendingProcessingAmount;
+                const shouldUseComputedRawEndingBalance = pendingProcessingAmount !== 0
+                    || (rawEndingBalanceAmount === null && Number.isFinite(endingBalanceAmount));
+                if (shouldUseComputedRawEndingBalance) {
+                    rawEndingBalanceAmount = endingBalanceAmount;
+                }
             }
             const cumulativeReturn = extractAmount(perf.totalCumulativeReturn);
             const safeEndingBalanceAmount = Number.isFinite(endingBalanceAmount) ? endingBalanceAmount : 0;
@@ -1823,6 +1916,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     UNKNOWN_GOAL_TYPE
                 ),
                 endingBalanceAmount: Number.isFinite(endingBalanceAmount) ? endingBalanceAmount : null,
+                rawEndingBalanceAmount,
                 totalCumulativeReturn: Number.isFinite(cumulativeReturn) ? cumulativeReturn : null,
                 simpleRateOfReturnPercent: Number.isFinite(perf.simpleRateOfReturnPercent)
                     ? perf.simpleRateOfReturnPercent
@@ -2216,6 +2310,26 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             if (typeof displayAmount === 'number' && Number.isFinite(displayAmount)) {
                 return displayAmount;
             }
+        }
+        return null;
+    }
+
+    function resolveRawAmountValue(value) {
+        if (typeof value === 'number') {
+            return Number.isFinite(value) ? value : null;
+        }
+        if (typeof value === 'string') {
+            if (value.trim() === '') {
+                return null;
+            }
+            return Number.isFinite(Number(value)) ? value : null;
+        }
+        if (value && typeof value === 'object') {
+            const directAmount = resolveRawAmountValue(value.amount);
+            if (directAmount !== null) {
+                return directAmount;
+            }
+            return resolveRawAmountValue(value.display?.amount);
         }
         return null;
     }
@@ -6715,6 +6829,123 @@ let GoalTargetStore;
 
 
 
+    async function copyTextToClipboard(text) {
+        if (typeof navigator !== 'undefined'
+            && navigator.clipboard
+            && typeof navigator.clipboard.writeText === 'function') {
+            try {
+                await navigator.clipboard.writeText(text);
+                return;
+            } catch (_error) {
+                // Fall back to execCommand copy below.
+            }
+        }
+        if (typeof document === 'undefined' || !document.body || typeof document.execCommand !== 'function') {
+            throw new Error('Clipboard unavailable');
+        }
+        const textarea = createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', 'true');
+        textarea.style.position = 'fixed';
+        textarea.style.top = '-9999px';
+        textarea.style.left = '-9999px';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        textarea.setSelectionRange(0, textarea.value.length);
+        const copied = document.execCommand('copy');
+        textarea.remove();
+        if (!copied) {
+            throw new Error('Copy command failed');
+        }
+    }
+
+    function setBalanceCopyFeedback(statusElement, message, type = 'info') {
+        if (!statusElement) {
+            return;
+        }
+        statusElement.textContent = message || '';
+        const isError = type === 'error';
+        statusElement.setAttribute('role', isError ? 'alert' : 'status');
+        statusElement.setAttribute('aria-live', isError ? 'assertive' : 'polite');
+    }
+
+    function getGoalBalancesForCopy(goals, options = {}) {
+        const filteredGoals = filterGoalsByName(goals, options.filterText);
+        return sortGoalsForBalanceCopy(filteredGoals, options.sortBy, options.direction);
+    }
+
+    function buildBalanceCopyControls(goalTypeModel) {
+        const controls = createElement('div', 'gpv-balance-copy-controls');
+
+        const filterInput = createElement('input', 'gpv-target-input gpv-balance-copy-filter');
+        filterInput.type = 'search';
+        filterInput.placeholder = 'Filter goals';
+        filterInput.setAttribute('aria-label', 'Filter goals by name');
+
+        const sortSelect = createElement('select', 'gpv-balance-copy-select');
+        sortSelect.setAttribute('aria-label', 'Sort goals by');
+        [
+            { value: 'current', label: 'Current order' },
+            { value: 'goalName', label: 'Goal name' },
+            { value: 'balance', label: 'Balance' }
+        ].forEach(optionData => {
+            const option = createElement('option', null, optionData.label);
+            option.value = optionData.value;
+            sortSelect.appendChild(option);
+        });
+
+        const directionSelect = createElement('select', 'gpv-balance-copy-select');
+        directionSelect.setAttribute('aria-label', 'Sort direction');
+        [
+            { value: 'asc', label: 'Asc' },
+            { value: 'desc', label: 'Desc' }
+        ].forEach(optionData => {
+            const option = createElement('option', null, optionData.label);
+            option.value = optionData.value;
+            directionSelect.appendChild(option);
+        });
+
+        const copyButton = createElement('button', 'gpv-section-toggle gpv-balance-copy-button', 'Copy balances row');
+        copyButton.type = 'button';
+
+        const status = createElement('div', 'gpv-balance-copy-status');
+        status.setAttribute('role', 'status');
+        status.setAttribute('aria-live', 'polite');
+
+        const updateSortControls = () => {
+            directionSelect.disabled = false;
+        };
+
+        sortSelect.addEventListener('change', updateSortControls);
+        updateSortControls();
+
+        copyButton.addEventListener('click', async () => {
+            const matchingGoals = getGoalBalancesForCopy(goalTypeModel?.goals, {
+                filterText: filterInput.value,
+                sortBy: sortSelect.value,
+                direction: directionSelect.value
+            });
+            if (matchingGoals.length === 0) {
+                setBalanceCopyFeedback(status, 'No matching goals');
+                return;
+            }
+            try {
+                await copyTextToClipboard(buildGoalBalancesTsvRow(matchingGoals));
+                setBalanceCopyFeedback(status, `Copied ${matchingGoals.length} balances`);
+            } catch (_error) {
+                setBalanceCopyFeedback(status, 'Copy failed', 'error');
+            }
+        });
+
+        controls.appendChild(filterInput);
+        controls.appendChild(sortSelect);
+        controls.appendChild(directionSelect);
+        controls.appendChild(copyButton);
+        controls.appendChild(status);
+        return controls;
+    }
+
     function renderBucketView({
         contentDiv,
         bucketViewModel,
@@ -6757,6 +6988,7 @@ let GoalTargetStore;
             typeHeader.appendChild(typeSummary);
 
             const typeActions = createElement('div', 'gpv-type-actions');
+            typeActions.appendChild(buildBalanceCopyControls(goalTypeModel));
             typeHeader.appendChild(typeActions);
             typeSection.appendChild(typeHeader);
 
@@ -9234,6 +9466,56 @@ syncUi.update = function updateSyncUI() {
                 gap: 8px;
                 margin-top: 8px;
                 flex-wrap: wrap;
+            }
+
+            .gpv-balance-copy-controls {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+            }
+
+            .gpv-balance-copy-filter {
+                width: 150px;
+            }
+
+            .gpv-balance-copy-select {
+                padding: 4px 8px;
+                border: 2px solid #e5e7eb;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 600;
+                color: #1f2937;
+                background: #ffffff;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            }
+
+            .gpv-balance-copy-select:focus {
+                outline: none;
+                border-color: #667eea;
+                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            }
+
+            .gpv-balance-copy-select:hover {
+                border-color: #667eea;
+            }
+
+            .gpv-balance-copy-select:disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
+            }
+
+            .gpv-balance-copy-button {
+                white-space: nowrap;
+            }
+
+            .gpv-balance-copy-status {
+                font-size: 12px;
+                font-weight: 600;
+                color: #4b5563;
+                min-height: 18px;
             }
 
             .gpv-section-toggle {
@@ -12982,6 +13264,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             getProjectedInvestmentValue,
             buildDiffCellData,
             sortGoalsByName,
+            filterGoalsByName,
+            sortGoalsForBalanceCopy,
+            buildGoalBalancesTsvRow,
+            copyTextToClipboard,
+            setBalanceCopyFeedback,
+            buildBalanceCopyControls,
             resolveGoalTypeActionTarget,
             buildSummaryViewModel,
             buildBucketDetailViewModel,

@@ -178,4 +178,48 @@ describe('UI renderers', () => {
         expect(values[2].textContent).toContain('0.00%');
         expect(values[2].classList.contains('positive')).toBe(true);
     });
+
+    test('balance copy controls apply filter/sort and announce success', async () => {
+        const { buildBalanceCopyControls } = exportsModule;
+        if (typeof buildBalanceCopyControls !== 'function') {
+            return;
+        }
+
+        const writeText = jest.fn().mockResolvedValue(undefined);
+        const previousNavigator = global.navigator;
+        global.navigator = { clipboard: { writeText } };
+
+        try {
+            const controls = buildBalanceCopyControls({
+                goals: [
+                    { goalId: 'goal-a', goalName: 'Goal A', endingBalanceAmount: 1, rawEndingBalanceAmount: '1.1000' },
+                    { goalId: 'goal-b', goalName: 'Goal B', endingBalanceAmount: 2, rawEndingBalanceAmount: '2.5000' }
+                ]
+            });
+            document.body.appendChild(controls);
+
+            const filterInput = controls.querySelector('.gpv-balance-copy-filter');
+            const sortSelect = controls.querySelectorAll('.gpv-balance-copy-select')[0];
+            const directionSelect = controls.querySelectorAll('.gpv-balance-copy-select')[1];
+            const copyButton = controls.querySelector('.gpv-balance-copy-button');
+            const status = controls.querySelector('.gpv-balance-copy-status');
+
+            filterInput.value = 'Goal B';
+            sortSelect.value = 'balance';
+            directionSelect.value = 'desc';
+            copyButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+            await Promise.resolve();
+
+            expect(writeText).toHaveBeenCalledWith('2.5000');
+            expect(status.textContent).toBe('Copied 1 balances');
+            expect(status.getAttribute('role')).toBe('status');
+            expect(status.getAttribute('aria-live')).toBe('polite');
+        } finally {
+            if (typeof previousNavigator === 'undefined') {
+                delete global.navigator;
+            } else {
+                global.navigator = previousNavigator;
+            }
+        }
+    });
 });

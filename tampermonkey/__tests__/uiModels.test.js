@@ -12,6 +12,9 @@ const {
     getProjectedInvestmentValue,
     buildAllocationDriftModel,
     buildDiffCellData,
+    filterGoalsByName,
+    sortGoalsForBalanceCopy,
+    buildGoalBalancesTsvRow,
     resolveGoalTypeActionTarget,
     buildSummaryViewModel,
     buildBucketDetailViewModel,
@@ -183,6 +186,63 @@ describe('projected and goal helpers', () => {
         expect(result.suggestedBuys.map(item => item.goalName)).toEqual(['Buy A']);
         expect(result.triggerBuys.map(item => item.goalName)).toEqual(['Buy A', 'Buy B']);
         expect(result.triggerBuys.map(item => item.recommendedAmount)).toEqual([10000, 800]);
+    });
+});
+
+describe('balance row copy helpers', () => {
+    const goals = [
+        { goalId: 'g1', goalName: 'Retirement', endingBalanceAmount: 1500.125 },
+        { goalId: 'g2', goalName: 'Vacation', endingBalanceAmount: '1000.5' },
+        { goalId: 'g3', goalName: 'Emergency', endingBalanceAmount: 3000 }
+    ];
+
+    test('should filter goals by name case-insensitively', () => {
+        expect(filterGoalsByName(goals, 'vac').map(goal => goal.goalId)).toEqual(['g2']);
+        expect(filterGoalsByName(goals, '').map(goal => goal.goalId)).toEqual(['g1', 'g2', 'g3']);
+    });
+
+    test('should sort balance copy goals by current order', () => {
+        expect(sortGoalsForBalanceCopy(goals, 'current', 'asc').map(goal => goal.goalId)).toEqual(['g1', 'g2', 'g3']);
+        expect(sortGoalsForBalanceCopy(goals, 'current', 'desc').map(goal => goal.goalId)).toEqual(['g3', 'g2', 'g1']);
+    });
+
+    test('should sort balance copy goals by goal name and balance', () => {
+        expect(sortGoalsForBalanceCopy(goals, 'goalName', 'asc').map(goal => goal.goalId)).toEqual(['g3', 'g1', 'g2']);
+        expect(sortGoalsForBalanceCopy(goals, 'goalName', 'desc').map(goal => goal.goalId)).toEqual(['g2', 'g1', 'g3']);
+        expect(sortGoalsForBalanceCopy(goals, 'balance', 'asc').map(goal => goal.goalId)).toEqual(['g2', 'g1', 'g3']);
+        expect(sortGoalsForBalanceCopy(goals, 'balance', 'desc').map(goal => goal.goalId)).toEqual(['g3', 'g1', 'g2']);
+    });
+
+    test('should build a tab-separated raw balances row', () => {
+        const row = buildGoalBalancesTsvRow([
+            { endingBalanceAmount: 1500.125 },
+            { endingBalanceAmount: '1000.5000' },
+            { endingBalanceAmount: 0 }
+        ]);
+        expect(row).toBe('1500.125\t1000.5000\t0');
+    });
+
+    test('should preserve raw ending balance values for copy and sort with fallback', () => {
+        const goalsWithRaw = [
+            { goalId: 'g1', endingBalanceAmount: 2, rawEndingBalanceAmount: '1000.5000' },
+            { goalId: 'g2', endingBalanceAmount: 10, rawEndingBalanceAmount: '2.5000' },
+            { goalId: 'g3', endingBalanceAmount: 3 },
+            { goalId: 'g4', goalName: 'Missing' }
+        ];
+
+        expect(sortGoalsForBalanceCopy(goalsWithRaw, 'balance', 'asc').map(goal => goal.goalId)).toEqual(['g2', 'g3', 'g1', 'g4']);
+        expect(buildGoalBalancesTsvRow(goalsWithRaw)).toBe('1000.5000\t2.5000\t3\t');
+    });
+
+    test('should treat null raw and ending balances as missing for copy and sort', () => {
+        const goalsWithNullBalances = [
+            { goalId: 'g1', endingBalanceAmount: 1 },
+            { goalId: 'g2', endingBalanceAmount: 2.5 },
+            { goalId: 'g3', rawEndingBalanceAmount: null, endingBalanceAmount: null }
+        ];
+
+        expect(sortGoalsForBalanceCopy(goalsWithNullBalances, 'balance', 'asc').map(goal => goal.goalId)).toEqual(['g1', 'g2', 'g3']);
+        expect(buildGoalBalancesTsvRow(goalsWithNullBalances)).toBe('1\t2.5\t');
     });
 });
 
