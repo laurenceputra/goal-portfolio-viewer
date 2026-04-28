@@ -348,57 +348,78 @@
         maximumFractionDigits: 2
     });
 
+    const numberHelpers = {
+        toFinite(value, fallback = null) {
+            const numericValue = Number(value);
+            return Number.isFinite(numericValue) ? numericValue : fallback;
+        },
+        toOptionalFinite(value) {
+            if (typeof value === 'string' && value.trim() === '') {
+                return null;
+            }
+            if (value === null || value === undefined || value === '') {
+                return null;
+            }
+            const numericValue = Number(value);
+            return Number.isFinite(numericValue) ? numericValue : null;
+        }
+    };
+
+    const formatHelpers = {
+        money(value) {
+            if (typeof value === 'number' && Number.isFinite(value)) {
+                return MONEY_FORMATTER.format(value);
+            }
+            return '-';
+        },
+        percent(value, options = {}) {
+            if (value === null || value === undefined) {
+                return options.fallback ?? '-';
+            }
+            const multiplier = numberHelpers.toFinite(options.multiplier ?? 1, null);
+            if (multiplier === null) {
+                return options.fallback ?? '-';
+            }
+            const numericValue = numberHelpers.toFinite(value, null);
+            if (numericValue === null) {
+                return options.fallback ?? '-';
+            }
+            const percentValue = numericValue * multiplier;
+            const showSign = options.showSign === true;
+            const sign = showSign && percentValue > 0 ? '+' : '';
+            return `${sign}${percentValue.toFixed(2)}%`;
+        },
+        signedMoney(value) {
+            const numericValue = numberHelpers.toOptionalFinite(value);
+            if (numericValue === null) {
+                return '-';
+            }
+            const money = this.money(numericValue);
+            if (money === '-') {
+                return '-';
+            }
+            return numericValue > 0 ? `+${money}` : money;
+        }
+    };
+
     function toFiniteNumber(value, fallback = null) {
-        const numericValue = Number(value);
-        return Number.isFinite(numericValue) ? numericValue : fallback;
+        return numberHelpers.toFinite(value, fallback);
     }
 
     function toOptionalFiniteNumber(value) {
-        if (typeof value === 'string' && value.trim() === '') {
-            return null;
-        }
-        if (value === null || value === undefined || value === '') {
-            return null;
-        }
-        const numericValue = Number(value);
-        return Number.isFinite(numericValue) ? numericValue : null;
+        return numberHelpers.toOptionalFinite(value);
     }
 
     function formatMoney(val) {
-        if (typeof val === 'number' && Number.isFinite(val)) {
-            return MONEY_FORMATTER.format(val);
-        }
-        return '-';
+        return formatHelpers.money(val);
     }
 
     function formatPercent(value, options = {}) {
-        if (value === null || value === undefined) {
-            return options.fallback ?? '-';
-        }
-        const multiplier = toFiniteNumber(options.multiplier ?? 1, null);
-        if (multiplier === null) {
-            return options.fallback ?? '-';
-        }
-        const numericValue = toFiniteNumber(value, null);
-        if (numericValue === null) {
-            return options.fallback ?? '-';
-        }
-        const percentValue = numericValue * multiplier;
-        const showSign = options.showSign === true;
-        const sign = showSign && percentValue > 0 ? '+' : '';
-        return `${sign}${percentValue.toFixed(2)}%`;
+        return formatHelpers.percent(value, options);
     }
 
     function formatSignedMoney(value) {
-        const numericValue = toOptionalFiniteNumber(value);
-        if (numericValue === null) {
-            return '-';
-        }
-        const money = formatMoney(numericValue);
-        if (money === '-') {
-            return '-';
-        }
-        return numericValue > 0 ? `+${money}` : money;
+        return formatHelpers.signedMoney(value);
     }
 
     function resolveProfitPercentRatio(value, derivedPercent = null) {
@@ -607,64 +628,75 @@
         return numericValue >= 0 ? 'positive' : 'negative';
     }
 
-    function calculateAllocationRatio(amount, total) {
-        const numericValues = getFiniteNumbers([amount, total]);
-        if (!numericValues) {
-            return null;
+    const allocationHelpers = {
+        ratio(amount, total) {
+            const numericValues = getFiniteNumbers([amount, total]);
+            if (!numericValues) {
+                return null;
+            }
+            const [numericAmount, numericTotal] = numericValues;
+            if (numericTotal <= 0) {
+                return null;
+            }
+            return numericAmount / numericTotal;
+        },
+        drift(currentAmount, targetPercent, total) {
+            if (targetPercent === null || targetPercent === undefined) {
+                return null;
+            }
+            const numericValues = getFiniteNumbers([currentAmount, targetPercent, total]);
+            if (!numericValues) {
+                return null;
+            }
+            const [numericCurrent, numericTarget, numericTotal] = numericValues;
+            if (numericTotal <= 0) {
+                return null;
+            }
+            const targetAmount = (numericTarget / 100) * numericTotal;
+            if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
+                return null;
+            }
+            const driftAmount = numericCurrent - targetAmount;
+            const driftPercent = driftAmount / targetAmount;
+            if (!Number.isFinite(driftPercent) || !Number.isFinite(driftAmount)) {
+                return null;
+            }
+            return { driftPercent, driftAmount };
+        },
+        percentOfType(amount, total) {
+            const ratio = this.ratio(amount, total);
+            if (ratio === null) {
+                return 0;
+            }
+            return ratio * 100;
+        },
+        goalDiff(currentAmount, targetPercent, adjustedTypeTotal) {
+            const drift = this.drift(currentAmount, targetPercent, adjustedTypeTotal);
+            if (!drift) {
+                return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
+            }
+            const diffAmount = drift.driftAmount;
+            const threshold = Number(currentAmount) * 0.05;
+            const diffClass = Math.abs(diffAmount) > threshold ? 'negative' : 'positive';
+            return {
+                diffAmount,
+                diffClass,
+                driftPercent: drift.driftPercent,
+                driftAmount: diffAmount
+            };
         }
-        const [numericAmount, numericTotal] = numericValues;
-        if (numericTotal <= 0) {
-            return null;
-        }
-        return numericAmount / numericTotal;
-    }
+    };
+
+    function calculateAllocationRatio(amount, total) { return allocationHelpers.ratio(amount, total); }
 
     function calculateAllocationDrift(currentAmount, targetPercent, total) {
-        if (targetPercent === null || targetPercent === undefined) {
-            return null;
-        }
-        const numericValues = getFiniteNumbers([currentAmount, targetPercent, total]);
-        if (!numericValues) {
-            return null;
-        }
-        const [numericCurrent, numericTarget, numericTotal] = numericValues;
-        if (numericTotal <= 0) {
-            return null;
-        }
-        const targetAmount = (numericTarget / 100) * numericTotal;
-        if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
-            return null;
-        }
-        const driftAmount = numericCurrent - targetAmount;
-        const driftPercent = driftAmount / targetAmount;
-        if (!Number.isFinite(driftPercent) || !Number.isFinite(driftAmount)) {
-            return null;
-        }
-        return { driftPercent, driftAmount };
+        return allocationHelpers.drift(currentAmount, targetPercent, total);
     }
 
-    function calculatePercentOfType(amount, total) {
-        const ratio = calculateAllocationRatio(amount, total);
-        if (ratio === null) {
-            return 0;
-        }
-        return ratio * 100;
-    }
+    function calculatePercentOfType(amount, total) { return allocationHelpers.percentOfType(amount, total); }
 
     function calculateGoalDiff(currentAmount, targetPercent, adjustedTypeTotal) {
-        const drift = calculateAllocationDrift(currentAmount, targetPercent, adjustedTypeTotal);
-        if (!drift) {
-            return { diffAmount: null, diffClass: '', driftPercent: null, driftAmount: null };
-        }
-        const diffAmount = drift.driftAmount;
-        const threshold = Number(currentAmount) * 0.05;
-        const diffClass = Math.abs(diffAmount) > threshold ? 'negative' : 'positive';
-        return {
-            diffAmount,
-            diffClass,
-            driftPercent: drift.driftPercent,
-            driftAmount: diffAmount
-        };
+        return allocationHelpers.goalDiff(currentAmount, targetPercent, adjustedTypeTotal);
     }
 
 
