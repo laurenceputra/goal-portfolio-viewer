@@ -272,6 +272,40 @@ describe('view model builders', () => {
         expect(retirement.health.score).toBeUndefined();
     });
 
+    test('should preserve duplicate target coverage issues across goal types in summary attention', () => {
+        const bucketMap = {
+            Retirement: {
+                _meta: { endingBalanceTotal: 2000 },
+                GENERAL_WEALTH_ACCUMULATION: {
+                    endingBalanceAmount: 1000,
+                    totalCumulativeReturn: 0,
+                    goals: [
+                        { goalId: 'g1', goalName: 'Core', endingBalanceAmount: 1000, totalCumulativeReturn: 0 }
+                    ]
+                },
+                CASH_MANAGEMENT: {
+                    endingBalanceAmount: 1000,
+                    totalCumulativeReturn: 0,
+                    goals: [
+                        { goalId: 'g3', goalName: 'Cash', endingBalanceAmount: 1000, totalCumulativeReturn: 0 }
+                    ]
+                }
+            }
+        };
+
+        const viewModel = buildSummaryViewModel(bucketMap, null, { g1: 80, g3: 80 }, {});
+        const firstReason = viewModel.buckets[0].goalTypes[0].targetCoverageIssue;
+        const secondReason = viewModel.buckets[0].goalTypes[1].targetCoverageIssue;
+
+        expect(firstReason).toBeTruthy();
+        expect(secondReason).toBe(firstReason);
+
+        const targetCoverageItems = viewModel.attentionItems
+            .filter(item => item.reason === firstReason);
+
+        expect(targetCoverageItems).toHaveLength(2);
+    });
+
     test('should build bucket detail view model with projections', () => {
         const bucketMap = createBucketMapFixture();
         const projected = createProjectedInvestmentFixture();

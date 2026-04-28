@@ -1701,16 +1701,18 @@ function buildNeedsAttentionItemsForSummary(summaryViewModel) {
         getReasons: bucket => {
             const goalTypeReasons = (Array.isArray(bucket.goalTypes) ? bucket.goalTypes : [])
                 .map(goalType => goalType?.targetCoverageIssue)
-                .filter(Boolean);
-            const healthReasons = Array.isArray(bucket.health?.reasons) ? bucket.health.reasons : [];
+                .filter(Boolean)
+                .map(reason => ({ reason, dedupe: false }));
+            const healthReasons = (Array.isArray(bucket.health?.reasons) ? bucket.health.reasons : [])
+                .map(reason => ({ reason, dedupe: true }));
             return [...goalTypeReasons, ...healthReasons];
         },
         shouldSkip: (reason, bucket, currentItems) => currentItems
-            .some(item => item.bucketName === bucket.bucketName && item.reason === reason),
+            .some(item => reason?.dedupe && item.bucketName === bucket.bucketName && item.reason === reason.reason),
         buildItem: (reason, bucket) => ({
             bucketName: bucket.bucketName,
-            label: `${bucket.bucketName}: ${reason}`,
-            reason
+            label: `${bucket.bucketName}: ${reason.reason}`,
+            reason: reason.reason
         })
     });
     return items.slice(0, 6);
