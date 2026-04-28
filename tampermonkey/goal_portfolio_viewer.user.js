@@ -693,7 +693,9 @@
         return allocationHelpers.drift(currentAmount, targetPercent, total);
     }
 
-    function calculatePercentOfType(amount, total) { return allocationHelpers.percentOfType(amount, total); }
+    function calculatePercentOfType(amount, total) {
+        return allocationHelpers.percentOfType(amount, total);
+    }
 
     function calculateGoalDiff(currentAmount, targetPercent, adjustedTypeTotal) {
         return allocationHelpers.goalDiff(currentAmount, targetPercent, adjustedTypeTotal);
