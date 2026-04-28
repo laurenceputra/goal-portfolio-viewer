@@ -1,6 +1,28 @@
 const { setupDom, teardownDom } = require('./helpers/domSetup');
 
 describe('FSM profit models', () => {
+    function mockStorageWithFsmConfig({ holdings, portfolios = [], assignments = {}, extra = {} }) {
+        global.GM_getValue = jest.fn((key, fallback = null) => {
+            if (key === 'api_fsm_holdings') {
+                return JSON.stringify(holdings || []);
+            }
+            if (key === 'fsm_portfolios') {
+                return JSON.stringify(portfolios);
+            }
+            if (key === 'fsm_assignment_by_code') {
+                return JSON.stringify(assignments);
+            }
+            if (Object.prototype.hasOwnProperty.call(extra, key)) {
+                return extra[key];
+            }
+            return fallback;
+        });
+    }
+
+    function getProjectionInput(overlay) {
+        return overlay.querySelector('.gpv-projected-input');
+    }
+
     beforeEach(() => {
         jest.resetModules();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
@@ -297,5 +319,191 @@ describe('FSM profit models', () => {
         overlay = document.querySelector('#gpv-overlay');
         const firstRow = overlay.querySelector('table tbody tr');
         expect(firstRow.querySelector('td[data-col="profit"]').textContent.trim()).toBe('-');
+    });
+
+    test('FSM projection input appears for a user portfolio scope only', () => {
+        const { init, showOverlay, getFsmHoldingIdentity } = require('../goal_portfolio_viewer.user.js');
+        const holdings = [
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1000 },
+            { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 1000 }
+        ];
+        const portfolioId = 'income';
+        const assignments = {
+            [getFsmHoldingIdentity(holdings[0])]: portfolioId,
+            [getFsmHoldingIdentity(holdings[1])]: portfolioId
+        };
+        mockStorageWithFsmConfig({
+            holdings,
+            portfolios: [{ id: portfolioId, name: 'Income', archived: false }],
+            assignments
+        });
+
+        init();
+        showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        expect(getProjectionInput(overlay)).toBeNull();
+
+        const portfolioCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).find(card => (
+            card.querySelector('.gpv-fsm-overview-card-title')?.textContent.trim() === 'Income'
+        ));
+        portfolioCard.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(getProjectionInput(overlay)).toBeTruthy();
+        expect(overlay.textContent).toContain('Projected Investment');
+    });
+
+    test('FSM projection input does not appear for All and Unassigned scopes', () => {
+        const { init, showOverlay, getFsmHoldingIdentity } = require('../goal_portfolio_viewer.user.js');
+        const holdings = [
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1000 },
+            { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 1000 }
+        ];
+        const portfolioId = 'income';
+        const assignments = {
+            [getFsmHoldingIdentity(holdings[0])]: portfolioId,
+            [getFsmHoldingIdentity(holdings[1])]: 'unassigned'
+        };
+        mockStorageWithFsmConfig({
+            holdings,
+            portfolios: [{ id: portfolioId, name: 'Income', archived: false }],
+            assignments
+        });
+
+        init();
+        showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        viewAllBtn.click();
+        overlay = document.querySelector('#gpv-overlay');
+        expect(getProjectionInput(overlay)).toBeNull();
+        expect(overlay.textContent).not.toContain('Set a projected investment amount to see a what-if split.');
+        expect(overlay.textContent).not.toContain('Projected Investment:');
+
+        const scopeSelect = overlay.querySelector('.gpv-fsm-filter-toolbar select.gpv-select');
+        scopeSelect.value = 'unassigned';
+        scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        overlay = document.querySelector('#gpv-overlay');
+        expect(getProjectionInput(overlay)).toBeNull();
+        expect(overlay.textContent).not.toContain('Set a projected investment amount to see a what-if split.');
+        expect(overlay.textContent).not.toContain('Projected Investment:');
+    });
+
+    test('FSM projected amount updates planning split and is isolated per portfolio', () => {
+        const { init, showOverlay, getFsmHoldingIdentity } = require('../goal_portfolio_viewer.user.js');
+        const holdings = [
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1000 },
+            { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 1000 }
+        ];
+        const p1 = 'income';
+        const p2 = 'growth';
+        const firstHoldingId = getFsmHoldingIdentity(holdings[0]);
+        const secondHoldingId = getFsmHoldingIdentity(holdings[1]);
+        mockStorageWithFsmConfig({
+            holdings,
+            portfolios: [
+                { id: p1, name: 'Income', archived: false },
+                { id: p2, name: 'Growth', archived: false }
+            ],
+            assignments: {
+                [firstHoldingId]: p1,
+                [secondHoldingId]: p1
+            },
+            extra: {
+                [`fsm_target_pct_${firstHoldingId}`]: 50,
+                [`fsm_target_pct_${secondHoldingId}`]: 50
+            }
+        });
+
+        init();
+        showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const portfolioCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).find(card => (
+            card.querySelector('.gpv-fsm-overview-card-title')?.textContent.trim() === 'Income'
+        ));
+        portfolioCard.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const projectionInput = getProjectionInput(overlay);
+        projectionInput.focus();
+        projectionInput.value = '1000';
+        projectionInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(document.activeElement).toBe(getProjectionInput(overlay));
+        expect(overlay.textContent).toContain('Projected Investment: SGD\u00A01,000.00');
+        expect(overlay.textContent).toContain('AAPL: SGD\u00A0500.00');
+        expect(overlay.textContent).toContain('BOND: SGD\u00A0500.00');
+
+        const scopeSelect = overlay.querySelector('.gpv-fsm-filter-toolbar select.gpv-select');
+        scopeSelect.value = p2;
+        scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        overlay = document.querySelector('#gpv-overlay');
+        const growthProjectionInput = getProjectionInput(overlay);
+        expect(growthProjectionInput).toBeTruthy();
+        expect(growthProjectionInput.value).toBe('');
+
+        scopeSelect.value = p1;
+        scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        overlay = document.querySelector('#gpv-overlay');
+        expect(getProjectionInput(overlay).value).toBe('1000');
+    });
+
+    test('FSM negative projected amount is rejected and not persisted', () => {
+        const { init, showOverlay, getFsmHoldingIdentity } = require('../goal_portfolio_viewer.user.js');
+        const holdings = [
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1000 },
+            { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 1000 }
+        ];
+        const portfolioId = 'income';
+        const firstHoldingId = getFsmHoldingIdentity(holdings[0]);
+        const secondHoldingId = getFsmHoldingIdentity(holdings[1]);
+        mockStorageWithFsmConfig({
+            holdings,
+            portfolios: [
+                { id: portfolioId, name: 'Income', archived: false },
+                { id: 'growth', name: 'Growth', archived: false }
+            ],
+            assignments: {
+                [firstHoldingId]: portfolioId,
+                [secondHoldingId]: portfolioId
+            },
+            extra: {
+                [`fsm_target_pct_${firstHoldingId}`]: 50,
+                [`fsm_target_pct_${secondHoldingId}`]: 50
+            }
+        });
+
+        init();
+        showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const portfolioCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).find(card => (
+            card.querySelector('.gpv-fsm-overview-card-title')?.textContent.trim() === 'Income'
+        ));
+        portfolioCard.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const projectionInput = getProjectionInput(overlay);
+        projectionInput.value = '-100';
+        projectionInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).not.toContain('Projected Investment:');
+        expect(overlay.textContent).not.toContain('AAPL: SGD\u00A0');
+        expect(overlay.textContent).not.toContain('BOND: SGD\u00A0');
+
+        const scopeSelect = overlay.querySelector('.gpv-fsm-filter-toolbar select.gpv-select');
+        scopeSelect.value = 'growth';
+        scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        scopeSelect.value = portfolioId;
+        scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(getProjectionInput(overlay).value).toBe('');
+        expect(overlay.textContent).not.toContain('Projected Investment:');
     });
 });

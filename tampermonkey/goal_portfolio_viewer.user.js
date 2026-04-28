@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.7
+// @version      2.14.8
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -6584,33 +6584,24 @@ let GoalTargetStore;
             projectionIcon.textContent = projectionCollapsed ? '▸' : '▾';
         });
 
-        const projectedInputContainer = createElement('div', 'gpv-projected-input-container');
-        const projectedLabel = createElement('label', 'gpv-projected-label');
-        appendTextSpan(projectedLabel, 'gpv-projected-icon', '💡');
-        appendTextSpan(projectedLabel, null, 'Add Projected Investment (simulation only):');
-
-        const projectedInput = createElement('input', CLASS_NAMES.projectedInput);
-        projectedInput.type = 'number';
-        projectedInput.step = '100';
-        projectedInput.value = goalTypeModel.projectedAmount > 0 ? String(goalTypeModel.projectedAmount) : '';
-        projectedInput.placeholder = 'Enter amount';
-        projectedInput.dataset.bucket = bucketViewModel.bucketName;
-        projectedInput.dataset.goalType = goalTypeModel.goalType;
-
-        projectedInputContainer.appendChild(projectedLabel);
-        projectedInputContainer.appendChild(projectedInput);
-        projectionPanel.appendChild(projectedInputContainer);
-
-        projectedInput.addEventListener('input', function() {
-            EventHandlers.handleProjectedInvestmentChange({
-                input: this,
+        const projectedInputControl = createProjectedInvestmentInput({
+            amount: goalTypeModel.projectedAmount,
+            onInput: input => {
+                EventHandlers.handleProjectedInvestmentChange({
+                    input,
+                    bucket: bucketViewModel.bucketName,
+                    goalType: goalTypeModel.goalType,
+                    typeSection,
+                    mergedInvestmentDataState,
+                    projectedInvestmentsState
+                });
+            },
+            dataAttributes: {
                 bucket: bucketViewModel.bucketName,
-                goalType: goalTypeModel.goalType,
-                typeSection,
-                mergedInvestmentDataState,
-                projectedInvestmentsState
-            });
+                goalType: goalTypeModel.goalType
+            }
         });
+        projectionPanel.appendChild(projectedInputControl.container);
 
         return {
             panel: projectionPanel,
@@ -7405,6 +7396,54 @@ let GoalTargetStore;
         handleGoalFixedToggle,
         handleProjectedInvestmentChange
     };
+
+    const FSM_PROJECTION_BUCKET = '__fsm__';
+
+    function isFsmProjectedScope(selectedScope, activePortfolioIds) {
+        if (!selectedScope || selectedScope === FSM_ALL_PORTFOLIO_ID || selectedScope === FSM_UNASSIGNED_PORTFOLIO_ID) {
+            return false;
+        }
+        return Array.isArray(activePortfolioIds) && activePortfolioIds.includes(selectedScope);
+    }
+
+    function createProjectedInvestmentInput({
+        amount = 0,
+        inputLabel = 'Add Projected Investment (simulation only):',
+        placeholder = 'Enter amount',
+        onInput = null,
+        dataAttributes = {}
+    }) {
+        const projectedInputContainer = createElement('div', 'gpv-projected-input-container');
+        const projectedLabel = createElement('label', 'gpv-projected-label');
+        appendTextSpan(projectedLabel, 'gpv-projected-icon', '💡');
+        appendTextSpan(projectedLabel, null, inputLabel);
+
+        const projectedInput = createElement('input', CLASS_NAMES.projectedInput);
+        projectedInput.type = 'number';
+        projectedInput.step = '100';
+        projectedInput.value = amount > 0 ? String(amount) : '';
+        projectedInput.placeholder = placeholder;
+        Object.keys(dataAttributes || {}).forEach(key => {
+            if (!key) {
+                return;
+            }
+            projectedInput.dataset[key] = String(dataAttributes[key]);
+        });
+
+        if (typeof onInput === 'function') {
+            projectedInput.addEventListener('input', function() {
+                onInput(this);
+            });
+        }
+
+        projectedInputContainer.appendChild(projectedLabel);
+        projectedInputContainer.appendChild(projectedInput);
+        return {
+            container: projectedInputContainer,
+            label: projectedLabel,
+            input: projectedInput
+        };
+    }
 
     // ============================================
     // UI: Sync Helper Functions
@@ -11387,7 +11426,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         };
     }
 
-    function buildFsmPlanningModel(rows, summary) {
+    function buildFsmPlanningModel(rows, summary, options = {}) {
         const safeRows = Array.isArray(rows) ? rows : [];
         const safeSummary = summary || {};
         const underweightCandidates = safeRows
@@ -11400,8 +11439,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             buys: underweightCandidates,
             sells: overweightCandidates
         });
+        const projectedAmount = toFiniteNumber(options?.projectedAmount, 0);
+        const scenarioAmount = projectedAmount > 0 ? projectedAmount : 0;
+        const scenarioSplit = calculateRecommendedContributionSplit(
+            safeRows.map(row => ({
+                goalId: row?.holdingId || row?.code,
+                goalName: row?.displayTicker || row?.name || row?.code,
+                isFixed: row?.fixed === true,
+                diffAmount: row?.driftAmount
+            })),
+            scenarioAmount
+        );
         return {
             targetCoverageLabel: safeSummary.targetCoverageLabel || null,
+            scenarioAmount,
+            scenarioSplit,
             suggestedBuys: planningRecommendations.suggestedBuys,
             suggestedSells: planningRecommendations.suggestedSells,
             triggerBuys: planningRecommendations.triggerBuys,
@@ -11775,13 +11827,27 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return wrapper;
     }
 
-    function buildFsmPlanningPanel(planning, scopeLabel) {
+    function buildFsmPlanningPanel(planning, scopeLabel, options = {}) {
         const panel = createElement('div', 'gpv-planning-panel');
         panel.appendChild(createElement('h3', 'gpv-planning-title', 'Planning'));
         appendPlanningDetails(panel, planning || {}, {
             scopeLabel,
-            coverageText: planning?.targetCoverageLabel || null
+            coverageText: planning?.targetCoverageLabel || null,
+            showScenarioPrompt: options.showScenarioPrompt === true
         });
+        return panel;
+    }
+
+    function buildFsmProjectionPanel({ selectedScopeLabel, projectedAmount, onInput }) {
+        const panel = createElement('div', 'gpv-planning-panel');
+        panel.appendChild(createElement('h3', 'gpv-planning-title', 'Projection'));
+        const inputControl = createProjectedInvestmentInput({
+            amount: projectedAmount,
+            inputLabel: `Add Projected Investment for ${selectedScopeLabel} (simulation only):`,
+            onInput
+        });
+        inputControl.input.setAttribute('aria-label', `Projected investment amount for ${selectedScopeLabel}`);
+        panel.appendChild(inputControl.container);
         return panel;
     }
 
@@ -12119,6 +12185,19 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 if (detailToolbar.searchInput && typeof detailToolbar.searchInput.focus === 'function') {
                     detailToolbar.searchInput.focus();
                 }
+            } else if (nextFocusTarget === 'projection') {
+                const projectionInput = summarySection.querySelector('.gpv-projected-input');
+                if (projectionInput && typeof projectionInput.focus === 'function') {
+                    projectionInput.focus();
+                    const inputLength = String(projectionInput.value || '').length;
+                    if (typeof projectionInput.setSelectionRange === 'function' && projectionInput.type !== 'number') {
+                        try {
+                            projectionInput.setSelectionRange(inputLength, inputLength);
+                        } catch (_error) {
+                            // Selection APIs are unsupported for number inputs in some environments.
+                        }
+                    }
+                }
             }
             nextFocusTarget = null;
         };
@@ -12183,9 +12262,17 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             });
             const showDrift = selectedScope !== FSM_ALL_PORTFOLIO_ID;
             const summary = buildFsmScopedSummary(scopedRows);
-            const displayRows = buildFsmDisplayRows(filteredRows, summary.total);
-            const planning = buildFsmPlanningModel(buildFsmDisplayRows(scopedRows, summary.total), summary);
             const selectedScopeOption = scopeOptions.find(option => option.id === selectedScope);
+            const projectedEnabled = isFsmProjectedScope(selectedScope, activePortfolioIds);
+            const projectedAmount = projectedEnabled
+                ? getProjectedInvestmentValue(state.projectedInvestments, FSM_PROJECTION_BUCKET, selectedScope)
+                : 0;
+            const adjustedTotal = summary.total + projectedAmount;
+            const displayRows = buildFsmDisplayRows(filteredRows, adjustedTotal);
+            const scopedDisplayRows = buildFsmDisplayRows(scopedRows, adjustedTotal);
+            const planning = buildFsmPlanningModel(scopedDisplayRows, summary, {
+                projectedAmount
+            });
             return {
                 rows,
                 activePortfolioIds,
@@ -12198,6 +12285,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 showDrift,
                 summary,
                 displayRows,
+                projectedEnabled,
+                projectedAmount,
                 planning,
                 selectedScopeLabel: selectedScopeOption?.label || 'All',
                 overviewModel: buildFsmPortfolioOverviewModel(rows, activePortfolios())
@@ -12306,13 +12395,45 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 showDrift: viewState.showDrift,
                 showProfit: true
             }));
+            if (viewState.projectedEnabled) {
+                summarySection.appendChild(buildFsmProjectionPanel({
+                    selectedScopeLabel: viewState.selectedScopeLabel,
+                    projectedAmount: viewState.projectedAmount,
+                    onInput: input => {
+                        const value = input.value;
+                        if (value === '') {
+                            clearProjectedInvestment(state.projectedInvestments, FSM_PROJECTION_BUCKET, selectedScope);
+                            nextFocusTarget = 'projection';
+                            rerender();
+                            return;
+                        }
+                        const amount = parseFloat(value);
+                        if (!Number.isFinite(amount) || amount < 0) {
+                            flashInputBorder(input, 'error');
+                            return;
+                        }
+                        if (amount === 0) {
+                            clearProjectedInvestment(state.projectedInvestments, FSM_PROJECTION_BUCKET, selectedScope);
+                            nextFocusTarget = 'projection';
+                            rerender();
+                            return;
+                        }
+                        setProjectedInvestment(state.projectedInvestments, FSM_PROJECTION_BUCKET, selectedScope, amount);
+                        flashInputBorder(input, 'success');
+                        nextFocusTarget = 'projection';
+                        rerender();
+                    }
+                }));
+            }
             detailToolbar.setState({
                 scopeOptions: viewState.scopeOptions,
                 selectedScope,
                 filterTerm
             });
 
-            summarySection.appendChild(buildFsmPlanningPanel(viewState.planning, viewState.selectedScopeLabel));
+            summarySection.appendChild(buildFsmPlanningPanel(viewState.planning, viewState.selectedScopeLabel, {
+                showScenarioPrompt: viewState.projectedEnabled
+            }));
 
             bodySection.appendChild(buildFsmBulkRow({
                 selectAllFiltered: viewState.selectAllFiltered,
