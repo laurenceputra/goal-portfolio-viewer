@@ -23,16 +23,13 @@ describe('UI renderers', () => {
 
         class FakeXHR {
             constructor() {
-                this._headers = {};
                 this.responseText = '{}';
             }
             open(method, url) {
                 this._url = url;
                 return true;
             }
-            setRequestHeader(header, value) {
-                this._headers[header] = value;
-            }
+            setRequestHeader() {}
             addEventListener() {}
             send() {}
         }

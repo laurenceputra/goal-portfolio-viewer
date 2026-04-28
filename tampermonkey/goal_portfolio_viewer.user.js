@@ -816,14 +816,7 @@
     }
 
     function getGoalRawEndingBalanceAmount(goal) {
-        const rawEndingBalanceAmount = goal?.rawEndingBalanceAmount;
-        if (rawEndingBalanceAmount !== null && rawEndingBalanceAmount !== undefined) {
-            return rawEndingBalanceAmount;
-        }
-        const endingBalanceAmount = goal?.endingBalanceAmount;
-        return endingBalanceAmount === null || endingBalanceAmount === undefined
-            ? undefined
-            : endingBalanceAmount;
+        return goal?.rawEndingBalanceAmount ?? goal?.endingBalanceAmount;
     }
 
     function buildGoalBalancesTsvRow(goals) {
@@ -5078,7 +5071,6 @@ let GoalTargetStore;
     const originalFetch = window.fetch;
     const originalXHROpen = XMLHttpRequest.prototype.open;
     const originalXHRSend = XMLHttpRequest.prototype.send;
-    const originalXHRSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
 
     // Fetch interception
     window.fetch = async function(...args) {
@@ -5093,15 +5085,7 @@ let GoalTargetStore;
     // XMLHttpRequest interception
     XMLHttpRequest.prototype.open = function(method, url, ...rest) {
         this._url = url;
-        this._headers = {};
         return originalXHROpen.apply(this, [method, url, ...rest]);
-    };
-
-    XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
-        if (this._headers) {
-            this._headers[header] = value;
-        }
-        return originalXHRSetRequestHeader.apply(this, [header, value]);
     };
 
     XMLHttpRequest.prototype.send = function(...args) {
@@ -5302,13 +5286,6 @@ let GoalTargetStore;
         return (httpOnlyCookie || cookies[0])?.value || null;
     }
 
-    function findCookieValue(cookies, name) {
-        if (!Array.isArray(cookies)) {
-            return null;
-        }
-        return cookies.find(cookie => cookie?.name === name)?.value || null;
-    }
-
     function isEndowusAuthContext() {
         const hostname = (window?.location?.hostname || '').toLowerCase();
         return hostname === 'endowus.com' || hostname.endsWith('.endowus.com');
@@ -5380,16 +5357,14 @@ let GoalTargetStore;
         }
         dumpAvailableCookies();
         const cookieNames = ['webapp-sg-access-token', 'webapp-sg-accessToken'];
-        const queries = [
-            { domain: '.endowus.com', path: '/', name: cookieNames[0] },
-            { domain: '.endowus.com', path: '/', name: cookieNames[1] },
-            { domain: 'app.sg.endowus.com', path: '/', name: cookieNames[0] },
-            { domain: 'app.sg.endowus.com', path: '/', name: cookieNames[1] }
-        ];
+        const domains = ['.endowus.com', 'app.sg.endowus.com'];
+        const queries = domains.flatMap(domain => (
+            cookieNames.map(name => ({ domain, path: '/', name }))
+        ));
         const queryPromises = queries.map(query => listCookieByQuery(query));
         return Promise.all(queryPromises).then(cookieResults => {
             for (const cookies of cookieResults) {
-                const token = selectAuthCookieToken(cookies) || findCookieValue(cookies, cookieNames[1]);
+                const token = selectAuthCookieToken(cookies);
                 if (token) {
                     return token;
                 }
@@ -13243,8 +13218,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             showOverlay,
             startUrlMonitoring,
             init,
-            copyTextToClipboard,
-            setBalanceCopyFeedback,
             buildBalanceCopyControls,
             isEndowusAuthContext,
             listCookieByQuery,
@@ -13296,8 +13269,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             buildDiffCellData,
             sortGoalsByName,
             buildGoalBalancesTsvRow,
-            copyTextToClipboard: testingHooks?.copyTextToClipboard,
-            setBalanceCopyFeedback: testingHooks?.setBalanceCopyFeedback,
             buildBalanceCopyControls: testingHooks?.buildBalanceCopyControls,
             resolveGoalTypeActionTarget,
             buildSummaryViewModel,
