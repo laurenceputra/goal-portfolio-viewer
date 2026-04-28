@@ -12,6 +12,7 @@ const {
     getProjectedInvestmentValue,
     buildAllocationDriftModel,
     buildDiffCellData,
+    buildGoalBalancesTsvRow,
     resolveGoalTypeActionTarget,
     buildSummaryViewModel,
     buildBucketDetailViewModel,
@@ -183,6 +184,38 @@ describe('projected and goal helpers', () => {
         expect(result.suggestedBuys.map(item => item.goalName)).toEqual(['Buy A']);
         expect(result.triggerBuys.map(item => item.goalName)).toEqual(['Buy A', 'Buy B']);
         expect(result.triggerBuys.map(item => item.recommendedAmount)).toEqual([10000, 800]);
+    });
+});
+
+describe('balance row copy helpers', () => {
+    test('should build a tab-separated raw balances row', () => {
+        const row = buildGoalBalancesTsvRow([
+            { endingBalanceAmount: 1500.125 },
+            { endingBalanceAmount: '1000.5000' },
+            { endingBalanceAmount: 0 }
+        ]);
+        expect(row).toBe('1500.125\t1000.5000\t0');
+    });
+
+    test('should preserve raw ending balance values for copy with fallback', () => {
+        const goalsWithRaw = [
+            { goalId: 'g1', endingBalanceAmount: 2, rawEndingBalanceAmount: '1000.5000' },
+            { goalId: 'g2', endingBalanceAmount: 10, rawEndingBalanceAmount: '2.5000' },
+            { goalId: 'g3', endingBalanceAmount: 3 },
+            { goalId: 'g4', goalName: 'Missing' }
+        ];
+
+        expect(buildGoalBalancesTsvRow(goalsWithRaw)).toBe('1000.5000\t2.5000\t3\t');
+    });
+
+    test('should treat null raw and ending balances as missing for copy', () => {
+        const goalsWithNullBalances = [
+            { goalId: 'g1', endingBalanceAmount: 1 },
+            { goalId: 'g2', endingBalanceAmount: 2.5 },
+            { goalId: 'g3', rawEndingBalanceAmount: null, endingBalanceAmount: null }
+        ];
+
+        expect(buildGoalBalancesTsvRow(goalsWithNullBalances)).toBe('1\t2.5\t');
     });
 });
 

@@ -23,16 +23,13 @@ describe('UI renderers', () => {
 
         class FakeXHR {
             constructor() {
-                this._headers = {};
                 this.responseText = '{}';
             }
             open(method, url) {
                 this._url = url;
                 return true;
             }
-            setRequestHeader(header, value) {
-                this._headers[header] = value;
-            }
+            setRequestHeader() {}
             addEventListener() {}
             send() {}
         }
@@ -177,5 +174,42 @@ describe('UI renderers', () => {
         expect(values[0].classList.contains('negative')).toBe(false);
         expect(values[2].textContent).toContain('0.00%');
         expect(values[2].classList.contains('positive')).toBe(true);
+    });
+
+    test('balance copy controls copy TSV and announce success', async () => {
+        const { buildBalanceCopyControls } = exportsModule;
+        expect(typeof buildBalanceCopyControls).toBe('function');
+
+        const writeText = jest.fn().mockResolvedValue(undefined);
+        const previousNavigator = global.navigator;
+        global.navigator = { clipboard: { writeText } };
+
+        try {
+            const controls = buildBalanceCopyControls({
+                goals: [
+                    { goalId: 'goal-a', goalName: 'Goal A', endingBalanceAmount: 1, rawEndingBalanceAmount: '1.1000' },
+                    { goalId: 'goal-b', goalName: 'Goal B', endingBalanceAmount: 2, rawEndingBalanceAmount: '2.5000' }
+                ]
+            });
+            document.body.appendChild(controls);
+
+            const copyButton = controls.querySelector('.gpv-balance-copy-button');
+            const status = controls.querySelector('.gpv-balance-copy-status');
+
+            copyButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(writeText).toHaveBeenCalledWith('1.1000\t2.5000');
+            expect(status.textContent).toBe('Copied 2 balances');
+            expect(status.getAttribute('role')).toBe('status');
+            expect(status.getAttribute('aria-live')).toBe('polite');
+        } finally {
+            if (typeof previousNavigator === 'undefined') {
+                delete global.navigator;
+            } else {
+                global.navigator = previousNavigator;
+            }
+        }
     });
 });

@@ -29,7 +29,6 @@ describe('API interception', () => {
 
         class FakeXHR {
             constructor() {
-                this._headers = {};
                 this._listeners = {};
                 this.responseText = '{}';
             }
@@ -37,9 +36,7 @@ describe('API interception', () => {
                 this._url = url;
                 return true;
             }
-            setRequestHeader(header, value) {
-                this._headers[header] = value;
-            }
+            setRequestHeader() {}
             addEventListener(eventName, callback) {
                 if (!this._listeners[eventName]) {
                     this._listeners[eventName] = [];

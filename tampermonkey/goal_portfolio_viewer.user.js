@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.6
+// @version      2.14.7
 // @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -11,6 +11,7 @@
 // @grant        GM_deleteValue
 // @grant        GM_listValues
 // @grant        GM_xmlhttpRequest
+// @grant        GM_cookie
 // @connect      goal-portfolio-sync.laurenceputra.workers.dev
 // @connect      localhost
 // @connect      127.0.0.1
@@ -814,8 +815,23 @@
         });
     }
 
+    function getGoalRawEndingBalanceAmount(goal) {
+        return goal?.rawEndingBalanceAmount ?? goal?.endingBalanceAmount;
+    }
+
+    function buildGoalBalancesTsvRow(goals) {
+        const safeGoals = Array.isArray(goals) ? goals : [];
+        return safeGoals.map(goal => {
+            const rawEndingBalanceAmount = getGoalRawEndingBalanceAmount(goal);
+            return rawEndingBalanceAmount === null || rawEndingBalanceAmount === undefined
+                ? ''
+                : String(rawEndingBalanceAmount);
+        }).join('\t');
+    }
+
     function buildGoalModel(goal, totalTypeAmount, adjustedTotal, goalTargets, goalFixed) {
         const endingBalanceAmount = goal.endingBalanceAmount || 0;
+        const rawEndingBalanceAmount = getGoalRawEndingBalanceAmount(goal);
         const percentOfType = calculatePercentOfType(
             endingBalanceAmount,
             totalTypeAmount
@@ -836,6 +852,7 @@
             goalId: goal.goalId,
             goalName: goal.goalName,
             endingBalanceAmount,
+            rawEndingBalanceAmount,
             percentOfType,
             isFixed,
             targetPercent,
@@ -1806,13 +1823,25 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             const goalBucket = configuredBucket || utils.extractBucketName(goalName);
             // Note: investible API `totalInvestmentAmount` is misnamed and represents ending balance.
             // We map it internally to endingBalanceAmount to avoid confusing it with principal invested.
+            const performanceEndingBalanceRaw = resolveRawAmountValue(perf.totalInvestmentValue);
             const performanceEndingBalance = extractAmount(perf.totalInvestmentValue);
             const pendingProcessingAmount = extractAmount(perf.pendingProcessingAmount);
+            const investEndingBalanceRaw = resolveRawAmountValue(invest.totalInvestmentAmount);
+            const investEndingBalance = extractAmount(invest.totalInvestmentAmount);
+            const usingPerformanceEndingBalance = performanceEndingBalance !== null;
             let endingBalanceAmount = performanceEndingBalance !== null
                 ? performanceEndingBalance
-                : extractAmount(invest.totalInvestmentAmount);
+                : investEndingBalance;
+            let rawEndingBalanceAmount = usingPerformanceEndingBalance
+                ? performanceEndingBalanceRaw
+                : investEndingBalanceRaw;
             if (Number.isFinite(endingBalanceAmount) && Number.isFinite(pendingProcessingAmount)) {
                 endingBalanceAmount += pendingProcessingAmount;
+                const shouldUseComputedRawEndingBalance = pendingProcessingAmount !== 0
+                    || (rawEndingBalanceAmount === null && Number.isFinite(endingBalanceAmount));
+                if (shouldUseComputedRawEndingBalance) {
+                    rawEndingBalanceAmount = endingBalanceAmount;
+                }
             }
             const cumulativeReturn = extractAmount(perf.totalCumulativeReturn);
             const safeEndingBalanceAmount = Number.isFinite(endingBalanceAmount) ? endingBalanceAmount : 0;
@@ -1826,6 +1855,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     UNKNOWN_GOAL_TYPE
                 ),
                 endingBalanceAmount: Number.isFinite(endingBalanceAmount) ? endingBalanceAmount : null,
+                rawEndingBalanceAmount,
                 totalCumulativeReturn: Number.isFinite(cumulativeReturn) ? cumulativeReturn : null,
                 simpleRateOfReturnPercent: Number.isFinite(perf.simpleRateOfReturnPercent)
                     ? perf.simpleRateOfReturnPercent
@@ -2219,6 +2249,26 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             if (typeof displayAmount === 'number' && Number.isFinite(displayAmount)) {
                 return displayAmount;
             }
+        }
+        return null;
+    }
+
+    function resolveRawAmountValue(value) {
+        if (typeof value === 'number') {
+            return Number.isFinite(value) ? value : null;
+        }
+        if (typeof value === 'string') {
+            if (value.trim() === '') {
+                return null;
+            }
+            return Number.isFinite(Number(value)) ? value : null;
+        }
+        if (value && typeof value === 'object') {
+            const directAmount = resolveRawAmountValue(value.amount);
+            if (directAmount !== null) {
+                return directAmount;
+            }
+            return resolveRawAmountValue(value.display?.amount);
         }
         return null;
     }
@@ -4816,6 +4866,7 @@ let GoalTargetStore;
     const PERFORMANCE_CACHE_REFRESH_MIN_AGE_MS = 24 * 60 * 60 * 1000;
     const PERFORMANCE_CHART_WINDOW = PERFORMANCE_WINDOWS.oneYear.key;
     const PERFORMANCE_REQUEST_TIMEOUT_MS = 10000;
+    const GM_COOKIE_LIST_TIMEOUT_MS = 250;
 
     const state = {
         apiData: {
@@ -4832,7 +4883,7 @@ let GoalTargetStore;
             })
         },
         auth: {
-            requestHeaders: null
+            gmCookieDumped: false
         },
         ui: {
             portfolioButton: null,
@@ -5020,11 +5071,9 @@ let GoalTargetStore;
     const originalFetch = window.fetch;
     const originalXHROpen = XMLHttpRequest.prototype.open;
     const originalXHRSend = XMLHttpRequest.prototype.send;
-    const originalXHRSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
 
     // Fetch interception
     window.fetch = async function(...args) {
-        extractAuthHeaders(args[0], args[1]);
         const response = await originalFetch.apply(this, args);
         const url = args[0];
         if (response?.ok) {
@@ -5036,20 +5085,11 @@ let GoalTargetStore;
     // XMLHttpRequest interception
     XMLHttpRequest.prototype.open = function(method, url, ...rest) {
         this._url = url;
-        this._headers = {};
         return originalXHROpen.apply(this, [method, url, ...rest]);
-    };
-
-    XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
-        if (this._headers) {
-            this._headers[header] = value;
-        }
-        return originalXHRSetRequestHeader.apply(this, [header, value]);
     };
 
     XMLHttpRequest.prototype.send = function(...args) {
         const url = this._url;
-        extractAuthHeaders(url, { headers: this._headers });
         
         if (url && typeof url === 'string') {
             this.addEventListener('load', function() {
@@ -5238,59 +5278,117 @@ let GoalTargetStore;
     // Performance Data Fetching
     // ============================================
 
-    function getHeaderValue(headers, key) {
-        if (!headers) {
+    function selectAuthCookieToken(cookies) {
+        if (!Array.isArray(cookies) || !cookies.length) {
             return null;
         }
-        if (headers instanceof Headers) {
-            return headers.get(key);
-        }
-        if (typeof headers === 'object') {
-            return headers[key] || headers[key.toLowerCase()] || headers[key.toUpperCase()] || null;
-        }
-        return null;
+        const httpOnlyCookie = cookies.find(cookie => cookie?.httpOnly);
+        return (httpOnlyCookie || cookies[0])?.value || null;
     }
 
-    function extractAuthHeaders(requestUrl, requestInit) {
-        const url = typeof requestUrl === 'string' ? requestUrl : requestUrl?.url;
-        if (!url || !url.includes('endowus.com')) {
-            if (DEBUG_AUTH && url) {
-                logAuthDebug('[Goal Portfolio Viewer][DEBUG_AUTH] Skipping header extraction for non-endowus.com URL:', url);
+    function isEndowusAuthContext() {
+        const hostname = (window?.location?.hostname || '').toLowerCase();
+        return hostname === 'endowus.com' || hostname.endsWith('.endowus.com');
+    }
+
+    function listCookieByQuery(query) {
+        return new Promise(resolve => {
+            let settled = false;
+            let timeoutId = setTimeout(() => {
+                settle([]);
+            }, GM_COOKIE_LIST_TIMEOUT_MS);
+
+            const settle = cookies => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = null;
+                }
+                resolve(Array.isArray(cookies) ? cookies : []);
+            };
+
+            if (typeof GM_cookie === 'undefined' || typeof GM_cookie.list !== 'function') {
+                settle([]);
+                return;
             }
+
+            try {
+                const maybePromise = GM_cookie.list(query, cookies => settle(cookies));
+                if (maybePromise && typeof maybePromise.then === 'function') {
+                    maybePromise
+                        .then(cookies => settle(cookies))
+                        .catch(() => settle([]));
+                }
+            } catch (_error) {
+                settle([]);
+            }
+        });
+    }
+
+    function dumpAvailableCookies() {
+        if (state.auth.gmCookieDumped || !DEBUG_AUTH) {
             return;
         }
-        const headers = requestInit?.headers || requestUrl?.headers || null;
-        const authorization = getHeaderValue(headers, 'authorization');
-        const clientId = getHeaderValue(headers, 'client-id');
-        const deviceId = getHeaderValue(headers, 'device-id');
-
-        if (authorization || clientId || deviceId) {
-            if (!state.auth.requestHeaders || typeof state.auth.requestHeaders !== 'object') {
-                state.auth.requestHeaders = {};
-            }
-            const nextHeaders = {
-                authorization,
-                'client-id': clientId,
-                'device-id': deviceId
-            };
-            Object.entries(nextHeaders).forEach(([key, value]) => {
-                if (value) {
-                    state.auth.requestHeaders[key] = value;
-                } else if (DEBUG_AUTH && value === '') {
-                    logAuthDebug('[Goal Portfolio Viewer][DEBUG_AUTH] Skipped empty auth header:', { key });
-                }
+        state.auth.gmCookieDumped = true;
+        listCookieByQuery({})
+            .then(cookies => {
+                // Debug-only: log a safe summary of available GM_cookie entries
+                const summary = cookies.map(cookie => ({
+                    domain: cookie.domain,
+                    path: cookie.path,
+                    name: cookie.name
+                }));
+                logAuthDebug('[Goal Portfolio Viewer][DEBUG_AUTH] Available GM_cookie entries:', summary);
+            })
+            .catch(error => {
+                console.error('[Goal Portfolio Viewer][DEBUG_AUTH] Failed to list GM_cookie entries:', error);
             });
-        }
     }
 
-    function buildPerformanceRequestHeaders() {
-        const headers = new Headers();
-        if (state.auth.requestHeaders) {
-            Object.entries(state.auth.requestHeaders).forEach(([key, value]) => {
-                if (value) {
-                    headers.set(key, value);
+    function getAuthTokenFromGMCookie() {
+        if (!isEndowusAuthContext()) {
+            return Promise.resolve(null);
+        }
+        if (typeof GM_cookie === 'undefined' || typeof GM_cookie.list !== 'function') {
+            return Promise.resolve(null);
+        }
+        dumpAvailableCookies();
+        const cookieNames = ['webapp-sg-access-token', 'webapp-sg-accessToken'];
+        const domains = ['.endowus.com', 'app.sg.endowus.com'];
+        const queries = domains.flatMap(domain => (
+            cookieNames.map(name => ({ domain, path: '/', name }))
+        ));
+        const queryPromises = queries.map(query => listCookieByQuery(query));
+        return Promise.all(queryPromises).then(cookieResults => {
+            for (const cookies of cookieResults) {
+                const token = selectAuthCookieToken(cookies);
+                if (token) {
+                    return token;
                 }
-            });
+            }
+            return null;
+        });
+    }
+
+    function buildAuthorizationValue(token) {
+        if (!token || typeof token !== 'string') {
+            return null;
+        }
+        if (token.toLowerCase().startsWith('bearer ')) {
+            return token;
+        }
+        return `Bearer ${token}`;
+    }
+
+    async function buildPerformanceRequestHeaders() {
+        const headers = new Headers();
+        const token = await getAuthTokenFromGMCookie();
+        const authorization = buildAuthorizationValue(token);
+        if (authorization) {
+            headers.set('authorization', authorization);
         }
         return headers;
     }
@@ -6811,6 +6909,75 @@ let GoalTargetStore;
 
 
 
+    async function copyTextToClipboard(text) {
+        const clipboard = typeof globalThis !== 'undefined' ? globalThis.navigator?.clipboard : null;
+        if (clipboard && typeof clipboard.writeText === 'function') {
+            try {
+                await clipboard.writeText(text);
+                return;
+            } catch (_error) {
+                // Fall back to execCommand copy below.
+            }
+        }
+        if (typeof document === 'undefined' || !document.body || typeof document.execCommand !== 'function') {
+            throw new Error('Clipboard unavailable');
+        }
+        const textarea = createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', 'true');
+        textarea.style.position = 'fixed';
+        textarea.style.top = '-9999px';
+        textarea.style.left = '-9999px';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        textarea.setSelectionRange(0, textarea.value.length);
+        const copied = document.execCommand('copy');
+        textarea.remove();
+        if (!copied) {
+            throw new Error('Copy command failed');
+        }
+    }
+
+    function setBalanceCopyFeedback(statusElement, message, type = 'info') {
+        if (!statusElement) {
+            return;
+        }
+        statusElement.textContent = message || '';
+        const isError = type === 'error';
+        statusElement.setAttribute('role', isError ? 'alert' : 'status');
+        statusElement.setAttribute('aria-live', isError ? 'assertive' : 'polite');
+    }
+
+    function buildBalanceCopyControls(goalTypeModel) {
+        const controls = createElement('div', 'gpv-balance-copy-controls');
+
+        const copyButton = createElement('button', 'gpv-section-toggle gpv-balance-copy-button', 'Copy balances row');
+        copyButton.type = 'button';
+
+        const status = createElement('div', 'gpv-balance-copy-status');
+        status.setAttribute('role', 'status');
+        status.setAttribute('aria-live', 'polite');
+
+        copyButton.addEventListener('click', async () => {
+            const matchingGoals = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
+            if (matchingGoals.length === 0) {
+                setBalanceCopyFeedback(status, 'No goals to copy');
+                return;
+            }
+            try {
+                await copyTextToClipboard(buildGoalBalancesTsvRow(matchingGoals));
+                setBalanceCopyFeedback(status, `Copied ${matchingGoals.length} balances`);
+            } catch (_error) {
+                setBalanceCopyFeedback(status, 'Copy failed', 'error');
+            }
+        });
+
+        controls.appendChild(copyButton);
+        controls.appendChild(status);
+        return controls;
+    }
+
     function renderBucketView({
         contentDiv,
         bucketViewModel,
@@ -6853,6 +7020,7 @@ let GoalTargetStore;
             typeHeader.appendChild(typeSummary);
 
             const typeActions = createElement('div', 'gpv-type-actions');
+            typeActions.appendChild(buildBalanceCopyControls(goalTypeModel));
             typeHeader.appendChild(typeActions);
             typeSection.appendChild(typeHeader);
 
@@ -9330,6 +9498,24 @@ syncUi.update = function updateSyncUI() {
                 gap: 8px;
                 margin-top: 8px;
                 flex-wrap: wrap;
+            }
+
+            .gpv-balance-copy-controls {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+            }
+
+            .gpv-balance-copy-button {
+                white-space: nowrap;
+            }
+
+            .gpv-balance-copy-status {
+                font-size: 12px;
+                font-weight: 600;
+                color: #4b5563;
+                min-height: 18px;
             }
 
             .gpv-section-toggle {
@@ -13031,7 +13217,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             injectStyles,
             showOverlay,
             startUrlMonitoring,
-            init
+            init,
+            buildBalanceCopyControls,
+            isEndowusAuthContext,
+            listCookieByQuery,
+            buildPerformanceRequestHeaders
         };
     }
 
@@ -13078,6 +13268,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             getProjectedInvestmentValue,
             buildDiffCellData,
             sortGoalsByName,
+            buildGoalBalancesTsvRow,
+            buildBalanceCopyControls: testingHooks?.buildBalanceCopyControls,
             resolveGoalTypeActionTarget,
             buildSummaryViewModel,
             buildBucketDetailViewModel,
@@ -13139,7 +13331,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             injectStyles: testingHooks?.injectStyles,
             showOverlay: testingHooks?.showOverlay,
             startUrlMonitoring: testingHooks?.startUrlMonitoring,
-            init: testingHooks?.init
+            init: testingHooks?.init,
+            isEndowusAuthContext: testingHooks?.isEndowusAuthContext,
+            listCookieByQuery: testingHooks?.listCookieByQuery,
+            buildPerformanceRequestHeaders: testingHooks?.buildPerformanceRequestHeaders
         };
 
         if (chartHelpers && chartHelpers.buildPerformanceWindowGrid) {

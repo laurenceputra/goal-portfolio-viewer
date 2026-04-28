@@ -1714,6 +1714,78 @@ describe('buildMergedInvestmentData', () => {
         expect(result.Retirement.GENERAL_WEALTH_ACCUMULATION.goals[0].endingBalanceAmount).toBeCloseTo(124038.45, 2);
     });
 
+    test('should preserve raw source value when no pending amount is added', () => {
+        const performanceData = [{ goalId: 'goal1' }];
+        const investibleData = [
+            {
+                goalId: 'goal1',
+                goalName: 'Retirement - Portfolio',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { amount: '1000.5000' }
+            }
+        ];
+        const summaryData = [{ goalId: 'goal1' }];
+
+        const result = buildMergedInvestmentData(performanceData, investibleData, summaryData);
+        const goal = result.Retirement.GENERAL_WEALTH_ACCUMULATION.goals[0];
+
+        expect(goal.endingBalanceAmount).toBeNull();
+        expect(goal.rawEndingBalanceAmount).toBe('1000.5000');
+    });
+
+    test('should use computed ending balance as raw value when pending amount is added', () => {
+        const performanceData = [
+            {
+                goalId: 'goal1',
+                totalInvestmentValue: { amount: 1200.1 },
+                pendingProcessingAmount: { amount: 0.2 }
+            }
+        ];
+        const investibleData = [
+            {
+                goalId: 'goal1',
+                goalName: 'Retirement - Portfolio',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { amount: 9999 }
+            }
+        ];
+        const summaryData = [{ goalId: 'goal1' }];
+
+        const result = buildMergedInvestmentData(performanceData, investibleData, summaryData);
+        const goal = result.Retirement.GENERAL_WEALTH_ACCUMULATION.goals[0];
+
+        expect(goal.endingBalanceAmount).toBeCloseTo(1200.3, 6);
+        expect(goal.rawEndingBalanceAmount).toBeCloseTo(1200.3, 6);
+    });
+
+    test('should preserve source raw string when pending processing amount is zero', () => {
+        const performanceData = [
+            {
+                goalId: 'goal1',
+                totalInvestmentValue: {
+                    amount: '1000.5000',
+                    display: { amount: 1000.5 }
+                },
+                pendingProcessingAmount: { amount: 0 }
+            }
+        ];
+        const investibleData = [
+            {
+                goalId: 'goal1',
+                goalName: 'Retirement - Portfolio',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { amount: 9999 }
+            }
+        ];
+        const summaryData = [{ goalId: 'goal1' }];
+
+        const result = buildMergedInvestmentData(performanceData, investibleData, summaryData);
+        const goal = result.Retirement.GENERAL_WEALTH_ACCUMULATION.goals[0];
+
+        expect(goal.endingBalanceAmount).toBeCloseTo(1000.5, 6);
+        expect(goal.rawEndingBalanceAmount).toBe('1000.5000');
+    });
+
     test('should handle multiple buckets and goal types', () => {
         const performanceData = [
             { goalId: 'goal1', totalCumulativeReturn: { amount: 100 } },
