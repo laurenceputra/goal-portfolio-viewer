@@ -439,22 +439,26 @@
         return numericProfitValue / costBasis;
     }
 
+    function formatTwoPartDisplay(primaryDisplay, secondaryDisplay) {
+        if (primaryDisplay === '-' && secondaryDisplay === '-') {
+            return '-';
+        }
+        if (primaryDisplay === '-') {
+            return secondaryDisplay;
+        }
+        if (secondaryDisplay === '-') {
+            return primaryDisplay;
+        }
+        return `${primaryDisplay} (${secondaryDisplay})`;
+    }
+
     function formatProfitDisplay(profitValue, profitPercent) {
         const valueDisplay = formatSignedMoney(profitValue);
         const percentDisplay = formatPercent(profitPercent, {
             multiplier: 100,
             showSign: true
         });
-        if (valueDisplay === '-' && percentDisplay === '-') {
-            return '-';
-        }
-        if (valueDisplay === '-') {
-            return percentDisplay;
-        }
-        if (percentDisplay === '-') {
-            return valueDisplay;
-        }
-        return `${valueDisplay} (${percentDisplay})`;
+        return formatTwoPartDisplay(valueDisplay, percentDisplay);
     }
 
     function normalizeMoneyDisplaySpacing(value) {
@@ -470,16 +474,7 @@
             showSign: true
         });
         const valueDisplay = normalizeMoneyDisplaySpacing(formatSignedMoney(profitValue));
-        if (percentDisplay === '-' && valueDisplay === '-') {
-            return '-';
-        }
-        if (percentDisplay === '-') {
-            return valueDisplay;
-        }
-        if (valueDisplay === '-') {
-            return percentDisplay;
-        }
-        return `${percentDisplay} (${valueDisplay})`;
+        return formatTwoPartDisplay(percentDisplay, valueDisplay);
     }
 
     function getFsmProfitClass(profitPercent) {
@@ -520,7 +515,7 @@
         if (percentDisplay === '-' || amountDisplay === '-') {
             return '-';
         }
-        return `${percentDisplay} (${amountDisplay})`;
+        return formatTwoPartDisplay(percentDisplay, amountDisplay);
     }
 
     function getFiniteNumbers(values) {
@@ -1675,33 +1670,48 @@ function buildBucketPlanningModel(goalTypeModels) {
     };
 }
 
+function collectAttentionItemsFromReasons(parents, options = {}) {
+    const safeParents = Array.isArray(parents) ? parents : [];
+    const getReasons = typeof options.getReasons === 'function' ? options.getReasons : () => [];
+    const buildItem = typeof options.buildItem === 'function' ? options.buildItem : () => null;
+    const shouldSkip = typeof options.shouldSkip === 'function' ? options.shouldSkip : () => false;
+    const items = [];
+
+    safeParents.forEach(parent => {
+        const reasons = getReasons(parent);
+        reasons.forEach(reason => {
+            if (shouldSkip(reason, parent, items)) {
+                return;
+            }
+            const item = buildItem(reason, parent, items);
+            if (item) {
+                items.push(item);
+            }
+        });
+    });
+
+    return items;
+}
+
 function buildNeedsAttentionItemsForSummary(summaryViewModel) {
     if (!summaryViewModel || !Array.isArray(summaryViewModel.buckets)) {
         return [];
     }
-    const items = [];
-    summaryViewModel.buckets.forEach(bucket => {
-        const goalTypes = Array.isArray(bucket.goalTypes) ? bucket.goalTypes : [];
-        goalTypes.forEach(goalType => {
-            if (goalType.targetCoverageIssue) {
-                items.push({
-                    bucketName: bucket.bucketName,
-                    label: `${bucket.bucketName}: ${goalType.targetCoverageIssue}`,
-                    reason: goalType.targetCoverageIssue
-                });
-            }
-        });
-        const healthReasons = Array.isArray(bucket.health?.reasons) ? bucket.health.reasons : [];
-        healthReasons.forEach(reason => {
-            if (items.some(item => item.bucketName === bucket.bucketName && item.reason === reason)) {
-                return;
-            }
-            items.push({
-                bucketName: bucket.bucketName,
-                label: `${bucket.bucketName}: ${reason}`,
-                reason
-            });
-        });
+    const items = collectAttentionItemsFromReasons(summaryViewModel.buckets, {
+        getReasons: bucket => {
+            const goalTypeReasons = (Array.isArray(bucket.goalTypes) ? bucket.goalTypes : [])
+                .map(goalType => goalType?.targetCoverageIssue)
+                .filter(Boolean);
+            const healthReasons = Array.isArray(bucket.health?.reasons) ? bucket.health.reasons : [];
+            return [...goalTypeReasons, ...healthReasons];
+        },
+        shouldSkip: (reason, bucket, currentItems) => currentItems
+            .some(item => item.bucketName === bucket.bucketName && item.reason === reason),
+        buildItem: (reason, bucket) => ({
+            bucketName: bucket.bucketName,
+            label: `${bucket.bucketName}: ${reason}`,
+            reason
+        })
     });
     return items.slice(0, 6);
 }
@@ -1710,16 +1720,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     if (!overviewModel || !Array.isArray(overviewModel.cards)) {
         return [];
     }
-    const items = [];
-    overviewModel.cards.forEach(card => {
-        const reasons = Array.isArray(card.health?.reasons) ? card.health.reasons : [];
-        reasons.forEach(reason => {
-            items.push({
-                scopeId: card.id,
-                label: `${card.label}: ${reason}`,
-                reason
-            });
-        });
+    const items = collectAttentionItemsFromReasons(overviewModel.cards, {
+        getReasons: card => (Array.isArray(card.health?.reasons) ? card.health.reasons : []),
+        buildItem: (reason, card) => ({
+            scopeId: card.id,
+            label: `${card.label}: ${reason}`,
+            reason
+        })
     });
     return items.slice(0, 6);
 }
@@ -7516,16 +7523,6 @@ let GoalTargetStore;
     function showInfoMessage(message) {
         setSyncMessage(message, 'info');
     }
-
-    /**
-     * Format timestamp for display
-     */
-    function _formatTimestamp(timestamp) {
-        if (!timestamp) return 'Never';
-        const date = new Date(timestamp);
-        return date.toLocaleString();
-    }
-
 
     // ============================================
     // UI: Sync Functions
