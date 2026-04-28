@@ -519,6 +519,10 @@ async function captureSyncScreens(page, outputDir, summary) {
 }
 
 async function captureFsmFlow(page, summary, outputDir) {
+    const WHAT_IF_SPLIT_TOKEN = /what-if split/i;
+    const PROJECTED_OUTPUT_PATTERN = /projected investment\s*:/i;
+    const CURRENCY_AMOUNT_PATTERN = /(SGD|\$)\s*[\d,]+(?:\.\d{2})?/i;
+
     const fsmUrl = `http://localhost:${DEFAULT_PORT}/fsmone/holdings/investments`;
     await page.goto(fsmUrl, { waitUntil: 'networkidle' });
     await page.waitForFunction(() => window.__GPV_E2E_READY__ === true, null, { timeout: 20000 });
@@ -562,6 +566,118 @@ async function captureFsmFlow(page, summary, outputDir) {
     if (!hasTableHeaders) {
         summary.status = 'failed';
     }
+
+    const allScopeProjectionAbsent = await page.$('.gpv-projected-input') === null;
+    const allScopeOverlayText = await page.$eval('.gpv-overlay', node => node.textContent || '');
+    const allScopePromptAbsent = !WHAT_IF_SPLIT_TOKEN.test(allScopeOverlayText);
+    const allScopeProjectedInvestmentAbsent = !PROJECTED_OUTPUT_PATTERN.test(allScopeOverlayText);
+    const noAllScopeProjection = allScopeProjectionAbsent
+        && allScopePromptAbsent
+        && allScopeProjectedInvestmentAbsent;
+    recordAssertion(
+        summary,
+        'fsm-overlay',
+        'no-all-scope-projection',
+        noAllScopeProjection,
+        'All scope does not render projected investment controls or copy.'
+    );
+    if (!noAllScopeProjection) {
+        summary.status = 'failed';
+    }
+
+    await page.waitForFunction(
+        () => typeof window.GM_setValue === 'function',
+        null,
+        { timeout: 5000 }
+    );
+
+    await page.evaluate(async () => {
+        const growthId = 'ESG003|sub:ESG3';
+        if (typeof window.GM_setValue !== 'function') {
+            throw new Error('Demo bridge missing: window.GM_setValue is not available');
+        }
+        const key = `fsm_target_pct_${growthId}`;
+        await Promise.resolve(window.GM_setValue(key, 64.5));
+        if (typeof window.GM_getValue === 'function') {
+            const storedValue = await Promise.resolve(window.GM_getValue(key));
+            if (storedValue !== 64.5) {
+                throw new Error(`Demo bridge verification failed for ${key}: expected 64.5, received ${String(storedValue)}`);
+            }
+        }
+    });
+    await page.selectOption('.gpv-fsm-filter-toolbar select.gpv-select', 'demo-fsm-core');
+    await page.waitForSelector('.gpv-projected-input', { timeout: 5000 });
+    await page.waitForFunction(() => {
+        const scopeSelect = document.querySelector('.gpv-fsm-filter-toolbar select.gpv-select');
+        const projectedInput = document.querySelector('.gpv-projected-input');
+        const overlay = document.querySelector('.gpv-overlay');
+        const text = overlay && overlay.textContent ? overlay.textContent : '';
+        return Boolean(
+            scopeSelect instanceof HTMLSelectElement
+            && scopeSelect.value === 'demo-fsm-core'
+            && projectedInput
+            && /what-if split/i.test(text)
+        );
+    }, null, { timeout: 5000 });
+    const preAmountCoreState = await page.evaluate(() => {
+        const scopeSelect = document.querySelector('.gpv-fsm-filter-toolbar select.gpv-select');
+        const projectedInput = document.querySelector('.gpv-projected-input');
+        const overlay = document.querySelector('.gpv-overlay');
+        const text = overlay && overlay.textContent ? overlay.textContent : '';
+        return {
+            coreScopeSelected: scopeSelect instanceof HTMLSelectElement && scopeSelect.value === 'demo-fsm-core',
+            hasProjectionInput: Boolean(projectedInput),
+            hasWhatIfPrompt: /what-if split/i.test(text)
+        };
+    });
+
+    const projectionInput = page.locator('.gpv-projected-input').first();
+    await projectionInput.click();
+    await projectionInput.fill('1000');
+
+    await page.waitForFunction(() => {
+        const overlay = document.querySelector('.gpv-overlay');
+        const input = document.querySelector('.gpv-projected-input');
+        const inputHasProjectedAmount = input instanceof HTMLInputElement && input.value.replace(/,/g, '') === '1000';
+        const overlayText = overlay && overlay.textContent ? overlay.textContent : '';
+        const hasProjectedOutput = Boolean(
+            overlay
+            && /projected investment\s*:/i.test(overlayText)
+            && /(SGD|\$)\s*[\d,]+(?:\.\d{2})?/i.test(overlayText)
+        );
+        const scenarioSplitCount = overlay
+            ? overlay.querySelectorAll('.gpv-planning-list .gpv-planning-item').length
+            : 0;
+        return inputHasProjectedAmount && hasProjectedOutput && scenarioSplitCount > 0;
+    }, null, { timeout: 5000 });
+
+    const projectionOverlayText = await page.$eval('.gpv-overlay', node => node.textContent || '');
+    const hasProjectionOutput = PROJECTED_OUTPUT_PATTERN.test(projectionOverlayText)
+        && CURRENCY_AMOUNT_PATTERN.test(projectionOverlayText);
+    const scenarioSplitCount = await page.$$eval('.gpv-planning-list .gpv-planning-item', items => items.length);
+    await page.waitForFunction(() => {
+        const input = document.querySelector('.gpv-projected-input');
+        return input instanceof HTMLInputElement && input === document.activeElement;
+    }, null, { timeout: 5000 });
+    const projectionInputFocused = await page.$eval('.gpv-projected-input', input => input === document.activeElement);
+
+    const projectionOutputReady = preAmountCoreState.hasProjectionInput
+        && preAmountCoreState.coreScopeSelected
+        && preAmountCoreState.hasWhatIfPrompt
+        && hasProjectionOutput
+        && scenarioSplitCount > 0
+        && projectionInputFocused;
+    recordAssertion(
+        summary,
+        'fsm-projection',
+        'projection-output',
+        projectionOutputReady,
+        'Core Portfolio projection input updates what-if split and retains focus.'
+    );
+    if (!projectionOutputReady) {
+        summary.status = 'failed';
+    }
+    await captureScreenshot(page, summary, outputDir, 'fsm-projection');
 
     const conflict = {
         local: {
