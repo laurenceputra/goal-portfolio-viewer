@@ -205,7 +205,7 @@ async function runE2ETests() {
         await captureSyncScreens(page, outputDir, summary);
 
         await captureFsmFlow(page, summary, outputDir);
-        await captureOcbcFlow(page, summary);
+        await captureOcbcFlow(page, summary, outputDir);
     } catch (error) {
         summary.status = 'failed';
         summary.error = error instanceof Error ? error.message : String(error);
@@ -744,7 +744,7 @@ async function captureFsmFlow(page, summary, outputDir) {
     await captureScreenshot(page, summary, outputDir, 'fsm-conflict');
 }
 
-async function captureOcbcFlow(page, summary) {
+async function captureOcbcFlow(page, summary, outputDir) {
     const ocbcFlowName = 'ocbc-overlay';
     if (!summary.flowsTested.includes(ocbcFlowName)) {
         summary.flowsTested.push(ocbcFlowName);
@@ -776,6 +776,8 @@ async function captureOcbcFlow(page, summary) {
 
     const excludesLiabilityByDefault = !overlayTextAssets.includes('OCBC Margin Loan');
     recordAssertion(summary, ocbcFlowName, 'assets-excludes-liability', excludesLiabilityByDefault, 'Assets view does not contain OCBC Margin Loan.');
+
+    await captureScreenshot(page, summary, outputDir, 'ocbc-assets');
 
     const isViewLabelAssociated = await page.$eval('.gpv-overlay', root => {
         const labels = Array.from(root.querySelectorAll('label'));
@@ -813,4 +815,6 @@ async function captureOcbcFlow(page, summary) {
 
     const assetRemovedInLiabilitiesView = !overlayTextLiabilities.includes('OCBC Global Equity Fund');
     recordAssertion(summary, ocbcFlowName, 'liabilities-excludes-asset', assetRemovedInLiabilitiesView, 'Liabilities view does not contain OCBC Global Equity Fund.');
+
+    await captureScreenshot(page, summary, outputDir, 'ocbc-liabilities');
 }
