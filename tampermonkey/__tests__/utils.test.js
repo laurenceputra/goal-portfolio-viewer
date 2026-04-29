@@ -29,6 +29,7 @@ const {
     formatPercentage,
     isDashboardRoute,
     isFsmInvestmentsRoute,
+    isOcbcDashboardRoute,
     isOcbcPortfolioHoldingsRoute,
     normalizeTimeSeriesData,
     normalizePerformanceResponse,
@@ -190,6 +191,24 @@ describe('extractBucketName', () => {
 });
 
 describe('route matchers', () => {
+    test('matches OCBC dashboard route and ignores query/hash', () => {
+        expect(
+            isOcbcDashboardRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/dashboard?menuId=e62c3103-da60-4e8a-8717-72f11ebaaebe#overview'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcDashboardRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/dashboard/'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcDashboardRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(false);
+    });
+
     test('matches OCBC portfolio holdings route regardless of menuId', () => {
         expect(
             isOcbcPortfolioHoldingsRoute(

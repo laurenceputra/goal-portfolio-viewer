@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.9
+// @version      2.14.10
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
 // @match        https://secure.fundsupermart.com/fsmone/*
-// @match        https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings*
+// @match        https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
@@ -779,6 +779,19 @@
             const target = new URL(url, originFallback);
             const normalizedPath = target.pathname.replace(/\/+$/, '');
             return normalizedPath === '/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function isOcbcDashboardRoute(url, originFallback = 'https://internet.ocbc.com') {
+        if (typeof url !== 'string' || !url) {
+            return false;
+        }
+        try {
+            const target = new URL(url, originFallback);
+            const normalizedPath = target.pathname.replace(/\/+$/, '');
+            return normalizedPath === '/internet-banking/digital/web/sg/cfo/dashboard';
         } catch (_error) {
             return false;
         }
@@ -13012,7 +13025,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             return;
         }
 
-        const isOcbcRoute = isOcbcPortfolioHoldingsRoute(window.location.href, window.location.origin);
+        const isOcbcRoute = isOcbcDashboardRoute(window.location.href, window.location.origin)
+            || isOcbcPortfolioHoldingsRoute(window.location.href, window.location.origin);
         if (isOcbcRoute) {
             const readinessState = getOcbcReadinessState();
             if (!readinessState.ready) {
@@ -13481,6 +13495,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const origin = window.location.origin;
         return isDashboardRoute(href, origin)
             || isFsmInvestmentsRoute(href, origin)
+            || isOcbcDashboardRoute(href, origin)
             || isOcbcPortfolioHoldingsRoute(href, origin);
     }
     
@@ -13706,6 +13721,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             calculateGoalDiff,
             isDashboardRoute,
             isFsmInvestmentsRoute,
+            isOcbcDashboardRoute,
             isOcbcPortfolioHoldingsRoute,
             normalizeOcbcHoldingsPayload,
             calculateFixedTargetPercent,
