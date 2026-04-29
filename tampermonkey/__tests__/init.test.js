@@ -135,6 +135,53 @@ describe('initialization and URL monitoring', () => {
         expect(document.querySelector('.gpv-trigger-btn')).toBeTruthy();
     });
 
+    test('startUrlMonitoring shows button on OCBC portfolio holdings route', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=abc123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        global.fetch = jest.fn(() => Promise.resolve(responseFactory({})));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.startUrlMonitoring();
+
+        expect(document.querySelector('.gpv-trigger-btn')).toBeTruthy();
+    });
+
     test('showOverlay renders and closes via backdrop click', () => {
         const performanceData = [{
             goalId: 'goal1',
@@ -784,6 +831,89 @@ describe('initialization and URL monitoring', () => {
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Waiting for FSM holdings response');
         expect(overlay.textContent).toContain('FSM holdings data');
+    });
+
+    test('showOverlay renders OCBC overlay with separate assets and liabilities views', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                {
+                    code: 'P-1:AAA',
+                    subcode: 'P-1',
+                    name: 'OCBC Asset',
+                    productType: 'Equity',
+                    currentValueLcy: 1000,
+                    profitValueLcy: 100,
+                    profitPercentLcy: 0.1
+                }
+            ],
+            liabilities: [
+                {
+                    code: 'P-1:BBB',
+                    subcode: 'P-1',
+                    name: 'OCBC Liability',
+                    productType: 'Liability',
+                    currentValueLcy: -250,
+                    profitValueLcy: null,
+                    profitPercentLcy: null
+                }
+            ]
+        }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        expect(overlay).toBeTruthy();
+        expect(overlay.textContent).toContain('Portfolio Viewer (OCBC)');
+        expect(overlay.textContent).toContain('OCBC Asset');
+        expect(overlay.textContent).not.toContain('OCBC Liability');
+
+        const viewSelect = overlay.querySelector('.gpv-select');
+        const viewLabel = Array.from(overlay.querySelectorAll('label')).find(label => label.textContent.includes('View:'));
+        expect(viewLabel).toBeTruthy();
+        expect(viewSelect.id).toBe('gpv-ocbc-view-select');
+        expect(viewLabel.getAttribute('for')).toBe('gpv-ocbc-view-select');
+        viewSelect.value = 'liabilities';
+        viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(overlay.textContent).toContain('OCBC Liability');
+        expect(overlay.textContent).toContain('-SGD');
+        expect(overlay.textContent).not.toContain('OCBC Asset');
     });
 
     test('readiness overlay auto-updates into portfolio view when data arrives', async () => {

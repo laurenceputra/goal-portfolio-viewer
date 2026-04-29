@@ -29,6 +29,7 @@ const {
     formatPercentage,
     isDashboardRoute,
     isFsmInvestmentsRoute,
+    isOcbcPortfolioHoldingsRoute,
     normalizeTimeSeriesData,
     normalizePerformanceResponse,
     getLatestTimeSeriesPoint,
@@ -45,7 +46,8 @@ const {
     buildPerformanceMetricsRows,
     summarizePerformanceMetrics,
     derivePerformanceWindows,
-    parseJsonSafely
+    parseJsonSafely,
+    normalizeOcbcHoldingsPayload
 } = require('../goal_portfolio_viewer.user.js');
 
 describe('storage key helpers', () => {
@@ -184,6 +186,157 @@ describe('extractBucketName', () => {
 
     test('should handle multiple separators', () => {
         expect(utils.extractBucketName('Bucket - Goal - Extra')).toBe('Bucket');
+    });
+});
+
+describe('route matchers', () => {
+    test('matches OCBC portfolio holdings route regardless of menuId', () => {
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings/?menuId=111'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=222&foo=bar'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/other-page?menuId=111'
+            )
+        ).toBe(false);
+    });
+});
+
+describe('normalizeOcbcHoldingsPayload', () => {
+    test('flattens nested assets and liabilities holdings with parent class context', () => {
+        const payload = {
+            data: [
+                {
+                    portfolioNo: 'P-123',
+                    assets: [
+                        {
+                            assetClassDesc: 'Equities',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'US Equity',
+                                    holdings: [
+                                        {
+                                            holdingGuid: 'A-1',
+                                            fundName: 'Asset One',
+                                            shortName: 'A1',
+                                            marketValueReferenceCcy: { source: '500.25', parsedValue: 500.25 }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: [
+                        {
+                            assetClassDesc: 'Liability',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Margin',
+                                    holdings: [
+                                        {
+                                            positionId: 'L-1',
+                                            description: 'Margin Loan',
+                                            marketValueReferenceCcy: { source: '-100.75', parsedValue: -100.75 }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+
+        const result = normalizeOcbcHoldingsPayload(payload);
+        expect(result.assets).toHaveLength(1);
+        expect(result.liabilities).toHaveLength(1);
+        expect(result.assets[0]).toMatchObject({
+            code: 'P-123:A-1',
+            subcode: 'P-123',
+            productType: 'US Equity',
+            currentValueLcy: 500.25
+        });
+        expect(result.liabilities[0]).toMatchObject({
+            code: 'P-123:L-1',
+            subcode: 'P-123',
+            productType: 'Margin',
+            currentValueLcy: -100.75
+        });
+    });
+
+    test('applies OCBC numeric fallback chain and null-safe parsing', () => {
+        const payload = {
+            data: [
+                {
+                    portfolioNo: 'P-456',
+                    assets: [
+                        {
+                            assetClassDesc: 'Mixed Asset',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Balanced',
+                                    holdings: [
+                                        {
+                                            holdingGuid: 'MV-FALLBACK',
+                                            fundName: 'Fallback Fund',
+                                            marketValueReferenceCcy: null,
+                                            marketValue: '45.67'
+                                        },
+                                        {
+                                            holdingGuid: 'SRC-FALLBACK',
+                                            fundName: 'Source Fund',
+                                            marketValueReferenceCcy: {
+                                                parsedValue: null,
+                                                source: '12.34'
+                                            }
+                                        },
+                                        {
+                                            holdingGuid: 'BLANK-NUMERIC',
+                                            fundName: 'Blank Fund',
+                                            marketValueReferenceCcy: '',
+                                            marketValue: ' ',
+                                            marketValueOriginalCcy: null,
+                                            totalUnrealisedPLRefCcy: '',
+                                            totalPl: ' '
+                                        },
+                                        {
+                                            holdingGuid: 'ACTUAL-ZERO',
+                                            fundName: 'Zero Fund',
+                                            marketValueReferenceCcy: { parsedValue: null, source: '0E-9' },
+                                            totalUnrealisedPLRefCcy: { parsedValue: null, source: '0E-9' }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: []
+                }
+            ]
+        };
+
+        const result = normalizeOcbcHoldingsPayload(payload);
+        expect(result.assets).toHaveLength(4);
+
+        const byCode = Object.fromEntries(result.assets.map(row => [row.code, row]));
+        expect(byCode['P-456:MV-FALLBACK'].currentValueLcy).toBe(45.67);
+        expect(byCode['P-456:SRC-FALLBACK'].currentValueLcy).toBe(12.34);
+        expect(byCode['P-456:BLANK-NUMERIC'].currentValueLcy).toBe(0);
+        expect(byCode['P-456:BLANK-NUMERIC'].profitValueLcy).toBeNull();
+        expect(byCode['P-456:ACTUAL-ZERO'].currentValueLcy).toBe(0);
+        expect(byCode['P-456:ACTUAL-ZERO'].profitValueLcy).toBe(0);
     });
 });
 

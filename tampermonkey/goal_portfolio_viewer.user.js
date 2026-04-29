@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.8
-// @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
+// @version      2.14.9
+// @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
 // @match        https://secure.fundsupermart.com/fsmone/*
+// @match        https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
@@ -45,7 +46,8 @@
         performance: '/v1/goals/performance',
         investible: '/v2/goals/investible',
         summary: '/v1/goals',
-        fsmHoldings: '/fsmone/rest/holding/client/protected/find-holdings-with-pnl'
+        fsmHoldings: '/fsmone/rest/holding/client/protected/find-holdings-with-pnl',
+        ocbcHoldings: '/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry'
     };
     const SUMMARY_ENDPOINT_REGEX = /\/v1\/goals(?:[?#]|$)/;
 
@@ -54,6 +56,7 @@
         investible: 'api_investible',
         summary: 'api_summary',
         fsmHoldings: 'api_fsm_holdings',
+        ocbcHoldings: 'api_ocbc_holdings',
         fsmPortfolios: 'fsm_portfolios',
         fsmAssignmentByCode: 'fsm_assignment_by_code'
     };
@@ -63,6 +66,8 @@
         goalBucket: 'goal_bucket_name_',
         fsmTarget: 'fsm_target_pct_',
         fsmFixed: 'fsm_fixed_',
+        ocbcTarget: 'ocbc_target_pct_',
+        ocbcFixed: 'ocbc_fixed_',
         performanceCache: 'gpv_performance_',
         collapseState: 'gpv_collapse_'
     };
@@ -293,6 +298,12 @@
         },
         fsmFixed(code) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.fsmFixed, code ?? '');
+        },
+        ocbcTarget(code) {
+            return buildStorageKey(STORAGE_KEY_PREFIXES.ocbcTarget, code ?? '');
+        },
+        ocbcFixed(code) {
+            return buildStorageKey(STORAGE_KEY_PREFIXES.ocbcFixed, code ?? '');
         },
         performanceCache(goalId) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.performanceCache, goalId ?? '');
@@ -758,6 +769,118 @@
         } catch (_error) {
             return false;
         }
+    }
+
+    function isOcbcPortfolioHoldingsRoute(url, originFallback = 'https://internet.ocbc.com') {
+        if (typeof url !== 'string' || !url) {
+            return false;
+        }
+        try {
+            const target = new URL(url, originFallback);
+            const normalizedPath = target.pathname.replace(/\/+$/, '');
+            return normalizedPath === '/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function parseOcbcNumericValue(value) {
+        if (value === null || value === undefined) {
+            return null;
+        }
+        if (typeof value === 'string' && value.trim() === '') {
+            return null;
+        }
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            const parsedValue = parseOcbcNumericValue(value.parsedValue);
+            if (parsedValue !== null) {
+                return parsedValue;
+            }
+            const parsedFromSource = parseOcbcNumericValue(value.source);
+            if (parsedFromSource !== null) {
+                return parsedFromSource;
+            }
+            return null;
+        }
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function mapOcbcHoldingRow(row, context = {}) {
+        if (!row || typeof row !== 'object') {
+            return null;
+        }
+        const resolvedPortfolioNo = utils.normalizeString(context.portfolioNo, '-');
+        const index = Number.isFinite(Number(context.index)) ? Number(context.index) : 0;
+        const baseCode = utils.normalizeString(
+            row.holdingGuid || row.positionId || row.isin || row.fundCode || row.description,
+            ''
+        );
+        const stableCode = baseCode || `${resolvedPortfolioNo || '-'}#${index + 1}`;
+        const code = `${resolvedPortfolioNo}:${stableCode}`;
+        const currentValueLcy = parseOcbcNumericValue(row.marketValueReferenceCcy)
+            ?? parseOcbcNumericValue(row.marketValue)
+            ?? parseOcbcNumericValue(row.marketValueOriginalCcy)
+            ?? 0;
+        return {
+            code,
+            subcode: resolvedPortfolioNo,
+            name: utils.normalizeString(row.fundName || row.companyName || row.description || row.shortName, '-'),
+            productType: utils.normalizeString(
+                context.subAssetClassDesc || context.assetClassDesc || row.shortName,
+                '-'
+            ),
+            currentValueLcy,
+            profitValueLcy: parseOcbcNumericValue(row.totalUnrealisedPLRefCcy) ?? parseOcbcNumericValue(row.totalPl),
+            profitPercentLcy: parseOcbcNumericValue(row.unrealisedPLPercent)
+        };
+    }
+
+    function normalizeOcbcHoldingsPayload(data) {
+        const groups = Array.isArray(data?.data) ? data.data : [];
+        const assets = [];
+        const liabilities = [];
+        let assetIndex = 0;
+        let liabilityIndex = 0;
+
+        function flattenSectionRows(sectionType, rows) {
+            const isAssets = sectionType === 'assets';
+            (Array.isArray(rows) ? rows : []).forEach(group => {
+                const portfolioNo = utils.normalizeString(group?.portfolioNo, '-');
+                const sections = Array.isArray(group?.[sectionType]) ? group[sectionType] : [];
+                sections.forEach(section => {
+                    const assetClassDesc = utils.normalizeString(section?.assetClassDesc, '');
+                    const subAssets = Array.isArray(section?.subAssets) ? section.subAssets : [];
+                    subAssets.forEach(subAsset => {
+                        const subAssetClassDesc = utils.normalizeString(subAsset?.subAssetClassDesc, '');
+                        const holdings = Array.isArray(subAsset?.holdings) ? subAsset.holdings : [];
+                        holdings.forEach(row => {
+                            const normalized = mapOcbcHoldingRow(row, {
+                                portfolioNo,
+                                assetClassDesc,
+                                subAssetClassDesc,
+                                sectionType,
+                                index: isAssets ? assetIndex : liabilityIndex
+                            });
+                            if (!normalized) {
+                                return;
+                            }
+                            if (isAssets) {
+                                assetIndex += 1;
+                                assets.push(normalized);
+                            } else {
+                                liabilityIndex += 1;
+                                liabilities.push(normalized);
+                            }
+                        });
+                    });
+                });
+            });
+        }
+
+        flattenSectionRows('assets', groups);
+        flattenSectionRows('liabilities', groups);
+        return { assets, liabilities };
     }
 
     // ============================================
@@ -4873,7 +4996,8 @@ let GoalTargetStore;
             performance: null,
             investible: null,
             summary: null,
-            fsmHoldings: null
+            fsmHoldings: null,
+            ocbcHoldings: null
         },
         projectedInvestments: {},
         performance: {
@@ -4900,6 +5024,9 @@ let GoalTargetStore;
                 summaryLoaded: false
             },
             fsm: {
+                holdingsLoaded: false
+            },
+            ocbc: {
                 holdingsLoaded: false
             }
         }
@@ -4969,26 +5096,42 @@ let GoalTargetStore;
             Storage.writeJson(STORAGE_KEYS.fsmHoldings, filteredRows, 'Error saving FSM holdings data');
             logDebug('[Goal Portfolio Viewer] Intercepted FSM holdings data', { rows: filteredRows.length });
             notifyDataUpdates();
+        },
+        ocbcHoldings: data => {
+            const normalized = normalizeOcbcHoldingsPayload(data);
+            state.apiData.ocbcHoldings = normalized;
+            state.readiness.ocbc.holdingsLoaded = true;
+            Storage.writeJson(STORAGE_KEYS.ocbcHoldings, normalized, 'Error saving OCBC holdings data');
+            logDebug('[Goal Portfolio Viewer] Intercepted OCBC holdings data', {
+                assets: normalized.assets.length,
+                liabilities: normalized.liabilities.length
+            });
+            notifyDataUpdates();
         }
     };
 
-    function detectEndpointKey(url) {
-        if (typeof url !== 'string') {
-            return null;
+    function detectEndpointInfo(url, method = null) {
+        if (typeof url !== 'string' || !url) {
+            return { endpointKey: null };
         }
         if (url.includes(ENDPOINT_PATHS.performance)) {
-            return 'performance';
+            return { endpointKey: 'performance' };
         }
         if (url.includes(ENDPOINT_PATHS.investible)) {
-            return 'investible';
+            return { endpointKey: 'investible' };
         }
         if (url.match(SUMMARY_ENDPOINT_REGEX)) {
-            return 'summary';
+            return { endpointKey: 'summary' };
         }
         if (url.includes(ENDPOINT_PATHS.fsmHoldings)) {
-            return 'fsmHoldings';
+            return { endpointKey: 'fsmHoldings' };
         }
-        return null;
+        if (url.includes(ENDPOINT_PATHS.ocbcHoldings)) {
+            if (!method || method === 'POST') {
+                return { endpointKey: 'ocbcHoldings' };
+            }
+        }
+        return { endpointKey: null };
     }
 
 
@@ -4996,7 +5139,7 @@ let GoalTargetStore;
         if (!data || typeof data !== 'object') {
             return { valid: false, reason: 'Expected object payload' };
         }
-        if (!Array.isArray(data) && endpointKey !== 'fsmHoldings') {
+        if (!Array.isArray(data) && endpointKey !== 'fsmHoldings' && endpointKey !== 'ocbcHoldings') {
             return { valid: false, reason: `Expected array payload for ${endpointKey}` };
         }
         if (endpointKey === 'performance') {
@@ -5019,11 +5162,20 @@ let GoalTargetStore;
             const isValid = groups.every(group => group && typeof group === 'object' && Array.isArray(group.holdings));
             return { valid: isValid, reason: isValid ? null : 'Invalid holdings group format in FSM payload' };
         }
+        if (endpointKey === 'ocbcHoldings') {
+            const groups = Array.isArray(data.data) ? data.data : null;
+            if (!groups) {
+                return { valid: false, reason: 'Missing data array in OCBC holdings payload' };
+            }
+            const isValid = groups.every(group => group && typeof group === 'object');
+            return { valid: isValid, reason: isValid ? null : 'Invalid portfolio group format in OCBC payload' };
+        }
         return { valid: true, reason: null };
     }
 
-    async function handleInterceptedResponse(url, readData) {
-        const endpointKey = detectEndpointKey(url);
+    async function handleInterceptedResponse(url, readData, method = null) {
+        const endpointInfo = detectEndpointInfo(url, method);
+        const endpointKey = endpointInfo.endpointKey;
         if (!endpointKey) {
             return;
         }
@@ -5075,9 +5227,26 @@ let GoalTargetStore;
     // Fetch interception
     window.fetch = async function(...args) {
         const response = await originalFetch.apply(this, args);
-        const url = args[0];
+        const input = args[0];
+        const init = args[1];
+        const requestCtor = (typeof globalThis !== 'undefined' && globalThis.Request)
+            || (typeof window !== 'undefined' && window.Request)
+            || null;
+        const isRequestInput = Boolean(requestCtor && input instanceof requestCtor);
+        const url = typeof input === 'string'
+            ? input
+            : (input instanceof URL
+                ? input.toString()
+                : (isRequestInput
+                    ? input.url
+                    : ''));
+        const method = utils.normalizeString(
+            init?.method
+            || (isRequestInput ? input.method : ''),
+            'GET'
+        ).toUpperCase();
         if (response?.ok) {
-            void handleInterceptedResponse(url, () => response.clone().json());
+            void handleInterceptedResponse(url, () => response.clone().json(), method);
         }
         return response;
     };
@@ -5085,17 +5254,19 @@ let GoalTargetStore;
     // XMLHttpRequest interception
     XMLHttpRequest.prototype.open = function(method, url, ...rest) {
         this._url = url;
+        this._method = method;
         return originalXHROpen.apply(this, [method, url, ...rest]);
     };
 
     XMLHttpRequest.prototype.send = function(...args) {
         const url = this._url;
+        const method = utils.normalizeString(this._method, 'GET').toUpperCase();
         
         if (url && typeof url === 'string') {
             this.addEventListener('load', function() {
                 const status = Number(this.status);
                 if (!Number.isFinite(status) || (status >= 200 && status < 300)) {
-                    handleInterceptedResponse(url, () => Promise.resolve(parseJsonSafely(this.responseText)));
+                    handleInterceptedResponse(url, () => Promise.resolve(parseJsonSafely(this.responseText)), method);
                 }
             });
         }
@@ -5241,6 +5412,16 @@ let GoalTargetStore;
             apiDataState.fsmHoldings = fsmHoldings;
             appState.readiness.fsm.holdingsLoaded = true;
             logDebug('[Goal Portfolio Viewer] Loaded FSM holdings data from storage');
+        }
+        const ocbcHoldings = Storage.readJson(
+            STORAGE_KEYS.ocbcHoldings,
+            data => data && typeof data === 'object' && Array.isArray(data.assets) && Array.isArray(data.liabilities),
+            'Error loading OCBC holdings data'
+        );
+        if (ocbcHoldings) {
+            apiDataState.ocbcHoldings = ocbcHoldings;
+            appState.readiness.ocbc.holdingsLoaded = true;
+            logDebug('[Goal Portfolio Viewer] Loaded OCBC holdings data from storage');
         }
     }
 
@@ -11204,6 +11385,19 @@ syncUi.update = function updateSyncUI() {
         };
     }
 
+    function getOcbcReadinessState() {
+        const ocbcHoldings = state.apiData.ocbcHoldings && typeof state.apiData.ocbcHoldings === 'object'
+            ? state.apiData.ocbcHoldings
+            : { assets: [], liabilities: [] };
+        return {
+            ready: state.readiness.ocbc.holdingsLoaded === true,
+            ocbcHoldings: {
+                assets: Array.isArray(ocbcHoldings.assets) ? ocbcHoldings.assets : [],
+                liabilities: Array.isArray(ocbcHoldings.liabilities) ? ocbcHoldings.liabilities : []
+            }
+        };
+    }
+
     function createReadinessItem(label, isReady) {
         const item = createElement('li', isReady ? 'gpv-readiness-item is-ready' : 'gpv-readiness-item is-pending');
         const icon = createElement('span', 'gpv-readiness-icon', isReady ? '✓' : '…');
@@ -11466,9 +11660,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return calculateAllocationRatio(row?.currentValueLcy, total);
     }
 
-    function buildFsmHeader({ overlay, cleanupCallbacks }) {
+    function buildFsmHeader({ overlay, cleanupCallbacks, titleText = 'Portfolio Viewer (FSM)' }) {
         const header = createElement('div', 'gpv-header');
-        const title = createElement('h1', null, 'Portfolio Viewer (FSM)');
+        const title = createElement('h1', null, titleText);
         const titleId = 'gpv-portfolio-title';
         title.id = titleId;
 
@@ -12108,7 +12302,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         container.gpvCleanupCallbacks = cleanupCallbacks;
         overlay.gpvCleanupCallbacks = cleanupCallbacks;
 
-        const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({ overlay, cleanupCallbacks });
+        const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({ overlay, cleanupCallbacks, titleText: 'Portfolio Viewer (FSM)' });
         container.appendChild(header);
 
         const contentDiv = createElement('div', 'gpv-content');
@@ -12581,6 +12775,115 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
     }
 
+    function buildOcbcSimpleTable(rows, total) {
+        const displayRows = buildFsmDisplayRows(rows, total);
+        if (displayRows.length === 0) {
+            return createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.');
+        }
+        const table = createElement('table', 'gpv-table');
+        table.innerHTML = `
+            <thead>
+                <tr>
+                    <th>Ticker</th>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Value (SGD)</th>
+                    <th>Profit</th>
+                    <th>Current %</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        `;
+        const tbody = table.querySelector('tbody');
+        displayRows.forEach(row => {
+            const tr = createElement('tr');
+            tr.innerHTML = `
+                <td>${escapeHtml(row.displayTicker || row.code || '-')}</td>
+                <td>${escapeHtml(row.name || '-')}</td>
+                <td>${escapeHtml(row.productType || '-')}</td>
+                <td>${escapeHtml(formatMoney(row.currentValueLcy))}</td>
+                <td class="${escapeHtml(row.profitClass || '')}">${escapeHtml(row.profitDisplay || '-')}</td>
+                <td>${escapeHtml(row.currentAllocationDisplay || '-')}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+        return table;
+    }
+
+    function renderOcbcOverlay(ocbcHoldings) {
+        const overlay = createElement('div', 'gpv-overlay');
+        overlay.id = 'gpv-overlay';
+        const container = createElement('div', 'gpv-container gpv-container--expanded');
+        const cleanupCallbacks = [];
+        container.gpvCleanupCallbacks = cleanupCallbacks;
+        overlay.gpvCleanupCallbacks = cleanupCallbacks;
+
+        const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({
+            overlay,
+            cleanupCallbacks,
+            titleText: 'Portfolio Viewer (OCBC)'
+        });
+        container.appendChild(header);
+
+        const controls = createElement('div', 'gpv-controls');
+        const viewLabel = createElement('label', 'gpv-select-label', 'View:');
+        const viewSelect = createElement('select', 'gpv-select');
+        const viewSelectId = 'gpv-ocbc-view-select';
+        viewSelect.id = viewSelectId;
+        viewLabel.setAttribute('for', viewSelectId);
+        viewSelect.setAttribute('aria-label', 'Select OCBC holdings view');
+        viewSelect.innerHTML = `
+            <option value="assets">Assets</option>
+            <option value="liabilities">Liabilities</option>
+        `;
+        controls.appendChild(viewLabel);
+        controls.appendChild(viewSelect);
+        container.appendChild(controls);
+
+        const contentDiv = createElement('div', 'gpv-content');
+        container.appendChild(contentDiv);
+        overlay.appendChild(container);
+
+        const safeHoldings = ocbcHoldings && typeof ocbcHoldings === 'object'
+            ? ocbcHoldings
+            : { assets: [], liabilities: [] };
+        const assets = buildFsmRowsWithAssignment(Array.isArray(safeHoldings.assets) ? safeHoldings.assets : [], {});
+        const liabilities = buildFsmRowsWithAssignment(Array.isArray(safeHoldings.liabilities) ? safeHoldings.liabilities : [], {});
+
+        function rerender() {
+            const activeView = viewSelect.value === 'liabilities' ? 'liabilities' : 'assets';
+            const rows = activeView === 'liabilities' ? liabilities : assets;
+            const summary = buildFsmScopedSummary(rows.map(row => ({
+                ...row,
+                portfolioId: FSM_UNASSIGNED_PORTFOLIO_ID,
+                targetPercent: null,
+                fixed: false
+            })));
+            contentDiv.innerHTML = '';
+            contentDiv.appendChild(buildFsmSummaryRow(summary, { showDrift: false, showFixed: false, showProfit: true }));
+            contentDiv.appendChild(buildOcbcSimpleTable(rows, summary.total));
+        }
+        viewSelect.onchange = rerender;
+        rerender();
+
+        overlay.onclick = event => {
+            if (event.target === overlay) {
+                closeOverlay();
+            }
+        };
+        document.body.appendChild(overlay);
+        const modalCleanup = setupModalAccessibility({
+            overlay,
+            container,
+            titleId,
+            onClose: closeOverlay,
+            initialFocus: closeBtn
+        });
+        if (typeof modalCleanup === 'function') {
+            cleanupCallbacks.push(modalCleanup);
+        }
+    }
+
     function renderDataReadinessOverlay({
         title,
         description,
@@ -12706,6 +13009,26 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 return;
             }
             renderFsmOverlay(readinessState.fsmHoldings);
+            return;
+        }
+
+        const isOcbcRoute = isOcbcPortfolioHoldingsRoute(window.location.href, window.location.origin);
+        if (isOcbcRoute) {
+            const readinessState = getOcbcReadinessState();
+            if (!readinessState.ready) {
+                renderDataReadinessOverlay({
+                    title: 'Portfolio Viewer (OCBC)',
+                    description: 'Waiting for OCBC portfolio holdings response. This updates automatically when data arrives.',
+                    getItems: () => [{
+                        label: 'OCBC portfolio holdings data',
+                        ready: getOcbcReadinessState().ready
+                    }],
+                    isReady: () => getOcbcReadinessState().ready,
+                    onReady: () => showOverlay()
+                });
+                return;
+            }
+            renderOcbcOverlay(readinessState.ocbcHoldings);
             return;
         }
 
@@ -13156,7 +13479,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     function shouldShowButton() {
         const href = window.location.href;
         const origin = window.location.origin;
-        return isDashboardRoute(href, origin) || isFsmInvestmentsRoute(href, origin);
+        return isDashboardRoute(href, origin)
+            || isFsmInvestmentsRoute(href, origin)
+            || isOcbcPortfolioHoldingsRoute(href, origin);
     }
     
     function createButton() {
@@ -13381,6 +13706,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             calculateGoalDiff,
             isDashboardRoute,
             isFsmInvestmentsRoute,
+            isOcbcPortfolioHoldingsRoute,
+            normalizeOcbcHoldingsPayload,
             calculateFixedTargetPercent,
             calculateRemainingTargetPercent,
             isRemainingTargetAboveThreshold,

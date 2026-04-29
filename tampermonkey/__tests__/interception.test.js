@@ -125,6 +125,136 @@ describe('API interception', () => {
         );
     });
 
+    test('fetch interception stores normalized OCBC assets and liabilities separately', async () => {
+        const holdingsPayload = {
+            data: [
+                {
+                    portfolioNo: 'P-001',
+                    assets: [
+                        {
+                            assetClassDesc: 'Equities',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Global Equity',
+                                    holdings: [
+                                        {
+                                            holdingGuid: 'asset-guid-1',
+                                            fundName: 'OCBC Asset Fund',
+                                            marketValueReferenceCcy: { source: '1234.56', parsedValue: 1234.56 },
+                                            totalUnrealisedPLRefCcy: { source: '12.34', parsedValue: 12.34 },
+                                            unrealisedPLPercent: '1.23'
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: [
+                        {
+                            assetClassDesc: 'Liability',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Margin Liability',
+                                    holdings: [
+                                        {
+                                            positionId: 'liab-1',
+                                            description: 'Margin Liability',
+                                            marketValueReferenceCcy: { source: '-250.5', parsedValue: -250.5 },
+                                            totalPl: '0E-9'
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        baseFetchMock.mockResolvedValueOnce(responseFactory(holdingsPayload));
+
+        const RequestCtor = (typeof globalThis !== 'undefined' && globalThis.Request)
+            || (typeof window !== 'undefined' && window.Request)
+            || null;
+        if (RequestCtor) {
+            const request = new RequestCtor(
+                'https://internet.ocbc.com/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry',
+                { method: 'POST' }
+            );
+            await window.fetch(request);
+        } else {
+            await window.fetch(
+                'https://internet.ocbc.com/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry',
+                { method: 'POST' }
+            );
+        }
+        await flushPromises();
+
+        expect(global.GM_setValue).toHaveBeenCalledWith(
+            'api_ocbc_holdings',
+            JSON.stringify({
+                assets: [
+                    {
+                        code: 'P-001:asset-guid-1',
+                        subcode: 'P-001',
+                        name: 'OCBC Asset Fund',
+                        productType: 'Global Equity',
+                        currentValueLcy: 1234.56,
+                        profitValueLcy: 12.34,
+                        profitPercentLcy: 1.23
+                    }
+                ],
+                liabilities: [
+                    {
+                        code: 'P-001:liab-1',
+                        subcode: 'P-001',
+                        name: 'Margin Liability',
+                        productType: 'Margin Liability',
+                        currentValueLcy: -250.5,
+                        profitValueLcy: 0,
+                        profitPercentLcy: null
+                    }
+                ]
+            })
+        );
+    });
+
+    test('fetch interception ignores OCBC holdings endpoint when method is GET', async () => {
+        const holdingsPayload = {
+            data: [
+                {
+                    portfolioNo: 'P-001',
+                    assets: [],
+                    liabilities: []
+                }
+            ]
+        };
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        baseFetchMock.mockResolvedValueOnce(responseFactory(holdingsPayload));
+        global.GM_setValue.mockClear();
+
+        await window.fetch(
+            'https://internet.ocbc.com/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry',
+            { method: 'GET' }
+        );
+        await flushPromises();
+
+        expect(global.GM_setValue).not.toHaveBeenCalledWith(
+            'api_ocbc_holdings',
+            expect.any(String)
+        );
+    });
+
     test('fetch interception ignores non-matching endpoints', async () => {
         const responseFactory = body => ({
             clone: () => responseFactory(body),
@@ -215,5 +345,28 @@ describe('API interception', () => {
         await flushPromises();
 
         expect(global.GM_setValue).not.toHaveBeenCalled();
+    });
+
+    test('XMLHttpRequest interception ignores OCBC holdings endpoint when method is GET', async () => {
+        const xhr = new global.XMLHttpRequest();
+        xhr.open('GET', 'https://internet.ocbc.com/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry');
+        xhr.responseText = JSON.stringify({
+            data: [
+                {
+                    portfolioNo: 'P-001',
+                    assets: [],
+                    liabilities: []
+                }
+            ]
+        });
+        global.GM_setValue.mockClear();
+
+        xhr.send();
+        await flushPromises();
+
+        expect(global.GM_setValue).not.toHaveBeenCalledWith(
+            'api_ocbc_holdings',
+            expect.any(String)
+        );
     });
 });

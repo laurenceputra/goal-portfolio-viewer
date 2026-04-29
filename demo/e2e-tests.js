@@ -205,6 +205,7 @@ async function runE2ETests() {
         await captureSyncScreens(page, outputDir, summary);
 
         await captureFsmFlow(page, summary, outputDir);
+        await captureOcbcFlow(page, summary);
     } catch (error) {
         summary.status = 'failed';
         summary.error = error instanceof Error ? error.message : String(error);
@@ -741,4 +742,75 @@ async function captureFsmFlow(page, summary, outputDir) {
         summary.status = 'failed';
     }
     await captureScreenshot(page, summary, outputDir, 'fsm-conflict');
+}
+
+async function captureOcbcFlow(page, summary) {
+    const ocbcFlowName = 'ocbc-overlay';
+    if (!summary.flowsTested.includes(ocbcFlowName)) {
+        summary.flowsTested.push(ocbcFlowName);
+    }
+
+    const ocbcUrl = `http://localhost:${DEFAULT_PORT}/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=e2e-ocbc`;
+    await page.goto(ocbcUrl, { waitUntil: 'networkidle' });
+    await page.waitForFunction(() => window.__GPV_E2E_READY__ === true, null, { timeout: 20000 });
+
+    await page.click('.gpv-trigger-btn');
+    await page.waitForSelector('.gpv-overlay', { timeout: 5000 });
+
+    const overlayTextAssets = await page.$eval('.gpv-overlay', node => node.textContent || '');
+    const titleText = await page.$eval('.gpv-overlay', root => {
+        const titleNode = root.querySelector('.gpv-title, .gpv-header h2, .gpv-header');
+        return titleNode ? (titleNode.textContent || '') : '';
+    });
+    const hasOcbcTitle = /Portfolio Viewer\s*\(OCBC\)/i.test(titleText);
+    recordAssertion(summary, ocbcFlowName, 'title-contains-ocbc', hasOcbcTitle, 'Overlay title contains Portfolio Viewer (OCBC).');
+
+    const hasAssetName = overlayTextAssets.includes('OCBC Global Equity Fund');
+    recordAssertion(summary, ocbcFlowName, 'assets-has-fund-name', hasAssetName, 'Assets view contains OCBC Global Equity Fund.');
+
+    const hasAssetClass = overlayTextAssets.includes('Global Equity');
+    recordAssertion(summary, ocbcFlowName, 'assets-has-sub-asset-class', hasAssetClass, 'Assets view contains Global Equity.');
+
+    const hasReferenceAmount = /12,345\.67/.test(overlayTextAssets);
+    recordAssertion(summary, ocbcFlowName, 'assets-has-reference-amount', hasReferenceAmount, 'Assets view contains 12,345.67 reference amount.');
+
+    const excludesLiabilityByDefault = !overlayTextAssets.includes('OCBC Margin Loan');
+    recordAssertion(summary, ocbcFlowName, 'assets-excludes-liability', excludesLiabilityByDefault, 'Assets view does not contain OCBC Margin Loan.');
+
+    const isViewLabelAssociated = await page.$eval('.gpv-overlay', root => {
+        const labels = Array.from(root.querySelectorAll('label'));
+        const target = labels.find(label => (label.textContent || '').trim() === 'View:');
+        return Boolean(target && target.getAttribute('for') === 'gpv-ocbc-view-select');
+    });
+    recordAssertion(summary, ocbcFlowName, 'view-label-associated', isViewLabelAssociated, 'View label is associated with gpv-ocbc-view-select.');
+
+    const liabilitiesValue = await page.$eval('#gpv-ocbc-view-select', select => {
+        if (!(select instanceof HTMLSelectElement)) {
+            return 'liabilities';
+        }
+        const matchingOption = Array.from(select.options).find(option => /liabilities/i.test(option.textContent || ''));
+        return matchingOption ? matchingOption.value : 'liabilities';
+    });
+    await page.selectOption('#gpv-ocbc-view-select', liabilitiesValue);
+    await page.waitForFunction(() => {
+        const overlay = document.querySelector('.gpv-overlay');
+        if (!overlay) {
+            return false;
+        }
+        const text = overlay.textContent || '';
+        return text.includes('OCBC Margin Loan') && !text.includes('OCBC Global Equity Fund');
+    }, null, { timeout: 5000 });
+
+    const overlayTextLiabilities = await page.$eval('.gpv-overlay', node => node.textContent || '');
+    const hasLiabilityName = overlayTextLiabilities.includes('OCBC Margin Loan');
+    recordAssertion(summary, ocbcFlowName, 'liabilities-has-loan-name', hasLiabilityName, 'Liabilities view contains OCBC Margin Loan.');
+
+    const hasLiabilityClass = overlayTextLiabilities.includes('Investment Loans');
+    recordAssertion(summary, ocbcFlowName, 'liabilities-has-sub-asset-class', hasLiabilityClass, 'Liabilities view contains Investment Loans.');
+
+    const hasNegativeAmount = /-\s*SGD\s*2,500\.50|SGD\s*-\s*2,500\.50|-\s*2,500\.50/.test(overlayTextLiabilities);
+    recordAssertion(summary, ocbcFlowName, 'liabilities-has-negative-amount', hasNegativeAmount, 'Liabilities view contains negative SGD amount for margin loan.');
+
+    const assetRemovedInLiabilitiesView = !overlayTextLiabilities.includes('OCBC Global Equity Fund');
+    recordAssertion(summary, ocbcFlowName, 'liabilities-excludes-asset', assetRemovedInLiabilitiesView, 'Liabilities view does not contain OCBC Global Equity Fund.');
 }

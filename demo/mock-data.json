@@ -22440,5 +22440,58 @@
         ]
       }
     ]
+  },
+  "ocbcHoldings": {
+    "data": [
+      {
+        "assets": [
+          {
+            "assetClassDesc": "Funds",
+            "subAssets": [
+              {
+                "subAssetClassDesc": "Global Equity",
+                "holdings": [
+                  {
+                    "fundName": "OCBC Global Equity Fund",
+                    "currencyCode": "USD",
+                    "marketValue": {
+                      "parsedValue": 9500.12
+                    },
+                    "marketValueReferenceCcy": {
+                      "currencyCode": "SGD",
+                      "parsedValue": 12345.67
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "liabilities": [
+          {
+            "assetClassDesc": "Loans",
+            "subAssets": [
+              {
+                "subAssetClassDesc": "Investment Loans",
+                "holdings": [
+                  {
+                    "assetDesc": "OCBC Margin Loan",
+                    "description": "OCBC Margin Loan",
+                    "currencyCode": "SGD",
+                    "marketValue": {
+                      "parsedValue": -2400.45
+                    },
+                    "marketValueReferenceCcy": {
+                      "currencyCode": "SGD",
+                      "parsedValue": -2500.5
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
   }
 }
