@@ -8690,6 +8690,19 @@ function createConflictDialogHTML(conflict) {
                 <td>${escapeHtml(item.remoteDisplay)}</td>
             </tr>
         `).join('');
+    const fsmInstrumentRows = diffSections.fsm
+        .filter(item => item.section === 'instrument')
+        .map(item => `
+            <tr>
+                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
+                <td>${escapeHtml(item.localDisplay)}</td>
+                <td>${escapeHtml(item.remoteDisplay)}</td>
+            </tr>
+        `).join('');
+    const hasTargetRows = endowusRows.length > 0 || fsmInstrumentRows.length > 0;
+    const targetRowsHtml = hasTargetRows
+        ? `${endowusRows.length > 0 ? sectionRows(endowusRows, 'Goal') : ''}${fsmInstrumentRows.length > 0 ? sectionRows(fsmInstrumentRows, 'Instrument') : ''}`
+        : '<div class="gpv-conflict-diff-empty">No differences detected.</div>';
 
     return `
         <div class="gpv-conflict-dialog" data-step="1">
@@ -8720,7 +8733,7 @@ function createConflictDialogHTML(conflict) {
             </div>
             <div class="gpv-conflict-step-panel" data-step-panel="4" hidden>
                 <h4>Targets and drift changes</h4>
-                ${sectionRows(endowusRows, 'Goal')}
+                ${targetRowsHtml}
             </div>
             <div class="gpv-conflict-step-panel" data-step-panel="5" hidden>
                 <h4>Final decision</h4>
