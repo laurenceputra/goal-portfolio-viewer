@@ -58,7 +58,9 @@
         fsmHoldings: 'api_fsm_holdings',
         ocbcHoldings: 'api_ocbc_holdings',
         fsmPortfolios: 'fsm_portfolios',
-        fsmAssignmentByCode: 'fsm_assignment_by_code'
+        fsmAssignmentByCode: 'fsm_assignment_by_code',
+        ocbcAllocationBuckets: 'ocbc_allocation_buckets',
+        ocbcAllocationAssignmentByCode: 'ocbc_allocation_assignment_by_code'
     };
     const STORAGE_KEY_PREFIXES = {
         goalTarget: 'goal_target_pct_',
@@ -12914,6 +12916,90 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return typeHeader;
     }
 
+    function buildOcbcTargetScope(viewKey, productType, bucketId) {
+        const safeView = encodeURIComponent(utils.normalizeString(viewKey, 'assets'));
+        const safeProductType = encodeURIComponent(utils.normalizeString(productType, '-'));
+        const safeBucketId = encodeURIComponent(utils.normalizeString(bucketId, ''));
+        return `${safeView}${PROJECTED_KEY_SEPARATOR}${safeProductType}${PROJECTED_KEY_SEPARATOR}${safeBucketId}`;
+    }
+
+    function getOcbcAllocationTargetPercent(viewKey, productType, bucketId) {
+        const key = storageKeys.ocbcTarget(buildOcbcTargetScope(viewKey, productType, bucketId));
+        if (!Storage.has(key)) {
+            return null;
+        }
+        return toOptionalFiniteNumber(Storage.get(key, null));
+    }
+
+    function loadOcbcAllocationConfig(rows) {
+        const bucketsByView = Storage.readJson(
+            STORAGE_KEYS.ocbcAllocationBuckets,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error reading OCBC allocation buckets'
+        ) || {};
+        const assignmentByCode = Storage.readJson(
+            STORAGE_KEYS.ocbcAllocationAssignmentByCode,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error reading OCBC allocation assignments'
+        ) || {};
+        const safeRows = Array.isArray(rows) ? rows : [];
+        const safeAssignments = {};
+        safeRows.forEach(row => {
+            const code = utils.normalizeString(row?.code, '');
+            if (!code) {
+                return;
+            }
+            safeAssignments[code] = utils.normalizeString(assignmentByCode[code], '');
+        });
+        return { bucketsByView, assignmentByCode: safeAssignments };
+    }
+
+    function saveOcbcAllocationBucketsConfig(bucketsByView) {
+        Storage.writeJson(STORAGE_KEYS.ocbcAllocationBuckets, bucketsByView || {}, 'Error saving OCBC allocation buckets');
+    }
+
+    function saveOcbcAllocationAssignmentsConfig(assignmentByCode) {
+        Storage.writeJson(
+            STORAGE_KEYS.ocbcAllocationAssignmentByCode,
+            assignmentByCode || {},
+            'Error saving OCBC allocation assignments'
+        );
+    }
+
+    function getActiveOcbcBucketsByProductType(bucketsByView, activeView, productType) {
+        const scoped = bucketsByView && typeof bucketsByView === 'object' ? bucketsByView[activeView] : null;
+        const items = scoped && typeof scoped === 'object' ? scoped[productType] : null;
+        if (!Array.isArray(items)) {
+            return [];
+        }
+        return items
+            .filter(item => item && typeof item === 'object' && item.archived !== true)
+            .map(item => ({
+                id: utils.normalizeString(item.id, ''),
+                name: utils.normalizeString(item.name, 'Untitled bucket'),
+                archived: item.archived === true
+            }))
+            .filter(item => item.id);
+    }
+
+    function ensureOcbcViewBucketStore(bucketsByView, activeView) {
+        if (!bucketsByView[activeView] || typeof bucketsByView[activeView] !== 'object' || Array.isArray(bucketsByView[activeView])) {
+            bucketsByView[activeView] = {};
+        }
+        return bucketsByView[activeView];
+    }
+
+    function buildOcbcAllocationRowsByProductType(rows) {
+        return (Array.isArray(rows) ? rows : []).reduce((acc, row) => {
+            const productType = utils.normalizeString(row?.productType, '-');
+            if (!acc[productType]) {
+                acc[productType] = [];
+            }
+            acc[productType].push(row);
+            return acc;
+        }, {});
+    }
+
     function renderOcbcOverlay(ocbcHoldings) {
         const overlay = createElement('div', 'gpv-overlay');
         overlay.id = 'gpv-overlay';
@@ -12942,6 +13028,19 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         `;
         controls.appendChild(viewLabel);
         controls.appendChild(viewSelect);
+
+        const modeLabel = createElement('label', 'gpv-select-label', 'Mode:');
+        const modeSelect = createElement('select', 'gpv-select');
+        const modeSelectId = 'gpv-ocbc-mode-select';
+        modeSelect.id = modeSelectId;
+        modeLabel.setAttribute('for', modeSelectId);
+        modeSelect.setAttribute('aria-label', 'Select OCBC layout mode');
+        modeSelect.innerHTML = `
+            <option value="portfolio">Portfolio</option>
+            <option value="allocation">Allocation</option>
+        `;
+        controls.appendChild(modeLabel);
+        controls.appendChild(modeSelect);
         container.appendChild(controls);
 
         const contentDiv = createElement('div', 'gpv-content');
@@ -12954,10 +13053,230 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const assets = Array.isArray(safeHoldings.assets) ? safeHoldings.assets : [];
         const liabilities = Array.isArray(safeHoldings.liabilities) ? safeHoldings.liabilities : [];
 
+        const allocationConfig = loadOcbcAllocationConfig([...(assets || []), ...(liabilities || [])]);
+        const bucketsByView = allocationConfig.bucketsByView;
+        const assignmentByCode = allocationConfig.assignmentByCode;
+
+        function renderAllocationMode(activeView, rows) {
+            const groupedByProductType = buildOcbcAllocationRowsByProductType(rows);
+            const productTypes = Object.keys(groupedByProductType);
+            if (productTypes.length === 0) {
+                contentDiv.appendChild(createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.'));
+                return;
+            }
+
+            productTypes.forEach(productType => {
+                const productRows = groupedByProductType[productType] || [];
+                const productSummary = buildOcbcSummary(productRows);
+                const productTotal = toFiniteNumber(productSummary.total, 0);
+                const buckets = getActiveOcbcBucketsByProductType(bucketsByView, activeView, productType);
+
+                const section = createElement('section', 'gpv-type-section');
+
+                const targetAssigned = buckets.reduce((sum, bucket) => {
+                    const value = getOcbcAllocationTargetPercent(activeView, productType, bucket.id);
+                    return sum + (Number.isFinite(value) ? value : 0);
+                }, 0);
+                const targetAssignedDisplay = Number.isFinite(targetAssigned)
+                    ? `${targetAssigned.toFixed(2)}%`
+                    : '-';
+                const coverageHint = buildTargetCoverageLabel(targetAssigned);
+
+                const driftTotal = targetAssigned - 100;
+                const driftClass = Math.abs(driftTotal) <= TARGET_TOTAL_TOLERANCE_PERCENT
+                    ? null
+                    : driftTotal > 0 ? 'negative' : 'positive';
+
+                const header = createElement('div', 'gpv-type-header');
+                const headerTitle = createElement('h3', null, productType);
+                const headerSummary = createElement('div', 'gpv-type-summary');
+                appendLabeledValue(headerSummary, null, 'Value:', formatMoney(productTotal));
+                appendLabeledValue(headerSummary, null, 'Holdings:', String(productSummary?.holdingsCount || 0));
+                appendLabeledValue(headerSummary, null, 'Target Assigned:', targetAssignedDisplay);
+                appendLabeledValue(
+                    headerSummary,
+                    null,
+                    'Drift:',
+                    `${driftTotal >= 0 ? '+' : ''}${driftTotal.toFixed(2)}%`,
+                    { valueClass: driftClass }
+                );
+                if (coverageHint) {
+                    const coverage = createElement('div', 'gpv-subtitle gpv-target-coverage-label', coverageHint);
+                    headerSummary.appendChild(coverage);
+                }
+                header.appendChild(headerTitle);
+                header.appendChild(headerSummary);
+                section.appendChild(header);
+
+                const managerRow = createElement('div', 'gpv-fsm-manager-row');
+                const createLabelId = `gpv-ocbc-bucket-create-${activeView}-${encodeURIComponent(productType)}`;
+                const createLabel = createElement('label', null, 'New allocation bucket');
+                createLabel.setAttribute('for', createLabelId);
+                const createInput = createElement('input', 'gpv-target-input');
+                createInput.id = createLabelId;
+                createInput.maxLength = 80;
+                createInput.placeholder = 'Bucket name';
+                const createBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', 'Create');
+                createBtn.type = 'button';
+                createBtn.onclick = () => {
+                    const name = utils.normalizeString(createInput.value, '');
+                    if (!name) {
+                        return;
+                    }
+                    const normalizedId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                    const bucketId = normalizedId || `bucket-${Date.now()}`;
+                    const viewStore = ensureOcbcViewBucketStore(bucketsByView, activeView);
+                    const currentItems = Array.isArray(viewStore[productType]) ? viewStore[productType] : [];
+                    const existing = currentItems.some(item => utils.normalizeString(item?.id, '') === bucketId);
+                    if (!existing) {
+                        currentItems.push({ id: bucketId, name, archived: false });
+                        viewStore[productType] = currentItems;
+                        saveOcbcAllocationBucketsConfig(bucketsByView);
+                        rerender();
+                    }
+                };
+                managerRow.appendChild(createLabel);
+                managerRow.appendChild(createInput);
+                managerRow.appendChild(createBtn);
+                section.appendChild(managerRow);
+
+                const bucketRows = createElement('table', 'gpv-table');
+                bucketRows.innerHTML = `
+                    <thead>
+                        <tr>
+                            <th>Bucket</th>
+                            <th>Value (SGD)</th>
+                            <th>Current %</th>
+                            <th>Target %</th>
+                            <th>Drift</th>
+                            <th>Holdings</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                `;
+                const bucketBody = bucketRows.querySelector('tbody');
+
+                const bucketRowsData = [{ id: '', name: 'Unassigned', rows: [] }];
+                buckets.forEach(bucket => bucketRowsData.push({ ...bucket, rows: [] }));
+
+                productRows.forEach(row => {
+                    const code = utils.normalizeString(row?.code, '');
+                    const assignedBucketId = utils.normalizeString(assignmentByCode[code], '');
+                    const matched = bucketRowsData.find(item => item.id === assignedBucketId);
+                    (matched || bucketRowsData[0]).rows.push(row);
+                });
+
+                bucketRowsData.forEach(bucket => {
+                    const tr = createElement('tr');
+                    const bucketSummary = buildOcbcSummary(bucket.rows);
+                    const bucketValue = toFiniteNumber(bucketSummary.total, 0);
+                    const currentPercent = calculateAllocationRatio(bucketValue, productTotal);
+                    const targetPercent = bucket.id ? getOcbcAllocationTargetPercent(activeView, productType, bucket.id) : null;
+                    const driftModel = targetPercent === null
+                        ? { driftPercent: null, driftAmount: null }
+                        : calculateAllocationDrift(bucketValue, targetPercent / 100, productTotal);
+                    const driftDisplay = formatDriftDisplay(driftModel?.driftPercent, driftModel?.driftAmount);
+                    const driftClass = getDriftSeverityClass(driftModel?.driftPercent);
+
+                    const bucketCell = createElement('td', null, bucket.name);
+                    tr.appendChild(bucketCell);
+                    tr.appendChild(createElement('td', null, formatMoney(bucketValue)));
+                    tr.appendChild(createElement('td', null, formatPercent(currentPercent, { multiplier: 100, showSign: false })));
+
+                    const targetCell = createElement('td');
+                    if (bucket.id) {
+                        const targetInput = createElement('input', 'gpv-target-input');
+                        targetInput.type = 'number';
+                        targetInput.min = '0';
+                        targetInput.max = '100';
+                        targetInput.step = '0.01';
+                        targetInput.value = Number.isFinite(targetPercent) ? targetPercent.toFixed(2) : '';
+                        targetInput.setAttribute('aria-label', `Target percentage for ${productType} ${bucket.name}`);
+                        targetInput.onchange = () => {
+                            const parsed = toOptionalFiniteNumber(targetInput.value);
+                            const key = storageKeys.ocbcTarget(buildOcbcTargetScope(activeView, productType, bucket.id));
+                            if (parsed === null) {
+                                Storage.remove(key);
+                            } else {
+                                const bounded = Math.min(100, Math.max(0, parsed));
+                                Storage.set(key, Number(bounded.toFixed(2)));
+                            }
+                            rerender();
+                        };
+                        targetCell.appendChild(targetInput);
+                    } else {
+                        targetCell.textContent = '-';
+                    }
+                    tr.appendChild(targetCell);
+                    tr.appendChild(createElement('td', driftClass, driftDisplay));
+                    tr.appendChild(createElement('td', null, String(bucket.rows.length)));
+                    bucketBody.appendChild(tr);
+                });
+
+                section.appendChild(bucketRows);
+
+                const holdingsTable = createElement('table', 'gpv-table');
+                holdingsTable.innerHTML = `
+                    <thead>
+                        <tr>
+                            <th>Identifier</th>
+                            <th>Name</th>
+                            <th>Portfolio</th>
+                            <th>Value (SGD)</th>
+                            <th>Current %</th>
+                            <th>Allocation Bucket</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                `;
+                const holdingsBody = holdingsTable.querySelector('tbody');
+                const displayRows = buildFsmDisplayRows(productRows, productTotal);
+                displayRows.forEach(row => {
+                    const tr = createElement('tr');
+                    tr.appendChild(createElement('td', null, row.displayTicker || row.code || '-'));
+                    tr.appendChild(createElement('td', null, row.name || '-'));
+                    tr.appendChild(createElement('td', null, row.portfolioNo || '-'));
+                    tr.appendChild(createElement('td', null, formatMoney(row.currentValueLcy)));
+                    tr.appendChild(createElement('td', null, row.currentAllocationDisplay || '-'));
+
+                    const selectCell = createElement('td');
+                    const select = createElement('select', 'gpv-select');
+                    const code = utils.normalizeString(row.code, '');
+                    const currentBucketId = utils.normalizeString(assignmentByCode[code], '');
+                    const unassignedOption = createElement('option', null, 'Unassigned');
+                    unassignedOption.value = '';
+                    select.appendChild(unassignedOption);
+                    buckets.forEach(bucket => {
+                        const option = createElement('option', null, bucket.name);
+                        option.value = bucket.id;
+                        select.appendChild(option);
+                    });
+                    select.value = currentBucketId;
+                    select.onchange = () => {
+                        assignmentByCode[code] = utils.normalizeString(select.value, '');
+                        saveOcbcAllocationAssignmentsConfig(assignmentByCode);
+                        rerender();
+                    };
+                    selectCell.appendChild(select);
+                    tr.appendChild(selectCell);
+                    holdingsBody.appendChild(tr);
+                });
+                section.appendChild(holdingsTable);
+
+                contentDiv.appendChild(section);
+            });
+        }
+
         function rerender() {
             const activeView = viewSelect.value === 'liabilities' ? 'liabilities' : 'assets';
             const rows = activeView === 'liabilities' ? liabilities : assets;
+            const mode = modeSelect.value === 'allocation' ? 'allocation' : 'portfolio';
             contentDiv.innerHTML = '';
+
+            if (mode === 'allocation') {
+                renderAllocationMode(activeView, rows);
+                return;
+            }
 
             const grouped = buildOcbcRowsByPortfolioAndProductType(rows);
             const portfolioNos = Object.keys(grouped);
@@ -12983,6 +13302,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             });
         }
         viewSelect.onchange = rerender;
+        modeSelect.onchange = rerender;
         rerender();
 
         overlay.onclick = event => {

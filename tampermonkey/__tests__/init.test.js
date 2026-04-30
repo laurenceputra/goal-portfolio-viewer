@@ -1077,17 +1077,163 @@ describe('initialization and URL monitoring', () => {
         expect(firstIdentifierCell.textContent.trim()).toBe('SG00AAA111');
         expect(firstIdentifierCell.textContent.trim()).not.toBe('P-1');
 
-        const viewSelect = overlay.querySelector('.gpv-select');
+        const viewSelect = overlay.querySelector('#gpv-ocbc-view-select');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         const viewLabel = Array.from(overlay.querySelectorAll('label')).find(label => label.textContent.includes('View:'));
+        const modeLabel = Array.from(overlay.querySelectorAll('label')).find(label => label.textContent.includes('Mode:'));
         expect(viewLabel).toBeTruthy();
+        expect(modeLabel).toBeTruthy();
         expect(viewSelect.id).toBe('gpv-ocbc-view-select');
+        expect(modeSelect.id).toBe('gpv-ocbc-mode-select');
         expect(viewLabel.getAttribute('for')).toBe('gpv-ocbc-view-select');
+        expect(modeLabel.getAttribute('for')).toBe('gpv-ocbc-mode-select');
         viewSelect.value = 'liabilities';
         viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         expect(overlay.textContent).toContain('OCBC Liability');
         expect(overlay.textContent).toContain('-SGD');
         expect(overlay.textContent).not.toContain('OCBC Asset');
+    });
+
+    test('OCBC allocation mode groups holdings by product type across portfolios', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-2:EQ2', portfolioNo: 'P-2', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(overlay.querySelectorAll('.gpv-type-section')).toHaveLength(1);
+        expect(overlay.textContent).toContain('Global Equity');
+        expect(overlay.textContent).toContain('P-1');
+        expect(overlay.textContent).toContain('P-2');
+        expect(overlay.textContent).not.toContain('Portfolio P-1');
+        expect(overlay.textContent).not.toContain('Portfolio P-2');
+    });
+
+    test('OCBC allocation mode renders bucket summary and persists target and assignment updates', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-2:EQ2', portfolioNo: 'P-2', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        }));
+        global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
+            assets: {
+                'Global Equity': [{ id: 'core-equity', name: 'Core Equity', archived: false }]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            'P-1:EQ1': 'core-equity'
+        }));
+        global.GM_setValue('ocbc_target_pct_assets|Global%20Equity|core-equity', 70);
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(overlay.textContent).toContain('Core Equity');
+        expect(overlay.textContent).toContain('70.00%');
+        expect(overlay.textContent).toContain('66.67%');
+
+        const targetInput = Array.from(overlay.querySelectorAll('input.gpv-target-input')).find(input => input.type === 'number');
+        expect(targetInput).toBeTruthy();
+        targetInput.value = '60';
+        targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+        expect(storage.get('ocbc_target_pct_assets|Global%20Equity|core-equity')).toBe(60);
+
+        const assignmentSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => Array.from(select.options).some(option => option.textContent === 'Core Equity'));
+        expect(assignmentSelect).toBeTruthy();
+        assignmentSelect.value = '';
+        assignmentSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const savedAssignments = JSON.parse(storage.get('ocbc_allocation_assignment_by_code'));
+        expect(savedAssignments['P-1:EQ1']).toBe('');
     });
 
     test('normalizeOcbcHoldingsPayload keeps portfolioNo and stable non-portfolio identifier', () => {
