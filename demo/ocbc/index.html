@@ -128,6 +128,8 @@
             window.dispatchEvent(new Event('gpv:e2e-ready'));
         }
 
+        window.__GPV_OCBC_DEMO_ROUTE__ = true;
+
         loadUserscript()
             .then(bootstrapMockData)
             .then(waitForButton)

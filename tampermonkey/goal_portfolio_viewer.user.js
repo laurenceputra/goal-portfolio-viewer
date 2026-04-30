@@ -60,6 +60,7 @@
         fsmPortfolios: 'fsm_portfolios',
         fsmAssignmentByCode: 'fsm_assignment_by_code',
         ocbcAllocationBuckets: 'ocbc_allocation_buckets',
+        ocbcSubPortfolios: 'ocbc_sub_portfolios',
         ocbcAllocationAssignmentByCode: 'ocbc_allocation_assignment_by_code'
     };
     const STORAGE_KEY_PREFIXES = {
@@ -781,8 +782,20 @@
             const target = new URL(url, originFallback);
             const expectedOrigin = 'https://internet.ocbc.com';
             const normalizedPath = target.pathname.replace(/\/+$/, '');
-            return target.origin === expectedOrigin
-                && normalizedPath === '/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings';
+            const isExpectedPath = normalizedPath === '/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings';
+            if (!isExpectedPath) {
+                return false;
+            }
+            if (target.origin === expectedOrigin) {
+                return true;
+            }
+
+            const demoRouteEnabled = typeof window !== 'undefined' && window.__GPV_OCBC_DEMO_ROUTE__ === true;
+            if (!demoRouteEnabled) {
+                return false;
+            }
+
+            return target.hostname === 'localhost' || target.hostname === '127.0.0.1';
         } catch (_error) {
             return false;
         }
@@ -857,6 +870,8 @@
             subcode: utils.normalizeString(row.subcode ?? row.subCode, ''),
             displayTicker,
             name: utils.normalizeString(row.fundName || row.companyName || row.description || row.shortName, '-'),
+            assetClassDesc: utils.normalizeString(context.assetClassDesc, ''),
+            subAssetClassDesc: utils.normalizeString(context.subAssetClassDesc, ''),
             productType: utils.normalizeString(
                 context.subAssetClassDesc || context.assetClassDesc || row.shortName,
                 '-'
@@ -9730,6 +9745,25 @@ syncUi.update = function updateSyncUI() {
                 flex-wrap: nowrap;
                 grid-column: 1 / -1;
             }
+
+            .gpv-ocbc-portfolio-header {
+                margin-bottom: 12px;
+            }
+
+            .gpv-ocbc-detail-stats {
+                gap: 16px;
+                flex-wrap: wrap;
+            }
+
+            .gpv-ocbc-detail-stats .gpv-stat-label {
+                font-size: 11px;
+                letter-spacing: 0.3px;
+            }
+
+            .gpv-ocbc-detail-stats .gpv-stat-value {
+                font-size: 16px;
+                line-height: 1.2;
+            }
             
             .gpv-type-section {
                 margin-bottom: 24px;
@@ -12872,19 +12906,35 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function buildOcbcSummary(rows) {
-        const summary = buildFsmScopedSummary((Array.isArray(rows) ? rows : []).map(row => ({
+        const safeRows = Array.isArray(rows) ? rows : [];
+        const summary = buildFsmScopedSummary(safeRows.map(row => ({
             ...row,
             portfolioId: FSM_UNASSIGNED_PORTFOLIO_ID,
             targetPercent: null,
             fixed: false
         })));
-        return summary;
+        const knownProfitRows = safeRows.filter(row => Number.isFinite(toOptionalFiniteNumber(row?.profitValueLcy)));
+        const missingProfitCount = Math.max(0, safeRows.length - knownProfitRows.length);
+        if (knownProfitRows.length === 0) {
+            return summary;
+        }
+        const profitValue = knownProfitRows.reduce((sum, row) => sum + toFiniteNumber(row.profitValueLcy, 0), 0);
+        const total = toFiniteNumber(summary.total, 0);
+        const profitPercent = calculateProfitPercentFromValue(total, profitValue);
+        const partialSuffix = missingProfitCount > 0 ? ` · partial (${missingProfitCount} missing)` : '';
+        return {
+            ...summary,
+            profitValue,
+            profitPercent,
+            profitDisplay: `${formatFsmProfitDisplay(profitValue, profitPercent)}${partialSuffix}`,
+            profitClass: getFsmProfitClass(profitPercent)
+        };
     }
 
     function buildOcbcPortfolioHeader(portfolioNo, summary) {
-        const detailHeader = createElement('div', 'gpv-detail-header');
+        const detailHeader = createElement('div', 'gpv-detail-header gpv-ocbc-portfolio-header');
         const detailTitle = createElement('h2', 'gpv-detail-title', `Portfolio ${portfolioNo}`);
-        const detailStats = createElement('div', 'gpv-stats gpv-detail-stats');
+        const detailStats = createElement('div', 'gpv-stats gpv-detail-stats gpv-ocbc-detail-stats');
         const profitClass = summary?.profitClass === 'positive' || summary?.profitClass === 'negative'
             ? summary.profitClass
             : null;
@@ -12918,19 +12968,41 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return typeHeader;
     }
 
-    function buildOcbcTargetScope(viewKey, productType, bucketId) {
-        const safeView = encodeURIComponent(utils.normalizeString(viewKey, 'assets'));
-        const safeProductType = encodeURIComponent(utils.normalizeString(productType, '-'));
-        const safeBucketId = encodeURIComponent(utils.normalizeString(bucketId, ''));
+    function encodeOcbcTargetScopeSegment(value, fallback) {
+        return encodeURIComponent(utils.normalizeString(value, fallback)).replace(/\|/g, '%7C');
+    }
+
+    function buildOcbcTargetScope(viewKey, portfolioNo, subPortfolioId, bucketId) {
+        const safeView = encodeOcbcTargetScopeSegment(viewKey, 'assets');
+        const safePortfolioNo = encodeOcbcTargetScopeSegment(portfolioNo, '-');
+        const safeSubPortfolioId = encodeOcbcTargetScopeSegment(subPortfolioId, '');
+        const safeBucketId = encodeOcbcTargetScopeSegment(bucketId, '');
+        return `${safeView}${PROJECTED_KEY_SEPARATOR}${safePortfolioNo}${PROJECTED_KEY_SEPARATOR}${safeSubPortfolioId}${PROJECTED_KEY_SEPARATOR}${safeBucketId}`;
+    }
+
+    function buildLegacyOcbcTargetScope(viewKey, productType, bucketId) {
+        const safeView = encodeOcbcTargetScopeSegment(viewKey, 'assets');
+        const safeProductType = encodeOcbcTargetScopeSegment(productType, '');
+        const safeBucketId = encodeOcbcTargetScopeSegment(bucketId, '');
         return `${safeView}${PROJECTED_KEY_SEPARATOR}${safeProductType}${PROJECTED_KEY_SEPARATOR}${safeBucketId}`;
     }
 
-    function getOcbcAllocationTargetPercent(viewKey, productType, bucketId) {
-        const key = storageKeys.ocbcTarget(buildOcbcTargetScope(viewKey, productType, bucketId));
-        if (!Storage.has(key)) {
-            return null;
+    function getOcbcAllocationTargetPercent(viewKey, portfolioNo, subPortfolioId, bucketId, legacyProductType, legacyBucketId) {
+        const key = storageKeys.ocbcTarget(buildOcbcTargetScope(viewKey, portfolioNo, subPortfolioId, bucketId));
+        if (Storage.has(key)) {
+            return toOptionalFiniteNumber(Storage.get(key, null));
         }
-        return toOptionalFiniteNumber(Storage.get(key, null));
+        const normalizedLegacyBucketId = utils.normalizeString(legacyBucketId, '');
+        const normalizedBucketId = utils.normalizeString(bucketId, '');
+        const normalizedLegacyProductType = utils.normalizeString(legacyProductType, '');
+        if (!normalizedBucketId && normalizedLegacyProductType) {
+            const legacyScopeBucketId = normalizedLegacyBucketId || utils.normalizeString(subPortfolioId, '');
+            const legacyKey = storageKeys.ocbcTarget(buildLegacyOcbcTargetScope(viewKey, normalizedLegacyProductType, legacyScopeBucketId));
+            if (Storage.has(legacyKey)) {
+                return toOptionalFiniteNumber(Storage.get(legacyKey, null));
+            }
+        }
+        return null;
     }
 
     function loadOcbcAllocationConfig() {
@@ -12939,16 +13011,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             data => data && typeof data === 'object' && !Array.isArray(data),
             'Error reading OCBC allocation buckets'
         ) || {};
+        const subPortfoliosByView = Storage.readJson(
+            STORAGE_KEYS.ocbcSubPortfolios,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error reading OCBC sub-portfolios'
+        ) || {};
         const assignmentByCode = Storage.readJson(
             STORAGE_KEYS.ocbcAllocationAssignmentByCode,
             data => data && typeof data === 'object' && !Array.isArray(data),
             'Error reading OCBC allocation assignments'
         ) || {};
-        return { bucketsByView, assignmentByCode };
+        return { bucketsByView, subPortfoliosByView, assignmentByCode };
     }
 
-    function saveOcbcAllocationBucketsConfig(bucketsByView) {
-        Storage.writeJson(STORAGE_KEYS.ocbcAllocationBuckets, bucketsByView || {}, 'Error saving OCBC allocation buckets');
+    function saveOcbcSubPortfoliosConfig(subPortfoliosByView) {
+        Storage.writeJson(STORAGE_KEYS.ocbcSubPortfolios, subPortfoliosByView || {}, 'Error saving OCBC sub-portfolios');
     }
 
     function saveOcbcAllocationAssignmentsConfig(assignmentByCode) {
@@ -12959,38 +13036,191 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         );
     }
 
-    function getActiveOcbcBucketsByProductType(bucketsByView, activeView, productType) {
-        const scoped = bucketsByView && typeof bucketsByView === 'object' ? bucketsByView[activeView] : null;
-        const items = scoped && typeof scoped === 'object' ? scoped[productType] : null;
+    function normalizeOcbcSubPortfolioItem(item) {
+        if (!item || typeof item !== 'object') {
+            return null;
+        }
+        const id = utils.normalizeString(item.id, '');
+        if (!id) {
+            return null;
+        }
+        const buckets = Array.isArray(item.buckets) ? item.buckets : [];
+        return {
+            id,
+            name: utils.normalizeString(item.name, 'Untitled sub-portfolio'),
+            archived: item.archived === true,
+            legacyProductType: utils.normalizeString(item.legacyProductType, ''),
+            legacyBucketId: utils.normalizeString(item.legacyBucketId, ''),
+            buckets: buckets
+                .filter(bucket => bucket && typeof bucket === 'object' && bucket.archived !== true)
+                .map(bucket => ({
+                    id: utils.normalizeString(bucket.id, ''),
+                    name: utils.normalizeString(bucket.name, 'Untitled bucket'),
+                    archived: bucket.archived === true
+                }))
+                .filter(bucket => bucket.id)
+        };
+    }
+
+    function getActiveOcbcSubPortfolios(subPortfoliosByView, activeView, portfolioNo) {
+        const scoped = subPortfoliosByView && typeof subPortfoliosByView === 'object' ? subPortfoliosByView[activeView] : null;
+        const items = scoped && typeof scoped === 'object' ? scoped[portfolioNo] : null;
         if (!Array.isArray(items)) {
             return [];
         }
         return items
-            .filter(item => item && typeof item === 'object' && item.archived !== true)
-            .map(item => ({
-                id: utils.normalizeString(item.id, ''),
-                name: utils.normalizeString(item.name, 'Untitled bucket'),
-                archived: item.archived === true
-            }))
-            .filter(item => item.id);
+            .map(normalizeOcbcSubPortfolioItem)
+            .filter(item => item && item.archived !== true);
     }
 
-    function ensureOcbcViewBucketStore(bucketsByView, activeView) {
-        if (!bucketsByView[activeView] || typeof bucketsByView[activeView] !== 'object' || Array.isArray(bucketsByView[activeView])) {
-            bucketsByView[activeView] = {};
+    function ensureOcbcViewSubPortfolioStore(subPortfoliosByView, activeView) {
+        if (!subPortfoliosByView[activeView] || typeof subPortfoliosByView[activeView] !== 'object' || Array.isArray(subPortfoliosByView[activeView])) {
+            subPortfoliosByView[activeView] = {};
         }
-        return bucketsByView[activeView];
+        return subPortfoliosByView[activeView];
     }
 
-    function buildOcbcAllocationRowsByProductType(rows) {
+    function normalizeOcbcAllocationAssignment(value) {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            return {
+                subPortfolioId: utils.normalizeString(value.subPortfolioId, ''),
+                bucketId: utils.normalizeString(value.bucketId, '')
+            };
+        }
+        return {
+            subPortfolioId: utils.normalizeString(value, ''),
+            bucketId: ''
+        };
+    }
+
+    function buildOcbcAllocationRowsByPortfolio(rows) {
         return (Array.isArray(rows) ? rows : []).reduce((acc, row) => {
-            const productType = utils.normalizeString(row?.productType, '-');
-            if (!acc[productType]) {
-                acc[productType] = [];
+            const portfolioNo = utils.normalizeString(row?.portfolioNo, '-');
+            if (!acc[portfolioNo]) {
+                acc[portfolioNo] = [];
             }
-            acc[productType].push(row);
+            acc[portfolioNo].push(row);
             return acc;
         }, {});
+    }
+
+    function buildLegacyOcbcSubPortfolios(activeView, bucketsByView) {
+        const legacyProductBuckets = bucketsByView?.[activeView] || {};
+        const legacySubPortfolios = [];
+        const bucketUsageCount = new Map();
+        Object.values(legacyProductBuckets).forEach(buckets => {
+            if (!Array.isArray(buckets)) {
+                return;
+            }
+            buckets.forEach(bucket => {
+                const normalizedId = utils.normalizeString(bucket?.id, '');
+                if (!normalizedId) {
+                    return;
+                }
+                bucketUsageCount.set(normalizedId, (bucketUsageCount.get(normalizedId) || 0) + 1);
+            });
+        });
+        Object.entries(legacyProductBuckets).forEach(([productType, buckets]) => {
+            if (!Array.isArray(buckets)) {
+                return;
+            }
+            buckets.forEach(bucket => {
+                const normalizedId = utils.normalizeString(bucket?.id, '');
+                const normalizedProductType = utils.normalizeString(productType, '');
+                if (!normalizedId) {
+                    return;
+                }
+                const isDuplicateLegacyBucketId = (bucketUsageCount.get(normalizedId) || 0) > 1;
+                const internalId = isDuplicateLegacyBucketId
+                    ? `legacy-${normalizedProductType.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'product'}-${normalizedId}`
+                    : normalizedId;
+                legacySubPortfolios.push({
+                    id: internalId,
+                    name: utils.normalizeString(bucket?.name, normalizedId),
+                    archived: bucket?.archived === true,
+                    buckets: [],
+                    legacyProductType: normalizedProductType,
+                    legacyBucketId: normalizedId
+                });
+            });
+        });
+        return legacySubPortfolios.filter(item => item.archived !== true);
+    }
+
+    function resolveOcbcAllocationAssignmentForRow(rawAssignment, row, subPortfolios) {
+        const normalizedFromRaw = normalizeOcbcAllocationAssignment(rawAssignment);
+        if (rawAssignment && typeof rawAssignment === 'object' && !Array.isArray(rawAssignment)) {
+            return normalizedFromRaw;
+        }
+        const rawLegacyId = normalizedFromRaw.subPortfolioId;
+        if (!rawLegacyId) {
+            return normalizedFromRaw;
+        }
+        const items = Array.isArray(subPortfolios) ? subPortfolios : [];
+        const directMatch = items.find(item => utils.normalizeString(item?.id, '') === rawLegacyId);
+        if (directMatch && isOcbcSubPortfolioAllowedForRow(directMatch, row)) {
+            return normalizedFromRaw;
+        }
+        const rowProductType = utils.normalizeString(row?.productType, '');
+        const productScopedLegacyMatch = items.find(item => (
+            utils.normalizeString(item?.legacyBucketId, '') === rawLegacyId
+            && utils.normalizeString(item?.legacyProductType, '') === rowProductType
+        ));
+        if (productScopedLegacyMatch) {
+            return { subPortfolioId: productScopedLegacyMatch.id, bucketId: '' };
+        }
+        const legacyBucketMatches = items.filter(item => utils.normalizeString(item?.legacyBucketId, '') === rawLegacyId);
+        if (legacyBucketMatches.length === 1) {
+            return { subPortfolioId: legacyBucketMatches[0].id, bucketId: '' };
+        }
+        return normalizedFromRaw;
+    }
+
+    function isOcbcSubPortfolioAllowedForRow(subPortfolio, row) {
+        const legacyProductType = utils.normalizeString(subPortfolio?.legacyProductType, '');
+        if (!legacyProductType) {
+            return true;
+        }
+        return legacyProductType === utils.normalizeString(row?.productType, '');
+    }
+
+    function getEffectiveOcbcAssignmentForRow(rawAssignment, row, subPortfolios) {
+        const normalizedAssignment = resolveOcbcAllocationAssignmentForRow(rawAssignment, row, subPortfolios);
+        const subPortfolioId = utils.normalizeString(normalizedAssignment?.subPortfolioId, '');
+        if (!subPortfolioId) {
+            return { subPortfolioId: '', bucketId: '' };
+        }
+        const selectedSubPortfolio = (Array.isArray(subPortfolios) ? subPortfolios : []).find(item => item.id === subPortfolioId);
+        if (!selectedSubPortfolio || !isOcbcSubPortfolioAllowedForRow(selectedSubPortfolio, row)) {
+            return { subPortfolioId: '', bucketId: '' };
+        }
+        const bucketId = utils.normalizeString(normalizedAssignment?.bucketId, '');
+        const hasBucket = bucketId && Array.isArray(selectedSubPortfolio.buckets)
+            ? selectedSubPortfolio.buckets.some(bucket => utils.normalizeString(bucket?.id, '') === bucketId)
+            : false;
+        return {
+            subPortfolioId,
+            bucketId: hasBucket ? bucketId : ''
+        };
+    }
+
+    function mergeOcbcSubPortfolios(scopedSubPortfolios, legacySubPortfolios) {
+        const mergedMap = new Map();
+        (Array.isArray(scopedSubPortfolios) ? scopedSubPortfolios : []).forEach(item => {
+            const id = utils.normalizeString(item?.id, '');
+            if (!id || mergedMap.has(id)) {
+                return;
+            }
+            mergedMap.set(id, item);
+        });
+        (Array.isArray(legacySubPortfolios) ? legacySubPortfolios : []).forEach(item => {
+            const id = utils.normalizeString(item?.id, '');
+            if (!id || mergedMap.has(id)) {
+                return;
+            }
+            mergedMap.set(id, item);
+        });
+        return Array.from(mergedMap.values());
     }
 
     function renderOcbcOverlay(ocbcHoldings) {
@@ -13048,151 +13278,135 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         const allocationConfig = loadOcbcAllocationConfig();
         const bucketsByView = allocationConfig.bucketsByView;
+        const subPortfoliosByView = allocationConfig.subPortfoliosByView;
         const assignmentByCode = allocationConfig.assignmentByCode;
 
         function renderAllocationMode(activeView, rows) {
-            const groupedByProductType = buildOcbcAllocationRowsByProductType(rows);
-            const productTypes = Object.keys(groupedByProductType);
-            if (productTypes.length === 0) {
+            const groupedByPortfolio = buildOcbcAllocationRowsByPortfolio(rows);
+            const portfolioNos = Object.keys(groupedByPortfolio);
+            if (portfolioNos.length === 0) {
                 contentDiv.appendChild(createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.'));
                 return;
             }
 
-            productTypes.forEach(productType => {
-                const productRows = groupedByProductType[productType] || [];
-                const productSummary = buildOcbcSummary(productRows);
-                const productTotal = toFiniteNumber(productSummary.total, 0);
-                const buckets = getActiveOcbcBucketsByProductType(bucketsByView, activeView, productType);
+            portfolioNos.forEach(portfolioNo => {
+                const portfolioRows = groupedByPortfolio[portfolioNo] || [];
+                const portfolioSummary = buildOcbcSummary(portfolioRows);
+                const portfolioTotal = toFiniteNumber(portfolioSummary.total, 0);
+                const section = createElement('section', 'gpv-bucket-detail-section');
+                section.appendChild(buildOcbcPortfolioHeader(portfolioNo, portfolioSummary));
 
-                const section = createElement('section', 'gpv-type-section');
-
-                const targetAssigned = buckets.reduce((sum, bucket) => {
-                    const value = getOcbcAllocationTargetPercent(activeView, productType, bucket.id);
-                    return sum + (Number.isFinite(value) ? value : 0);
-                }, 0);
-                const targetAssignedDisplay = Number.isFinite(targetAssigned)
-                    ? `${targetAssigned.toFixed(2)}%`
-                    : '-';
-                const coverageHint = buildTargetCoverageLabel(targetAssigned);
-
-                const driftTotal = targetAssigned - 100;
-                const driftClass = Math.abs(driftTotal) <= TARGET_TOTAL_TOLERANCE_PERCENT
-                    ? null
-                    : driftTotal > 0 ? 'negative' : 'positive';
-
-                const header = createElement('div', 'gpv-type-header');
-                const headerTitle = createElement('h3', null, productType);
-                const headerSummary = createElement('div', 'gpv-type-summary');
-                appendLabeledValue(headerSummary, null, 'Value:', formatMoney(productTotal));
-                appendLabeledValue(headerSummary, null, 'Holdings:', String(productSummary?.holdingsCount || 0));
-                appendLabeledValue(headerSummary, null, 'Target Assigned:', targetAssignedDisplay);
-                appendLabeledValue(
-                    headerSummary,
-                    null,
-                    'Drift:',
-                    `${driftTotal >= 0 ? '+' : ''}${driftTotal.toFixed(2)}%`,
-                    { valueClass: driftClass }
-                );
-                if (coverageHint) {
-                    const coverage = createElement('div', 'gpv-subtitle gpv-target-coverage-label', coverageHint);
-                    headerSummary.appendChild(coverage);
-                }
-                header.appendChild(headerTitle);
-                header.appendChild(headerSummary);
-                section.appendChild(header);
+                const scopedSubPortfolios = getActiveOcbcSubPortfolios(subPortfoliosByView, activeView, portfolioNo);
+                const legacySubPortfolios = buildLegacyOcbcSubPortfolios(activeView, bucketsByView);
+                const persistedSubPortfolios = mergeOcbcSubPortfolios(scopedSubPortfolios, legacySubPortfolios);
+                const assignmentReferencedIds = Array.from(new Set(portfolioRows
+                    .map(row => getEffectiveOcbcAssignmentForRow(
+                        assignmentByCode[utils.normalizeString(row?.code, '')],
+                        row,
+                        persistedSubPortfolios
+                    ).subPortfolioId)
+                    .filter(Boolean)));
+                assignmentReferencedIds.forEach(id => {
+                    const ambiguousLegacyMatches = persistedSubPortfolios.filter(item => (
+                        utils.normalizeString(item?.legacyBucketId, '') === id
+                        && utils.normalizeString(item?.legacyProductType, '')
+                    ));
+                    if (ambiguousLegacyMatches.length > 1) {
+                        return;
+                    }
+                    if (!persistedSubPortfolios.some(item => item.id === id)) {
+                        persistedSubPortfolios.push({ id, name: id, archived: false, buckets: [] });
+                    }
+                });
 
                 const managerRow = createElement('div', 'gpv-fsm-manager-row');
-                const createLabelId = `gpv-ocbc-bucket-create-${activeView}-${encodeURIComponent(productType)}`;
-                const createLabel = createElement('label', null, 'New allocation bucket');
-                createLabel.setAttribute('for', createLabelId);
-                const createInput = createElement('input', 'gpv-target-input');
-                createInput.id = createLabelId;
-                createInput.maxLength = 80;
-                createInput.placeholder = 'Bucket name';
-                const createBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', 'Create');
-                createBtn.type = 'button';
-                createBtn.onclick = () => {
-                    const name = utils.normalizeString(createInput.value, '');
+                const createSubPortfolioId = `gpv-ocbc-sub-portfolio-create-${activeView}-${encodeURIComponent(portfolioNo)}`;
+                const createSubPortfolioLabel = createElement('label', null, 'New sub-portfolio');
+                createSubPortfolioLabel.setAttribute('for', createSubPortfolioId);
+                const createSubPortfolioInput = createElement('input', 'gpv-target-input');
+                createSubPortfolioInput.id = createSubPortfolioId;
+                createSubPortfolioInput.maxLength = 80;
+                createSubPortfolioInput.placeholder = 'Sub-portfolio name';
+                const createSubPortfolioBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', 'Create');
+                createSubPortfolioBtn.type = 'button';
+                createSubPortfolioBtn.onclick = () => {
+                    const name = utils.normalizeString(createSubPortfolioInput.value, '');
                     if (!name) {
                         return;
                     }
                     const normalizedId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                    const bucketId = normalizedId || `bucket-${Date.now()}`;
-                    const viewStore = ensureOcbcViewBucketStore(bucketsByView, activeView);
-                    const currentItems = Array.isArray(viewStore[productType]) ? viewStore[productType] : [];
-                    const existing = currentItems.some(item => utils.normalizeString(item?.id, '') === bucketId);
-                    if (!existing) {
-                        currentItems.push({ id: bucketId, name, archived: false });
-                        viewStore[productType] = currentItems;
-                        saveOcbcAllocationBucketsConfig(bucketsByView);
+                    const subPortfolioId = normalizedId || `sub-portfolio-${Date.now()}`;
+                    const viewStore = ensureOcbcViewSubPortfolioStore(subPortfoliosByView, activeView);
+                    const currentItems = Array.isArray(viewStore[portfolioNo]) ? viewStore[portfolioNo] : [];
+                    if (!currentItems.some(item => utils.normalizeString(item?.id, '') === subPortfolioId)) {
+                        currentItems.push({ id: subPortfolioId, name, archived: false, buckets: [] });
+                        viewStore[portfolioNo] = currentItems;
+                        saveOcbcSubPortfoliosConfig(subPortfoliosByView);
                         rerender();
                     }
                 };
-                managerRow.appendChild(createLabel);
-                managerRow.appendChild(createInput);
-                managerRow.appendChild(createBtn);
+                managerRow.appendChild(createSubPortfolioLabel);
+                managerRow.appendChild(createSubPortfolioInput);
+                managerRow.appendChild(createSubPortfolioBtn);
                 section.appendChild(managerRow);
 
-                const bucketRows = createElement('table', 'gpv-table');
-                bucketRows.innerHTML = `
+                const subPortfolioRows = createElement('table', 'gpv-table');
+                subPortfolioRows.innerHTML = `
                     <thead>
                         <tr>
-                            <th>Bucket</th>
+                            <th>Sub-portfolio</th>
                             <th>Value (SGD)</th>
                             <th>Current %</th>
                             <th>Target %</th>
                             <th>Drift</th>
                             <th>Holdings</th>
+                            <th>Profit</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
                 `;
-                const bucketBody = bucketRows.querySelector('tbody');
+                const subPortfolioBody = subPortfolioRows.querySelector('tbody');
+                const subPortfolioRowsData = [{ id: '', name: 'Unassigned', buckets: [], rows: [] }];
+                persistedSubPortfolios.forEach(item => subPortfolioRowsData.push({ ...item, rows: [] }));
 
-                const bucketRowsData = [{ id: '', name: 'Unassigned', rows: [] }];
-                buckets.forEach(bucket => bucketRowsData.push({ ...bucket, rows: [] }));
-
-                productRows.forEach(row => {
+                portfolioRows.forEach(row => {
                     const code = utils.normalizeString(row?.code, '');
-                    const assignedBucketId = utils.normalizeString(assignmentByCode[code], '');
-                    const matched = bucketRowsData.find(item => item.id === assignedBucketId);
-                    (matched || bucketRowsData[0]).rows.push(row);
+                    const assignment = getEffectiveOcbcAssignmentForRow(assignmentByCode[code], row, persistedSubPortfolios);
+                    const matchedSubPortfolio = subPortfolioRowsData.find(item => item.id === assignment.subPortfolioId);
+                    (matchedSubPortfolio || subPortfolioRowsData[0]).rows.push(row);
                 });
 
-                bucketRowsData.forEach(bucket => {
+                subPortfolioRowsData.forEach(subPortfolio => {
                     const tr = createElement('tr');
-                    const bucketSummary = buildOcbcSummary(bucket.rows);
-                    const bucketValue = toFiniteNumber(bucketSummary.total, 0);
-                    const currentPercent = calculateAllocationRatio(bucketValue, productTotal);
-                    const targetPercent = bucket.id ? getOcbcAllocationTargetPercent(activeView, productType, bucket.id) : null;
+                    const subPortfolioSummary = buildOcbcSummary(subPortfolio.rows);
+                    const subPortfolioValue = toFiniteNumber(subPortfolioSummary.total, 0);
+                    const currentPercent = calculateAllocationRatio(subPortfolioValue, portfolioTotal);
+                    const targetPercent = subPortfolio.id
+                        ? getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId)
+                        : null;
                     const driftModel = targetPercent === null
                         ? { driftPercent: null, driftAmount: null }
-                        : calculateAllocationDrift(bucketValue, targetPercent, productTotal);
-                    const driftDisplay = formatDriftDisplay(driftModel?.driftPercent, driftModel?.driftAmount);
-                    const driftClass = getDriftSeverityClass(driftModel?.driftPercent);
-
-                    const bucketCell = createElement('td', null, bucket.name);
-                    tr.appendChild(bucketCell);
-                    tr.appendChild(createElement('td', null, formatMoney(bucketValue)));
+                        : calculateAllocationDrift(subPortfolioValue, targetPercent, portfolioTotal);
+                    tr.appendChild(createElement('td', null, subPortfolio.name));
+                    tr.appendChild(createElement('td', null, formatMoney(subPortfolioValue)));
                     tr.appendChild(createElement('td', null, formatPercent(currentPercent, { multiplier: 100, showSign: false })));
 
                     const targetCell = createElement('td');
-                    if (bucket.id) {
+                    if (subPortfolio.id) {
                         const targetInput = createElement('input', 'gpv-target-input');
                         targetInput.type = 'number';
                         targetInput.min = '0';
                         targetInput.max = '100';
                         targetInput.step = '0.01';
                         targetInput.value = Number.isFinite(targetPercent) ? targetPercent.toFixed(2) : '';
-                        targetInput.setAttribute('aria-label', `Target percentage for ${productType} ${bucket.name}`);
+                        targetInput.setAttribute('aria-label', `Target percentage for portfolio ${portfolioNo} sub-portfolio ${subPortfolio.name}`);
                         targetInput.onchange = () => {
                             const parsed = toOptionalFiniteNumber(targetInput.value);
-                            const key = storageKeys.ocbcTarget(buildOcbcTargetScope(activeView, productType, bucket.id));
+                            const key = storageKeys.ocbcTarget(buildOcbcTargetScope(activeView, portfolioNo, subPortfolio.id, ''));
                             if (parsed === null) {
                                 Storage.remove(key);
                             } else {
-                                const bounded = Math.min(100, Math.max(0, parsed));
-                                Storage.set(key, Number(bounded.toFixed(2)));
+                                Storage.set(key, Number(Math.min(100, Math.max(0, parsed)).toFixed(2)));
                             }
                             rerender();
                         };
@@ -13201,12 +13415,126 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         targetCell.textContent = '-';
                     }
                     tr.appendChild(targetCell);
-                    tr.appendChild(createElement('td', driftClass, driftDisplay));
-                    tr.appendChild(createElement('td', null, String(bucket.rows.length)));
-                    bucketBody.appendChild(tr);
+                    tr.appendChild(createElement('td', getDriftSeverityClass(driftModel?.driftPercent), formatDriftDisplay(driftModel?.driftPercent, driftModel?.driftAmount)));
+                    tr.appendChild(createElement('td', null, String(subPortfolio.rows.length)));
+                    tr.appendChild(createElement('td', subPortfolioSummary?.profitClass, subPortfolioSummary?.profitDisplay || '-'));
+                    subPortfolioBody.appendChild(tr);
                 });
+                section.appendChild(subPortfolioRows);
 
-                section.appendChild(bucketRows);
+                persistedSubPortfolios.forEach(subPortfolio => {
+                    const subPortfolioSection = createElement('section', 'gpv-type-section');
+                    const subPortfolioHeader = createElement('div', 'gpv-type-header');
+                    const subPortfolioTitle = createElement('h3', null, `${subPortfolio.name} buckets`);
+                    subPortfolioHeader.appendChild(subPortfolioTitle);
+                    subPortfolioSection.appendChild(subPortfolioHeader);
+
+                    const viewStore = ensureOcbcViewSubPortfolioStore(subPortfoliosByView, activeView);
+                    const currentItems = Array.isArray(viewStore[portfolioNo]) ? viewStore[portfolioNo] : [];
+                    const isPersistedSubPortfolio = currentItems.some(item => utils.normalizeString(item?.id, '') === subPortfolio.id);
+
+                    const createBucketId = `gpv-ocbc-bucket-create-${activeView}-${encodeURIComponent(portfolioNo)}-${encodeURIComponent(subPortfolio.id)}`;
+                    if (isPersistedSubPortfolio) {
+                        const createBucketRow = createElement('div', 'gpv-fsm-manager-row');
+                        const createBucketLabel = createElement('label', null, 'New nested bucket');
+                        createBucketLabel.setAttribute('for', createBucketId);
+                        const createBucketInput = createElement('input', 'gpv-target-input');
+                        createBucketInput.id = createBucketId;
+                        createBucketInput.maxLength = 80;
+                        createBucketInput.placeholder = 'Bucket name';
+                        const createBucketBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', 'Create');
+                        createBucketBtn.type = 'button';
+                        createBucketBtn.onclick = () => {
+                            const name = utils.normalizeString(createBucketInput.value, '');
+                            if (!name) {
+                                return;
+                            }
+                            const targetSubPortfolio = currentItems.find(item => utils.normalizeString(item?.id, '') === subPortfolio.id);
+                            if (!targetSubPortfolio) {
+                                return;
+                            }
+                            const normalizedId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                            const bucketId = normalizedId || `bucket-${Date.now()}`;
+                            targetSubPortfolio.buckets = Array.isArray(targetSubPortfolio.buckets) ? targetSubPortfolio.buckets : [];
+                            if (!targetSubPortfolio.buckets.some(item => utils.normalizeString(item?.id, '') === bucketId)) {
+                                targetSubPortfolio.buckets.push({ id: bucketId, name, archived: false });
+                                saveOcbcSubPortfoliosConfig(subPortfoliosByView);
+                                rerender();
+                            }
+                        };
+                        createBucketRow.appendChild(createBucketLabel);
+                        createBucketRow.appendChild(createBucketInput);
+                        createBucketRow.appendChild(createBucketBtn);
+                        subPortfolioSection.appendChild(createBucketRow);
+                    }
+
+                    const subPortfolioTotal = toFiniteNumber(buildOcbcSummary(portfolioRows.filter(row => {
+                        const assignment = getEffectiveOcbcAssignmentForRow(
+                            assignmentByCode[utils.normalizeString(row.code, '')],
+                            row,
+                            persistedSubPortfolios
+                        );
+                        return assignment.subPortfolioId === subPortfolio.id;
+                    })).total, 0);
+                    const bucketRows = [{ id: '', name: 'Unassigned', rows: [] }].concat((subPortfolio.buckets || []).map(bucket => ({ ...bucket, rows: [] })));
+                    portfolioRows.forEach(row => {
+                        const code = utils.normalizeString(row.code, '');
+                        const assignment = getEffectiveOcbcAssignmentForRow(assignmentByCode[code], row, persistedSubPortfolios);
+                        if (assignment.subPortfolioId !== subPortfolio.id) {
+                            return;
+                        }
+                        const matched = bucketRows.find(item => item.id === assignment.bucketId);
+                        (matched || bucketRows[0]).rows.push(row);
+                    });
+
+                    const nestedTable = createElement('table', 'gpv-table');
+                    nestedTable.innerHTML = '<thead><tr><th>Bucket</th><th>Value (SGD)</th><th>Current %</th><th>Target %</th><th>Drift</th><th>Holdings</th></tr></thead><tbody></tbody>';
+                    const nestedBody = nestedTable.querySelector('tbody');
+                    bucketRows.forEach(bucket => {
+                        const bucketSummary = buildOcbcSummary(bucket.rows);
+                        const bucketValue = toFiniteNumber(bucketSummary.total, 0);
+                        const currentPercent = calculateAllocationRatio(bucketValue, subPortfolioTotal);
+                        const targetPercent = bucket.id
+                            ? getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, bucket.id)
+                            : null;
+                        const driftModel = targetPercent === null
+                            ? { driftPercent: null, driftAmount: null }
+                            : calculateAllocationDrift(bucketValue, targetPercent, subPortfolioTotal);
+                        const tr = createElement('tr');
+                        tr.appendChild(createElement('td', null, bucket.name));
+                        tr.appendChild(createElement('td', null, formatMoney(bucketValue)));
+                        tr.appendChild(createElement('td', null, formatPercent(currentPercent, { multiplier: 100, showSign: false })));
+                        const targetCell = createElement('td');
+                        if (bucket.id) {
+                            const targetInput = createElement('input', 'gpv-target-input');
+                            targetInput.type = 'number';
+                            targetInput.min = '0';
+                            targetInput.max = '100';
+                            targetInput.step = '0.01';
+                            targetInput.value = Number.isFinite(targetPercent) ? targetPercent.toFixed(2) : '';
+                            targetInput.setAttribute('aria-label', `Target percentage for portfolio ${portfolioNo} sub-portfolio ${subPortfolio.name} bucket ${bucket.name}`);
+                            targetInput.onchange = () => {
+                                const parsed = toOptionalFiniteNumber(targetInput.value);
+                                const key = storageKeys.ocbcTarget(buildOcbcTargetScope(activeView, portfolioNo, subPortfolio.id, bucket.id));
+                                if (parsed === null) {
+                                    Storage.remove(key);
+                                } else {
+                                    Storage.set(key, Number(Math.min(100, Math.max(0, parsed)).toFixed(2)));
+                                }
+                                rerender();
+                            };
+                            targetCell.appendChild(targetInput);
+                        } else {
+                            targetCell.textContent = '-';
+                        }
+                        tr.appendChild(targetCell);
+                        tr.appendChild(createElement('td', getDriftSeverityClass(driftModel?.driftPercent), formatDriftDisplay(driftModel?.driftPercent, driftModel?.driftAmount)));
+                        tr.appendChild(createElement('td', null, String(bucket.rows.length)));
+                        nestedBody.appendChild(tr);
+                    });
+                    subPortfolioSection.appendChild(nestedTable);
+                    section.appendChild(subPortfolioSection);
+                });
 
                 const holdingsTable = createElement('table', 'gpv-table');
                 holdingsTable.innerHTML = `
@@ -13214,46 +13542,86 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         <tr>
                             <th>Identifier</th>
                             <th>Name</th>
-                            <th>Portfolio</th>
+                            <th>Product Type</th>
                             <th>Value (SGD)</th>
                             <th>Current %</th>
-                            <th>Allocation Bucket</th>
+                            <th>Sub-portfolio</th>
+                            <th>Bucket</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
                 `;
                 const holdingsBody = holdingsTable.querySelector('tbody');
-                const displayRows = buildFsmDisplayRows(productRows, productTotal);
+                const displayRows = buildFsmDisplayRows(portfolioRows, portfolioTotal);
                 displayRows.forEach(row => {
                     const tr = createElement('tr');
                     tr.appendChild(createElement('td', null, row.displayTicker || row.code || '-'));
                     tr.appendChild(createElement('td', null, row.name || '-'));
-                    tr.appendChild(createElement('td', null, row.portfolioNo || '-'));
+                    tr.appendChild(createElement('td', null, row.productType || '-'));
                     tr.appendChild(createElement('td', null, formatMoney(row.currentValueLcy)));
                     tr.appendChild(createElement('td', null, row.currentAllocationDisplay || '-'));
 
-                    const selectCell = createElement('td');
-                    const select = createElement('select', 'gpv-select');
+                    const subPortfolioCell = createElement('td');
+                    const subPortfolioSelect = createElement('select', 'gpv-select');
                     const code = utils.normalizeString(row.code, '');
+                    const assignment = getEffectiveOcbcAssignmentForRow(assignmentByCode[code], row, persistedSubPortfolios);
                     const labelTicker = row.displayTicker || row.code || row.name || 'this holding';
-                    select.setAttribute('aria-label', `Allocation bucket for ${labelTicker}`);
-                    const currentBucketId = utils.normalizeString(assignmentByCode[code], '');
+                    subPortfolioSelect.setAttribute('aria-label', `Sub-portfolio for ${labelTicker}`);
                     const unassignedOption = createElement('option', null, 'Unassigned');
                     unassignedOption.value = '';
-                    select.appendChild(unassignedOption);
-                    buckets.forEach(bucket => {
-                        const option = createElement('option', null, bucket.name);
-                        option.value = bucket.id;
-                        select.appendChild(option);
+                    subPortfolioSelect.appendChild(unassignedOption);
+                    const rowProductType = utils.normalizeString(row?.productType, '');
+                    const rowSubPortfolioOptions = persistedSubPortfolios.filter(subPortfolio => {
+                        const legacyProductType = utils.normalizeString(subPortfolio?.legacyProductType, '');
+                        return !legacyProductType || legacyProductType === rowProductType;
                     });
-                    select.value = currentBucketId;
-                    select.onchange = () => {
-                        assignmentByCode[code] = utils.normalizeString(select.value, '');
+                    rowSubPortfolioOptions.forEach(subPortfolio => {
+                        const option = createElement('option', null, subPortfolio.name);
+                        option.value = subPortfolio.id;
+                        subPortfolioSelect.appendChild(option);
+                    });
+                    subPortfolioSelect.value = assignment.subPortfolioId;
+                    subPortfolioSelect.onchange = () => {
+                        const nextSubPortfolioId = utils.normalizeString(subPortfolioSelect.value, '');
+                        const selected = persistedSubPortfolios.find(item => item.id === nextSubPortfolioId);
+                        const currentBucketId = utils.normalizeString(bucketSelect.value, '');
+                        const hasBucket = selected && Array.isArray(selected.buckets)
+                            ? selected.buckets.some(bucket => bucket.id === currentBucketId)
+                            : false;
+                        assignmentByCode[code] = {
+                            subPortfolioId: nextSubPortfolioId,
+                            bucketId: hasBucket ? currentBucketId : ''
+                        };
                         saveOcbcAllocationAssignmentsConfig(assignmentByCode);
                         rerender();
                     };
-                    selectCell.appendChild(select);
-                    tr.appendChild(selectCell);
+                    subPortfolioCell.appendChild(subPortfolioSelect);
+                    tr.appendChild(subPortfolioCell);
+
+                    const bucketCell = createElement('td');
+                    const bucketSelect = createElement('select', 'gpv-select');
+                    bucketSelect.setAttribute('aria-label', `Allocation bucket for ${labelTicker}`);
+                    const bucketUnassignedOption = createElement('option', null, 'Unassigned');
+                    bucketUnassignedOption.value = '';
+                    bucketSelect.appendChild(bucketUnassignedOption);
+                    const selectedSubPortfolio = persistedSubPortfolios.find(item => item.id === subPortfolioSelect.value);
+                    (selectedSubPortfolio?.buckets || []).forEach(bucket => {
+                        const option = createElement('option', null, bucket.name);
+                        option.value = bucket.id;
+                        bucketSelect.appendChild(option);
+                    });
+                    bucketSelect.value = assignment.bucketId;
+                    bucketSelect.onchange = () => {
+                        const currentSubPortfolioId = utils.normalizeString(subPortfolioSelect.value, '');
+                        assignmentByCode[code] = {
+                            subPortfolioId: currentSubPortfolioId,
+                            bucketId: utils.normalizeString(bucketSelect.value, '')
+                        };
+                        saveOcbcAllocationAssignmentsConfig(assignmentByCode);
+                        rerender();
+                    };
+                    bucketCell.appendChild(bucketSelect);
+                    tr.appendChild(bucketCell);
                     holdingsBody.appendChild(tr);
                 });
                 section.appendChild(holdingsTable);

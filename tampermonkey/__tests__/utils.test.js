@@ -231,6 +231,50 @@ describe('route matchers', () => {
             )
         ).toBe(false);
     });
+
+    test('does not match localhost OCBC route without explicit demo flag', () => {
+        window.__GPV_OCBC_DEMO_ROUTE__ = false;
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'http://localhost:4173/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(false);
+    });
+
+    test('matches localhost OCBC route only when explicit demo flag is enabled', () => {
+        window.__GPV_OCBC_DEMO_ROUTE__ = true;
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'http://localhost:4173/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'http://127.0.0.1:8787/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(true);
+        window.__GPV_OCBC_DEMO_ROUTE__ = false;
+    });
+
+    test('does not match non-OCBC/non-localhost route even when demo flag is enabled', () => {
+        window.__GPV_OCBC_DEMO_ROUTE__ = true;
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://evil.example/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(false);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'http://[::1]:4173/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(false);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'http://localhost./internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(false);
+        window.__GPV_OCBC_DEMO_ROUTE__ = false;
+    });
 });
 
 describe('normalizeOcbcHoldingsPayload', () => {
@@ -286,6 +330,8 @@ describe('normalizeOcbcHoldingsPayload', () => {
             portfolioNo: 'P-123',
             subcode: '',
             displayTicker: 'A-1',
+            assetClassDesc: 'Equities',
+            subAssetClassDesc: 'US Equity',
             productType: 'US Equity',
             currentValueLcy: 500.25
         });
@@ -294,6 +340,8 @@ describe('normalizeOcbcHoldingsPayload', () => {
             portfolioNo: 'P-123',
             subcode: '',
             displayTicker: 'L-1',
+            assetClassDesc: 'Liability',
+            subAssetClassDesc: 'Margin',
             productType: 'Margin',
             currentValueLcy: -100.75
         });

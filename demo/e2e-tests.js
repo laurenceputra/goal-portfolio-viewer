@@ -809,26 +809,32 @@ async function captureOcbcFlow(page, summary, outputDir) {
             return false;
         }
         const text = overlay.textContent || '';
-        return text.includes('New allocation bucket')
-            && text.includes('Target Assigned:')
+        return text.includes('New sub-portfolio')
             && text.includes('Unassigned')
-            && text.includes('6500142646-2')
-            && text.includes('6500142647-2')
-            && text.includes('Equity Funds')
-            && !text.includes('Portfolio 6500142646-2');
+            && text.includes('Portfolio 6500142646-2');
     }, null, { timeout: 5000 });
 
     const overlayTextAllocation = await page.$eval('.gpv-overlay', node => node.textContent || '');
-    const hasAllocationUi = overlayTextAllocation.includes('New allocation bucket')
-        && overlayTextAllocation.includes('Unassigned')
-        && overlayTextAllocation.includes('Target Assigned:');
-    recordAssertion(summary, ocbcFlowName, 'allocation-has-bucket-ui', hasAllocationUi, 'Allocation mode shows bucket controls and summary.');
+    const allocationHeaders = await page.$$eval('.gpv-overlay th', cells => cells.map(cell => (cell.textContent || '').trim()));
+    const hasAllocationUi = overlayTextAllocation.includes('New sub-portfolio')
+        && overlayTextAllocation.includes('Unassigned');
+    recordAssertion(summary, ocbcFlowName, 'allocation-has-sub-portfolio-ui', hasAllocationUi, 'Allocation mode shows sub-portfolio controls and summary.');
 
-    const allocationAggregatesAcrossPortfolios = overlayTextAllocation.includes('6500142646-2')
+    const hasPortfolioFirstAllocation = overlayTextAllocation.includes('Portfolio 6500142646-2')
+        && overlayTextAllocation.includes('Portfolio 6500142647-2')
+        && overlayTextAllocation.includes('Unassigned')
+        && overlayTextAllocation.includes('New sub-portfolio');
+    recordAssertion(summary, ocbcFlowName, 'allocation-portfolio-first-mode', hasPortfolioFirstAllocation, 'Allocation mode is portfolio-first and includes product type rows plus sub-portfolio controls.');
+
+    const hasProductTypeColumnAndRowText = allocationHeaders.includes('Product Type')
+        && overlayTextAllocation.includes('Equity Funds');
+    recordAssertion(summary, ocbcFlowName, 'allocation-product-type-column-row', hasProductTypeColumnAndRowText, 'Allocation mode includes Product Type column and product type row text.');
+
+    const hasBothPortfolioNumbers = overlayTextAllocation.includes('6500142646-2')
         && overlayTextAllocation.includes('6500142647-2')
-        && overlayTextAllocation.includes('Equity Funds')
-        && !overlayTextAllocation.includes('Portfolio 6500142646-2');
-    recordAssertion(summary, ocbcFlowName, 'allocation-aggregates-across-portfolios', allocationAggregatesAcrossPortfolios, 'Allocation mode shows aggregated product type holdings across both portfolios.');
+        && overlayTextAllocation.includes('Portfolio 6500142646-2')
+        && overlayTextAllocation.includes('Portfolio 6500142647-2');
+    recordAssertion(summary, ocbcFlowName, 'allocation-has-both-portfolio-numbers', hasBothPortfolioNumbers, 'Allocation mode contains both OCBC portfolio numbers under portfolio sections.');
 
     await page.selectOption('#gpv-ocbc-mode-select', 'portfolio');
     await page.waitForFunction(() => {
@@ -837,7 +843,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
             return false;
         }
         const text = overlay.textContent || '';
-        const allocationTextGone = !text.includes('New allocation bucket')
+        const allocationTextGone = !text.includes('New sub-portfolio')
             && !text.includes('Target Assigned:')
             && !text.includes('Unassigned');
         return allocationTextGone || text.includes('Portfolio 6500142646-2');
@@ -859,7 +865,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
         const text = overlay.textContent || '';
         return text.includes('OCBC Investment Credit Line')
             && !text.includes('OCBC Global Equity Opportunities Fund')
-            && !text.includes('New allocation bucket');
+            && !text.includes('New sub-portfolio');
     }, null, { timeout: 5000 });
 
     const overlayTextLiabilities = await page.$eval('.gpv-overlay', node => node.textContent || '');

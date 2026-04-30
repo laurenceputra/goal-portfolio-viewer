@@ -1070,7 +1070,7 @@ describe('initialization and URL monitoring', () => {
                     name: 'OCBC Asset',
                     productType: 'Equity',
                     currentValueLcy: 1000,
-                    profitValueLcy: 100,
+                    profitValueLcy: 50,
                     profitPercentLcy: 0.1
                 },
                 {
@@ -1080,8 +1080,8 @@ describe('initialization and URL monitoring', () => {
                     name: 'OCBC Asset 2',
                     productType: 'Bond',
                     currentValueLcy: 400,
-                    profitValueLcy: 10,
-                    profitPercentLcy: 0.025
+                    profitValueLcy: null,
+                    profitPercentLcy: null
                 }
             ],
             liabilities: [
@@ -1119,6 +1119,8 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('SG00AAA111');
         expect(Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim())).not.toContain('Ticker');
         expect(overlay.textContent).toContain('OCBC Asset');
+        expect(overlay.textContent).toContain('+3.70% (+SGD 50.00) · partial (1 missing)');
+        expect(overlay.textContent).toContain('partial (1 missing)');
         expect(overlay.textContent).not.toContain('OCBC Liability');
         const firstIdentifierCell = overlay.querySelector('table tbody tr td');
         expect(firstIdentifierCell.textContent.trim()).toBe('SG00AAA111');
@@ -1142,7 +1144,7 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).not.toContain('OCBC Asset');
     });
 
-    test('OCBC allocation mode groups holdings by product type across portfolios', () => {
+    test('OCBC allocation mode groups by portfolio first and keeps product type on rows', () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -1180,6 +1182,7 @@ describe('initialization and URL monitoring', () => {
         global.GM_setValue('api_ocbc_holdings', JSON.stringify({
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond 1', productType: 'Bond', currentValueLcy: 250 },
                 { code: 'P-2:EQ2', portfolioNo: 'P-2', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
             ],
             liabilities: []
@@ -1194,15 +1197,15 @@ describe('initialization and URL monitoring', () => {
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        expect(overlay.querySelectorAll('.gpv-type-section')).toHaveLength(1);
+        expect(overlay.textContent).toContain('Portfolio P-1');
+        expect(overlay.textContent).toContain('Portfolio P-2');
         expect(overlay.textContent).toContain('Global Equity');
-        expect(overlay.textContent).toContain('P-1');
-        expect(overlay.textContent).toContain('P-2');
-        expect(overlay.textContent).not.toContain('Portfolio P-1');
-        expect(overlay.textContent).not.toContain('Portfolio P-2');
+        expect(overlay.textContent).toContain('Bond');
+        const headers = Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim());
+        expect(headers).toContain('Product Type');
     });
 
-    test('OCBC allocation mode renders bucket summary and persists target and assignment updates', () => {
+    test('OCBC allocation mode persists sub-portfolios, nested buckets and object assignments', () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -1240,20 +1243,105 @@ describe('initialization and URL monitoring', () => {
         global.GM_setValue('api_ocbc_holdings', JSON.stringify({
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
-                { code: 'P-2:EQ2', portfolioNo: 'P-2', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
+                { code: 'P-1:FI1', portfolioNo: 'P-1', displayTicker: 'FI1', name: 'Asset 2', productType: 'Fixed Income', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            'P-1:EQ1': 'legacy-core',
+            'P-9:MISSING': { subPortfolioId: 'other', bucketId: 'x' }
+        }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const subPortfolioInput = overlay.querySelector('input[placeholder="Sub-portfolio name"]');
+        subPortfolioInput.value = 'Core';
+        const createSubPortfolioBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Create');
+        createSubPortfolioBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+        const savedSubPortfolios = JSON.parse(storage.get('ocbc_sub_portfolios'));
+        expect(savedSubPortfolios.assets['P-1'][0].id).toBe('core');
+
+        const bucketInput = overlay.querySelector('input[placeholder="Bucket name"]');
+        bucketInput.value = 'Growth';
+        const createBucketBtn = Array.from(overlay.querySelectorAll('button')).filter(btn => btn.textContent.trim() === 'Create')[1];
+        createBucketBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+        const subPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for EQ1');
+        subPortfolioSelect.value = 'core';
+        subPortfolioSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const bucketSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Allocation bucket for EQ1');
+        bucketSelect.value = 'growth';
+        bucketSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const savedAssignments = JSON.parse(storage.get('ocbc_allocation_assignment_by_code'));
+        expect(savedAssignments['P-1:EQ1']).toEqual({ subPortfolioId: 'core', bucketId: 'growth' });
+        expect(savedAssignments['P-9:MISSING']).toEqual({ subPortfolioId: 'other', bucketId: 'x' });
+    });
+
+    test('OCBC allocation mode honors legacy bucket assignments and target fallback while writing new target keys', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        const legacyTargetKey = 'ocbc_target_pct_assets|Global%20Equity|core-equity';
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:FI1', portfolioNo: 'P-1', displayTicker: 'FI1', name: 'Asset 2', productType: 'Fixed Income', currentValueLcy: 500 }
             ],
             liabilities: []
         }));
         global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
             assets: {
-                'Global Equity': [{ id: 'core-equity', name: 'Core Equity', archived: false }]
+                'Global Equity': [{ id: 'core-equity', name: 'Core Equity' }]
             }
         }));
         global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
-            'P-1:EQ1': 'core-equity',
-            'P-9:MISSING': 'core-equity'
+            'P-1:EQ1': 'core-equity'
         }));
-        global.GM_setValue('ocbc_target_pct_assets|Global%20Equity|core-equity', 70);
+        global.GM_setValue(legacyTargetKey, 70);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -1265,27 +1353,657 @@ describe('initialization and URL monitoring', () => {
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         expect(overlay.textContent).toContain('Core Equity');
-        expect(overlay.textContent).toContain('70.00%');
-        expect(overlay.textContent).toContain('66.67%');
-        expect(overlay.textContent).toMatch(/-4\.76%/);
-        expect(overlay.textContent).toMatch(/-SGD\s*50\.00/);
+        expect(overlay.textContent).toContain('Core Equity buckets');
 
-        const targetInput = Array.from(overlay.querySelectorAll('input.gpv-target-input')).find(input => input.type === 'number');
+        const subPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for EQ1');
+        expect(subPortfolioSelect.value).toBe('core-equity');
+
+        const targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core Equity"]');
         expect(targetInput).toBeTruthy();
-        targetInput.value = '60';
+        expect(targetInput.value).toBe('70.00');
+
+        const newTargetKey = 'ocbc_target_pct_assets|P-1|core-equity|';
+        expect(storage.has(newTargetKey)).toBe(false);
+
+        targetInput.value = '65';
         targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
-        expect(storage.get('ocbc_target_pct_assets|Global%20Equity|core-equity')).toBe(60);
 
-        const assignmentSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
-            .find(select => Array.from(select.options).some(option => option.textContent === 'Core Equity'));
-        expect(assignmentSelect).toBeTruthy();
-        expect(assignmentSelect.getAttribute('aria-label')).toBe('Allocation bucket for EQ1');
-        assignmentSelect.value = '';
-        assignmentSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        expect(storage.get(newTargetKey)).toBe(65);
+        expect(storage.get(legacyTargetKey)).toBe(70);
+    });
 
-        const savedAssignments = JSON.parse(storage.get('ocbc_allocation_assignment_by_code'));
-        expect(savedAssignments['P-1:EQ1']).toBe('');
-        expect(savedAssignments['P-9:MISSING']).toBe('core-equity');
+    test('OCBC allocation mode writes separator-safe scoped target keys and avoids collisions', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P|1:EQ1', portfolioNo: 'P|1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P:EQ2', portfolioNo: 'P', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        }));
+        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+            assets: {
+                'P|1': [
+                    { id: 'core', name: 'Core Pipe Portfolio', archived: false, buckets: [] }
+                ],
+                P: [
+                    { id: '1|core', name: 'Core Pipe Sub', archived: false, buckets: [] }
+                ]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            'P|1:EQ1': { subPortfolioId: 'core', bucketId: '' },
+            'P:EQ2': { subPortfolioId: '1|core', bucketId: '' }
+        }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const portfolioPipeInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P|1 sub-portfolio Core Pipe Portfolio"]');
+        const subPipeInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P sub-portfolio Core Pipe Sub"]');
+        expect(portfolioPipeInput).toBeTruthy();
+        expect(subPipeInput).toBeTruthy();
+
+        portfolioPipeInput.value = '60';
+        portfolioPipeInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+        subPipeInput.value = '40';
+        subPipeInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(storage.get('ocbc_target_pct_assets|P%7C1|core|')).toBe(60);
+        expect(storage.get('ocbc_target_pct_assets|P|1%7Ccore|')).toBe(40);
+        expect(storage.get('ocbc_target_pct_assets|P%7C1|core|')).not.toBe(storage.get('ocbc_target_pct_assets|P|1%7Ccore|'));
+    });
+
+    test('OCBC allocation mode reads separator-safe legacy target fallback keys', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global|Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        }));
+        global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
+            assets: {
+                'Global|Equity': [{ id: 'core|equity', name: 'Core Equity' }]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            'P-1:EQ1': 'core|equity'
+        }));
+        global.GM_setValue('ocbc_target_pct_assets|Global%7CEquity|core%7Cequity', 72);
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core Equity"]');
+        expect(targetInput).toBeTruthy();
+        expect(targetInput.value).toBe('72.00');
+    });
+
+    test('OCBC allocation mode resolves duplicate legacy bucket ids by row product type and keeps product-scoped legacy targets', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Equity Asset', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond Asset', productType: 'Bond', currentValueLcy: 500 },
+                { code: 'P-1:UNK1', portfolioNo: 'P-1', displayTicker: 'UNK1', name: 'Unknown Asset', currentValueLcy: 200 }
+            ],
+            liabilities: []
+        }));
+        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+            assets: {
+                'P-1': [
+                    { id: 'all-weather', name: 'All Weather', archived: false, buckets: [] }
+                ]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
+            assets: {
+                'Global Equity': [{ id: 'core', name: 'Core' }],
+                Bond: [{ id: 'core', name: 'Core' }]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            'P-1:EQ1': 'core',
+            'P-1:BD1': 'core',
+            'P-1:UNK1': 'core'
+        }));
+        global.GM_setValue('ocbc_target_pct_assets|Global%20Equity|core', 70);
+        global.GM_setValue('ocbc_target_pct_assets|Bond|core', 30);
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const equitySubPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for EQ1');
+        const bondSubPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for BD1');
+        const unknownSubPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for UNK1');
+
+        expect(equitySubPortfolioSelect.value).toBe('legacy-global-equity-core');
+        expect(bondSubPortfolioSelect.value).toBe('legacy-bond-core');
+        expect(unknownSubPortfolioSelect.value).toBe('');
+
+        const equityOptionValues = Array.from(equitySubPortfolioSelect.options).map(option => option.value);
+        const bondOptionValues = Array.from(bondSubPortfolioSelect.options).map(option => option.value);
+        expect(equityOptionValues).toContain('all-weather');
+        expect(bondOptionValues).toContain('all-weather');
+        expect(equityOptionValues).toContain('legacy-global-equity-core');
+        expect(equityOptionValues).not.toContain('legacy-bond-core');
+        expect(bondOptionValues).toContain('legacy-bond-core');
+        expect(bondOptionValues).not.toContain('legacy-global-equity-core');
+
+        const equityTargetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core"]');
+        const duplicateLegacyTargetInput = Array.from(overlay.querySelectorAll('input.gpv-target-input'))
+            .find(input => input !== equityTargetInput && input.getAttribute('aria-label') === 'Target percentage for portfolio P-1 sub-portfolio Core');
+
+        expect(equityTargetInput).toBeTruthy();
+        expect(duplicateLegacyTargetInput).toBeTruthy();
+
+        const duplicateTargetValues = [equityTargetInput.value, duplicateLegacyTargetInput.value].sort();
+        expect(duplicateTargetValues).toEqual(['30.00', '70.00']);
+    });
+
+    test('OCBC allocation mode lets explicit scoped sub-portfolio win on legacy id collision without legacy fallback metadata', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        const legacyTargetKey = 'ocbc_target_pct_assets|Global%20Equity|core';
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Asset 2', productType: 'Bond', currentValueLcy: 600 }
+            ],
+            liabilities: []
+        }));
+        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+            assets: {
+                'P-1': [
+                    { id: 'legacy-global-equity-core', name: 'Scoped Core', archived: false, buckets: [] }
+                ]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
+            assets: {
+                'Global Equity': [{ id: 'core', name: 'Core' }],
+                Bond: [{ id: 'core', name: 'Core' }]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            'P-1:EQ1': 'core'
+        }));
+        global.GM_setValue(legacyTargetKey, 55);
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Scoped Core"]');
+        expect(targetInput).toBeTruthy();
+        expect(targetInput.value).toBe('');
+
+        const equitySubPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for EQ1');
+        const bondSubPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for BD1');
+
+        const equityOptionValues = Array.from(equitySubPortfolioSelect.options).map(option => option.value);
+        const bondOptionValues = Array.from(bondSubPortfolioSelect.options).map(option => option.value);
+
+        expect(equityOptionValues).toContain('legacy-global-equity-core');
+        expect(bondOptionValues).toContain('legacy-global-equity-core');
+    });
+
+    test('OCBC allocation mode falls back to product-matching legacy candidate when direct legacy-id collision is disallowed for row product type', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Equity Asset', productType: 'Global Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        }));
+        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+            assets: {
+                'P-1': [
+                    { id: 'core', name: 'Scoped Core (Bond)', archived: false, buckets: [], legacyProductType: 'Bond' }
+                ]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
+            assets: {
+                'Global Equity': [{ id: 'core', name: 'Core' }],
+                Bond: [{ id: 'core', name: 'Core' }]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            'P-1:EQ1': 'core'
+        }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const equitySubPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for EQ1');
+        const equityOptionValues = Array.from(equitySubPortfolioSelect.options).map(option => option.value);
+
+        expect(equitySubPortfolioSelect.value).toBe('legacy-global-equity-core');
+        expect(equityOptionValues).not.toContain('core');
+        expect(equityOptionValues).toContain('legacy-global-equity-core');
+    });
+
+    test('OCBC allocation mode treats mismatched legacy-derived assignment as unassigned and clears invalid nested bucket selection', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond Asset', productType: 'Bond', currentValueLcy: 1000 },
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Equity Asset', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        }));
+        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+            assets: {
+                'P-1': [
+                    {
+                        id: 'core',
+                        name: 'Core',
+                        archived: false,
+                        buckets: [{ id: 'growth', name: 'Growth', archived: false }]
+                    }
+                ]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
+            assets: {
+                'Global Equity': [{ id: 'legacy-core', name: 'Legacy Core' }]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            'P-1:BD1': { subPortfolioId: 'legacy-global-equity-legacy-core', bucketId: 'stale-bucket' },
+            'P-1:EQ1': { subPortfolioId: 'core', bucketId: 'missing-bucket' }
+        }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const bondSubPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for BD1');
+        const bondBucketSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Allocation bucket for BD1');
+        expect(bondSubPortfolioSelect.value).toBe('');
+        expect(Array.from(bondBucketSelect.options).map(option => option.value)).toEqual(['']);
+        expect(bondBucketSelect.value).toBe('');
+
+        const equitySubPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for EQ1');
+        const equityBucketSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Allocation bucket for EQ1');
+        expect(equitySubPortfolioSelect.value).toBe('core');
+        expect(Array.from(equityBucketSelect.options).map(option => option.value)).toEqual(['', 'growth']);
+        expect(equityBucketSelect.value).toBe('');
+    });
+
+    test('OCBC allocation mode hides nested bucket create controls for non-persisted legacy-derived sub-portfolios', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        }));
+        global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
+            assets: {
+                'Global Equity': [{ id: 'core', name: 'Core' }]
+            }
+        }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(overlay.textContent).toContain('Core buckets');
+        expect(Array.from(overlay.querySelectorAll('label')).some(label => label.textContent.trim() === 'New nested bucket')).toBe(false);
+        expect(overlay.querySelector('input[placeholder="Bucket name"]')).toBeFalsy();
+    });
+
+    test('OCBC allocation mode provides aria-label for nested bucket target input', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        }));
+        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+            assets: {
+                'P-1': [
+                    {
+                        id: 'core',
+                        name: 'Core',
+                        archived: false,
+                        buckets: [{ id: 'growth', name: 'Growth', archived: false }]
+                    }
+                ]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            'P-1:EQ1': { subPortfolioId: 'core', bucketId: 'growth' }
+        }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const nestedTargetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core bucket Growth"]');
+        expect(nestedTargetInput).toBeTruthy();
     });
 
     test('normalizeOcbcHoldingsPayload keeps portfolioNo and stable non-portfolio identifier', () => {
@@ -1320,6 +2038,8 @@ describe('initialization and URL monitoring', () => {
         normalized.assets.forEach(row => {
             expect(row.portfolioNo).toBe('P-100');
             expect(row.productType).toBe('Global Equity');
+            expect(row.assetClassDesc).toBe('Managed Funds');
+            expect(row.subAssetClassDesc).toBe('Global Equity');
             expect(row.displayTicker).not.toBe('P-100');
             expect(row.code.startsWith('P-100:')).toBe(true);
         });
