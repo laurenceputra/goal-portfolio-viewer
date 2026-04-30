@@ -12931,7 +12931,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return toOptionalFiniteNumber(Storage.get(key, null));
     }
 
-    function loadOcbcAllocationConfig(rows) {
+    function loadOcbcAllocationConfig() {
         const bucketsByView = Storage.readJson(
             STORAGE_KEYS.ocbcAllocationBuckets,
             data => data && typeof data === 'object' && !Array.isArray(data),
@@ -12942,16 +12942,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             data => data && typeof data === 'object' && !Array.isArray(data),
             'Error reading OCBC allocation assignments'
         ) || {};
-        const safeRows = Array.isArray(rows) ? rows : [];
-        const safeAssignments = {};
-        safeRows.forEach(row => {
-            const code = utils.normalizeString(row?.code, '');
-            if (!code) {
-                return;
-            }
-            safeAssignments[code] = utils.normalizeString(assignmentByCode[code], '');
-        });
-        return { bucketsByView, assignmentByCode: safeAssignments };
+        return { bucketsByView, assignmentByCode };
     }
 
     function saveOcbcAllocationBucketsConfig(bucketsByView) {
@@ -13053,7 +13044,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const assets = Array.isArray(safeHoldings.assets) ? safeHoldings.assets : [];
         const liabilities = Array.isArray(safeHoldings.liabilities) ? safeHoldings.liabilities : [];
 
-        const allocationConfig = loadOcbcAllocationConfig([...(assets || []), ...(liabilities || [])]);
+        const allocationConfig = loadOcbcAllocationConfig();
         const bucketsByView = allocationConfig.bucketsByView;
         const assignmentByCode = allocationConfig.assignmentByCode;
 

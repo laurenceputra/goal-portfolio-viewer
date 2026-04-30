@@ -1203,7 +1203,8 @@ describe('initialization and URL monitoring', () => {
             }
         }));
         global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
-            'P-1:EQ1': 'core-equity'
+            'P-1:EQ1': 'core-equity',
+            'P-9:MISSING': 'core-equity'
         }));
         global.GM_setValue('ocbc_target_pct_assets|Global%20Equity|core-equity', 70);
 
@@ -1237,6 +1238,7 @@ describe('initialization and URL monitoring', () => {
 
         const savedAssignments = JSON.parse(storage.get('ocbc_allocation_assignment_by_code'));
         expect(savedAssignments['P-1:EQ1']).toBe('');
+        expect(savedAssignments['P-9:MISSING']).toBe('core-equity');
     });
 
     test('normalizeOcbcHoldingsPayload keeps portfolioNo and stable non-portfolio identifier', () => {
