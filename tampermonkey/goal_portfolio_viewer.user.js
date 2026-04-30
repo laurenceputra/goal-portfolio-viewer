@@ -12877,6 +12877,43 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return summary;
     }
 
+    function buildOcbcPortfolioHeader(portfolioNo, summary) {
+        const detailHeader = createElement('div', 'gpv-detail-header');
+        const detailTitle = createElement('h2', 'gpv-detail-title', `Portfolio ${portfolioNo}`);
+        const detailStats = createElement('div', 'gpv-stats gpv-detail-stats');
+        const profitClass = summary?.profitClass === 'positive' || summary?.profitClass === 'negative'
+            ? summary.profitClass
+            : null;
+
+        detailStats.appendChild(createStatItem('Total Value', formatMoney(summary?.total || 0)));
+        detailStats.appendChild(createStatItem('Holdings', String(summary?.holdingsCount || 0)));
+        detailStats.appendChild(createStatItem('Profit', summary?.profitDisplay || '-', profitClass));
+
+        detailHeader.appendChild(detailTitle);
+        detailHeader.appendChild(detailStats);
+        return detailHeader;
+    }
+
+    function buildOcbcProductTypeHeader(productType, summary) {
+        const typeHeader = createElement('div', 'gpv-type-header');
+        const typeTitle = createElement('h3', null, productType);
+        const typeSummary = createElement('div', 'gpv-type-summary');
+
+        appendLabeledValue(typeSummary, null, 'Value:', formatMoney(summary?.total || 0));
+        appendLabeledValue(typeSummary, null, 'Holdings:', String(summary?.holdingsCount || 0));
+        appendLabeledValue(
+            typeSummary,
+            null,
+            'Profit:',
+            summary?.profitDisplay || '-',
+            { valueClass: summary?.profitClass === 'positive' || summary?.profitClass === 'negative' ? summary.profitClass : null }
+        );
+
+        typeHeader.appendChild(typeTitle);
+        typeHeader.appendChild(typeSummary);
+        return typeHeader;
+    }
+
     function renderOcbcOverlay(ocbcHoldings) {
         const overlay = createElement('div', 'gpv-overlay');
         overlay.id = 'gpv-overlay';
@@ -12920,15 +12957,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         function rerender() {
             const activeView = viewSelect.value === 'liabilities' ? 'liabilities' : 'assets';
             const rows = activeView === 'liabilities' ? liabilities : assets;
-            const summary = buildOcbcSummary(rows);
             contentDiv.innerHTML = '';
-            contentDiv.appendChild(buildFsmSummaryRow(summary, {
-                showDrift: false,
-                showFixed: false,
-                showProfit: true,
-                showTargetAssigned: false,
-                showUnassigned: false
-            }));
 
             const grouped = buildOcbcRowsByPortfolioAndProductType(rows);
             const portfolioNos = Object.keys(grouped);
@@ -12938,31 +12967,15 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
             portfolioNos.forEach(portfolioNo => {
                 const portfolioSection = createElement('section', 'gpv-bucket-detail-section');
-                const portfolioTitle = createElement('h2', 'gpv-bucket-detail-title', `Portfolio ${portfolioNo}`);
-                portfolioSection.appendChild(portfolioTitle);
                 const portfolioRows = Object.values(grouped[portfolioNo]).flat();
                 const portfolioSummary = buildOcbcSummary(portfolioRows);
-                portfolioSection.appendChild(buildFsmSummaryRow(portfolioSummary, {
-                    showDrift: false,
-                    showFixed: false,
-                    showProfit: true,
-                    showTargetAssigned: false,
-                    showUnassigned: false
-                }));
+                portfolioSection.appendChild(buildOcbcPortfolioHeader(portfolioNo, portfolioSummary));
 
                 Object.keys(grouped[portfolioNo]).forEach(productType => {
-                    const productSection = createElement('section', 'gpv-bucket-detail-section');
-                    const productTitle = createElement('h3', 'gpv-bucket-detail-title', productType);
-                    productSection.appendChild(productTitle);
+                    const productSection = createElement('section', 'gpv-type-section');
                     const productRows = grouped[portfolioNo][productType] || [];
                     const productSummary = buildOcbcSummary(productRows);
-                    productSection.appendChild(buildFsmSummaryRow(productSummary, {
-                        showDrift: false,
-                        showFixed: false,
-                        showProfit: true,
-                        showTargetAssigned: false,
-                        showUnassigned: false
-                    }));
+                    productSection.appendChild(buildOcbcProductTypeHeader(productType, productSummary));
                     productSection.appendChild(buildOcbcSimpleTable(productRows, productSummary.total));
                     portfolioSection.appendChild(productSection);
                 });

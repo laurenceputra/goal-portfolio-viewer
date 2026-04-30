@@ -1061,6 +1061,13 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Portfolio P-1');
         expect(overlay.textContent).toContain('Equity');
         expect(overlay.textContent).toContain('Bond');
+        expect(overlay.querySelectorAll('.gpv-summary-row')).toHaveLength(0);
+        expect(overlay.querySelectorAll('.gpv-detail-header')).toHaveLength(1);
+        expect(overlay.querySelectorAll('.gpv-detail-title')).toHaveLength(1);
+        expect(overlay.querySelectorAll('.gpv-detail-title')[0].textContent).toBe('Portfolio P-1');
+        expect(overlay.querySelectorAll('.gpv-type-section')).toHaveLength(2);
+        expect(overlay.querySelectorAll('.gpv-type-header')).toHaveLength(2);
+        expect(Array.from(overlay.querySelectorAll('.gpv-type-header h3')).map(node => node.textContent.trim())).toEqual(['Equity', 'Bond']);
         expect(overlay.textContent).toContain('Identifier');
         expect(overlay.textContent).toContain('SG00AAA111');
         expect(Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim())).not.toContain('Ticker');
