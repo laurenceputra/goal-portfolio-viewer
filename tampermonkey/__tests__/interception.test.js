@@ -201,7 +201,9 @@ describe('API interception', () => {
                 assets: [
                     {
                         code: 'P-001:asset-guid-1',
-                        subcode: 'P-001',
+                        portfolioNo: 'P-001',
+                        subcode: '',
+                        displayTicker: 'asset-guid-1',
                         name: 'OCBC Asset Fund',
                         productType: 'Global Equity',
                         currentValueLcy: 1234.56,
@@ -212,7 +214,9 @@ describe('API interception', () => {
                 liabilities: [
                     {
                         code: 'P-001:liab-1',
-                        subcode: 'P-001',
+                        portfolioNo: 'P-001',
+                        subcode: '',
+                        displayTicker: 'liab-1',
                         name: 'Margin Liability',
                         productType: 'Margin Liability',
                         currentValueLcy: -250.5,

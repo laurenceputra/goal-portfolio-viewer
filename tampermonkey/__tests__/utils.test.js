@@ -283,13 +283,17 @@ describe('normalizeOcbcHoldingsPayload', () => {
         expect(result.liabilities).toHaveLength(1);
         expect(result.assets[0]).toMatchObject({
             code: 'P-123:A-1',
-            subcode: 'P-123',
+            portfolioNo: 'P-123',
+            subcode: '',
+            displayTicker: 'A-1',
             productType: 'US Equity',
             currentValueLcy: 500.25
         });
         expect(result.liabilities[0]).toMatchObject({
             code: 'P-123:L-1',
-            subcode: 'P-123',
+            portfolioNo: 'P-123',
+            subcode: '',
+            displayTicker: 'L-1',
             productType: 'Margin',
             currentValueLcy: -100.75
         });
@@ -356,6 +360,91 @@ describe('normalizeOcbcHoldingsPayload', () => {
         expect(byCode['P-456:BLANK-NUMERIC'].profitValueLcy).toBeNull();
         expect(byCode['P-456:ACTUAL-ZERO'].currentValueLcy).toBe(0);
         expect(byCode['P-456:ACTUAL-ZERO'].profitValueLcy).toBe(0);
+    });
+
+    test('uses non-portfolio identifier fallback when all OCBC id fields are missing', () => {
+        const payload = {
+            data: [
+                {
+                    portfolioNo: 'P-LEAK-CHECK',
+                    assets: [
+                        {
+                            assetClassDesc: 'Equities',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Global Equity',
+                                    holdings: [
+                                        {
+                                            marketValueReferenceCcy: 10
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: []
+                }
+            ]
+        };
+
+        const result = normalizeOcbcHoldingsPayload(payload);
+        expect(result.assets).toHaveLength(1);
+        expect(result.assets[0].code).toBe('P-LEAK-CHECK:P-LEAK-CHECK#1');
+        expect(result.assets[0].displayTicker).toBe('Holding 1');
+        expect(result.assets[0].displayTicker).not.toContain('P-LEAK-CHECK');
+        expect(result.assets[0].displayTicker.length).toBeGreaterThan(0);
+    });
+
+    test('keeps same product type holdings separated by portfolio via code', () => {
+        const payload = {
+            data: [
+                {
+                    portfolioNo: 'P-1',
+                    assets: [
+                        {
+                            assetClassDesc: 'Equities',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Global Equity',
+                                    holdings: [
+                                        {
+                                            positionId: 'POS-SHARED',
+                                            marketValueReferenceCcy: 100
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: []
+                },
+                {
+                    portfolioNo: 'P-2',
+                    assets: [
+                        {
+                            assetClassDesc: 'Equities',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Global Equity',
+                                    holdings: [
+                                        {
+                                            positionId: 'POS-SHARED',
+                                            marketValueReferenceCcy: 200
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: []
+                }
+            ]
+        };
+
+        const result = normalizeOcbcHoldingsPayload(payload);
+        expect(result.assets).toHaveLength(2);
+        expect(result.assets.map(row => row.productType)).toEqual(['Global Equity', 'Global Equity']);
+        expect(result.assets.map(row => row.code)).toEqual(['P-1:POS-SHARED', 'P-2:POS-SHARED']);
     });
 });
 

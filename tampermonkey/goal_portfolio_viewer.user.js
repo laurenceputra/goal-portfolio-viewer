@@ -826,18 +826,32 @@
         const resolvedPortfolioNo = utils.normalizeString(context.portfolioNo, '-');
         const index = Number.isFinite(Number(context.index)) ? Number(context.index) : 0;
         const baseCode = utils.normalizeString(
-            row.holdingGuid || row.positionId || row.isin || row.fundCode || row.description,
+            row.holdingGuid || row.positionId || row.trancheId || row.isin || row.fundCode || row.description,
             ''
         );
         const stableCode = baseCode || `${resolvedPortfolioNo || '-'}#${index + 1}`;
         const code = `${resolvedPortfolioNo}:${stableCode}`;
+        const fallbackLabel = `Holding ${index + 1}`;
+        const displayTicker = utils.normalizeString(
+            row.isin
+            || row.fundCode
+            || row.trancheId
+            || row.positionId
+            || row.holdingGuid
+            || row.description
+            || row.shortName
+            || fallbackLabel,
+            fallbackLabel
+        );
         const currentValueLcy = parseOcbcNumericValue(row.marketValueReferenceCcy)
             ?? parseOcbcNumericValue(row.marketValue)
             ?? parseOcbcNumericValue(row.marketValueOriginalCcy)
             ?? 0;
         return {
             code,
-            subcode: resolvedPortfolioNo,
+            portfolioNo: resolvedPortfolioNo,
+            subcode: utils.normalizeString(row.subcode ?? row.subCode, ''),
+            displayTicker,
             name: utils.normalizeString(row.fundName || row.companyName || row.description || row.shortName, '-'),
             productType: utils.normalizeString(
                 context.subAssetClassDesc || context.assetClassDesc || row.shortName,
@@ -11884,6 +11898,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const showDrift = options.showDrift !== false;
         const showProfit = options.showProfit === true;
         const showFixed = options.showFixed !== false;
+        const showTargetAssigned = options.showTargetAssigned !== false;
+        const showUnassigned = options.showUnassigned !== false;
         const summaryRow = createElement('div', 'gpv-summary-row');
         const driftClassName = summary?.driftClass
             ? `gpv-summary-card ${summary.driftClass}`
@@ -11902,9 +11918,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             : '';
         summaryRow.innerHTML = `
             <div class="gpv-summary-card"><strong>Total Value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
-            <div class="gpv-summary-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>
+            ${showTargetAssigned ? `<div class="gpv-summary-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>` : ''}
             <div class="gpv-summary-card"><strong>Holdings:</strong> ${escapeHtml(String(summary.holdingsCount))}</div>
-            <div class="gpv-summary-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>
+            ${showUnassigned ? `<div class="gpv-summary-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>` : ''}
             ${profitCardHtml}
             ${fixedCardHtml}
             ${driftCardHtml}
@@ -12810,7 +12826,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         table.innerHTML = `
             <thead>
                 <tr>
-                    <th>Ticker</th>
+                    <th>Identifier</th>
                     <th>Name</th>
                     <th>Type</th>
                     <th>Value (SGD)</th>
@@ -12834,6 +12850,31 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             tbody.appendChild(tr);
         });
         return table;
+    }
+
+    function buildOcbcRowsByPortfolioAndProductType(rows) {
+        return (Array.isArray(rows) ? rows : []).reduce((acc, row) => {
+            const portfolioNo = utils.normalizeString(row?.portfolioNo, '-');
+            const productType = utils.normalizeString(row?.productType, '-');
+            if (!acc[portfolioNo]) {
+                acc[portfolioNo] = {};
+            }
+            if (!acc[portfolioNo][productType]) {
+                acc[portfolioNo][productType] = [];
+            }
+            acc[portfolioNo][productType].push(row);
+            return acc;
+        }, {});
+    }
+
+    function buildOcbcSummary(rows) {
+        const summary = buildFsmScopedSummary((Array.isArray(rows) ? rows : []).map(row => ({
+            ...row,
+            portfolioId: FSM_UNASSIGNED_PORTFOLIO_ID,
+            targetPercent: null,
+            fixed: false
+        })));
+        return summary;
     }
 
     function renderOcbcOverlay(ocbcHoldings) {
@@ -12873,21 +12914,60 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const safeHoldings = ocbcHoldings && typeof ocbcHoldings === 'object'
             ? ocbcHoldings
             : { assets: [], liabilities: [] };
-        const assets = buildFsmRowsWithAssignment(Array.isArray(safeHoldings.assets) ? safeHoldings.assets : [], {});
-        const liabilities = buildFsmRowsWithAssignment(Array.isArray(safeHoldings.liabilities) ? safeHoldings.liabilities : [], {});
+        const assets = Array.isArray(safeHoldings.assets) ? safeHoldings.assets : [];
+        const liabilities = Array.isArray(safeHoldings.liabilities) ? safeHoldings.liabilities : [];
 
         function rerender() {
             const activeView = viewSelect.value === 'liabilities' ? 'liabilities' : 'assets';
             const rows = activeView === 'liabilities' ? liabilities : assets;
-            const summary = buildFsmScopedSummary(rows.map(row => ({
-                ...row,
-                portfolioId: FSM_UNASSIGNED_PORTFOLIO_ID,
-                targetPercent: null,
-                fixed: false
-            })));
+            const summary = buildOcbcSummary(rows);
             contentDiv.innerHTML = '';
-            contentDiv.appendChild(buildFsmSummaryRow(summary, { showDrift: false, showFixed: false, showProfit: true }));
-            contentDiv.appendChild(buildOcbcSimpleTable(rows, summary.total));
+            contentDiv.appendChild(buildFsmSummaryRow(summary, {
+                showDrift: false,
+                showFixed: false,
+                showProfit: true,
+                showTargetAssigned: false,
+                showUnassigned: false
+            }));
+
+            const grouped = buildOcbcRowsByPortfolioAndProductType(rows);
+            const portfolioNos = Object.keys(grouped);
+            if (portfolioNos.length === 0) {
+                contentDiv.appendChild(createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.'));
+                return;
+            }
+            portfolioNos.forEach(portfolioNo => {
+                const portfolioSection = createElement('section', 'gpv-bucket-detail-section');
+                const portfolioTitle = createElement('h2', 'gpv-bucket-detail-title', `Portfolio ${portfolioNo}`);
+                portfolioSection.appendChild(portfolioTitle);
+                const portfolioRows = Object.values(grouped[portfolioNo]).flat();
+                const portfolioSummary = buildOcbcSummary(portfolioRows);
+                portfolioSection.appendChild(buildFsmSummaryRow(portfolioSummary, {
+                    showDrift: false,
+                    showFixed: false,
+                    showProfit: true,
+                    showTargetAssigned: false,
+                    showUnassigned: false
+                }));
+
+                Object.keys(grouped[portfolioNo]).forEach(productType => {
+                    const productSection = createElement('section', 'gpv-bucket-detail-section');
+                    const productTitle = createElement('h3', 'gpv-bucket-detail-title', productType);
+                    productSection.appendChild(productTitle);
+                    const productRows = grouped[portfolioNo][productType] || [];
+                    const productSummary = buildOcbcSummary(productRows);
+                    productSection.appendChild(buildFsmSummaryRow(productSummary, {
+                        showDrift: false,
+                        showFixed: false,
+                        showProfit: true,
+                        showTargetAssigned: false,
+                        showUnassigned: false
+                    }));
+                    productSection.appendChild(buildOcbcSimpleTable(productRows, productSummary.total));
+                    portfolioSection.appendChild(productSection);
+                });
+                contentDiv.appendChild(portfolioSection);
+            });
         }
         viewSelect.onchange = rerender;
         rerender();

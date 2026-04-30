@@ -1018,18 +1018,30 @@ describe('initialization and URL monitoring', () => {
             assets: [
                 {
                     code: 'P-1:AAA',
-                    subcode: 'P-1',
+                    portfolioNo: 'P-1',
+                    displayTicker: 'SG00AAA111',
                     name: 'OCBC Asset',
                     productType: 'Equity',
                     currentValueLcy: 1000,
                     profitValueLcy: 100,
                     profitPercentLcy: 0.1
+                },
+                {
+                    code: 'P-1:CCC',
+                    portfolioNo: 'P-1',
+                    displayTicker: 'FUND-CCC',
+                    name: 'OCBC Asset 2',
+                    productType: 'Bond',
+                    currentValueLcy: 400,
+                    profitValueLcy: 10,
+                    profitPercentLcy: 0.025
                 }
             ],
             liabilities: [
                 {
                     code: 'P-1:BBB',
-                    subcode: 'P-1',
+                    portfolioNo: 'P-1',
+                    displayTicker: 'POS-BBB',
                     name: 'OCBC Liability',
                     productType: 'Liability',
                     currentValueLcy: -250,
@@ -1046,8 +1058,17 @@ describe('initialization and URL monitoring', () => {
         const overlay = document.querySelector('#gpv-overlay');
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Portfolio Viewer (OCBC)');
+        expect(overlay.textContent).toContain('Portfolio P-1');
+        expect(overlay.textContent).toContain('Equity');
+        expect(overlay.textContent).toContain('Bond');
+        expect(overlay.textContent).toContain('Identifier');
+        expect(overlay.textContent).toContain('SG00AAA111');
+        expect(Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim())).not.toContain('Ticker');
         expect(overlay.textContent).toContain('OCBC Asset');
         expect(overlay.textContent).not.toContain('OCBC Liability');
+        const firstIdentifierCell = overlay.querySelector('table tbody tr td');
+        expect(firstIdentifierCell.textContent.trim()).toBe('SG00AAA111');
+        expect(firstIdentifierCell.textContent.trim()).not.toBe('P-1');
 
         const viewSelect = overlay.querySelector('.gpv-select');
         const viewLabel = Array.from(overlay.querySelectorAll('label')).find(label => label.textContent.includes('View:'));
@@ -1060,6 +1081,46 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('OCBC Liability');
         expect(overlay.textContent).toContain('-SGD');
         expect(overlay.textContent).not.toContain('OCBC Asset');
+    });
+
+    test('normalizeOcbcHoldingsPayload keeps portfolioNo and stable non-portfolio identifier', () => {
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        const normalized = exportsModule.normalizeOcbcHoldingsPayload({
+            data: [
+                {
+                    portfolioNo: 'P-100',
+                    assets: [
+                        {
+                            assetClassDesc: 'Managed Funds',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Global Equity',
+                                    holdings: [
+                                        { isin: 'ISIN-1', shortName: 'EQ', marketValueReferenceCcy: 1500 },
+                                        { fundCode: 'FUND-2', shortName: 'EQ2', marketValueReferenceCcy: 2500 },
+                                        { trancheId: 'TR-3', shortName: 'EQ3', marketValueReferenceCcy: 3500 },
+                                        { positionId: 'POS-4', shortName: 'EQ4', marketValueReferenceCcy: 4500 },
+                                        { marketValueReferenceCcy: 5000 }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: []
+                }
+            ]
+        });
+
+        expect(normalized.assets).toHaveLength(5);
+        normalized.assets.forEach(row => {
+            expect(row.portfolioNo).toBe('P-100');
+            expect(row.productType).toBe('Global Equity');
+            expect(row.displayTicker).not.toBe('P-100');
+            expect(row.code.startsWith('P-100:')).toBe(true);
+        });
+        expect(normalized.assets.map(row => row.displayTicker)).toEqual(['ISIN-1', 'FUND-2', 'TR-3', 'POS-4', 'Holding 5']);
+        expect(normalized.assets[4].displayTicker).not.toContain('P-100');
+        expect(normalized.assets[4].displayTicker.length).toBeGreaterThan(0);
     });
 
     test('readiness overlay auto-updates into portfolio view when data arrives', async () => {
