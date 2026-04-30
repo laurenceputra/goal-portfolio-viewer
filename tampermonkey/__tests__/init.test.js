@@ -1219,6 +1219,8 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Core Equity');
         expect(overlay.textContent).toContain('70.00%');
         expect(overlay.textContent).toContain('66.67%');
+        expect(overlay.textContent).toMatch(/-4\.76%/);
+        expect(overlay.textContent).toMatch(/-SGD\s*50\.00/);
 
         const targetInput = Array.from(overlay.querySelectorAll('input.gpv-target-input')).find(input => input.type === 'number');
         expect(targetInput).toBeTruthy();
@@ -1229,6 +1231,7 @@ describe('initialization and URL monitoring', () => {
         const assignmentSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => Array.from(select.options).some(option => option.textContent === 'Core Equity'));
         expect(assignmentSelect).toBeTruthy();
+        expect(assignmentSelect.getAttribute('aria-label')).toBe('Allocation bucket for EQ1');
         assignmentSelect.value = '';
         assignmentSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 

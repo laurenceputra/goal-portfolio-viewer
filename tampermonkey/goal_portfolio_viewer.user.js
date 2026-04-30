@@ -13174,7 +13174,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     const targetPercent = bucket.id ? getOcbcAllocationTargetPercent(activeView, productType, bucket.id) : null;
                     const driftModel = targetPercent === null
                         ? { driftPercent: null, driftAmount: null }
-                        : calculateAllocationDrift(bucketValue, targetPercent / 100, productTotal);
+                        : calculateAllocationDrift(bucketValue, targetPercent, productTotal);
                     const driftDisplay = formatDriftDisplay(driftModel?.driftPercent, driftModel?.driftAmount);
                     const driftClass = getDriftSeverityClass(driftModel?.driftPercent);
 
@@ -13242,6 +13242,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     const selectCell = createElement('td');
                     const select = createElement('select', 'gpv-select');
                     const code = utils.normalizeString(row.code, '');
+                    const labelTicker = row.displayTicker || row.code || row.name || 'this holding';
+                    select.setAttribute('aria-label', `Allocation bucket for ${labelTicker}`);
                     const currentBucketId = utils.normalizeString(assignmentByCode[code], '');
                     const unassignedOption = createElement('option', null, 'Unassigned');
                     unassignedOption.value = '';
