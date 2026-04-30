@@ -779,8 +779,10 @@
         }
         try {
             const target = new URL(url, originFallback);
+            const expectedOrigin = 'https://internet.ocbc.com';
             const normalizedPath = target.pathname.replace(/\/+$/, '');
-            return normalizedPath === '/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings';
+            return target.origin === expectedOrigin
+                && normalizedPath === '/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings';
         } catch (_error) {
             return false;
         }
@@ -13914,7 +13916,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const origin = window.location.origin;
         return isDashboardRoute(href, origin)
             || isFsmInvestmentsRoute(href, origin)
-            || isOcbcDashboardRoute(href, origin)
             || isOcbcPortfolioHoldingsRoute(href, origin);
     }
     

@@ -182,7 +182,7 @@ describe('initialization and URL monitoring', () => {
         expect(document.querySelector('.gpv-trigger-btn')).toBeTruthy();
     });
 
-    test('startUrlMonitoring shows button on exact OCBC dashboard route', () => {
+    test('startUrlMonitoring does not show button on exact OCBC dashboard route', () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/dashboard?menuId=e62c3103-da60-4e8a-8717-72f11ebaaebe'
@@ -226,10 +226,10 @@ describe('initialization and URL monitoring', () => {
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.startUrlMonitoring();
 
-        expect(document.querySelector('.gpv-trigger-btn')).toBeTruthy();
+        expect(document.querySelector('.gpv-trigger-btn')).toBeNull();
     });
 
-    test('startUrlMonitoring keeps button visible from OCBC dashboard to portfolio holdings SPA navigation', () => {
+    test('startUrlMonitoring shows button only after SPA navigation from OCBC dashboard to portfolio holdings', () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/dashboard?menuId=e62c3103-da60-4e8a-8717-72f11ebaaebe'
@@ -273,7 +273,7 @@ describe('initialization and URL monitoring', () => {
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.startUrlMonitoring();
 
-        expect(document.querySelector('.gpv-trigger-btn')).toBeTruthy();
+        expect(document.querySelector('.gpv-trigger-btn')).toBeNull();
 
         window.history.pushState(
             {},
@@ -282,6 +282,53 @@ describe('initialization and URL monitoring', () => {
         );
 
         expect(document.querySelector('.gpv-trigger-btn')).toBeTruthy();
+    });
+
+    test('startUrlMonitoring does not show button on near-prefix OCBC holdings route', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings-extra?menuId=235562af-625e-41a3-aead-7beaf7b21cee'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        global.fetch = jest.fn(() => Promise.resolve(responseFactory({})));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.startUrlMonitoring();
+
+        expect(document.querySelector('.gpv-trigger-btn')).toBeNull();
     });
 
     test('showOverlay renders and closes via backdrop click', () => {
