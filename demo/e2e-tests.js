@@ -829,6 +829,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
     const hasProductTypeColumnAndRowText = allocationHeaders.includes('Product Type')
         && overlayTextAllocation.includes('Equity Funds');
     recordAssertion(summary, ocbcFlowName, 'allocation-product-type-column-row', hasProductTypeColumnAndRowText, 'Allocation mode includes Product Type column and product type row text.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-no-bucket-column', !allocationHeaders.includes('Bucket'), 'Allocation mode no longer shows nested bucket column.');
 
     const hasBothPortfolioNumbers = overlayTextAllocation.includes('6500142646-2')
         && overlayTextAllocation.includes('6500142647-2')
