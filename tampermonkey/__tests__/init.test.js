@@ -1435,6 +1435,10 @@ describe('initialization and URL monitoring', () => {
         expect(allocationText).toContain('Instrument allocation · Core');
         expect(allocationText).toContain('Sub-portfolio targets: 110.00% assigned, 10.00% overallocated');
         expect(allocationText).toContain('Core instrument targets: 120.00% assigned, 20.00% overallocated');
+        const targetSummaries = overlay.querySelectorAll('.gpv-sync-help.gpv-ocbc-target-summary');
+        expect(targetSummaries.length).toBeGreaterThanOrEqual(2);
+        expect(Array.from(targetSummaries).some(node => node.textContent.includes('Sub-portfolio targets:'))).toBe(true);
+        expect(Array.from(targetSummaries).some(node => node.textContent.includes('Core instrument targets:'))).toBe(true);
 
         const headers = Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim());
         expect(headers).toContain('Current % of portfolio');
@@ -1515,15 +1519,17 @@ describe('initialization and URL monitoring', () => {
 
         expect(overlay.textContent).toContain('Core instrument targets:');
         const coreHeaderRow = coreHeading.parentElement;
-        const coreSummaryNode = coreHeaderRow?.nextElementSibling?.textContent?.includes('instrument targets:')
-            ? coreHeaderRow.nextElementSibling
-            : coreHeaderRow?.nextElementSibling?.nextElementSibling;
-        const coreTable = coreSummaryNode?.nextElementSibling;
+        const nextTableFrom = start => {
+            let current = start?.nextElementSibling || null;
+            while (current && current.tagName !== 'TABLE') {
+                current = current.nextElementSibling;
+            }
+            return current;
+        };
+        const coreTable = nextTableFrom(coreHeaderRow);
 
         const unassignedHeaderRow = unassignedHeading.parentElement;
-        const unassignedTable = unassignedHeaderRow?.nextElementSibling?.tagName === 'TABLE'
-            ? unassignedHeaderRow.nextElementSibling
-            : unassignedHeaderRow?.nextElementSibling?.nextElementSibling;
+        const unassignedTable = nextTableFrom(unassignedHeaderRow);
         expect(unassignedTable?.tagName).toBe('TABLE');
         expect(unassignedTable?.textContent).not.toContain('instrument targets:');
 
@@ -1598,9 +1604,14 @@ describe('initialization and URL monitoring', () => {
         const assignedHeading = Array.from(overlay.querySelectorAll('h3'))
             .find(node => node.textContent.trim() === 'Instrument allocation · Core');
         const assignedHeaderRow = assignedHeading?.parentElement;
-        const assignedTable = assignedHeaderRow?.nextElementSibling?.tagName === 'TABLE'
-            ? assignedHeaderRow.nextElementSibling
-            : assignedHeaderRow?.nextElementSibling?.nextElementSibling;
+        const nextTableFrom = start => {
+            let current = start?.nextElementSibling || null;
+            while (current && current.tagName !== 'TABLE') {
+                current = current.nextElementSibling;
+            }
+            return current;
+        };
+        const assignedTable = nextTableFrom(assignedHeaderRow);
         const eq1Row = Array.from(assignedTable?.querySelectorAll('tbody tr') || [])
             .find(row => row.textContent.includes('EQ1'));
         expect(eq1Row).toBeTruthy();
@@ -2464,10 +2475,21 @@ describe('initialization and URL monitoring', () => {
         expect(storage.get('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(60);
         expect(overlay.textContent).toContain('-SGD 200.00');
 
+        const copyButton = overlay.querySelector('button[aria-label="Copy balances for sub-portfolio Core"]');
+        expect(copyButton).toBeTruthy();
         const instrumentHeading = Array.from(overlay.querySelectorAll('.gpv-ocbc-instrument-header-row'))
             .find(row => row.textContent.includes('Instrument allocation · Core'));
         expect(instrumentHeading).toBeTruthy();
-        const copyButton = instrumentHeading.querySelector('button');
+        const sectionSummary = instrumentHeading.nextElementSibling;
+        expect(sectionSummary?.classList.contains('gpv-ocbc-target-summary')).toBe(true);
+        const sectionActions = sectionSummary?.nextElementSibling;
+        expect(sectionActions?.classList.contains('gpv-balance-copy-controls--section')).toBe(true);
+        expect(sectionActions?.contains(copyButton)).toBe(true);
+        const status = sectionActions?.querySelector('.gpv-balance-copy-status');
+        expect(status).toBeTruthy();
+        expect(status?.getAttribute('role')).toBe('status');
+        expect(status?.getAttribute('aria-live')).toBe('polite');
+        expect(status?.getAttribute('aria-atomic')).toBe('true');
         expect(copyButton.textContent).toContain('Copy balances');
         copyButton.dispatchEvent(new window.Event('click', { bubbles: true }));
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -2542,9 +2564,14 @@ describe('initialization and URL monitoring', () => {
 
         const coreSectionRow = Array.from(overlay.querySelectorAll('.gpv-ocbc-instrument-header-row'))
             .find(row => row.textContent.includes('Instrument allocation · Core'));
-        const coreTable = coreSectionRow.nextElementSibling.tagName === 'TABLE'
-            ? coreSectionRow.nextElementSibling
-            : coreSectionRow.nextElementSibling.nextElementSibling;
+        const nextTableFrom = start => {
+            let current = start?.nextElementSibling || null;
+            while (current && current.tagName !== 'TABLE') {
+                current = current.nextElementSibling;
+            }
+            return current;
+        };
+        const coreTable = nextTableFrom(coreSectionRow);
         const getCodes = () => Array.from(coreTable.querySelectorAll('tbody tr td:first-child')).map(cell => cell.textContent.trim());
         expect(getCodes()).toEqual(['EQ1', 'EQ2', 'EQ3']);
 
@@ -2554,9 +2581,7 @@ describe('initialization and URL monitoring', () => {
 
         const updatedHeaderRow = Array.from(overlay.querySelectorAll('.gpv-ocbc-instrument-header-row'))
             .find(row => row.textContent.includes('Instrument allocation · Core'));
-        const updatedTable = updatedHeaderRow.nextElementSibling.tagName === 'TABLE'
-            ? updatedHeaderRow.nextElementSibling
-            : updatedHeaderRow.nextElementSibling.nextElementSibling;
+        const updatedTable = nextTableFrom(updatedHeaderRow);
         const updatedCodes = Array.from(updatedTable.querySelectorAll('tbody tr td:first-child')).map(cell => cell.textContent.trim());
         expect(updatedCodes).toEqual(['EQ2', 'EQ1', 'EQ3']);
 

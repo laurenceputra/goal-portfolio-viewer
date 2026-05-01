@@ -1012,7 +1012,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
     await instrumentAssignmentSelect.selectOption({ label: indicatorCheck.createdName });
     await page.waitForFunction(name => {
         const exactLabel = `Copy balances for sub-portfolio ${name}`;
-        const copyButton = Array.from(document.querySelectorAll('.gpv-ocbc-instrument-header-row button'))
+        const copyButton = Array.from(document.querySelectorAll('.gpv-balance-copy-controls--section button'))
             .find(button => (button.getAttribute('aria-label') || '') === exactLabel);
         return Boolean(copyButton);
     }, indicatorCheck.createdName, { timeout: 5000 });
@@ -1053,7 +1053,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
 
     const clipboardCheck = await page.evaluate(async subPortfolioName => {
         const exactLabel = `Copy balances for sub-portfolio ${subPortfolioName}`;
-        const copyButton = Array.from(document.querySelectorAll('.gpv-ocbc-instrument-header-row button'))
+        const copyButton = Array.from(document.querySelectorAll('.gpv-balance-copy-controls--section button'))
             .find(button => (button.getAttribute('aria-label') || '') === exactLabel);
         if (!(copyButton instanceof HTMLButtonElement)) {
             return { hasCopyHeader: false, hasDriftScope: false, fallbackUsed: false };

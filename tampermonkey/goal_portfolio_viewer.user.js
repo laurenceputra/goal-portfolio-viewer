@@ -10107,8 +10107,8 @@ syncUi.update = function updateSyncUI() {
                 flex-wrap: wrap;
             }
 
-            .gpv-balance-copy-controls--inline {
-                margin-left: auto;
+            .gpv-balance-copy-controls--section {
+                margin-bottom: 10px;
             }
 
             .gpv-balance-copy-button {
@@ -10170,6 +10170,10 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-ocbc-instrument-heading {
                 margin: 0;
+            }
+
+            .gpv-ocbc-target-summary {
+                margin-bottom: 10px;
             }
             
             /* Table Styles */
@@ -13866,7 +13870,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 });
                 section.appendChild(createElement(
                     'p',
-                    'gpv-sync-help',
+                    'gpv-sync-help gpv-ocbc-target-summary',
                     `Sub-portfolio targets: ${buildAssignedCoverageText(configuredSubPortfolioTargets)}`
                 ));
                 section.appendChild(subPortfolioRows);
@@ -13895,12 +13899,20 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     const headerRow = createElement('div', 'gpv-ocbc-instrument-header-row');
                     const headingElement = createElement('h3', `gpv-detail-title gpv-ocbc-instrument-heading ${sectionClass}`.trim(), heading);
                     headerRow.appendChild(headingElement);
+                    section.appendChild(headerRow);
+                    let copyControls = null;
                     if (subPortfolioId) {
+                        const configuredInstrumentTargets = rows.reduce((sum, row) => {
+                            const rowCode = utils.normalizeString(row?.code, '');
+                            const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolioId, rowCode);
+                            return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
+                        }, 0);
+                        section.appendChild(createElement('p', 'gpv-sync-help gpv-ocbc-target-summary', `${subPortfolioName || subPortfolioId} instrument targets: ${buildAssignedCoverageText(configuredInstrumentTargets)}`));
                         const status = createElement('span', 'gpv-balance-copy-status');
                         status.setAttribute('role', 'status');
                         status.setAttribute('aria-live', 'polite');
                         status.setAttribute('aria-atomic', 'true');
-                        const copyControls = createElement('div', 'gpv-balance-copy-controls gpv-balance-copy-controls--inline');
+                        copyControls = createElement('div', 'gpv-balance-copy-controls gpv-balance-copy-controls--section');
                         const copyButton = createElement('button', 'gpv-sync-btn gpv-balance-copy-button', 'Copy balances');
                         copyButton.type = 'button';
                         copyButton.setAttribute('aria-label', `Copy balances for sub-portfolio ${subPortfolioName || subPortfolioId}`);
@@ -13941,16 +13953,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         };
                         copyControls.appendChild(copyButton);
                         copyControls.appendChild(status);
-                        headerRow.appendChild(copyControls);
                     }
-                    section.appendChild(headerRow);
-                    if (subPortfolioId) {
-                        const configuredInstrumentTargets = rows.reduce((sum, row) => {
-                            const rowCode = utils.normalizeString(row?.code, '');
-                            const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolioId, rowCode);
-                            return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
-                        }, 0);
-                        section.appendChild(createElement('p', 'gpv-sync-help', `${subPortfolioName || subPortfolioId} instrument targets: ${buildAssignedCoverageText(configuredInstrumentTargets)}`));
+                    if (copyControls) {
+                        section.appendChild(copyControls);
                     }
                     const holdingsTable = createElement('table', 'gpv-table');
                     holdingsTable.innerHTML = `
