@@ -328,7 +328,7 @@ describe('normalizeOcbcHoldingsPayload', () => {
         expect(result.assets[0]).toMatchObject({
             portfolioNo: 'P-123',
             subcode: '',
-            displayTicker: 'A-1',
+            displayTicker: 'A1',
             assetClassDesc: 'Equities',
             subAssetClassDesc: 'US Equity',
             productType: 'US Equity',
@@ -338,7 +338,7 @@ describe('normalizeOcbcHoldingsPayload', () => {
         expect(result.liabilities[0]).toMatchObject({
             portfolioNo: 'P-123',
             subcode: '',
-            displayTicker: 'L-1',
+            displayTicker: 'Margin Loan',
             assetClassDesc: 'Liability',
             subAssetClassDesc: 'Margin',
             productType: 'Margin',
@@ -401,13 +401,13 @@ describe('normalizeOcbcHoldingsPayload', () => {
         const result = normalizeOcbcHoldingsPayload(payload);
         expect(result.assets).toHaveLength(4);
 
-        const byTicker = Object.fromEntries(result.assets.map(row => [row.displayTicker, row]));
-        expect(byTicker['MV-FALLBACK'].currentValueLcy).toBe(45.67);
-        expect(byTicker['SRC-FALLBACK'].currentValueLcy).toBe(12.34);
-        expect(byTicker['BLANK-NUMERIC'].currentValueLcy).toBe(0);
-        expect(byTicker['BLANK-NUMERIC'].profitValueLcy).toBeNull();
-        expect(byTicker['ACTUAL-ZERO'].currentValueLcy).toBe(0);
-        expect(byTicker['ACTUAL-ZERO'].profitValueLcy).toBe(0);
+        expect(result.assets.map(row => row.displayTicker)).toEqual(['Holding 1', 'Holding 2', 'Holding 3', 'Holding 4']);
+        expect(result.assets[0].currentValueLcy).toBe(45.67);
+        expect(result.assets[1].currentValueLcy).toBe(12.34);
+        expect(result.assets[2].currentValueLcy).toBe(0);
+        expect(result.assets[2].profitValueLcy).toBeNull();
+        expect(result.assets[3].currentValueLcy).toBe(0);
+        expect(result.assets[3].profitValueLcy).toBe(0);
     });
 
     test('uses non-portfolio identifier fallback when all OCBC id fields are missing', () => {
@@ -555,6 +555,85 @@ describe('normalizeOcbcHoldingsPayload', () => {
         const secondByTicker = Object.fromEntries(second.assets.map(row => [row.displayTicker, row.code]));
         expect(firstByTicker['ISIN-AAA']).toEqual(secondByTicker['ISIN-AAA']);
         expect(firstByTicker['ISIN-BBB']).toEqual(secondByTicker['ISIN-BBB']);
+    });
+
+    test('ignores holdingGuid/positionId/trancheId/subCode changes for OCBC stable identity', () => {
+        const buildPayload = holdings => ({
+            data: [{
+                portfolioNo: 'P-IMMUTABLE',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings
+                    }]
+                }],
+                liabilities: []
+            }]
+        });
+
+        const first = normalizeOcbcHoldingsPayload(buildPayload([
+            {
+                isin: 'ISIN-IMM-A',
+                fundCode: 'FUND-IMM-A',
+                trancheId: 'TRANCHE-OLD',
+                positionId: 'POSITION-OLD',
+                holdingGuid: 'GUID-OLD',
+                subCode: 'SUB-OLD',
+                fundName: 'Fund A'
+            }
+        ]));
+        const second = normalizeOcbcHoldingsPayload(buildPayload([
+            {
+                isin: 'ISIN-IMM-A',
+                fundCode: 'FUND-IMM-A',
+                trancheId: 'TRANCHE-NEW',
+                positionId: 'POSITION-NEW',
+                holdingGuid: 'GUID-NEW',
+                subCode: 'SUB-NEW',
+                fundName: 'Fund A Renamed'
+            }
+        ]));
+
+        expect(first.assets[0].displayTicker).toBe('ISIN-IMM-A');
+        expect(second.assets[0].displayTicker).toBe('ISIN-IMM-A');
+        expect(first.assets[0].code).toBe(second.assets[0].code);
+    });
+
+    test('does not emit OCBC legacy aliases for holdingGuid/positionId/trancheId/subCode', () => {
+        const payload = {
+            data: [{
+                portfolioNo: 'P-ALIASES',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [{
+                            holdingGuid: 'GUID-LEGACY',
+                            positionId: 'POSITION-LEGACY',
+                            trancheId: 'TRANCHE-LEGACY',
+                            subCode: 'SUB-LEGACY',
+                            isin: 'ISIN-ALIAS',
+                            fundCode: 'FUND-ALIAS',
+                            description: 'Alias Description'
+                        }]
+                    }]
+                }],
+                liabilities: []
+            }]
+        };
+
+        const result = normalizeOcbcHoldingsPayload(payload);
+        expect(result.assets[0].legacyCodeAliases).toEqual(expect.arrayContaining([
+            'P-ALIASES:ISIN-ALIAS',
+            'P-ALIASES:FUND-ALIAS',
+            'P-ALIASES:Alias Description',
+            'P-ALIASES:P-ALIASES#1'
+        ]));
+        expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:GUID-LEGACY');
+        expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:POSITION-LEGACY');
+        expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:TRANCHE-LEGACY');
+        expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:SUB-LEGACY');
     });
 });
 

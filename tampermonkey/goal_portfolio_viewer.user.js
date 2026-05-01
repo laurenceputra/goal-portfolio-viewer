@@ -859,9 +859,6 @@
         const portfolioNo = utils.normalizeString(resolvedPortfolioNo, '-');
         const aliases = [];
         const stableKeys = [
-            row?.holdingGuid,
-            row?.positionId,
-            row?.trancheId,
             row?.isin,
             row?.fundCode,
             row?.description
@@ -880,23 +877,16 @@
         const resolvedPortfolioNo = utils.normalizeString(context.portfolioNo, '-');
         const fallbackIndex = Number.isFinite(Number(context.index)) ? Number(context.index) : 0;
         const sectionType = utils.normalizeString(context.sectionType, 'assets');
-        const subCode = utils.normalizeString(row?.subcode ?? row?.subCode, '');
         const scopeParts = [
             sectionType,
             resolvedPortfolioNo,
             utils.normalizeString(context.assetClassDesc, ''),
-            utils.normalizeString(context.subAssetClassDesc, ''),
-            subCode
+            utils.normalizeString(context.subAssetClassDesc, '')
         ].map(normalizeOcbcIdentitySegment).filter(Boolean);
 
         const strongIdParts = [
-            row?.holdingGuid,
             row?.isin,
-            row?.fundCode,
-            row?.trancheId,
-            row?.subcode,
-            row?.subCode,
-            row?.positionId
+            row?.fundCode
         ].map(normalizeOcbcIdentitySegment).filter(Boolean);
         const weakDescriptorParts = [
             row?.description,
@@ -941,9 +931,6 @@
         const displayTicker = utils.normalizeString(
             row.isin
             || row.fundCode
-            || row.trancheId
-            || row.positionId
-            || row.holdingGuid
             || row.description
             || row.shortName
             || fallbackLabel,

@@ -204,7 +204,7 @@ describe('API interception', () => {
                 {
                     portfolioNo: 'P-001',
                     subcode: '',
-                    displayTicker: 'asset-guid-1',
+                    displayTicker: 'Holding 1',
                     name: 'OCBC Asset Fund',
                     assetClassDesc: 'Equities',
                     subAssetClassDesc: 'Global Equity',
@@ -218,7 +218,7 @@ describe('API interception', () => {
                 {
                     portfolioNo: 'P-001',
                     subcode: '',
-                    displayTicker: 'liab-1',
+                    displayTicker: 'Margin Liability',
                     name: 'Margin Liability',
                     assetClassDesc: 'Liability',
                     subAssetClassDesc: 'Margin Liability',
@@ -234,11 +234,10 @@ describe('API interception', () => {
         expect(normalized.liabilities[0].code).toMatch(/^P-001:gpv-ocbc-/);
 
         expect(normalized.assets[0].legacyCodeAliases).toEqual(expect.arrayContaining([
-            'P-001:asset-guid-1',
             'P-001:P-001#1'
         ]));
         expect(normalized.liabilities[0].legacyCodeAliases).toEqual(expect.arrayContaining([
-            'P-001:liab-1',
+            'P-001:Margin Liability',
             'P-001:P-001#1'
         ]));
     });

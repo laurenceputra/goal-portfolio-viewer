@@ -2907,7 +2907,7 @@ describe('initialization and URL monitoring', () => {
             expect(row.displayTicker).not.toBe('P-100');
             expect(row.code.startsWith('P-100:')).toBe(true);
         });
-        expect(normalized.assets.map(row => row.displayTicker)).toEqual(['ISIN-1', 'FUND-2', 'TR-3', 'POS-4', 'Holding 5']);
+        expect(normalized.assets.map(row => row.displayTicker)).toEqual(['ISIN-1', 'FUND-2', 'EQ3', 'EQ4', 'Holding 5']);
         expect(normalized.assets[4].displayTicker).not.toContain('P-100');
         expect(normalized.assets[4].displayTicker.length).toBeGreaterThan(0);
     });
