@@ -830,12 +830,64 @@ async function captureOcbcFlow(page, summary, outputDir) {
         && overlayTextAllocation.includes('Equity Funds');
     recordAssertion(summary, ocbcFlowName, 'allocation-product-type-column-row', hasProductTypeColumnAndRowText, 'Allocation mode includes Product Type column and product type row text.');
     recordAssertion(summary, ocbcFlowName, 'allocation-no-bucket-column', !allocationHeaders.includes('Bucket'), 'Allocation mode no longer shows nested bucket column.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-hierarchy-copy', overlayTextAllocation.includes('Allocation hierarchy: Portfolio -> Sub-portfolios -> Instruments'), 'Allocation mode shows hierarchy copy.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-headings', overlayTextAllocation.includes('Sub-portfolio allocation within Portfolio') && overlayTextAllocation.includes('Instrument allocation within assigned sub-portfolios'), 'Allocation mode shows sub-portfolio and instrument section headings.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-renamed-columns', allocationHeaders.includes('Current % of portfolio') && allocationHeaders.includes('Target % of portfolio') && allocationHeaders.includes('Current % of sub-portfolio') && allocationHeaders.includes('Target % of sub-portfolio'), 'Allocation mode shows renamed percentage columns.');
 
     const hasBothPortfolioNumbers = overlayTextAllocation.includes('6500142646-2')
         && overlayTextAllocation.includes('6500142647-2')
         && overlayTextAllocation.includes('Portfolio 6500142646-2')
         && overlayTextAllocation.includes('Portfolio 6500142647-2');
     recordAssertion(summary, ocbcFlowName, 'allocation-has-both-portfolio-numbers', hasBothPortfolioNumbers, 'Allocation mode contains both OCBC portfolio numbers under portfolio sections.');
+
+    const indicatorCheck = await page.evaluate(async () => {
+        const targetInput = document.querySelector('input[aria-label^="Target percentage for portfolio "]');
+        if (!(targetInput instanceof HTMLInputElement)) {
+            return { hasIndicator: false, hasCopyHeader: false, hasDriftScope: false };
+        }
+        targetInput.value = '85';
+        targetInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+        const rootText = document.querySelector('.gpv-overlay')?.textContent || '';
+        const hasIndicator = /Sub-portfolio targets:\s*85\.00% assigned,\s*15\.00% remaining/.test(rootText)
+            || rootText.includes('Sub-portfolio targets: 85.00% assigned, 15.00% remaining');
+
+        const copyButton = Array.from(document.querySelectorAll('button')).find(btn => (btn.textContent || '').includes('Copy amounts ('));
+        if (!(copyButton instanceof HTMLButtonElement)) {
+            return { hasIndicator, hasCopyHeader: false, hasDriftScope: false };
+        }
+
+        let captured = '';
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            const original = navigator.clipboard.writeText.bind(navigator.clipboard);
+            let resolveClipboardWrite;
+            const clipboardWriteCalled = new Promise(resolve => {
+                resolveClipboardWrite = resolve;
+            });
+            navigator.clipboard.writeText = async text => {
+                captured = text;
+                if (typeof resolveClipboardWrite === 'function') {
+                    resolveClipboardWrite();
+                }
+                return Promise.resolve();
+            };
+            copyButton.click();
+            await Promise.race([
+                clipboardWriteCalled,
+                new Promise(resolve => setTimeout(resolve, 750))
+            ]);
+            navigator.clipboard.writeText = original;
+        } else {
+            copyButton.click();
+        }
+
+        const hasCopyHeader = captured.includes('Current %') && captured.includes('Target %') && captured.includes('Target Amount') && captured.includes('Drift Amount');
+        const hasDriftScope = captured.includes('Identifier\tName\tCurrent Amount\tCurrent %\tTarget %\tTarget Amount\tDrift Amount');
+        return { hasIndicator, hasCopyHeader, hasDriftScope };
+    });
+    recordAssertion(summary, ocbcFlowName, 'allocation-target-indicator-updates', indicatorCheck.hasIndicator, 'Allocation target indicator updates after editing target %.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-has-target-columns', indicatorCheck.hasCopyHeader, 'Copy amounts output includes current %, target %, target amount, and drift amount columns.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-scoped-to-subportfolio', indicatorCheck.hasDriftScope, 'Copy amounts output uses sub-portfolio scoped projection header.');
 
     await page.selectOption('#gpv-ocbc-mode-select', 'portfolio');
     await page.waitForFunction(() => {

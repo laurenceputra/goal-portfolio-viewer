@@ -1688,6 +1688,19 @@ function buildTargetCoverageLabel(targetTotalPercent) {
     return `Target total is ${rounded.toFixed(2)}% (${difference.toFixed(2)}% over-allocated)`;
 }
 
+function buildAssignedCoverageText(assignedPercent) {
+    const safeAssigned = Number.isFinite(assignedPercent) ? assignedPercent : 0;
+    const roundedAssigned = Number(safeAssigned.toFixed(2));
+    const difference = roundedAssigned - 100;
+    if (Math.abs(difference) <= TARGET_TOTAL_TOLERANCE_PERCENT) {
+        return `${roundedAssigned.toFixed(2)}% assigned`;
+    }
+    if (difference < 0) {
+        return `${roundedAssigned.toFixed(2)}% assigned, ${Math.abs(difference).toFixed(2)}% remaining`;
+    }
+    return `${roundedAssigned.toFixed(2)}% assigned, ${difference.toFixed(2)}% overallocated`;
+}
+
 function calculateRecommendedContributionSplit(goalModels, additionalAmount) {
     const numericAmount = toFiniteNumber(additionalAmount, null);
     if (numericAmount === null || numericAmount <= 0 || !Array.isArray(goalModels)) {
@@ -8709,8 +8722,8 @@ function renderSyncOverlayView({
         backBtn.textContent = backLabel || '← Back';
         backBtn.title = 'Return to previous view';
         backBtn.onclick = () => {
-            onBack();
             closeOverlay();
+            onBack();
         };
         headerButtons.appendChild(backBtn);
     }
@@ -8766,7 +8779,45 @@ function renderSyncOverlayView({
  * Show sync settings modal
  */
 
-function showSyncSettings() {
+function showSyncSettings(options = {}) {
+    const returnTo = utils.normalizeString(options?.returnTo, 'endowus');
+    const syncReturnConfig = {
+        endowus: {
+            backLabel: '← Back to Portfolio Viewer',
+            onBack: () => {
+                if (typeof showOverlay === 'function') {
+                    showOverlay();
+                }
+            }
+        },
+        fsm: {
+            backLabel: '← Back to Portfolio Viewer (FSM)',
+            onBack: () => {
+                const holdings = getFsmReadinessState().fsmHoldings;
+                if (Array.isArray(holdings) && holdings.length > 0) {
+                    renderFsmOverlay(holdings);
+                    return;
+                }
+                if (typeof showOverlay === 'function') {
+                    showOverlay();
+                }
+            }
+        },
+        ocbc: {
+            backLabel: '← Back to Portfolio Viewer (OCBC)',
+            onBack: () => {
+                const holdings = getOcbcReadinessState().ocbcHoldings;
+                if (holdings) {
+                    renderOcbcOverlay(holdings);
+                    return;
+                }
+                if (typeof showOverlay === 'function') {
+                    showOverlay();
+                }
+            }
+        }
+    };
+    const resolvedReturnConfig = syncReturnConfig[returnTo] || syncReturnConfig.endowus;
     
     try {
         let settingsHTML;
@@ -8777,17 +8828,11 @@ function showSyncSettings() {
             settingsHTML = '<div style="padding: 20px; color: #ef4444;">Error loading sync settings. Please check console for details.</div>';
         }
 
-        const { overlay } = renderSyncOverlayView({
+        renderSyncOverlayView({
             title: 'Sync Settings',
             bodyHtml: settingsHTML,
-            onBack: () => {
-                if (typeof renderPortfolioView === 'function') {
-                    overlay.innerHTML = '';
-                    const event = new CustomEvent('gpv-show-portfolio');
-                    document.dispatchEvent(event);
-                }
-            },
-            backLabel: '← Back to Investments'
+            onBack: resolvedReturnConfig.onBack,
+            backLabel: resolvedReturnConfig.backLabel
         });
 
         // Setup listeners
@@ -10608,6 +10653,12 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-sync-settings {
                     padding: 20px;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                }
+
+                .gpv-sync-settings,
+                .gpv-sync-settings * {
+                    font-family: inherit;
                 }
 
                 .gpv-sync-header h3 {
@@ -11864,7 +11915,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return calculateAllocationRatio(row?.currentValueLcy, total);
     }
 
-    function buildFsmHeader({ overlay, cleanupCallbacks, titleText = 'Portfolio Viewer (FSM)' }) {
+    function buildFsmHeader({ overlay, cleanupCallbacks, titleText = 'Portfolio Viewer (FSM)', syncReturnTo = 'fsm' }) {
         const header = createElement('div', 'gpv-header');
         const title = createElement('h1', null, titleText);
         const titleId = 'gpv-portfolio-title';
@@ -11875,7 +11926,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         syncBtn.title = 'Configure cross-device sync';
         syncBtn.onclick = () => {
             if (typeof showSyncSettings === 'function') {
-                showSyncSettings();
+                showSyncSettings({ returnTo: syncReturnTo });
             }
         };
 
@@ -13342,7 +13393,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({
             overlay,
             cleanupCallbacks,
-            titleText: 'Portfolio Viewer (OCBC)'
+            titleText: 'Portfolio Viewer (OCBC)',
+            syncReturnTo: 'ocbc'
         });
         container.appendChild(header);
 
@@ -13457,6 +13509,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 managerRow.appendChild(createSubPortfolioInput);
                 managerRow.appendChild(createSubPortfolioBtn);
                 section.appendChild(managerRow);
+                section.appendChild(createElement('h3', 'gpv-detail-title', `Sub-portfolio allocation within Portfolio ${portfolioNo}`));
 
                 const subPortfolioRows = createElement('table', 'gpv-table');
                 subPortfolioRows.innerHTML = `
@@ -13464,8 +13517,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         <tr>
                             <th>Sub-portfolio</th>
                             <th>Value (SGD)</th>
-                            <th>Current %</th>
-                            <th>Target %</th>
+                            <th>Current % of portfolio</th>
+                            <th>Target % of portfolio</th>
                             <th>Drift</th>
                             <th>Holdings</th>
                             <th>Profit</th>
@@ -13476,6 +13529,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 const subPortfolioBody = subPortfolioRows.querySelector('tbody');
                 const subPortfolioRowsData = [{ id: '', name: 'Unassigned', rows: [] }];
                 persistedSubPortfolios.forEach(item => subPortfolioRowsData.push({ ...item, rows: [] }));
+                const configuredSubPortfolioTargets = subPortfolioRowsData.reduce((sum, subPortfolio) => {
+                    if (!subPortfolio.id) {
+                        return sum;
+                    }
+                    const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId);
+                    return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
+                }, 0);
 
                 portfolioRows.forEach(row => {
                     const code = utils.normalizeString(row?.code, '');
@@ -13528,6 +13588,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     tr.appendChild(createElement('td', subPortfolioSummary?.profitClass, subPortfolioSummary?.profitDisplay || '-'));
                     subPortfolioBody.appendChild(tr);
                 });
+                section.appendChild(createElement(
+                    'p',
+                    'gpv-sync-help',
+                    `Sub-portfolio targets: ${buildAssignedCoverageText(configuredSubPortfolioTargets)}`
+                ));
                 section.appendChild(subPortfolioRows);
 
                 const holdingsTable = createElement('table', 'gpv-table');
@@ -13538,14 +13603,15 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             <th>Name</th>
                             <th>Product Type</th>
                             <th>Value (SGD)</th>
-                            <th>Current %</th>
-                            <th>Target %</th>
+                            <th>Current % of sub-portfolio</th>
+                            <th>Target % of sub-portfolio</th>
                             <th>Drift</th>
                             <th>Sub-portfolio</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
                 `;
+                section.appendChild(createElement('h3', 'gpv-detail-title', 'Instrument allocation within assigned sub-portfolios'));
                 const holdingsBody = holdingsTable.querySelector('tbody');
                 const displayRows = buildFsmDisplayRows(portfolioRows, portfolioTotal);
                 displayRows.forEach(row => {
@@ -13641,6 +13707,23 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         row,
                         persistedSubPortfolios
                     ).subPortfolioId === subPortfolio.id);
+                    if (subRows.length === 0) {
+                        return;
+                    }
+                    const configuredInstrumentTargets = subRows.reduce((sum, row) => {
+                        const rowCode = utils.normalizeString(row?.code, '');
+                        const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, rowCode);
+                        return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
+                    }, 0);
+                    section.appendChild(createElement('p', 'gpv-sync-help', `${subPortfolio.name} instrument targets: ${buildAssignedCoverageText(configuredInstrumentTargets)}`));
+                });
+
+                persistedSubPortfolios.forEach(subPortfolio => {
+                    const subRows = portfolioRows.filter(row => getEffectiveOcbcAssignmentForRow(
+                        assignmentByCode[utils.normalizeString(row?.code, '')],
+                        row,
+                        persistedSubPortfolios
+                    ).subPortfolioId === subPortfolio.id);
                     const subTotal = toFiniteNumber(buildOcbcSummary(subRows).total, 0);
                     const controls = createElement('div', 'gpv-balance-copy-controls');
                     const copyButton = createElement('button', 'gpv-sync-btn', `Copy amounts (${subPortfolio.name})`);
@@ -13699,6 +13782,16 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             contentDiv.innerHTML = '';
 
             if (mode === 'allocation') {
+                contentDiv.appendChild(createElement(
+                    'p',
+                    'gpv-sync-help gpv-sync-help--lead',
+                    'Allocation hierarchy: Portfolio -> Sub-portfolios -> Instruments'
+                ));
+                contentDiv.appendChild(createElement(
+                    'p',
+                    'gpv-sync-help',
+                    'Sub-portfolio targets are percentages of the portfolio. Instrument targets are percentages of their assigned sub-portfolio.'
+                ));
                 renderAllocationMode(activeView, rows);
                 return;
             }
@@ -13953,7 +14046,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         syncBtn.title = 'Configure cross-device sync';
         syncBtn.onclick = () => {
             if (typeof showSyncSettings === 'function') {
-                showSyncSettings();
+                showSyncSettings({ returnTo: 'endowus' });
             } else {
                 console.error('[Goal Portfolio Viewer] showSyncSettings is not a function!');
                 alert('Sync settings are not available. Please ensure the sync module is loaded.');

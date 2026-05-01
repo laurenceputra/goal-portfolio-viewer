@@ -861,6 +861,87 @@ describe('initialization and URL monitoring', () => {
         expect(indicator.getAttribute('role')).toBe('button');
         expect(indicator.getAttribute('tabindex')).toBe('0');
     });
+
+    test('sync settings view is shared across Endowus, FSM, and OCBC with deterministic back targets', () => {
+        const mountEndowusData = () => {
+            global.GM_setValue('api_performance', JSON.stringify([{ goalId: 'goal1', totalCumulativeReturn: { amount: 100 }, simpleRateOfReturnPercent: 0.1 }]));
+            global.GM_setValue('api_investible', JSON.stringify([{ goalId: 'goal1', goalName: 'Goal One', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 1000 } } }]));
+            global.GM_setValue('api_summary', JSON.stringify([{ goalId: 'goal1', goalName: 'Goal One', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }]));
+        };
+        const mountFsmData = () => {
+            global.GM_setValue('api_fsm_holdings', JSON.stringify([{ code: 'AAA', subcode: 'AAPL', name: 'Fund A', currentValueLcy: 1234.56 }]));
+        };
+        const mountOcbcData = () => {
+            global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+                assets: [{ code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }],
+                liabilities: []
+            }));
+        };
+
+        const assertSharedSyncFields = overlay => {
+            expect(overlay.textContent).toContain('Sync Settings');
+            expect(overlay.querySelector('.gpv-sync-settings')).toBeTruthy();
+            expect(overlay.textContent).toContain('Activate Sync');
+            expect(overlay.textContent).toContain('Server URL');
+            expect(overlay.textContent).toContain('User ID');
+            expect(overlay.textContent).toContain('Password');
+            expect(overlay.textContent).toContain('Remember encryption key on this device');
+            expect(overlay.textContent).toContain('Sign Up');
+            expect(overlay.textContent).toContain('Login');
+            expect(overlay.textContent).toContain('Save Settings');
+            expect(overlay.textContent).toContain('Sync Now');
+            expect(overlay.textContent).toContain('Advanced settings');
+
+            const styleText = Array.from(document.querySelectorAll('style')).map(node => node.textContent || '').join('\n');
+            expect(styleText).toContain('.gpv-sync-settings');
+            expect(styleText).toMatch(/Segoe UI|sans-serif/);
+        };
+
+        const openSync = (expectedBackText) => {
+            const overlay = document.querySelector('#gpv-overlay');
+            const syncBtn = Array.from(overlay.querySelectorAll('button')).find(btn => (btn.textContent || '').includes('Sync'));
+            syncBtn.click();
+            const syncOverlay = document.querySelector('#gpv-overlay');
+            assertSharedSyncFields(syncOverlay);
+            const backBtn = Array.from(syncOverlay.querySelectorAll('button')).find(btn => (btn.textContent || '').includes('Back to Portfolio Viewer'));
+            expect(backBtn.textContent).toContain(expectedBackText);
+            backBtn.click();
+        };
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+
+        mountEndowusData();
+        exportsModule.init();
+        exportsModule.showOverlay();
+        openSync('Portfolio Viewer');
+        expect(document.querySelector('#gpv-overlay').textContent).toContain('Portfolio Viewer');
+
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (storage.has(key) ? storage.get(key) : fallback));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.history = window.history;
+        mountFsmData();
+        exportsModule.init();
+        exportsModule.showOverlay();
+        openSync('(FSM)');
+        expect(document.querySelector('#gpv-overlay').textContent).toContain('Portfolio Viewer (FSM)');
+
+        teardownDom();
+        setupDom({ url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123' });
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (storage.has(key) ? storage.get(key) : fallback));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.history = window.history;
+        mountOcbcData();
+        exportsModule.init();
+        exportsModule.showOverlay();
+        openSync('(OCBC)');
+        expect(document.querySelector('#gpv-overlay').textContent).toContain('Portfolio Viewer (OCBC)');
+    });
     test('showOverlay renders FSM overlay on FSM route using FSM holdings only', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
@@ -1203,6 +1284,94 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Bond');
         const headers = Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim());
         expect(headers).toContain('Product Type');
+    });
+
+    test('OCBC allocation mode shows hierarchy copy, renamed columns, and target assignment indicators', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 100 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 300 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Asset 3', productType: 'Bond', currentValueLcy: 600 }
+            ],
+            liabilities: []
+        }));
+        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+            assets: {
+                'P-1': [
+                    { id: 'core', name: 'Core', archived: false },
+                    { id: 'satellite', name: 'Satellite', archived: false }
+                ]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            'P-1:EQ1': 'core',
+            'P-1:EQ2': 'core'
+        }));
+        global.GM_setValue('ocbc_target_pct_assets|P-1|core|', 110);
+        global.GM_setValue('ocbc_target_pct_assets|P-1|satellite|', 0);
+        global.GM_setValue('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1', 50);
+        global.GM_setValue('ocbc_target_pct_assets|P-1|core|P-1%3AEQ2', 70);
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const allocationText = overlay.textContent;
+        expect(allocationText).toContain('Allocation hierarchy: Portfolio -> Sub-portfolios -> Instruments');
+        expect(allocationText).toContain('Sub-portfolio targets are percentages of the portfolio. Instrument targets are percentages of their assigned sub-portfolio.');
+        expect(allocationText).toContain('Sub-portfolio allocation within Portfolio P-1');
+        expect(allocationText).toContain('Instrument allocation within assigned sub-portfolios');
+        expect(allocationText).toContain('Sub-portfolio targets: 110.00% assigned, 10.00% overallocated');
+        expect(allocationText).toContain('Core instrument targets: 120.00% assigned, 20.00% overallocated');
+
+        const headers = Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim());
+        expect(headers).toContain('Current % of portfolio');
+        expect(headers).toContain('Target % of portfolio');
+        expect(headers).toContain('Current % of sub-portfolio');
+        expect(headers).toContain('Target % of sub-portfolio');
+
+        expect(allocationText).toContain('25.00%');
+        expect(allocationText).toContain('50.00%');
+        expect(allocationText).toContain('-50.00%');
     });
 
     test('OCBC allocation mode persists sub-portfolios and simple assignments', () => {
