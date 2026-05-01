@@ -9213,6 +9213,78 @@ syncUi.update = function updateSyncUI() {
     const STYLE_SECTIONS = {
         core: `
             /* Modern Portfolio Viewer Styles */
+            .gpv-overlay,
+            .gpv-trigger-btn,
+            .gpv-notification,
+            .gpv-sync-indicator {
+                --gpv-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                --gpv-font-size-title: 20px;
+                --gpv-font-size-section-title: 18px;
+                --gpv-font-size-body: 14px;
+                --gpv-font-size-small: 12px;
+                --gpv-line-height: 1.45;
+                --gpv-space-2: 8px;
+                --gpv-space-3: 12px;
+                --gpv-space-4: 16px;
+                --gpv-space-5: 20px;
+                --gpv-space-6: 24px;
+                --gpv-radius-sm: 8px;
+                --gpv-radius-md: 12px;
+                --gpv-radius-lg: 20px;
+                --gpv-color-text: #1f2937;
+                --gpv-color-muted: #6b7280;
+                --gpv-color-border: #e5e7eb;
+                --gpv-color-primary: #667eea;
+                --gpv-color-primary-strong: #4f46e5;
+                --gpv-color-success: #059669;
+                --gpv-color-danger: #dc2626;
+            }
+
+            .gpv-overlay,
+            .gpv-overlay *,
+            .gpv-trigger-btn,
+            .gpv-notification,
+            .gpv-sync-indicator,
+            .gpv-sync-indicator * {
+                box-sizing: border-box;
+                font-family: var(--gpv-font-family);
+            }
+
+            .gpv-overlay,
+            .gpv-trigger-btn,
+            .gpv-sync-indicator,
+            .gpv-notification {
+                font-size: var(--gpv-font-size-body);
+                line-height: var(--gpv-line-height);
+                color: var(--gpv-color-text);
+            }
+
+            .gpv-container h1,
+            .gpv-container h2,
+            .gpv-container h3,
+            .gpv-container h4,
+            .gpv-container p,
+            .gpv-container label,
+            .gpv-container button,
+            .gpv-container input,
+            .gpv-container select,
+            .gpv-container textarea,
+            .gpv-container table,
+            .gpv-container th,
+            .gpv-container td {
+                font-family: inherit;
+            }
+
+            .gpv-trigger-btn,
+            .gpv-container button,
+            .gpv-container input,
+            .gpv-container select,
+            .gpv-container textarea,
+            .gpv-sync-btn,
+            .gpv-sync-input {
+                font-family: var(--gpv-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif) !important;
+                line-height: var(--gpv-line-height, 1.45) !important;
+            }
             
             .gpv-trigger-btn {
                 position: fixed;
@@ -9228,7 +9300,7 @@ syncUi.update = function updateSyncUI() {
                 cursor: pointer;
                 font-size: 15px;
                 font-weight: 600;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
                 transition: all 0.3s ease;
                 backdrop-filter: blur(10px);
             }
@@ -9275,7 +9347,9 @@ syncUi.update = function updateSyncUI() {
                 display: flex;
                 flex-direction: column;
                 animation: gpv-slideUp 0.3s ease;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
+                font-size: var(--gpv-font-size-body);
+                line-height: var(--gpv-line-height);
             }
 
             .gpv-container button,
@@ -9349,10 +9423,10 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-header h1 {
                 margin: 0;
-                font-size: 20px;
+                font-size: var(--gpv-font-size-title);
                 font-weight: 700;
                 color: #ffffff;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: inherit;
             }
             
             .gpv-sync-indicator-container {
@@ -9452,21 +9526,21 @@ syncUi.update = function updateSyncUI() {
             .gpv-select-label {
                 font-weight: 600;
                 color: #1f2937;
-                font-size: 16px;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-size: var(--gpv-font-size-body);
+                font-family: inherit;
             }
             
             .gpv-select {
                 padding: 10px 18px;
                 border: 2px solid #e5e7eb;
                 border-radius: 8px;
-                font-size: 16px;
+                font-size: var(--gpv-font-size-body);
                 font-weight: 500;
                 color: #1f2937;
                 background: #ffffff;
                 cursor: pointer;
                 transition: all 0.2s ease;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: inherit;
                 min-width: 220px;
             }
             
@@ -10666,8 +10740,10 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-settings {
-                    padding: 20px;
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                    padding: var(--gpv-space-5);
+                    font-size: var(--gpv-font-size-body);
+                    line-height: var(--gpv-line-height);
+                    font-family: inherit;
                 }
 
                 .gpv-sync-settings,
@@ -10676,26 +10752,26 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-header h3 {
-                    margin: 0 0 15px 0;
-                    font-size: 20px;
+                    margin: 0 0 var(--gpv-space-4) 0;
+                    font-size: var(--gpv-font-size-title);
                     font-weight: 600;
                 }
 
                 .gpv-sync-warning {
                     background-color: #fff3cd;
                     border: 1px solid #ffc107;
-                    border-radius: 4px;
-                    padding: 12px;
-                    margin-bottom: 15px;
+                    border-radius: var(--gpv-radius-sm);
+                    padding: var(--gpv-space-3);
+                    margin-bottom: var(--gpv-space-4);
                     color: #856404;
                 }
 
                 .gpv-sync-status-bar {
                     background-color: #f8f9fa;
                     border: 1px solid #dee2e6;
-                    border-radius: 4px;
-                    padding: 12px;
-                    margin-bottom: 20px;
+                    border-radius: var(--gpv-radius-sm);
+                    padding: var(--gpv-space-3);
+                    margin-bottom: var(--gpv-space-5);
                 }
 
                 .gpv-sync-toast {
@@ -10761,21 +10837,21 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-status-idle {
-                    color: #6c757d;
+                    color: var(--gpv-color-muted);
                 }
 
                 .gpv-sync-status-syncing {
-                    color: #007bff;
+                    color: var(--gpv-color-primary-strong);
                     font-weight: 600;
                 }
 
                 .gpv-sync-status-success {
-                    color: #28a745;
+                    color: var(--gpv-color-success);
                     font-weight: 600;
                 }
 
                 .gpv-sync-status-error {
-                    color: #dc3545;
+                    color: var(--gpv-color-danger);
                     font-weight: 600;
                 }
 
@@ -10791,7 +10867,7 @@ syncUi.update = function updateSyncUI() {
                 .gpv-sync-form {
                     display: flex;
                     flex-direction: column;
-                    gap: 20px;
+                    gap: var(--gpv-space-5);
                 }
 
                 .gpv-sync-form-group {
@@ -10812,10 +10888,10 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-input {
-                    padding: 8px 12px;
+                    padding: var(--gpv-space-2) var(--gpv-space-3);
                     border: 1px solid #ced4da;
-                    border-radius: 4px;
-                    font-size: 14px;
+                    border-radius: var(--gpv-radius-sm);
+                    font-size: var(--gpv-font-size-body);
                     font-family: inherit;
                 }
 
@@ -10826,8 +10902,8 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-sync-input:focus {
                     outline: none;
-                    border-color: #007bff;
-                    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+                    border-color: var(--gpv-color-primary-strong);
+                    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
                 }
 
                 .gpv-sync-toggle {
@@ -10848,8 +10924,8 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-sync-help {
                     margin: 6px 0 0 0;
-                    font-size: 12px;
-                    color: #6c757d;
+                    font-size: 13px;
+                    color: var(--gpv-color-muted);
                 }
 
                 .gpv-sync-help--lead {
@@ -10869,7 +10945,7 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-help a {
-                    color: #007bff;
+                    color: var(--gpv-color-primary-strong);
                     text-decoration: none;
                 }
 
@@ -10879,9 +10955,9 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-sync-actions {
                     display: flex;
-                    gap: 10px;
+                    gap: var(--gpv-space-3);
                     flex-wrap: wrap;
-                    margin-top: 10px;
+                    margin-top: var(--gpv-space-3);
                 }
 
                 .gpv-sync-advanced {
@@ -10912,16 +10988,16 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-sync-auth-buttons {
                     display: flex;
-                    gap: 10px;
+                    gap: var(--gpv-space-3);
                     flex-wrap: wrap;
                     justify-content: center;
                 }
 
                 .gpv-sync-btn {
-                    padding: 10px 20px;
+                    padding: var(--gpv-space-2) var(--gpv-space-4);
                     border: none;
-                    border-radius: 4px;
-                    font-size: 14px;
+                    border-radius: var(--gpv-radius-sm);
+                    font-size: var(--gpv-font-size-body);
                     font-weight: 600;
                     cursor: pointer;
                     transition: all 0.2s;
@@ -10935,8 +11011,8 @@ syncUi.update = function updateSyncUI() {
                 .gpv-sync-btn-primary {
                     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                     color: white;
-                    border-radius: 20px;
-                    padding: 12px 24px;
+                    border-radius: var(--gpv-radius-lg);
+                    padding: var(--gpv-space-3) var(--gpv-space-6);
                     box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
                     font-weight: 600;
                 }
@@ -10952,8 +11028,8 @@ syncUi.update = function updateSyncUI() {
                     background: rgba(255, 255, 255, 0.2);
                     color: #667eea;
                     border: 2px solid #667eea;
-                    border-radius: 20px;
-                    padding: 12px 24px;
+                    border-radius: var(--gpv-radius-lg);
+                    padding: var(--gpv-space-3) var(--gpv-space-6);
                     font-weight: 600;
                 }
 
@@ -11404,9 +11480,9 @@ syncUi.update = function updateSyncUI() {
                     bottom: 20px;
                     right: 20px;
                     background-color: white;
-                    border: 1px solid #dee2e6;
-                    border-radius: 20px;
-                    padding: 8px 16px;
+                    border: 1px solid var(--gpv-color-border);
+                    border-radius: var(--gpv-radius-lg);
+                    padding: var(--gpv-space-2) var(--gpv-space-4);
                     display: flex;
                     align-items: center;
                     gap: 8px;
@@ -11448,8 +11524,8 @@ syncUi.update = function updateSyncUI() {
                     top: 20px;
                     right: 20px;
                     background-color: white;
-                    border-radius: 4px;
-                    padding: 12px 16px;
+                    border-radius: var(--gpv-radius-sm);
+                    padding: var(--gpv-space-3) var(--gpv-space-4);
                     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
                     z-index: 10000;
                     opacity: 0;
@@ -11472,7 +11548,7 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-notification-info {
-                    border-left: 4px solid #007bff;
+                    border-left: 4px solid var(--gpv-color-primary-strong);
                 }
 
                 /* Responsive adjustments */

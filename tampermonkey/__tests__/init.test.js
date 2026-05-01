@@ -901,6 +901,17 @@ describe('initialization and URL monitoring', () => {
     });
 
     test('sync settings view is shared across Endowus, FSM, and OCBC with deterministic back targets', () => {
+        const injectHostileHostTypography = () => {
+            const hostileStyle = document.createElement('style');
+            hostileStyle.textContent = `
+                button, input, select, textarea {
+                    line-height: 99px !important;
+                    font-family: fantasy !important;
+                }
+            `;
+            document.head.appendChild(hostileStyle);
+        };
+
         const mountEndowusData = () => {
             global.GM_setValue('api_performance', JSON.stringify([{ goalId: 'goal1', totalCumulativeReturn: { amount: 100 }, simpleRateOfReturnPercent: 0.1 }]));
             global.GM_setValue('api_investible', JSON.stringify([{ goalId: 'goal1', goalName: 'Goal One', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 1000 } } }]));
@@ -931,10 +942,31 @@ describe('initialization and URL monitoring', () => {
             expect(overlay.textContent).toContain('Advanced settings');
 
             const styleText = Array.from(document.querySelectorAll('style')).map(node => node.textContent || '').join('\n');
+            expect(styleText).toContain('--gpv-font-family');
             expect(styleText).toContain('.gpv-sync-settings');
-            expect(styleText).toMatch(/Segoe UI|sans-serif/);
-            expect(styleText).toContain('.gpv-container button');
-            expect(styleText).toContain('font-family: inherit');
+            expect(styleText).toContain('.gpv-trigger-btn');
+            expect(styleText).toContain('line-height: var(--gpv-line-height)');
+
+            const trigger = document.querySelector('.gpv-trigger-btn');
+            expect(trigger).toBeTruthy();
+            const triggerStyle = window.getComputedStyle(trigger);
+            expect(triggerStyle.lineHeight).not.toBe('99px');
+            expect(triggerStyle.fontFamily.toLowerCase()).not.toContain('fantasy');
+
+            const syncBtn = overlay.querySelector('.gpv-sync-btn');
+            expect(syncBtn).toBeTruthy();
+            const syncBtnStyle = window.getComputedStyle(syncBtn);
+            expect(syncBtnStyle.lineHeight).not.toBe('99px');
+            expect(syncBtnStyle.fontFamily.toLowerCase()).not.toContain('fantasy');
+
+            const syncInput = overlay.querySelector('.gpv-sync-input');
+            expect(syncInput).toBeTruthy();
+            const syncInputStyle = window.getComputedStyle(syncInput);
+            expect(syncInputStyle.lineHeight).not.toBe('99px');
+            expect(syncInputStyle.fontFamily.toLowerCase()).not.toContain('fantasy');
+
+            const overlayStyle = window.getComputedStyle(overlay);
+            expect(overlayStyle.lineHeight).not.toBe('99px');
         };
 
         const openSync = (expectedBackText) => {
@@ -951,6 +983,7 @@ describe('initialization and URL monitoring', () => {
         const exportsModule = require('../goal_portfolio_viewer.user.js');
 
         mountEndowusData();
+        injectHostileHostTypography();
         exportsModule.init();
         exportsModule.showOverlay();
         openSync('Portfolio Viewer');
@@ -964,6 +997,7 @@ describe('initialization and URL monitoring', () => {
         global.GM_deleteValue = jest.fn(key => storage.delete(key));
         global.history = window.history;
         mountFsmData();
+        injectHostileHostTypography();
         exportsModule.init();
         exportsModule.showOverlay();
         openSync('(FSM)');
@@ -977,6 +1011,7 @@ describe('initialization and URL monitoring', () => {
         global.GM_deleteValue = jest.fn(key => storage.delete(key));
         global.history = window.history;
         mountOcbcData();
+        injectHostileHostTypography();
         exportsModule.init();
         exportsModule.showOverlay();
         openSync('(OCBC)');
