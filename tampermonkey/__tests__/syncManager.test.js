@@ -654,6 +654,7 @@ describe('SyncManager', () => {
         });
         expect(config.platforms.ocbc.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 55 });
         expect(JSON.stringify(config)).not.toContain('api_ocbc_holdings');
+        expect(JSON.stringify(config)).not.toContain('marketValueReferenceCcy');
 
         storage.clear();
         global.GM_listValues = () => [];
@@ -662,6 +663,42 @@ describe('SyncManager', () => {
         expect(JSON.parse(storage.get('ocbc_allocation_order_by_scope'))).toEqual({
             'assets|P-1|core': ['P-1:EQ2', 'P-1:EQ1']
         });
+    });
+
+    test('hashConfigData ignores OCBC timestamp-only differences', async () => {
+        const { SyncManager } = loadModule();
+        const baseConfig = {
+            version: 2,
+            platforms: {
+                endowus: { goalTargets: {}, goalFixed: {}, timestamp: 100 },
+                fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: 100 },
+                ocbc: {
+                    subPortfolios: { assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false }] } },
+                    assignmentByCode: { 'P-1:gpv-ocbc-deadbeef': 'core' },
+                    orderByScope: { 'assets|P-1|core': ['P-1:gpv-ocbc-deadbeef'] },
+                    targetsByScope: { 'assets|P-1|core|P-1%3Agpv-ocbc-deadbeef': 40 },
+                    timestamp: 111
+                }
+            },
+            metadata: { lastModified: 100 },
+            timestamp: 100
+        };
+        const sameConfigDifferentOcbcTimestamp = {
+            ...baseConfig,
+            platforms: {
+                ...baseConfig.platforms,
+                ocbc: {
+                    ...baseConfig.platforms.ocbc,
+                    timestamp: 222
+                }
+            },
+            metadata: { lastModified: 200 },
+            timestamp: 200
+        };
+
+        const firstHash = await SyncManager.__test.hashConfigData(baseConfig);
+        const secondHash = await SyncManager.__test.hashConfigData(sameConfigDifferentOcbcTimestamp);
+        expect(firstHash).toBe(secondHash);
     });
 
     test('applyConfigData stores OCBC config and removes stale OCBC targets', () => {

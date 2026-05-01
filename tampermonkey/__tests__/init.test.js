@@ -2912,6 +2912,250 @@ describe('initialization and URL monitoring', () => {
         expect(normalized.assets[4].displayTicker.length).toBeGreaterThan(0);
     });
 
+    test('OCBC allocation render migrates legacy assignment key into stable generated key', () => {
+        teardownDom();
+        setupDom({ url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        const normalized = exportsModule.normalizeOcbcHoldingsPayload({
+            data: [{
+                portfolioNo: 'P-LEGACY',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [
+                            { isin: 'ISIN-LEGACY-1', fundName: 'Fund Legacy 1', marketValueReferenceCcy: 1000 },
+                            { isin: 'ISIN-LEGACY-2', fundName: 'Fund Legacy 2', marketValueReferenceCcy: 900 }
+                        ]
+                    }]
+                }],
+                liabilities: []
+            }]
+        });
+        const stableCode = normalized.assets.find(row => row.displayTicker === 'ISIN-LEGACY-1')?.code;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify(normalized));
+        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+            assets: {
+                'P-LEGACY': [
+                    { id: 'core', name: 'Core', archived: false },
+                    { id: 'satellite', name: 'Satellite', archived: false }
+                ]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            'P-LEGACY:ISIN-LEGACY-1': 'core'
+        }));
+        global.GM_setValue('ocbc_allocation_order_by_scope', JSON.stringify({
+            'assets|P-LEGACY|core': ['P-LEGACY:ISIN-LEGACY-1']
+        }));
+
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const legacySelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for ISIN-LEGACY-1');
+        expect(legacySelect.value).toBe('core');
+
+        const savedAssignments = JSON.parse(storage.get('ocbc_allocation_assignment_by_code'));
+        expect(savedAssignments['P-LEGACY:ISIN-LEGACY-1']).toBe('core');
+        expect(savedAssignments[stableCode]).toBe('core');
+
+        modeSelect.value = 'portfolio';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const assignmentWriteCalls = global.GM_setValue.mock.calls
+            .filter(([key]) => key === 'ocbc_allocation_assignment_by_code');
+        expect(assignmentWriteCalls).toHaveLength(2);
+    });
+
+    test('OCBC assignment stays resolved across rename and reorder with stable identifiers', () => {
+        teardownDom();
+        setupDom({ url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        const initial = exportsModule.normalizeOcbcHoldingsPayload({
+            data: [{
+                portfolioNo: 'P-STABLE',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [
+                            { isin: 'ISIN-A', fundCode: 'FUND-A', trancheId: 'TR-A', subCode: 'SUB-A', fundName: 'Fund A', description: 'Desc A', marketValueReferenceCcy: 1000 },
+                            { isin: 'ISIN-B', fundCode: 'FUND-B', trancheId: 'TR-B', subCode: 'SUB-B', fundName: 'Fund B', description: 'Desc B', marketValueReferenceCcy: 900 }
+                        ]
+                    }]
+                }],
+                liabilities: []
+            }]
+        });
+        const initialCode = initial.assets.find(row => row.displayTicker === 'ISIN-A')?.code;
+
+        const renamedReordered = exportsModule.normalizeOcbcHoldingsPayload({
+            data: [{
+                portfolioNo: 'P-STABLE',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [
+                            { isin: 'ISIN-B', fundCode: 'FUND-B', trancheId: 'TR-B', subCode: 'SUB-B', fundName: 'Fund B Renamed', description: 'Desc B Updated', marketValueReferenceCcy: 900 },
+                            { isin: 'ISIN-A', fundCode: 'FUND-A', trancheId: 'TR-A', subCode: 'SUB-A', fundName: 'Fund A Renamed', description: 'Desc A Updated', marketValueReferenceCcy: 1000 }
+                        ]
+                    }]
+                }],
+                liabilities: []
+            }]
+        });
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify(renamedReordered));
+        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+            assets: {
+                'P-STABLE': [
+                    { id: 'core', name: 'Core', archived: false },
+                    { id: 'satellite', name: 'Satellite', archived: false }
+                ]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            [initialCode]: 'core'
+        }));
+
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const stableSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for ISIN-A');
+        expect(stableSelect.value).toBe('core');
+    });
+
+    test('OCBC allocation assignment persists across logout/login-style payload replacement with no positionId', () => {
+        teardownDom();
+        setupDom({ url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+
+        const initialPayload = exportsModule.normalizeOcbcHoldingsPayload({
+            data: [{
+                portfolioNo: 'P-LIFECYCLE',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [
+                            { isin: 'ISIN-LIFE-A', fundCode: 'FUND-LIFE-A', subCode: 'SUB-LIFE-A', trancheId: 'TR-LIFE-A', fundName: 'Fund Life A', description: 'Initial description A', marketValueReferenceCcy: 1000 },
+                            { isin: 'ISIN-LIFE-B', fundCode: 'FUND-LIFE-B', subCode: 'SUB-LIFE-B', trancheId: 'TR-LIFE-B', fundName: 'Fund Life B', description: 'Initial description B', marketValueReferenceCcy: 500 }
+                        ]
+                    }]
+                }],
+                liabilities: []
+            }]
+        });
+
+        const initialStableCode = initialPayload.assets.find(row => row.displayTicker === 'ISIN-LIFE-A')?.code;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify(initialPayload));
+        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+            assets: {
+                'P-LIFECYCLE': [
+                    { id: 'core', name: 'Core', archived: false },
+                    { id: 'satellite', name: 'Satellite', archived: false }
+                ]
+            }
+        }));
+        if (initialStableCode) {
+            global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+                [initialStableCode]: 'core'
+            }));
+        }
+
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        let modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const firstSessionSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for ISIN-LIFE-A');
+        expect(firstSessionSelect.value).toBe('core');
+
+        firstSessionSelect.value = 'satellite';
+        firstSessionSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const savedAssignments = JSON.parse(storage.get('ocbc_allocation_assignment_by_code'));
+        expect(savedAssignments[initialStableCode]).toBe('satellite');
+
+        const postLoginPayload = exportsModule.normalizeOcbcHoldingsPayload({
+            data: [{
+                portfolioNo: 'P-LIFECYCLE',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [
+                            { isin: 'ISIN-LIFE-B', fundCode: 'FUND-LIFE-B', subCode: 'SUB-LIFE-B', trancheId: 'TR-LIFE-B', fundName: 'Fund Life B (Login 2)', description: 'Updated description B', marketValueReferenceCcy: 500 },
+                            { isin: 'ISIN-LIFE-A', fundCode: 'FUND-LIFE-A', subCode: 'SUB-LIFE-A', trancheId: 'TR-LIFE-A', fundName: 'Fund Life A (Login 2)', description: 'Updated description A', marketValueReferenceCcy: 1000 }
+                        ]
+                    }]
+                }],
+                liabilities: []
+            }]
+        });
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify(postLoginPayload));
+
+        overlay.remove();
+        exportsModule.showOverlay();
+
+        overlay = document.querySelector('#gpv-overlay');
+        modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const secondSessionSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for ISIN-LIFE-A');
+        expect(secondSessionSelect.value).toBe('satellite');
+    });
+
     test('readiness overlay auto-updates into portfolio view when data arrives', async () => {
         global.alert = jest.fn();
 

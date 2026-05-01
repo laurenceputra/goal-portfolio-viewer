@@ -326,7 +326,6 @@ describe('normalizeOcbcHoldingsPayload', () => {
         expect(result.assets).toHaveLength(1);
         expect(result.liabilities).toHaveLength(1);
         expect(result.assets[0]).toMatchObject({
-            code: 'P-123:A-1',
             portfolioNo: 'P-123',
             subcode: '',
             displayTicker: 'A-1',
@@ -335,8 +334,8 @@ describe('normalizeOcbcHoldingsPayload', () => {
             productType: 'US Equity',
             currentValueLcy: 500.25
         });
+        expect(result.assets[0].code).toContain('P-123:gpv-ocbc-');
         expect(result.liabilities[0]).toMatchObject({
-            code: 'P-123:L-1',
             portfolioNo: 'P-123',
             subcode: '',
             displayTicker: 'L-1',
@@ -345,6 +344,7 @@ describe('normalizeOcbcHoldingsPayload', () => {
             productType: 'Margin',
             currentValueLcy: -100.75
         });
+        expect(result.liabilities[0].code).toContain('P-123:gpv-ocbc-');
     });
 
     test('applies OCBC numeric fallback chain and null-safe parsing', () => {
@@ -401,13 +401,13 @@ describe('normalizeOcbcHoldingsPayload', () => {
         const result = normalizeOcbcHoldingsPayload(payload);
         expect(result.assets).toHaveLength(4);
 
-        const byCode = Object.fromEntries(result.assets.map(row => [row.code, row]));
-        expect(byCode['P-456:MV-FALLBACK'].currentValueLcy).toBe(45.67);
-        expect(byCode['P-456:SRC-FALLBACK'].currentValueLcy).toBe(12.34);
-        expect(byCode['P-456:BLANK-NUMERIC'].currentValueLcy).toBe(0);
-        expect(byCode['P-456:BLANK-NUMERIC'].profitValueLcy).toBeNull();
-        expect(byCode['P-456:ACTUAL-ZERO'].currentValueLcy).toBe(0);
-        expect(byCode['P-456:ACTUAL-ZERO'].profitValueLcy).toBe(0);
+        const byTicker = Object.fromEntries(result.assets.map(row => [row.displayTicker, row]));
+        expect(byTicker['MV-FALLBACK'].currentValueLcy).toBe(45.67);
+        expect(byTicker['SRC-FALLBACK'].currentValueLcy).toBe(12.34);
+        expect(byTicker['BLANK-NUMERIC'].currentValueLcy).toBe(0);
+        expect(byTicker['BLANK-NUMERIC'].profitValueLcy).toBeNull();
+        expect(byTicker['ACTUAL-ZERO'].currentValueLcy).toBe(0);
+        expect(byTicker['ACTUAL-ZERO'].profitValueLcy).toBe(0);
     });
 
     test('uses non-portfolio identifier fallback when all OCBC id fields are missing', () => {
@@ -437,7 +437,7 @@ describe('normalizeOcbcHoldingsPayload', () => {
 
         const result = normalizeOcbcHoldingsPayload(payload);
         expect(result.assets).toHaveLength(1);
-        expect(result.assets[0].code).toBe('P-LEAK-CHECK:P-LEAK-CHECK#1');
+        expect(result.assets[0].code).toBe('P-LEAK-CHECK:gpv-ocbc-fallback-P-LEAK-CHECK-1');
         expect(result.assets[0].displayTicker).toBe('Holding 1');
         expect(result.assets[0].displayTicker).not.toContain('P-LEAK-CHECK');
         expect(result.assets[0].displayTicker.length).toBeGreaterThan(0);
@@ -492,7 +492,69 @@ describe('normalizeOcbcHoldingsPayload', () => {
         const result = normalizeOcbcHoldingsPayload(payload);
         expect(result.assets).toHaveLength(2);
         expect(result.assets.map(row => row.productType)).toEqual(['Global Equity', 'Global Equity']);
-        expect(result.assets.map(row => row.code)).toEqual(['P-1:POS-SHARED', 'P-2:POS-SHARED']);
+        expect(result.assets[0].code).not.toEqual(result.assets[1].code);
+        expect(result.assets[0].code).toContain('P-1:gpv-ocbc-');
+        expect(result.assets[1].code).toContain('P-2:gpv-ocbc-');
+    });
+
+    test('generates stable hashed OCBC code without positionId across payload reorder', () => {
+        const buildPayload = holdings => ({
+            data: [{
+                portfolioNo: 'P-7',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings
+                    }]
+                }],
+                liabilities: []
+            }]
+        });
+        const first = normalizeOcbcHoldingsPayload(buildPayload([
+            { isin: 'ISIN-A', fundName: 'Fund A', originalCcy: 'USD', marketValueReferenceCcy: 11 },
+            { isin: 'ISIN-B', fundName: 'Fund B', originalCcy: 'USD', marketValueReferenceCcy: 22 }
+        ]));
+        const second = normalizeOcbcHoldingsPayload(buildPayload([
+            { isin: 'ISIN-B', fundName: 'Fund B', originalCcy: 'USD', marketValueReferenceCcy: 22 },
+            { isin: 'ISIN-A', fundName: 'Fund A', originalCcy: 'USD', marketValueReferenceCcy: 11 }
+        ]));
+
+        const firstByTicker = Object.fromEntries(first.assets.map(row => [row.displayTicker, row.code]));
+        const secondByTicker = Object.fromEntries(second.assets.map(row => [row.displayTicker, row.code]));
+        expect(firstByTicker['ISIN-A']).toEqual(secondByTicker['ISIN-A']);
+        expect(firstByTicker['ISIN-B']).toEqual(secondByTicker['ISIN-B']);
+        expect(firstByTicker['ISIN-A']).toContain('P-7:gpv-ocbc-');
+    });
+
+    test('keeps OCBC code stable when names drift with strong identifiers', () => {
+        const buildPayload = holdings => ({
+            data: [{
+                portfolioNo: 'P-9',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings
+                    }]
+                }],
+                liabilities: []
+            }]
+        });
+
+        const first = normalizeOcbcHoldingsPayload(buildPayload([
+            { isin: 'ISIN-AAA', fundCode: 'FUND-AAA', trancheId: 'TR-AAA', subCode: 'SUB-AAA', fundName: 'Alpha Fund', description: 'Alpha Desc' },
+            { isin: 'ISIN-BBB', fundCode: 'FUND-BBB', trancheId: 'TR-BBB', subCode: 'SUB-BBB', fundName: 'Beta Fund', description: 'Beta Desc' }
+        ]));
+        const second = normalizeOcbcHoldingsPayload(buildPayload([
+            { isin: 'ISIN-BBB', fundCode: 'FUND-BBB', trancheId: 'TR-BBB', subCode: 'SUB-BBB', fundName: 'Beta Fund Renamed', description: 'Beta Desc Updated' },
+            { isin: 'ISIN-AAA', fundCode: 'FUND-AAA', trancheId: 'TR-AAA', subCode: 'SUB-AAA', fundName: 'Alpha Fund Renamed', description: 'Alpha Desc Updated' }
+        ]));
+
+        const firstByTicker = Object.fromEntries(first.assets.map(row => [row.displayTicker, row.code]));
+        const secondByTicker = Object.fromEntries(second.assets.map(row => [row.displayTicker, row.code]));
+        expect(firstByTicker['ISIN-AAA']).toEqual(secondByTicker['ISIN-AAA']);
+        expect(firstByTicker['ISIN-BBB']).toEqual(secondByTicker['ISIN-BBB']);
     });
 });
 

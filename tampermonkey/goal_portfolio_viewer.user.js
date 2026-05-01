@@ -837,18 +837,106 @@
         return Number.isFinite(parsed) ? parsed : null;
     }
 
+    function normalizeOcbcIdentitySegment(value) {
+        return utils.normalizeString(value, '').trim().toLowerCase();
+    }
+
+    function hashOcbcIdentityFingerprint(input) {
+        const source = utils.normalizeString(input, '');
+        let hashA = 2166136261;
+        let hashB = 2166136261;
+        for (let index = 0; index < source.length; index += 1) {
+            const code = source.charCodeAt(index);
+            hashA ^= code;
+            hashA = Math.imul(hashA, 16777619);
+            hashB ^= (code ^ ((index + 1) & 0xff));
+            hashB = Math.imul(hashB, 16777619);
+        }
+        return `${(hashA >>> 0).toString(16).padStart(8, '0')}${(hashB >>> 0).toString(16).padStart(8, '0')}`;
+    }
+
+    function buildOcbcLegacyAssignmentCodeAliases(row, resolvedPortfolioNo, fallbackIndex) {
+        const portfolioNo = utils.normalizeString(resolvedPortfolioNo, '-');
+        const aliases = [];
+        const stableKeys = [
+            row?.holdingGuid,
+            row?.positionId,
+            row?.trancheId,
+            row?.isin,
+            row?.fundCode,
+            row?.description
+        ];
+        stableKeys.forEach(value => {
+            const normalized = utils.normalizeString(value, '');
+            if (normalized) {
+                aliases.push(`${portfolioNo}:${normalized}`);
+            }
+        });
+        aliases.push(`${portfolioNo}:${portfolioNo || '-'}#${fallbackIndex + 1}`);
+        return Array.from(new Set(aliases));
+    }
+
+    function buildOcbcStableHoldingCode(row, context = {}) {
+        const resolvedPortfolioNo = utils.normalizeString(context.portfolioNo, '-');
+        const fallbackIndex = Number.isFinite(Number(context.index)) ? Number(context.index) : 0;
+        const sectionType = utils.normalizeString(context.sectionType, 'assets');
+        const subCode = utils.normalizeString(row?.subcode ?? row?.subCode, '');
+        const scopeParts = [
+            sectionType,
+            resolvedPortfolioNo,
+            utils.normalizeString(context.assetClassDesc, ''),
+            utils.normalizeString(context.subAssetClassDesc, ''),
+            subCode
+        ].map(normalizeOcbcIdentitySegment).filter(Boolean);
+
+        const strongIdParts = [
+            row?.holdingGuid,
+            row?.isin,
+            row?.fundCode,
+            row?.trancheId,
+            row?.subcode,
+            row?.subCode,
+            row?.positionId
+        ].map(normalizeOcbcIdentitySegment).filter(Boolean);
+        const weakDescriptorParts = [
+            row?.description,
+            row?.fundName,
+            row?.companyName,
+            row?.assetDesc,
+            row?.shortName,
+            row?.originalCcy
+        ].map(normalizeOcbcIdentitySegment).filter(Boolean);
+
+        const hasHoldingSpecificIdentity = strongIdParts.length > 0 || weakDescriptorParts.length > 0;
+        if (!hasHoldingSpecificIdentity) {
+            return {
+                code: `${resolvedPortfolioNo}:gpv-ocbc-fallback-${resolvedPortfolioNo || '-'}-${fallbackIndex + 1}`,
+                usedFallbackIndex: true,
+                legacyAliases: buildOcbcLegacyAssignmentCodeAliases(row, resolvedPortfolioNo, fallbackIndex)
+            };
+        }
+
+        const fingerprintParts = strongIdParts.length > 0
+            ? [...scopeParts, ...strongIdParts]
+            : [...scopeParts, ...weakDescriptorParts];
+
+        const fingerprint = fingerprintParts.join('|');
+        const identityHash = hashOcbcIdentityFingerprint(fingerprint);
+        return {
+            code: `${resolvedPortfolioNo}:gpv-ocbc-${identityHash}`,
+            usedFallbackIndex: false,
+            legacyAliases: buildOcbcLegacyAssignmentCodeAliases(row, resolvedPortfolioNo, fallbackIndex)
+        };
+    }
+
     function mapOcbcHoldingRow(row, context = {}) {
         if (!row || typeof row !== 'object') {
             return null;
         }
         const resolvedPortfolioNo = utils.normalizeString(context.portfolioNo, '-');
         const index = Number.isFinite(Number(context.index)) ? Number(context.index) : 0;
-        const baseCode = utils.normalizeString(
-            row.holdingGuid || row.positionId || row.trancheId || row.isin || row.fundCode || row.description,
-            ''
-        );
-        const stableCode = baseCode || `${resolvedPortfolioNo || '-'}#${index + 1}`;
-        const code = `${resolvedPortfolioNo}:${stableCode}`;
+        const identity = buildOcbcStableHoldingCode(row, context);
+        const code = identity.code;
         const fallbackLabel = `Holding ${index + 1}`;
         const displayTicker = utils.normalizeString(
             row.isin
@@ -867,6 +955,7 @@
             ?? 0;
         return {
             code,
+            legacyCodeAliases: identity.legacyAliases,
             portfolioNo: resolvedPortfolioNo,
             subcode: utils.normalizeString(row.subcode ?? row.subCode, ''),
             displayTicker,
@@ -928,6 +1017,22 @@
         flattenSectionRows('assets', groups);
         flattenSectionRows('liabilities', groups);
         return { assets, liabilities };
+    }
+
+    function getOcbcAssignmentLookupCandidates(row) {
+        const candidates = [];
+        const primaryCode = utils.normalizeString(row?.code, '');
+        if (primaryCode) {
+            candidates.push(primaryCode);
+        }
+        const aliases = Array.isArray(row?.legacyCodeAliases) ? row.legacyCodeAliases : [];
+        aliases.forEach(alias => {
+            const normalizedAlias = utils.normalizeString(alias, '');
+            if (normalizedAlias) {
+                candidates.push(normalizedAlias);
+            }
+        });
+        return Array.from(new Set(candidates));
     }
 
     // ============================================
@@ -3306,6 +3411,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             if (sanitized.platforms.fsm && typeof sanitized.platforms.fsm === 'object') {
                 delete sanitized.platforms.fsm.timestamp;
             }
+            if (sanitized.platforms.ocbc && typeof sanitized.platforms.ocbc === 'object') {
+                delete sanitized.platforms.ocbc.timestamp;
+            }
         }
         return SyncEncryption.hash(JSON.stringify(sanitized));
     }
@@ -4874,6 +4982,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             setSyncStatus: status => {
                 syncStatus = status;
             },
+            hashConfigData,
             getAutoSyncIntervalMs,
             isStartupSyncDue,
             getLastDataTimestamp
@@ -13641,6 +13750,66 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return { subPortfolioId };
     }
 
+    function resolveOcbcAssignmentByRow(assignmentByCode, row, subPortfolios) {
+        const source = assignmentByCode && typeof assignmentByCode === 'object' ? assignmentByCode : {};
+        const candidates = getOcbcAssignmentLookupCandidates(row);
+        for (const code of candidates) {
+            const assignment = getEffectiveOcbcAssignmentForRow(source[code], row, subPortfolios);
+            if (assignment.subPortfolioId) {
+                return assignment;
+            }
+        }
+        return { subPortfolioId: '' };
+    }
+
+    function getOcbcInstrumentTargetPercent(viewKey, portfolioNo, subPortfolioId, row) {
+        const candidates = getOcbcAssignmentLookupCandidates(row);
+        for (const code of candidates) {
+            const targetPercent = getOcbcAllocationTargetPercent(viewKey, portfolioNo, subPortfolioId, code);
+            if (Number.isFinite(targetPercent)) {
+                return targetPercent;
+            }
+        }
+        return null;
+    }
+
+    function normalizeOcbcRowOrderCodes(currentOrder, rows) {
+        const normalizedRows = Array.isArray(rows) ? rows : [];
+        const rowCodes = normalizedRows.map(row => utils.normalizeString(row?.code, '')).filter(Boolean);
+        const canonicalByAlias = {};
+        normalizedRows.forEach(row => {
+            const canonicalCode = utils.normalizeString(row?.code, '');
+            if (!canonicalCode) {
+                return;
+            }
+            const aliases = getOcbcAssignmentLookupCandidates(row);
+            aliases.forEach(alias => {
+                const normalizedAlias = utils.normalizeString(alias, '');
+                if (normalizedAlias && !canonicalByAlias[normalizedAlias]) {
+                    canonicalByAlias[normalizedAlias] = canonicalCode;
+                }
+            });
+        });
+        const seenCodes = new Set();
+        const orderedCodes = [];
+        (Array.isArray(currentOrder) ? currentOrder : []).forEach(code => {
+            const normalizedCode = utils.normalizeString(code, '');
+            const canonicalCode = canonicalByAlias[normalizedCode] || normalizedCode;
+            if (!canonicalCode || seenCodes.has(canonicalCode) || !rowCodes.includes(canonicalCode)) {
+                return;
+            }
+            seenCodes.add(canonicalCode);
+            orderedCodes.push(canonicalCode);
+        });
+        rowCodes.forEach(code => {
+            if (!seenCodes.has(code)) {
+                seenCodes.add(code);
+                orderedCodes.push(code);
+            }
+        });
+        return orderedCodes;
+    }
+
     function mergeOcbcSubPortfolios(scopedSubPortfolios, legacySubPortfolios) {
         const mergedMap = new Map();
         (Array.isArray(scopedSubPortfolios) ? scopedSubPortfolios : []).forEach(item => {
@@ -13721,6 +13890,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const orderByScope = allocationConfig.orderByScope;
 
         function renderAllocationMode(activeView, rows) {
+            let assignmentConfigChanged = false;
             const groupedByPortfolio = buildOcbcAllocationRowsByPortfolio(rows);
             const portfolioNos = Object.keys(groupedByPortfolio);
             if (portfolioNos.length === 0) {
@@ -13739,11 +13909,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 const legacySubPortfolios = buildLegacyOcbcSubPortfolios(activeView, bucketsByView);
                 const persistedSubPortfolios = mergeOcbcSubPortfolios(scopedSubPortfolios, legacySubPortfolios);
                 const assignmentReferencedIds = Array.from(new Set(portfolioRows
-                    .map(row => getEffectiveOcbcAssignmentForRow(
-                        assignmentByCode[utils.normalizeString(row?.code, '')],
-                        row,
-                        persistedSubPortfolios
-                    ).subPortfolioId)
+                    .map(row => resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios).subPortfolioId)
                     .filter(Boolean)));
                 assignmentReferencedIds.forEach(id => {
                     const ambiguousLegacyMatches = persistedSubPortfolios.filter(item => (
@@ -13818,9 +13984,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
                 portfolioRows.forEach(row => {
                     const code = utils.normalizeString(row?.code, '');
-                    const assignment = getEffectiveOcbcAssignmentForRow(assignmentByCode[code], row, persistedSubPortfolios);
+                    const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
                     const matchedSubPortfolio = subPortfolioRowsData.find(item => item.id === assignment.subPortfolioId);
                     (matchedSubPortfolio || subPortfolioRowsData[0]).rows.push(row);
+                    if (code && assignment.subPortfolioId && assignmentByCode[code] !== assignment.subPortfolioId) {
+                        assignmentByCode[code] = assignment.subPortfolioId;
+                        assignmentConfigChanged = true;
+                    }
                 });
 
                 subPortfolioRowsData.forEach(subPortfolio => {
@@ -13885,9 +14055,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 persistedSubPortfolios.forEach(item => instrumentRowsBySubPortfolio.push({ ...item, rows: [] }));
                 displayRows.forEach(row => {
                     const code = utils.normalizeString(row?.code, '');
-                    const assignment = getEffectiveOcbcAssignmentForRow(assignmentByCode[code], row, persistedSubPortfolios);
+                    const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
                     const matchedSubPortfolio = instrumentRowsBySubPortfolio.find(item => item.id === assignment.subPortfolioId);
                     (matchedSubPortfolio || instrumentRowsBySubPortfolio[0]).rows.push(row);
+                    if (code && assignment.subPortfolioId && assignmentByCode[code] !== assignment.subPortfolioId) {
+                        assignmentByCode[code] = assignment.subPortfolioId;
+                        assignmentConfigChanged = true;
+                    }
                 });
 
                 const buildInstrumentTable = ({
@@ -13907,23 +14081,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     section.appendChild(headerRow);
                     const scopeKey = buildOcbcAllocationOrderScope(activeView, portfolioNo, subPortfolioId);
                     const currentOrder = Array.isArray(orderByScope[scopeKey]) ? orderByScope[scopeKey] : [];
-                    const rowCodes = rows.map(row => utils.normalizeString(row?.code, '')).filter(Boolean);
-                    const seenCodes = new Set();
-                    const orderedCodes = [];
-                    currentOrder.forEach(code => {
-                        const normalizedCode = utils.normalizeString(code, '');
-                        if (!normalizedCode || seenCodes.has(normalizedCode) || !rowCodes.includes(normalizedCode)) {
-                            return;
-                        }
-                        seenCodes.add(normalizedCode);
-                        orderedCodes.push(normalizedCode);
-                    });
-                    rowCodes.forEach(code => {
-                        if (!seenCodes.has(code)) {
-                            seenCodes.add(code);
-                            orderedCodes.push(code);
-                        }
-                    });
+                    const orderedCodes = normalizeOcbcRowOrderCodes(currentOrder, rows);
                     const rowsByCode = rows.reduce((acc, row) => {
                         const code = utils.normalizeString(row?.code, '');
                         if (code && !acc[code]) {
@@ -13997,15 +14155,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         tr.appendChild(createElement('td', null, row.productType || '-'));
                         tr.appendChild(createElement('td', null, formatMoney(row.currentValueLcy)));
                         const code = utils.normalizeString(row.code, '');
-                        const assignment = getEffectiveOcbcAssignmentForRow(assignmentByCode[code], row, persistedSubPortfolios);
+                        const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
                         const effectiveSubPortfolioId = utils.normalizeString(subPortfolioId || assignment.subPortfolioId, '');
                         const resolvedAssignedTotal = Number.isFinite(denominatorTotal)
                             ? toFiniteNumber(denominatorTotal, 0)
-                            : toFiniteNumber(buildOcbcSummary(portfolioRows.filter(candidate => getEffectiveOcbcAssignmentForRow(
-                                assignmentByCode[utils.normalizeString(candidate?.code, '')],
-                                candidate,
-                                persistedSubPortfolios
-                            ).subPortfolioId === effectiveSubPortfolioId)).total, 0);
+                            : toFiniteNumber(buildOcbcSummary(portfolioRows.filter(candidate => (
+                                resolveOcbcAssignmentByRow(assignmentByCode, candidate, persistedSubPortfolios).subPortfolioId === effectiveSubPortfolioId
+                            ))).total, 0);
                         const currentPercentInSubPortfolio = effectiveSubPortfolioId
                             ? calculateAllocationRatio(toFiniteNumber(row.currentValueLcy, 0), resolvedAssignedTotal)
                             : null;
@@ -14015,7 +14171,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
                         const targetCell = createElement('td');
                         const targetPercent = effectiveSubPortfolioId
-                            ? getOcbcAllocationTargetPercent(activeView, portfolioNo, effectiveSubPortfolioId, code)
+                            ? getOcbcInstrumentTargetPercent(activeView, portfolioNo, effectiveSubPortfolioId, row)
                             : null;
                         if (effectiveSubPortfolioId) {
                             const targetInput = createElement('input', 'gpv-target-input');
@@ -14158,6 +14314,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
                 contentDiv.appendChild(section);
             });
+
+            if (assignmentConfigChanged) {
+                saveOcbcAllocationAssignmentsConfig(assignmentByCode);
+            }
         }
 
         function rerender() {

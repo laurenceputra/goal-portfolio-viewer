@@ -195,41 +195,52 @@ describe('API interception', () => {
         }
         await flushPromises();
 
-        expect(global.GM_setValue).toHaveBeenCalledWith(
-            'api_ocbc_holdings',
-            JSON.stringify({
-                assets: [
-                    {
-                        code: 'P-001:asset-guid-1',
-                        portfolioNo: 'P-001',
-                        subcode: '',
-                        displayTicker: 'asset-guid-1',
-                        name: 'OCBC Asset Fund',
-                        assetClassDesc: 'Equities',
-                        subAssetClassDesc: 'Global Equity',
-                        productType: 'Global Equity',
-                        currentValueLcy: 1234.56,
-                        profitValueLcy: 12.34,
-                        profitPercentLcy: 1.23
-                    }
-                ],
-                liabilities: [
-                    {
-                        code: 'P-001:liab-1',
-                        portfolioNo: 'P-001',
-                        subcode: '',
-                        displayTicker: 'liab-1',
-                        name: 'Margin Liability',
-                        assetClassDesc: 'Liability',
-                        subAssetClassDesc: 'Margin Liability',
-                        productType: 'Margin Liability',
-                        currentValueLcy: -250.5,
-                        profitValueLcy: 0,
-                        profitPercentLcy: null
-                    }
-                ]
-            })
-        );
+        const ocbcStorageCall = global.GM_setValue.mock.calls.find(([key]) => key === 'api_ocbc_holdings');
+        expect(ocbcStorageCall).toBeDefined();
+
+        const normalized = JSON.parse(ocbcStorageCall[1]);
+        expect(normalized).toMatchObject({
+            assets: [
+                {
+                    portfolioNo: 'P-001',
+                    subcode: '',
+                    displayTicker: 'asset-guid-1',
+                    name: 'OCBC Asset Fund',
+                    assetClassDesc: 'Equities',
+                    subAssetClassDesc: 'Global Equity',
+                    productType: 'Global Equity',
+                    currentValueLcy: 1234.56,
+                    profitValueLcy: 12.34,
+                    profitPercentLcy: 1.23
+                }
+            ],
+            liabilities: [
+                {
+                    portfolioNo: 'P-001',
+                    subcode: '',
+                    displayTicker: 'liab-1',
+                    name: 'Margin Liability',
+                    assetClassDesc: 'Liability',
+                    subAssetClassDesc: 'Margin Liability',
+                    productType: 'Margin Liability',
+                    currentValueLcy: -250.5,
+                    profitValueLcy: 0,
+                    profitPercentLcy: null
+                }
+            ]
+        });
+
+        expect(normalized.assets[0].code).toMatch(/^P-001:gpv-ocbc-/);
+        expect(normalized.liabilities[0].code).toMatch(/^P-001:gpv-ocbc-/);
+
+        expect(normalized.assets[0].legacyCodeAliases).toEqual(expect.arrayContaining([
+            'P-001:asset-guid-1',
+            'P-001:P-001#1'
+        ]));
+        expect(normalized.liabilities[0].legacyCodeAliases).toEqual(expect.arrayContaining([
+            'P-001:liab-1',
+            'P-001:P-001#1'
+        ]));
     });
 
     test('fetch interception ignores OCBC holdings endpoint when method is GET', async () => {
