@@ -13,7 +13,7 @@ import { jsonResponse } from './responses.js';
 
 // Configuration
 const CONFIG = {
-	MAX_PAYLOAD_SIZE: 10 * 1024, // 10KB
+	MAX_PAYLOAD_SIZE: 64 * 1024, // 64KB
 	CORS_ORIGINS: 'https://app.sg.endowus.com,https://secure.fundsupermart.com',
 	SYNC_KV_BINDING: 'SYNC_KV',
 	VERSION: '1.2.0'

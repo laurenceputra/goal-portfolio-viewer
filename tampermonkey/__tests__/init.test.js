@@ -1361,7 +1361,7 @@ describe('initialization and URL monitoring', () => {
         expect(headers).toContain('Product Type');
     });
 
-    test('OCBC allocation mode shows hierarchy copy, renamed columns, and target assignment indicators', () => {
+    test('OCBC allocation mode shows renamed columns and target assignment indicators', () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -1431,8 +1431,6 @@ describe('initialization and URL monitoring', () => {
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const allocationText = overlay.textContent;
-        expect(allocationText).toContain('Allocation hierarchy: Portfolio -> Sub-portfolios -> Instruments');
-        expect(allocationText).toContain('Sub-portfolio targets are percentages of the portfolio. Instrument targets are percentages of their assigned sub-portfolio.');
         expect(allocationText).toContain('Sub-portfolio allocation within Portfolio P-1');
         expect(allocationText).toContain('Instrument allocation · Core');
         expect(allocationText).toContain('Sub-portfolio targets: 110.00% assigned, 10.00% overallocated');
@@ -1499,6 +1497,7 @@ describe('initialization and URL monitoring', () => {
         global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
             'P-1:EQ1': 'core'
         }));
+        global.GM_setValue('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1', 60);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -1514,8 +1513,15 @@ describe('initialization and URL monitoring', () => {
         expect(coreHeading).toBeTruthy();
         expect(unassignedHeading).toBeTruthy();
 
-        const coreTable = coreHeading.nextElementSibling;
+        const coreSummary = coreHeading.nextElementSibling;
+        expect(coreSummary?.tagName).not.toBe('TABLE');
+        expect(coreSummary?.textContent).toContain('Core instrument targets:');
+        const coreTable = coreSummary?.nextElementSibling;
+
         const unassignedTable = unassignedHeading.nextElementSibling;
+        expect(unassignedTable?.tagName).toBe('TABLE');
+        expect(unassignedTable?.textContent).not.toContain('instrument targets:');
+
         expect(coreTable?.textContent).toContain('EQ1');
         expect(coreTable?.textContent).not.toContain('BD1');
         expect(unassignedTable?.textContent).toContain('BD1');
@@ -1584,9 +1590,11 @@ describe('initialization and URL monitoring', () => {
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const assignedTable = Array.from(overlay.querySelectorAll('h3'))
-            .find(node => node.textContent.trim() === 'Instrument allocation · Core')
-            ?.nextElementSibling;
+        const assignedHeading = Array.from(overlay.querySelectorAll('h3'))
+            .find(node => node.textContent.trim() === 'Instrument allocation · Core');
+        const assignedTable = assignedHeading?.nextElementSibling?.tagName === 'TABLE'
+            ? assignedHeading.nextElementSibling
+            : assignedHeading?.nextElementSibling?.nextElementSibling;
         const eq1Row = Array.from(assignedTable?.querySelectorAll('tbody tr') || [])
             .find(row => row.textContent.includes('EQ1'));
         expect(eq1Row).toBeTruthy();

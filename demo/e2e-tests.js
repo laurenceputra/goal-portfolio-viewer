@@ -958,12 +958,10 @@ async function captureOcbcFlow(page, summary, outputDir) {
         && overlayTextAllocation.includes('Equity Funds');
     recordAssertion(summary, ocbcFlowName, 'allocation-product-type-column-row', hasProductTypeColumnAndRowText, 'Allocation mode includes Product Type column and product type row text.');
     recordAssertion(summary, ocbcFlowName, 'allocation-no-bucket-column', !allocationHeaders.includes('Bucket'), 'Allocation mode no longer shows nested bucket column.');
-    recordAssertion(summary, ocbcFlowName, 'allocation-hierarchy-copy', overlayTextAllocation.includes('Allocation hierarchy: Portfolio -> Sub-portfolios -> Instruments'), 'Allocation mode shows hierarchy copy.');
     const hasSubPortfolioHeading = overlayTextAllocation.includes('Sub-portfolio allocation within Portfolio');
     const hasInstrumentHeading = /Instrument allocation\s*[·-]/.test(overlayTextAllocation)
         || overlayTextAllocation.includes('Unassigned instruments');
-    const hasHierarchyGuidance = overlayTextAllocation.includes('Sub-portfolio targets are percentages of the portfolio. Instrument targets are percentages of their assigned sub-portfolio.');
-    recordAssertion(summary, ocbcFlowName, 'allocation-headings', hasSubPortfolioHeading && hasInstrumentHeading && hasHierarchyGuidance, 'Allocation mode shows sub-portfolio heading, instrument allocation sections, and hierarchy guidance copy.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-headings', hasSubPortfolioHeading && hasInstrumentHeading, 'Allocation mode shows sub-portfolio heading and instrument allocation sections.');
     recordAssertion(summary, ocbcFlowName, 'allocation-renamed-columns', allocationHeaders.includes('Current % of portfolio') && allocationHeaders.includes('Target % of portfolio') && allocationHeaders.includes('Current % of sub-portfolio') && allocationHeaders.includes('Target % of sub-portfolio'), 'Allocation mode shows renamed percentage columns.');
 
     const hasBothPortfolioNumbers = overlayTextAllocation.includes('6500142646-2')

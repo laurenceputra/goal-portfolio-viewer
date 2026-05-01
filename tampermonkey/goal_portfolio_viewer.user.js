@@ -13719,6 +13719,14 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         return;
                     }
                     section.appendChild(createElement('h3', `gpv-detail-title ${sectionClass}`.trim(), heading));
+                    if (subPortfolioId) {
+                        const configuredInstrumentTargets = rows.reduce((sum, row) => {
+                            const rowCode = utils.normalizeString(row?.code, '');
+                            const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolioId, rowCode);
+                            return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
+                        }, 0);
+                        section.appendChild(createElement('p', 'gpv-sync-help', `${subPortfolioName || subPortfolioId} instrument targets: ${buildAssignedCoverageText(configuredInstrumentTargets)}`));
+                    }
                     const holdingsTable = createElement('table', 'gpv-table');
                     holdingsTable.innerHTML = `
                     <thead>
@@ -13855,23 +13863,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         row,
                         persistedSubPortfolios
                     ).subPortfolioId === subPortfolio.id);
-                    if (subRows.length === 0) {
-                        return;
-                    }
-                    const configuredInstrumentTargets = subRows.reduce((sum, row) => {
-                        const rowCode = utils.normalizeString(row?.code, '');
-                        const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, rowCode);
-                        return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
-                    }, 0);
-                    section.appendChild(createElement('p', 'gpv-sync-help', `${subPortfolio.name} instrument targets: ${buildAssignedCoverageText(configuredInstrumentTargets)}`));
-                });
-
-                persistedSubPortfolios.forEach(subPortfolio => {
-                    const subRows = portfolioRows.filter(row => getEffectiveOcbcAssignmentForRow(
-                        assignmentByCode[utils.normalizeString(row?.code, '')],
-                        row,
-                        persistedSubPortfolios
-                    ).subPortfolioId === subPortfolio.id);
                     const subTotal = toFiniteNumber(buildOcbcSummary(subRows).total, 0);
                     const controls = createElement('div', 'gpv-balance-copy-controls');
                     const copyButton = createElement('button', 'gpv-sync-btn', `Copy amounts (${subPortfolio.name})`);
@@ -13930,16 +13921,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             contentDiv.innerHTML = '';
 
             if (mode === 'allocation') {
-                contentDiv.appendChild(createElement(
-                    'p',
-                    'gpv-sync-help gpv-sync-help--lead',
-                    'Allocation hierarchy: Portfolio -> Sub-portfolios -> Instruments'
-                ));
-                contentDiv.appendChild(createElement(
-                    'p',
-                    'gpv-sync-help',
-                    'Sub-portfolio targets are percentages of the portfolio. Instrument targets are percentages of their assigned sub-portfolio.'
-                ));
                 renderAllocationMode(activeView, rows);
                 return;
             }
