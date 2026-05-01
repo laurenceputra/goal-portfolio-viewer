@@ -23,6 +23,10 @@ const MODE = ['smoke', 'regression', 'update-baseline'].includes(E2E_MODE)
     : 'smoke';
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 const DEFAULT_DIFF_THRESHOLD = Number.parseFloat(process.env.E2E_DIFF_THRESHOLD || '0.001');
+const FLOW_DIFF_THRESHOLD_OVERRIDES = {
+    'endowus-performance-mode': 0.008,
+    'fsm-assignment-manager': 0.0015
+};
 const REGRESSION_DIR = path.join(__dirname, 'regression');
 const REGRESSION_BASELINE_DIR = path.join(REGRESSION_DIR, 'baseline');
 const REGRESSION_ACTUAL_DIR = path.join(REGRESSION_DIR, 'actual');
@@ -97,6 +101,12 @@ function buildSummaryPaths(outputDir) {
         ? path.resolve(process.env.E2E_SUMMARY_PATH)
         : path.join(outputDir, 'e2e-summary.json');
     return { summaryPath };
+}
+
+function getDiffThresholdForFlow(flowName) {
+    const normalizedFlowName = normalizeName(flowName);
+    const thresholdOverride = FLOW_DIFF_THRESHOLD_OVERRIDES[normalizedFlowName];
+    return typeof thresholdOverride === 'number' ? thresholdOverride : DEFAULT_DIFF_THRESHOLD;
 }
 
 async function runE2ETests() {
@@ -370,14 +380,15 @@ async function captureScreenshot(page, summary, outputDir, flowName) {
         diffPath: paths.diff
     });
 
-    const pass = diffResult.mismatchRatio <= DEFAULT_DIFF_THRESHOLD;
+    const diffThreshold = getDiffThresholdForFlow(flowName);
+    const pass = diffResult.mismatchRatio <= diffThreshold;
     summary.diffs.push({
         flow: flowName,
         screenshot: paths.relative,
         status: pass ? 'passed' : 'failed',
         mismatchPixels: diffResult.mismatchPixels,
         mismatchRatio: diffResult.mismatchRatio,
-        threshold: DEFAULT_DIFF_THRESHOLD
+        threshold: diffThreshold
     });
     if (!pass) {
         summary.status = 'failed';

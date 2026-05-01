@@ -141,6 +141,8 @@ corepack pnpm --filter ./demo test:e2e:update-baseline
 
 Baseline files in `demo/regression/baseline/` are committed to the repository so GitHub Actions can compare PR screenshots against the same checked-in reference images.
 
+`demo/e2e-tests.js` uses a strict default regression threshold (`E2E_DIFF_THRESHOLD`, default `0.001`) and allows small per-flow overrides for known cross-environment rendering drift. This keeps most flows strict while documenting and constraining tolerance only where needed.
+
 Only update baselines intentionally. Treat baseline refreshes as reviewable UI changes and include them in the same PR as the visual change they validate.
 
 Baseline refresh checklist:
