@@ -1011,7 +1011,9 @@ async function captureOcbcFlow(page, summary, outputDir) {
     assertCondition((await instrumentAssignmentSelect.count()) > 0, 'Expected visible instrument assignment selector in OCBC allocation mode.');
     await instrumentAssignmentSelect.selectOption({ label: indicatorCheck.createdName });
     await page.waitForFunction(name => {
-        const copyButton = Array.from(document.querySelectorAll('button')).find(btn => (btn.textContent || '').includes(`Copy amounts (${name})`));
+        const exactLabel = `Copy balances for sub-portfolio ${name}`;
+        const copyButton = Array.from(document.querySelectorAll('.gpv-ocbc-instrument-header-row button'))
+            .find(button => (button.getAttribute('aria-label') || '') === exactLabel);
         return Boolean(copyButton);
     }, indicatorCheck.createdName, { timeout: 5000 });
 
@@ -1050,7 +1052,9 @@ async function captureOcbcFlow(page, summary, outputDir) {
     }, indicatorCheck.beforeSummary, { timeout: 5000 });
 
     const clipboardCheck = await page.evaluate(async subPortfolioName => {
-        const copyButton = Array.from(document.querySelectorAll('button')).find(btn => (btn.textContent || '').includes(`Copy amounts (${subPortfolioName})`));
+        const exactLabel = `Copy balances for sub-portfolio ${subPortfolioName}`;
+        const copyButton = Array.from(document.querySelectorAll('.gpv-ocbc-instrument-header-row button'))
+            .find(button => (button.getAttribute('aria-label') || '') === exactLabel);
         if (!(copyButton instanceof HTMLButtonElement)) {
             return { hasCopyHeader: false, hasDriftScope: false, fallbackUsed: false };
         }
@@ -1129,7 +1133,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
         const hasHeaderFallback = tableHeaders.includes('Current % of sub-portfolio')
             && tableHeaders.includes('Target % of sub-portfolio')
             && tableHeaders.includes('Drift');
-        const hasScopeFallback = (copyButton.textContent || '').includes(`(${subPortfolioName})`)
+        const hasScopeFallback = (copyButton.textContent || '').includes('Copy balances')
             && (overlay?.textContent || '').includes('Sub-portfolio targets:');
         return {
             hasCopyHeader: captured
@@ -1148,8 +1152,8 @@ async function captureOcbcFlow(page, summary, outputDir) {
         return /Sub-portfolio targets:\s*[\d.]+% assigned,\s*[\d.]+% remaining/i.test(text);
     });
     recordAssertion(summary, ocbcFlowName, 'allocation-target-indicator-updates', finalIndicator, 'Allocation target indicator updates after editing target %.');
-    recordAssertion(summary, ocbcFlowName, 'allocation-copy-has-target-columns', clipboardCheck.hasCopyHeader, 'Copy amounts output includes current %, target %, target amount, and drift amount columns.');
-    recordAssertion(summary, ocbcFlowName, 'allocation-copy-scoped-to-subportfolio', clipboardCheck.hasDriftScope, 'Copy amounts output uses sub-portfolio scoped projection header.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-has-target-columns', clipboardCheck.hasCopyHeader, 'Copy balances output includes current %, target %, target amount, and drift amount columns.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-scoped-to-subportfolio', clipboardCheck.hasDriftScope, 'Copy balances output uses sub-portfolio scoped projection header.');
     await captureScreenshot(page, summary, outputDir, 'ocbc-allocation');
 
     const hasSubPortfolioManager = await page.$eval('.gpv-overlay', root => {

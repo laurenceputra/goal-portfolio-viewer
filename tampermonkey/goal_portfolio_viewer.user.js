@@ -61,7 +61,8 @@
         fsmAssignmentByCode: 'fsm_assignment_by_code',
         ocbcAllocationBuckets: 'ocbc_allocation_buckets',
         ocbcSubPortfolios: 'ocbc_sub_portfolios',
-        ocbcAllocationAssignmentByCode: 'ocbc_allocation_assignment_by_code'
+        ocbcAllocationAssignmentByCode: 'ocbc_allocation_assignment_by_code',
+        ocbcAllocationOrderByScope: 'ocbc_allocation_order_by_scope'
     };
     const STORAGE_KEY_PREFIXES = {
         goalTarget: 'goal_target_pct_',
@@ -3556,6 +3557,35 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return normalized;
     }
 
+    function normalizeOcbcOrderByScopeEntries(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const normalized = {};
+        Object.entries(source).forEach(([scope, value]) => {
+            const normalizedScope = utils.normalizeString(scope, '');
+            if (!normalizedScope || !Array.isArray(value)) {
+                return;
+            }
+            const deduped = [];
+            const seen = new Set();
+            value.forEach(code => {
+                const normalizedCode = utils.normalizeString(code, '');
+                if (!normalizedCode || seen.has(normalizedCode)) {
+                    return;
+                }
+                seen.add(normalizedCode);
+                deduped.push(normalizedCode);
+            });
+            if (deduped.length) {
+                normalized[normalizedScope] = deduped;
+            }
+        });
+        return normalized;
+    }
+
+    function normalizeOcbcOrderByScopeConfig(data) {
+        return normalizeOcbcOrderByScopeEntries(data);
+    }
+
     function collectOcbcSyncConfig() {
         const targetsByScope = {};
         const allKeys = GM_listValues ? GM_listValues() : [];
@@ -3575,6 +3605,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             ),
             assignmentByCode: normalizeOcbcAssignmentByCodeConfig(
                 Storage.readJson(STORAGE_KEYS.ocbcAllocationAssignmentByCode, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC assignments') || {}
+            ),
+            orderByScope: normalizeOcbcOrderByScopeConfig(
+                Storage.readJson(STORAGE_KEYS.ocbcAllocationOrderByScope, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC order') || {}
             ),
             targetsByScope,
             timestamp: Date.now()
@@ -3615,6 +3648,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     ocbc: {
                         subPortfolios: normalizeOcbcSubPortfoliosConfig(ocbc.subPortfolios),
                         assignmentByCode: normalizeOcbcAssignmentByCodeConfig(ocbc.assignmentByCode),
+                        orderByScope: normalizeOcbcOrderByScopeEntries(ocbc.orderByScope),
                         targetsByScope: ocbc.targetsByScope && typeof ocbc.targetsByScope === 'object' ? ocbc.targetsByScope : {},
                         timestamp: typeof ocbc.timestamp === 'number' ? ocbc.timestamp : (config.timestamp || Date.now())
                     }
@@ -3643,6 +3677,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 ocbc: {
                     subPortfolios: {},
                     assignmentByCode: {},
+                    orderByScope: {},
                     targetsByScope: {},
                     timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
                 }
@@ -3803,9 +3838,11 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const ocbc = normalized.platforms.ocbc || {};
         const ocbcSubPortfolios = normalizeOcbcSubPortfoliosConfig(ocbc.subPortfolios);
         const ocbcAssignmentByCode = normalizeOcbcAssignmentByCodeConfig(ocbc.assignmentByCode);
+        const ocbcOrderByScope = normalizeOcbcOrderByScopeEntries(ocbc.orderByScope);
         const ocbcTargetsByScope = ocbc.targetsByScope && typeof ocbc.targetsByScope === 'object' ? ocbc.targetsByScope : {};
         Storage.writeJson(STORAGE_KEYS.ocbcSubPortfolios, ocbcSubPortfolios, 'Error saving OCBC sub-portfolios');
         Storage.writeJson(STORAGE_KEYS.ocbcAllocationAssignmentByCode, ocbcAssignmentByCode, 'Error saving OCBC assignments');
+        Storage.writeJson(STORAGE_KEYS.ocbcAllocationOrderByScope, ocbcOrderByScope, 'Error saving OCBC order');
         removeStalePrefixedKeys(
             STORAGE_KEY_PREFIXES.ocbcTarget,
             new Set(Object.keys(ocbcTargetsByScope)),
@@ -3825,6 +3862,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             fsmAssignments: Object.keys(sanitizedAssignments).length,
             ocbcSubPortfolios: Object.keys(ocbcSubPortfolios).length,
             ocbcAssignments: Object.keys(ocbcAssignmentByCode).length,
+            ocbcOrderScopes: Object.keys(ocbcOrderByScope).length,
             ocbcTargets: Object.keys(ocbcTargetsByScope).length
         });
     }
@@ -9985,10 +10023,10 @@ syncUi.update = function updateSyncUI() {
                 margin-bottom: 16px;
                 padding-bottom: 12px;
                 border-bottom: 2px solid #e5e7eb;
-                display: grid;
-                grid-template-columns: auto 1fr;
-                gap: 8px 12px;
-                align-items: center;
+                display: flex;
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
             }
             
             .gpv-detail-title {
@@ -10002,11 +10040,12 @@ syncUi.update = function updateSyncUI() {
             .gpv-detail-stats {
                 gap: 28px;
                 flex-wrap: nowrap;
-                grid-column: 1 / -1;
+                width: auto;
+                align-self: flex-start;
             }
 
             .gpv-ocbc-portfolio-header {
-                margin-bottom: 12px;
+                margin-bottom: 16px;
             }
 
             .gpv-ocbc-detail-stats {
@@ -10049,6 +10088,10 @@ syncUi.update = function updateSyncUI() {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             }
 
+            .gpv-summary-row .gpv-summary-card-label {
+                font-weight: 700;
+            }
+
             .gpv-type-actions {
                 display: flex;
                 align-items: center;
@@ -10062,6 +10105,10 @@ syncUi.update = function updateSyncUI() {
                 align-items: center;
                 gap: 8px;
                 flex-wrap: wrap;
+            }
+
+            .gpv-balance-copy-controls--inline {
+                margin-left: auto;
             }
 
             .gpv-balance-copy-button {
@@ -10110,6 +10157,19 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-collapsible.gpv-collapsible--collapsed {
                 display: none;
+            }
+
+            .gpv-ocbc-instrument-header-row {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                margin-top: 14px;
+                margin-bottom: 4px;
+                flex-wrap: wrap;
+            }
+
+            .gpv-ocbc-instrument-heading {
+                margin: 0;
             }
             
             /* Table Styles */
@@ -10234,6 +10294,37 @@ syncUi.update = function updateSyncUI() {
                 color: #111827;
                 font-size: 14px;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            }
+
+            .gpv-fsm-manager-row {
+                gap: 10px;
+                margin-bottom: 14px;
+                align-items: center;
+            }
+
+            .gpv-fsm-manager-row label {
+                font-weight: 600;
+                color: #334155;
+            }
+
+            .gpv-fsm-manager-row .gpv-target-input {
+                min-width: 220px;
+            }
+
+            .gpv-row-reorder-controls {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+            .gpv-row-reorder-controls .gpv-section-toggle:disabled {
+                opacity: 0.45;
+                cursor: not-allowed;
+            }
+
+            .gpv-goal-table .gpv-goal-name,
+            .gpv-table .gpv-goal-name {
+                text-align: left;
             }
             
             .gpv-table .positive {
@@ -13272,6 +13363,64 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return null;
     }
 
+    function normalizeOcbcOrderByScopeForUi(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const normalized = {};
+        Object.entries(source).forEach(([scope, value]) => {
+            const normalizedScope = utils.normalizeString(scope, '');
+            if (!normalizedScope || !Array.isArray(value)) {
+                return;
+            }
+            const deduped = [];
+            const seen = new Set();
+            value.forEach(code => {
+                const normalizedCode = utils.normalizeString(code, '');
+                if (!normalizedCode || seen.has(normalizedCode)) {
+                    return;
+                }
+                seen.add(normalizedCode);
+                deduped.push(normalizedCode);
+            });
+            if (deduped.length) {
+                normalized[normalizedScope] = deduped;
+            }
+        });
+        return normalized;
+    }
+
+    function buildOcbcOrderScopeCompatibilityKeys(activeView, portfolioNo, subPortfolioId) {
+        const normalizedView = utils.normalizeString(activeView, 'assets');
+        const normalizedPortfolioNo = utils.normalizeString(portfolioNo, '-');
+        const normalizedSubPortfolioId = utils.normalizeString(subPortfolioId, '');
+
+        const viewVariants = new Set([
+            normalizedView,
+            encodeOcbcTargetScopeSegment(normalizedView, 'assets')
+        ]);
+        const portfolioVariants = new Set([
+            normalizedPortfolioNo,
+            encodeOcbcTargetScopeSegment(normalizedPortfolioNo, '-')
+        ]);
+        const subPortfolioVariants = new Set();
+        if (normalizedSubPortfolioId) {
+            subPortfolioVariants.add(normalizedSubPortfolioId);
+            subPortfolioVariants.add(encodeOcbcTargetScopeSegment(normalizedSubPortfolioId, ''));
+        } else {
+            subPortfolioVariants.add('');
+            subPortfolioVariants.add('-');
+        }
+
+        const keys = new Set();
+        viewVariants.forEach(viewVariant => {
+            portfolioVariants.forEach(portfolioVariant => {
+                subPortfolioVariants.forEach(subPortfolioVariant => {
+                    keys.add(`${viewVariant}${PROJECTED_KEY_SEPARATOR}${portfolioVariant}${PROJECTED_KEY_SEPARATOR}${subPortfolioVariant}`);
+                });
+            });
+        });
+        return Array.from(keys);
+    }
+
     function loadOcbcAllocationConfig() {
         const bucketsByView = Storage.readJson(
             STORAGE_KEYS.ocbcAllocationBuckets,
@@ -13288,7 +13437,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             data => data && typeof data === 'object' && !Array.isArray(data),
             'Error reading OCBC allocation assignments'
         ) || {};
-        return { bucketsByView, subPortfoliosByView, assignmentByCode };
+        const orderByScope = normalizeOcbcOrderByScopeForUi(Storage.readJson(
+            STORAGE_KEYS.ocbcAllocationOrderByScope,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error reading OCBC allocation order'
+        ) || {});
+        return { bucketsByView, subPortfoliosByView, assignmentByCode, orderByScope };
     }
 
     function saveOcbcSubPortfoliosConfig(subPortfoliosByView, options = {}) {
@@ -13307,6 +13461,25 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
             SyncManager.scheduleSyncOnChange('ocbc-assignment-update');
         }
+    }
+
+    function saveOcbcAllocationOrderConfig(orderByScope, options = {}) {
+        Storage.writeJson(
+            STORAGE_KEYS.ocbcAllocationOrderByScope,
+            normalizeOcbcOrderByScopeForUi(orderByScope),
+            'Error saving OCBC allocation order'
+        );
+        if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
+            SyncManager.scheduleSyncOnChange('ocbc-order-update');
+        }
+    }
+
+    function buildOcbcAllocationOrderScope(activeView, portfolioNo, subPortfolioId) {
+        return [
+            encodeOcbcTargetScopeSegment(activeView, 'assets'),
+            encodeOcbcTargetScopeSegment(portfolioNo, '-'),
+            encodeOcbcTargetScopeSegment(subPortfolioId, '')
+        ].join(PROJECTED_KEY_SEPARATOR);
     }
 
     function normalizeOcbcSubPortfolioItem(item) {
@@ -13536,6 +13709,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const bucketsByView = allocationConfig.bucketsByView;
         const subPortfoliosByView = allocationConfig.subPortfoliosByView;
         const assignmentByCode = allocationConfig.assignmentByCode;
+        const orderByScope = allocationConfig.orderByScope;
 
         function renderAllocationMode(activeView, rows) {
             const groupedByPortfolio = buildOcbcAllocationRowsByPortfolio(rows);
@@ -13718,7 +13892,58 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     if (!rows.length) {
                         return;
                     }
-                    section.appendChild(createElement('h3', `gpv-detail-title ${sectionClass}`.trim(), heading));
+                    const headerRow = createElement('div', 'gpv-ocbc-instrument-header-row');
+                    const headingElement = createElement('h3', `gpv-detail-title gpv-ocbc-instrument-heading ${sectionClass}`.trim(), heading);
+                    headerRow.appendChild(headingElement);
+                    if (subPortfolioId) {
+                        const status = createElement('span', 'gpv-balance-copy-status');
+                        status.setAttribute('role', 'status');
+                        status.setAttribute('aria-live', 'polite');
+                        status.setAttribute('aria-atomic', 'true');
+                        const copyControls = createElement('div', 'gpv-balance-copy-controls gpv-balance-copy-controls--inline');
+                        const copyButton = createElement('button', 'gpv-sync-btn gpv-balance-copy-button', 'Copy balances');
+                        copyButton.type = 'button';
+                        copyButton.setAttribute('aria-label', `Copy balances for sub-portfolio ${subPortfolioName || subPortfolioId}`);
+                        copyButton.onclick = async () => {
+                            if (rows.length === 0) {
+                                setBalanceCopyFeedback(status, 'No assigned instruments');
+                                return;
+                            }
+                            const totalForCopy = toFiniteNumber(denominatorTotal, 0);
+                            const lines = [
+                                `Sub-portfolio\t${subPortfolioName || subPortfolioId}`,
+                                `Total\t${totalForCopy.toFixed(2)}`,
+                                'Identifier\tName\tCurrent Amount\tCurrent %\tTarget %\tTarget Amount\tDrift Amount'
+                            ];
+                            rows.forEach(row => {
+                                const rowCode = utils.normalizeString(row?.code, '');
+                                const currentAmount = toFiniteNumber(row?.currentValueLcy, 0);
+                                const currentPct = calculateAllocationRatio(currentAmount, totalForCopy) * 100;
+                                const instrumentTarget = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolioId, rowCode);
+                                const targetAmount = Number.isFinite(instrumentTarget) ? totalForCopy * (instrumentTarget / 100) : null;
+                                const driftAmount = Number.isFinite(targetAmount) ? currentAmount - targetAmount : null;
+                                lines.push([
+                                    row.displayTicker || row.code || '-',
+                                    row.name || '-',
+                                    currentAmount.toFixed(2),
+                                    `${currentPct.toFixed(2)}%`,
+                                    Number.isFinite(instrumentTarget) ? `${instrumentTarget.toFixed(2)}%` : '-',
+                                    Number.isFinite(targetAmount) ? targetAmount.toFixed(2) : '-',
+                                    Number.isFinite(driftAmount) ? driftAmount.toFixed(2) : '-'
+                                ].join('\t'));
+                            });
+                            try {
+                                await copyTextToClipboard(lines.join('\n'));
+                                setBalanceCopyFeedback(status, `Copied ${rows.length} instruments`);
+                            } catch (_error) {
+                                setBalanceCopyFeedback(status, 'Copy failed', 'error');
+                            }
+                        };
+                        copyControls.appendChild(copyButton);
+                        copyControls.appendChild(status);
+                        headerRow.appendChild(copyControls);
+                    }
+                    section.appendChild(headerRow);
                     if (subPortfolioId) {
                         const configuredInstrumentTargets = rows.reduce((sum, row) => {
                             const rowCode = utils.normalizeString(row?.code, '');
@@ -13739,12 +13964,41 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             <th>Target % of sub-portfolio</th>
                             <th>Drift</th>
                             <th>Sub-portfolio</th>
+                            <th>Reorder</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
                 `;
                     const holdingsBody = holdingsTable.querySelector('tbody');
-                    rows.forEach(row => {
+                    const scopeKey = buildOcbcAllocationOrderScope(activeView, portfolioNo, subPortfolioId);
+                    const currentOrder = Array.isArray(orderByScope[scopeKey]) ? orderByScope[scopeKey] : [];
+                    const rowCodes = rows.map(row => utils.normalizeString(row?.code, '')).filter(Boolean);
+                    const seenCodes = new Set();
+                    const orderedCodes = [];
+                    currentOrder.forEach(code => {
+                        const normalizedCode = utils.normalizeString(code, '');
+                        if (!normalizedCode || seenCodes.has(normalizedCode) || !rowCodes.includes(normalizedCode)) {
+                            return;
+                        }
+                        seenCodes.add(normalizedCode);
+                        orderedCodes.push(normalizedCode);
+                    });
+                    rowCodes.forEach(code => {
+                        if (!seenCodes.has(code)) {
+                            seenCodes.add(code);
+                            orderedCodes.push(code);
+                        }
+                    });
+                    const rowsByCode = rows.reduce((acc, row) => {
+                        const code = utils.normalizeString(row?.code, '');
+                        if (code && !acc[code]) {
+                            acc[code] = row;
+                        }
+                        return acc;
+                    }, {});
+                    const orderedRows = orderedCodes.map(code => rowsByCode[code]).filter(Boolean);
+
+                    orderedRows.forEach((row, index) => {
                         const tr = createElement('tr');
                         tr.appendChild(createElement('td', null, row.displayTicker || row.code || '-'));
                         tr.appendChild(createElement('td', null, row.name || '-'));
@@ -13826,13 +14080,66 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         });
                         subPortfolioSelect.value = assignment.subPortfolioId;
                         subPortfolioSelect.onchange = () => {
+                            const previousSubPortfolioId = utils.normalizeString(assignment.subPortfolioId, '');
                             const nextSubPortfolioId = utils.normalizeString(subPortfolioSelect.value, '');
                             assignmentByCode[code] = nextSubPortfolioId;
+                            const nextScopeKey = buildOcbcAllocationOrderScope(activeView, portfolioNo, nextSubPortfolioId);
+                            const previousScopeCompatibilityKeys = buildOcbcOrderScopeCompatibilityKeys(activeView, portfolioNo, previousSubPortfolioId);
+                            previousScopeCompatibilityKeys.forEach(scopeKey => {
+                                const currentScopeOrder = Array.isArray(orderByScope[scopeKey]) ? orderByScope[scopeKey] : null;
+                                if (!currentScopeOrder) {
+                                    return;
+                                }
+                                const nextScopeOrder = currentScopeOrder.filter(item => item !== code);
+                                if (nextScopeOrder.length) {
+                                    orderByScope[scopeKey] = nextScopeOrder;
+                                } else {
+                                    delete orderByScope[scopeKey];
+                                }
+                            });
+                            const nextScope = Array.isArray(orderByScope[nextScopeKey]) ? orderByScope[nextScopeKey].filter(Boolean) : [];
+                            orderByScope[nextScopeKey] = nextScope.filter(item => item !== code).concat(code);
                             saveOcbcAllocationAssignmentsConfig(assignmentByCode);
+                            saveOcbcAllocationOrderConfig(orderByScope);
                             rerender();
                         };
                         subPortfolioCell.appendChild(subPortfolioSelect);
                         tr.appendChild(subPortfolioCell);
+
+                        const reorderCell = createElement('td', 'gpv-fixed-cell');
+                        const reorderGroup = createElement('div', 'gpv-row-reorder-controls');
+                        const moveUpButton = createElement('button', 'gpv-section-toggle', 'Up');
+                        const moveDownButton = createElement('button', 'gpv-section-toggle', 'Down');
+                        moveUpButton.type = 'button';
+                        moveDownButton.type = 'button';
+                        moveUpButton.disabled = index === 0;
+                        moveDownButton.disabled = index === (orderedRows.length - 1);
+                        moveUpButton.setAttribute('aria-label', `Move ${labelTicker} up within ${subPortfolioName || 'unassigned instruments'}`);
+                        moveDownButton.setAttribute('aria-label', `Move ${labelTicker} down within ${subPortfolioName || 'unassigned instruments'}`);
+                        moveUpButton.onclick = () => {
+                            if (index === 0) {
+                                return;
+                            }
+                            const nextOrder = orderedCodes.slice();
+                            [nextOrder[index - 1], nextOrder[index]] = [nextOrder[index], nextOrder[index - 1]];
+                            orderByScope[scopeKey] = nextOrder;
+                            saveOcbcAllocationOrderConfig(orderByScope);
+                            rerender();
+                        };
+                        moveDownButton.onclick = () => {
+                            if (index >= orderedRows.length - 1) {
+                                return;
+                            }
+                            const nextOrder = orderedCodes.slice();
+                            [nextOrder[index], nextOrder[index + 1]] = [nextOrder[index + 1], nextOrder[index]];
+                            orderByScope[scopeKey] = nextOrder;
+                            saveOcbcAllocationOrderConfig(orderByScope);
+                            rerender();
+                        };
+                        reorderGroup.appendChild(moveUpButton);
+                        reorderGroup.appendChild(moveDownButton);
+                        reorderCell.appendChild(reorderGroup);
+                        tr.appendChild(reorderCell);
                         holdingsBody.appendChild(tr);
                     });
                     section.appendChild(holdingsTable);
@@ -13855,59 +14162,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     heading: 'Unassigned instruments',
                     rows: instrumentRowsBySubPortfolio[0].rows,
                     sectionClass: 'gpv-unassigned-title'
-                });
-
-                persistedSubPortfolios.forEach(subPortfolio => {
-                    const subRows = portfolioRows.filter(row => getEffectiveOcbcAssignmentForRow(
-                        assignmentByCode[utils.normalizeString(row?.code, '')],
-                        row,
-                        persistedSubPortfolios
-                    ).subPortfolioId === subPortfolio.id);
-                    const subTotal = toFiniteNumber(buildOcbcSummary(subRows).total, 0);
-                    const controls = createElement('div', 'gpv-balance-copy-controls');
-                    const copyButton = createElement('button', 'gpv-sync-btn', `Copy amounts (${subPortfolio.name})`);
-                    const status = createElement('span', 'gpv-balance-copy-status');
-                    status.setAttribute('role', 'status');
-                    status.setAttribute('aria-live', 'polite');
-                    status.setAttribute('aria-atomic', 'true');
-                    copyButton.type = 'button';
-                    copyButton.onclick = async () => {
-                        if (subRows.length === 0) {
-                            setBalanceCopyFeedback(status, 'No assigned instruments');
-                            return;
-                        }
-                        const lines = [
-                            `Sub-portfolio\t${subPortfolio.name}`,
-                            `Total\t${subTotal.toFixed(2)}`,
-                            'Identifier\tName\tCurrent Amount\tCurrent %\tTarget %\tTarget Amount\tDrift Amount'
-                        ];
-                        subRows.forEach(row => {
-                            const rowCode = utils.normalizeString(row?.code, '');
-                            const currentAmount = toFiniteNumber(row?.currentValueLcy, 0);
-                            const currentPct = calculateAllocationRatio(currentAmount, subTotal) * 100;
-                            const instrumentTarget = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, rowCode);
-                            const targetAmount = Number.isFinite(instrumentTarget) ? subTotal * (instrumentTarget / 100) : null;
-                            const driftAmount = Number.isFinite(targetAmount) ? currentAmount - targetAmount : null;
-                            lines.push([
-                                row.displayTicker || row.code || '-',
-                                row.name || '-',
-                                currentAmount.toFixed(2),
-                                `${currentPct.toFixed(2)}%`,
-                                Number.isFinite(instrumentTarget) ? `${instrumentTarget.toFixed(2)}%` : '-',
-                                Number.isFinite(targetAmount) ? targetAmount.toFixed(2) : '-',
-                                Number.isFinite(driftAmount) ? driftAmount.toFixed(2) : '-'
-                            ].join('\t'));
-                        });
-                        try {
-                            await copyTextToClipboard(lines.join('\n'));
-                            setBalanceCopyFeedback(status, `Copied ${subRows.length} instruments`);
-                        } catch (_error) {
-                            setBalanceCopyFeedback(status, 'Copy failed', 'error');
-                        }
-                    };
-                    controls.appendChild(copyButton);
-                    controls.appendChild(status);
-                    section.appendChild(controls);
                 });
 
                 contentDiv.appendChild(section);
