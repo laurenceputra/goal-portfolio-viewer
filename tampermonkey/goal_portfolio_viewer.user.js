@@ -13945,7 +13945,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         status.setAttribute('aria-live', 'polite');
                         status.setAttribute('aria-atomic', 'true');
                         copyControls = createElement('div', 'gpv-balance-copy-controls gpv-balance-copy-controls--section');
-                        const copyButton = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary gpv-balance-copy-button', 'Copy Values');
+                        const copyButton = createElement('button', 'gpv-section-toggle gpv-balance-copy-button', 'Copy Values');
                         copyButton.type = 'button';
                         copyButton.setAttribute('aria-label', `Copy values for sub-portfolio ${subPortfolioName || subPortfolioId}`);
                         copyButton.onclick = async () => {
@@ -13954,7 +13954,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                                 return;
                             }
                             const valuesLine = orderedRows
-                                .map(row => toFiniteNumber(row?.currentValueLcy, 0).toFixed(2))
+                                .map(row => {
+                                    const rawValue = row?.currentValueLcy;
+                                    return rawValue === null || rawValue === undefined ? '' : String(rawValue);
+                                })
                                 .join('\t');
                             try {
                                 await copyTextToClipboard(valuesLine);

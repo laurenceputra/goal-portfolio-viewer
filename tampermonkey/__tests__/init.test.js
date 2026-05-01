@@ -2452,8 +2452,8 @@ describe('initialization and URL monitoring', () => {
 
         global.GM_setValue('api_ocbc_holdings', JSON.stringify({
             assets: [
-                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
-                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 1000 }
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000.5 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 700.25 }
             ],
             liabilities: []
         }));
@@ -2481,10 +2481,12 @@ describe('initialization and URL monitoring', () => {
         targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         expect(storage.get('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(60);
-        expect(overlay.textContent).toContain('-SGD 200.00');
+        expect(overlay.textContent).toContain('-SGD 19.95');
 
         const copyButton = overlay.querySelector('button[aria-label="Copy values for sub-portfolio Core"]');
         expect(copyButton).toBeTruthy();
+        expect(copyButton.classList.contains('gpv-section-toggle')).toBe(true);
+        expect(copyButton.classList.contains('gpv-sync-btn-primary')).toBe(false);
         const instrumentHeading = Array.from(overlay.querySelectorAll('.gpv-ocbc-instrument-header-row'))
             .find(row => row.textContent.includes('Instrument allocation · Core'));
         expect(instrumentHeading).toBeTruthy();
@@ -2504,7 +2506,7 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Copied 2 values');
         const clipboardCall = window.navigator.clipboard.writeText.mock.calls[0];
         const copiedText = clipboardCall ? clipboardCall[0] : fallbackCopiedText;
-        expect(copiedText).toBe('1000.00\t1000.00');
+        expect(copiedText).toBe('1000.5\t700.25');
         expect(copiedText).not.toContain('Sub-portfolio');
         expect(copiedText).not.toContain('Identifier');
         expect(copiedText).not.toContain('Name');
@@ -2513,6 +2515,93 @@ describe('initialization and URL monitoring', () => {
         expect(copiedText).not.toContain('Drift');
         expect(copiedText).not.toContain('%');
         expect(copiedText).not.toContain('\n');
+    });
+
+    test('OCBC Copy Values keeps row order and emits blank TSV fields for missing current values', async () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+        Object.defineProperty(window.navigator, 'clipboard', {
+            configurable: true,
+            value: { writeText: jest.fn(() => Promise.resolve()) }
+        });
+        let fallbackCopiedText = null;
+        document.execCommand = jest.fn(command => {
+            if (command === 'copy') {
+                const textarea = document.querySelector('textarea');
+                fallbackCopiedText = textarea ? textarea.value : null;
+                return true;
+            }
+            return false;
+        });
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000.5 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: null },
+                { code: 'P-1:EQ3', portfolioNo: 'P-1', displayTicker: 'EQ3', name: 'Asset 3', productType: 'Global Equity', currentValueLcy: 700.25 },
+                { code: 'P-1:EQ4', portfolioNo: 'P-1', displayTicker: 'EQ4', name: 'Asset 4', productType: 'Global Equity' }
+            ],
+            liabilities: []
+        }));
+        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+            assets: {
+                'P-1': [{ id: 'core', name: 'Core', archived: false }]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            'P-1:EQ1': 'core',
+            'P-1:EQ2': 'core',
+            'P-1:EQ3': 'core',
+            'P-1:EQ4': 'core'
+        }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const copyButton = overlay.querySelector('button[aria-label="Copy values for sub-portfolio Core"]');
+        copyButton.dispatchEvent(new window.Event('click', { bubbles: true }));
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        const clipboardCall = window.navigator.clipboard.writeText.mock.calls[0];
+        const copiedText = clipboardCall ? clipboardCall[0] : fallbackCopiedText;
+        expect(copiedText).toBe('1000.5\t\t700.25\t');
     });
 
     test('OCBC allocation mode Up/Down reorders rows and persists order by scope', async () => {
@@ -2621,7 +2710,7 @@ describe('initialization and URL monitoring', () => {
         await new Promise(resolve => setTimeout(resolve, 0));
         const clipboardCall = window.navigator.clipboard.writeText.mock.calls[0];
         const copiedText = clipboardCall ? clipboardCall[0] : fallbackCopiedText;
-        expect(copiedText).toBe('700.00\t1000.00\t500.00');
+        expect(copiedText).toBe('700\t1000\t500');
     });
 
     test('OCBC allocation mode moves instrument between order scopes when reassigned', () => {

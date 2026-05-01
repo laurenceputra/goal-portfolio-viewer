@@ -1148,9 +1148,9 @@ async function captureOcbcFlow(page, summary, outputDir) {
             && copyButton.offsetParent !== null;
         const singleLine = captured.trim();
         const hasSingleRow = singleLine.length > 0 && !singleLine.includes('\n');
-        const numericTokenPattern = /^-?\d+\.\d{2}$/;
+        const numericOrEmptyTokenPattern = /^(?:-?\d+(?:\.\d+)?|)$/;
         const tokens = hasSingleRow ? singleLine.split('\t') : [];
-        const hasNumericOnlyTokens = tokens.length > 0 && tokens.every(token => numericTokenPattern.test(token));
+        const hasNumericOrEmptyTokens = tokens.length > 0 && tokens.every(token => numericOrEmptyTokenPattern.test(token));
         const heading = Array.from(document.querySelectorAll('.gpv-ocbc-instrument-header-row'))
             .find(node => (node.textContent || '').includes(`Instrument allocation · ${subPortfolioName}`));
         const findNextTable = start => {
@@ -1169,16 +1169,32 @@ async function captureOcbcFlow(page, summary, outputDir) {
                     .replace(/[^0-9.-]/g, '')
                     .trim();
                 const parsed = Number.parseFloat(raw);
-                return Number.isFinite(parsed) ? parsed.toFixed(2) : '';
-            }).filter(Boolean)
+                return Number.isFinite(parsed) ? parsed : null;
+            })
             : [];
-        const matchesRenderedRowOrder = hasNumericOnlyTokens
+        const parsedTokens = hasNumericOrEmptyTokens
+            ? tokens.map(token => {
+                const trimmed = token.trim();
+                if (trimmed.length === 0) {
+                    return null;
+                }
+                const parsed = Number.parseFloat(trimmed);
+                return Number.isFinite(parsed) ? parsed : null;
+            })
+            : [];
+        const matchesRenderedRowOrder = hasNumericOrEmptyTokens
             && renderedValues.length > 0
-            && renderedValues.length === tokens.length
-            && renderedValues.every((value, index) => value === tokens[index]);
+            && renderedValues.length === parsedTokens.length
+            && renderedValues.every((value, index) => {
+                const tokenValue = parsedTokens[index];
+                if (value === null || tokenValue === null) {
+                    return value === tokenValue;
+                }
+                return Math.abs(value - tokenValue) < 1e-9;
+            });
         const hasLegacyMarkers = /(Sub-portfolio|Identifier|Name|Current %|Target %|Target Amount|Drift|SGD|Total|%)/i.test(singleLine);
         return {
-            hasNumericSingleRowTsv: hasSingleRow && hasNumericOnlyTokens,
+            hasNumericSingleRowTsv: hasSingleRow && hasNumericOrEmptyTokens,
             hasNoLegacyColumns: !hasLegacyMarkers,
             fallbackUsed,
             isVisible,
@@ -1191,7 +1207,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
     });
     recordAssertion(summary, ocbcFlowName, 'allocation-target-indicator-updates', finalIndicator, 'Allocation target indicator updates after editing target %.');
     recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-button-visible', clipboardCheck.isVisible, 'Copy Values button is visible in allocation mode.');
-    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-single-row-numeric-tsv', clipboardCheck.hasNumericSingleRowTsv, 'Copy Values output is a single-row numeric TSV payload.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-single-row-numeric-tsv', clipboardCheck.hasNumericSingleRowTsv, 'Copy Values output is a single-row numeric-or-empty TSV payload.');
     recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-matches-rendered-row-order', clipboardCheck.matchesRenderedRowOrder, 'Copy Values output follows visible instrument row order for the matching sub-portfolio.');
     recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-no-legacy-columns', clipboardCheck.hasNoLegacyColumns, 'Copy Values output excludes legacy headers, labels, percentages, and SGD fields.');
     await captureScreenshot(page, summary, outputDir, 'ocbc-allocation');
