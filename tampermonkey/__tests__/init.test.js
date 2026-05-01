@@ -2402,7 +2402,7 @@ describe('initialization and URL monitoring', () => {
         expect(targetInput).toBeTruthy();
     });
 
-    test('OCBC allocation mode stores instrument scoped target key and shows copy balances near sub-portfolio heading', async () => {
+    test('OCBC allocation mode stores instrument scoped target key and shows copy values near sub-portfolio heading', async () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -2418,10 +2418,18 @@ describe('initialization and URL monitoring', () => {
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
         global.history = window.history;
-        document.execCommand = jest.fn(() => true);
         Object.defineProperty(window.navigator, 'clipboard', {
             configurable: true,
             value: { writeText: jest.fn(() => Promise.resolve()) }
+        });
+        let fallbackCopiedText = null;
+        document.execCommand = jest.fn(command => {
+            if (command === 'copy') {
+                const textarea = document.querySelector('textarea');
+                fallbackCopiedText = textarea ? textarea.value : null;
+                return true;
+            }
+            return false;
         });
 
         class FakeXHR {
@@ -2475,7 +2483,7 @@ describe('initialization and URL monitoring', () => {
         expect(storage.get('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(60);
         expect(overlay.textContent).toContain('-SGD 200.00');
 
-        const copyButton = overlay.querySelector('button[aria-label="Copy balances for sub-portfolio Core"]');
+        const copyButton = overlay.querySelector('button[aria-label="Copy values for sub-portfolio Core"]');
         expect(copyButton).toBeTruthy();
         const instrumentHeading = Array.from(overlay.querySelectorAll('.gpv-ocbc-instrument-header-row'))
             .find(row => row.textContent.includes('Instrument allocation · Core'));
@@ -2490,18 +2498,24 @@ describe('initialization and URL monitoring', () => {
         expect(status?.getAttribute('role')).toBe('status');
         expect(status?.getAttribute('aria-live')).toBe('polite');
         expect(status?.getAttribute('aria-atomic')).toBe('true');
-        expect(copyButton.textContent).toContain('Copy balances');
+        expect(copyButton.textContent).toContain('Copy Values');
         copyButton.dispatchEvent(new window.Event('click', { bubbles: true }));
         await new Promise(resolve => setTimeout(resolve, 0));
-        expect(overlay.textContent).toContain('Copied 2 instruments');
-        if (window.navigator.clipboard.writeText.mock.calls.length > 0) {
-            const copiedText = window.navigator.clipboard.writeText.mock.calls[0][0];
-            expect(copiedText).toContain('Sub-portfolio\tCore');
-            expect(copiedText).toContain('Identifier\tName\tCurrent Amount\tCurrent %\tTarget %\tTarget Amount\tDrift Amount');
-        }
+        expect(overlay.textContent).toContain('Copied 2 values');
+        const clipboardCall = window.navigator.clipboard.writeText.mock.calls[0];
+        const copiedText = clipboardCall ? clipboardCall[0] : fallbackCopiedText;
+        expect(copiedText).toBe('1000.00\t1000.00');
+        expect(copiedText).not.toContain('Sub-portfolio');
+        expect(copiedText).not.toContain('Identifier');
+        expect(copiedText).not.toContain('Name');
+        expect(copiedText).not.toContain('SGD');
+        expect(copiedText).not.toContain('Target');
+        expect(copiedText).not.toContain('Drift');
+        expect(copiedText).not.toContain('%');
+        expect(copiedText).not.toContain('\n');
     });
 
-    test('OCBC allocation mode Up/Down reorders rows and persists order by scope', () => {
+    test('OCBC allocation mode Up/Down reorders rows and persists order by scope', async () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -2517,6 +2531,19 @@ describe('initialization and URL monitoring', () => {
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
         global.history = window.history;
+        Object.defineProperty(window.navigator, 'clipboard', {
+            configurable: true,
+            value: { writeText: jest.fn(() => Promise.resolve()) }
+        });
+        let fallbackCopiedText = null;
+        document.execCommand = jest.fn(command => {
+            if (command === 'copy') {
+                const textarea = document.querySelector('textarea');
+                fallbackCopiedText = textarea ? textarea.value : null;
+                return true;
+            }
+            return false;
+        });
 
         class FakeXHR {
             constructor() {
@@ -2587,6 +2614,14 @@ describe('initialization and URL monitoring', () => {
 
         const savedOrder = JSON.parse(storage.get('ocbc_allocation_order_by_scope'));
         expect(savedOrder['assets|P-1|core']).toEqual(['P-1:EQ2', 'P-1:EQ1', 'P-1:EQ3']);
+
+        const copyButton = overlay.querySelector('button[aria-label="Copy values for sub-portfolio Core"]');
+        expect(copyButton).toBeTruthy();
+        copyButton.dispatchEvent(new window.Event('click', { bubbles: true }));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const clipboardCall = window.navigator.clipboard.writeText.mock.calls[0];
+        const copiedText = clipboardCall ? clipboardCall[0] : fallbackCopiedText;
+        expect(copiedText).toBe('700.00\t1000.00\t500.00');
     });
 
     test('OCBC allocation mode moves instrument between order scopes when reassigned', () => {

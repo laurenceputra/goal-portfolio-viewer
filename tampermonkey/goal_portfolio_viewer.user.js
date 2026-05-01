@@ -10108,7 +10108,8 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-balance-copy-controls--section {
-                margin-bottom: 10px;
+                justify-content: flex-start;
+                margin: 0 0 16px 0;
             }
 
             .gpv-balance-copy-button {
@@ -10173,7 +10174,7 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-ocbc-target-summary {
-                margin-bottom: 10px;
+                margin-bottom: 14px;
             }
             
             /* Table Styles */
@@ -11021,6 +11022,10 @@ syncUi.update = function updateSyncUI() {
                     margin: 6px 0 0 0;
                     font-size: 13px;
                     color: var(--gpv-color-muted);
+                }
+
+                .gpv-sync-help.gpv-ocbc-target-summary {
+                    margin: 6px 0 14px 0;
                 }
 
                 .gpv-sync-help--lead {
@@ -13900,6 +13905,33 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     const headingElement = createElement('h3', `gpv-detail-title gpv-ocbc-instrument-heading ${sectionClass}`.trim(), heading);
                     headerRow.appendChild(headingElement);
                     section.appendChild(headerRow);
+                    const scopeKey = buildOcbcAllocationOrderScope(activeView, portfolioNo, subPortfolioId);
+                    const currentOrder = Array.isArray(orderByScope[scopeKey]) ? orderByScope[scopeKey] : [];
+                    const rowCodes = rows.map(row => utils.normalizeString(row?.code, '')).filter(Boolean);
+                    const seenCodes = new Set();
+                    const orderedCodes = [];
+                    currentOrder.forEach(code => {
+                        const normalizedCode = utils.normalizeString(code, '');
+                        if (!normalizedCode || seenCodes.has(normalizedCode) || !rowCodes.includes(normalizedCode)) {
+                            return;
+                        }
+                        seenCodes.add(normalizedCode);
+                        orderedCodes.push(normalizedCode);
+                    });
+                    rowCodes.forEach(code => {
+                        if (!seenCodes.has(code)) {
+                            seenCodes.add(code);
+                            orderedCodes.push(code);
+                        }
+                    });
+                    const rowsByCode = rows.reduce((acc, row) => {
+                        const code = utils.normalizeString(row?.code, '');
+                        if (code && !acc[code]) {
+                            acc[code] = row;
+                        }
+                        return acc;
+                    }, {});
+                    const orderedRows = orderedCodes.map(code => rowsByCode[code]).filter(Boolean);
                     let copyControls = null;
                     if (subPortfolioId) {
                         const configuredInstrumentTargets = rows.reduce((sum, row) => {
@@ -13913,40 +13945,20 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         status.setAttribute('aria-live', 'polite');
                         status.setAttribute('aria-atomic', 'true');
                         copyControls = createElement('div', 'gpv-balance-copy-controls gpv-balance-copy-controls--section');
-                        const copyButton = createElement('button', 'gpv-sync-btn gpv-balance-copy-button', 'Copy balances');
+                        const copyButton = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary gpv-balance-copy-button', 'Copy Values');
                         copyButton.type = 'button';
-                        copyButton.setAttribute('aria-label', `Copy balances for sub-portfolio ${subPortfolioName || subPortfolioId}`);
+                        copyButton.setAttribute('aria-label', `Copy values for sub-portfolio ${subPortfolioName || subPortfolioId}`);
                         copyButton.onclick = async () => {
-                            if (rows.length === 0) {
+                            if (orderedRows.length === 0) {
                                 setBalanceCopyFeedback(status, 'No assigned instruments');
                                 return;
                             }
-                            const totalForCopy = toFiniteNumber(denominatorTotal, 0);
-                            const lines = [
-                                `Sub-portfolio\t${subPortfolioName || subPortfolioId}`,
-                                `Total\t${totalForCopy.toFixed(2)}`,
-                                'Identifier\tName\tCurrent Amount\tCurrent %\tTarget %\tTarget Amount\tDrift Amount'
-                            ];
-                            rows.forEach(row => {
-                                const rowCode = utils.normalizeString(row?.code, '');
-                                const currentAmount = toFiniteNumber(row?.currentValueLcy, 0);
-                                const currentPct = calculateAllocationRatio(currentAmount, totalForCopy) * 100;
-                                const instrumentTarget = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolioId, rowCode);
-                                const targetAmount = Number.isFinite(instrumentTarget) ? totalForCopy * (instrumentTarget / 100) : null;
-                                const driftAmount = Number.isFinite(targetAmount) ? currentAmount - targetAmount : null;
-                                lines.push([
-                                    row.displayTicker || row.code || '-',
-                                    row.name || '-',
-                                    currentAmount.toFixed(2),
-                                    `${currentPct.toFixed(2)}%`,
-                                    Number.isFinite(instrumentTarget) ? `${instrumentTarget.toFixed(2)}%` : '-',
-                                    Number.isFinite(targetAmount) ? targetAmount.toFixed(2) : '-',
-                                    Number.isFinite(driftAmount) ? driftAmount.toFixed(2) : '-'
-                                ].join('\t'));
-                            });
+                            const valuesLine = orderedRows
+                                .map(row => toFiniteNumber(row?.currentValueLcy, 0).toFixed(2))
+                                .join('\t');
                             try {
-                                await copyTextToClipboard(lines.join('\n'));
-                                setBalanceCopyFeedback(status, `Copied ${rows.length} instruments`);
+                                await copyTextToClipboard(valuesLine);
+                                setBalanceCopyFeedback(status, `Copied ${orderedRows.length} values`);
                             } catch (_error) {
                                 setBalanceCopyFeedback(status, 'Copy failed', 'error');
                             }
@@ -13975,34 +13987,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     <tbody></tbody>
                 `;
                     const holdingsBody = holdingsTable.querySelector('tbody');
-                    const scopeKey = buildOcbcAllocationOrderScope(activeView, portfolioNo, subPortfolioId);
-                    const currentOrder = Array.isArray(orderByScope[scopeKey]) ? orderByScope[scopeKey] : [];
-                    const rowCodes = rows.map(row => utils.normalizeString(row?.code, '')).filter(Boolean);
-                    const seenCodes = new Set();
-                    const orderedCodes = [];
-                    currentOrder.forEach(code => {
-                        const normalizedCode = utils.normalizeString(code, '');
-                        if (!normalizedCode || seenCodes.has(normalizedCode) || !rowCodes.includes(normalizedCode)) {
-                            return;
-                        }
-                        seenCodes.add(normalizedCode);
-                        orderedCodes.push(normalizedCode);
-                    });
-                    rowCodes.forEach(code => {
-                        if (!seenCodes.has(code)) {
-                            seenCodes.add(code);
-                            orderedCodes.push(code);
-                        }
-                    });
-                    const rowsByCode = rows.reduce((acc, row) => {
-                        const code = utils.normalizeString(row?.code, '');
-                        if (code && !acc[code]) {
-                            acc[code] = row;
-                        }
-                        return acc;
-                    }, {});
-                    const orderedRows = orderedCodes.map(code => rowsByCode[code]).filter(Boolean);
-
                     orderedRows.forEach((row, index) => {
                         const tr = createElement('tr');
                         tr.appendChild(createElement('td', null, row.displayTicker || row.code || '-'));

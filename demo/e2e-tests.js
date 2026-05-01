@@ -1011,10 +1011,14 @@ async function captureOcbcFlow(page, summary, outputDir) {
     assertCondition((await instrumentAssignmentSelect.count()) > 0, 'Expected visible instrument assignment selector in OCBC allocation mode.');
     await instrumentAssignmentSelect.selectOption({ label: indicatorCheck.createdName });
     await page.waitForFunction(name => {
-        const exactLabel = `Copy balances for sub-portfolio ${name}`;
+        const exactLabel = `Copy values for sub-portfolio ${name}`;
         const copyButton = Array.from(document.querySelectorAll('.gpv-balance-copy-controls--section button'))
             .find(button => (button.getAttribute('aria-label') || '') === exactLabel);
-        return Boolean(copyButton);
+        if (!(copyButton instanceof HTMLButtonElement)) {
+            return false;
+        }
+        const style = window.getComputedStyle(copyButton);
+        return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
     }, indicatorCheck.createdName, { timeout: 5000 });
 
     const targetInputsUpdated = await page.evaluate(subPortfolioName => {
@@ -1052,11 +1056,17 @@ async function captureOcbcFlow(page, summary, outputDir) {
     }, indicatorCheck.beforeSummary, { timeout: 5000 });
 
     const clipboardCheck = await page.evaluate(async subPortfolioName => {
-        const exactLabel = `Copy balances for sub-portfolio ${subPortfolioName}`;
+        const exactLabel = `Copy values for sub-portfolio ${subPortfolioName}`;
         const copyButton = Array.from(document.querySelectorAll('.gpv-balance-copy-controls--section button'))
             .find(button => (button.getAttribute('aria-label') || '') === exactLabel);
         if (!(copyButton instanceof HTMLButtonElement)) {
-            return { hasCopyHeader: false, hasDriftScope: false, fallbackUsed: false };
+            return {
+                hasNumericSingleRowTsv: false,
+                hasNoLegacyColumns: false,
+                fallbackUsed: false,
+                isVisible: false,
+                matchesRenderedRowOrder: false
+            };
         }
         let captured = '';
         const hadClipboardObject = Boolean(navigator.clipboard);
@@ -1128,23 +1138,51 @@ async function captureOcbcFlow(page, summary, outputDir) {
                 }
             }
         }
-        const overlay = document.querySelector('.gpv-overlay');
-        const tableHeaders = Array.from(overlay?.querySelectorAll('table thead th') || []).map(th => (th.textContent || '').trim());
-        const hasHeaderFallback = tableHeaders.includes('Current % of sub-portfolio')
-            && tableHeaders.includes('Target % of sub-portfolio')
-            && tableHeaders.includes('Drift');
-        const hasScopeFallback = (copyButton.textContent || '').includes('Copy balances')
-            && (overlay?.textContent || '').includes('Sub-portfolio targets:');
+        const buttonStyle = window.getComputedStyle(copyButton);
+        const rect = copyButton.getBoundingClientRect();
+        const isVisible = buttonStyle.display !== 'none'
+            && buttonStyle.visibility !== 'hidden'
+            && buttonStyle.opacity !== '0'
+            && rect.width > 0
+            && rect.height > 0
+            && copyButton.offsetParent !== null;
+        const singleLine = captured.trim();
+        const hasSingleRow = singleLine.length > 0 && !singleLine.includes('\n');
+        const numericTokenPattern = /^-?\d+\.\d{2}$/;
+        const tokens = hasSingleRow ? singleLine.split('\t') : [];
+        const hasNumericOnlyTokens = tokens.length > 0 && tokens.every(token => numericTokenPattern.test(token));
+        const heading = Array.from(document.querySelectorAll('.gpv-ocbc-instrument-header-row'))
+            .find(node => (node.textContent || '').includes(`Instrument allocation · ${subPortfolioName}`));
+        const findNextTable = start => {
+            let current = start?.nextElementSibling || null;
+            while (current && current.tagName !== 'TABLE') {
+                current = current.nextElementSibling;
+            }
+            return current;
+        };
+        const table = findNextTable(heading);
+        const renderedValues = table
+            ? Array.from(table.querySelectorAll('tbody tr')).map(row => {
+                const valueCell = row.querySelector('td:nth-child(4)');
+                const raw = (valueCell?.textContent || '')
+                    .replace(/,/g, '')
+                    .replace(/[^0-9.-]/g, '')
+                    .trim();
+                const parsed = Number.parseFloat(raw);
+                return Number.isFinite(parsed) ? parsed.toFixed(2) : '';
+            }).filter(Boolean)
+            : [];
+        const matchesRenderedRowOrder = hasNumericOnlyTokens
+            && renderedValues.length > 0
+            && renderedValues.length === tokens.length
+            && renderedValues.every((value, index) => value === tokens[index]);
+        const hasLegacyMarkers = /(Sub-portfolio|Identifier|Name|Current %|Target %|Target Amount|Drift|SGD|Total|%)/i.test(singleLine);
         return {
-            hasCopyHeader: captured
-                ? (captured.includes('Current %') && captured.includes('Target %') && captured.includes('Target Amount') && captured.includes('Drift Amount'))
-                : hasHeaderFallback,
-            hasDriftScope: captured
-                ? (captured.includes('Sub-portfolio\t')
-                && captured.includes('\nTotal\t')
-                && captured.includes('Identifier\tName\tCurrent Amount\tCurrent %\tTarget %\tTarget Amount\tDrift Amount'))
-                : hasScopeFallback,
-            fallbackUsed
+            hasNumericSingleRowTsv: hasSingleRow && hasNumericOnlyTokens,
+            hasNoLegacyColumns: !hasLegacyMarkers,
+            fallbackUsed,
+            isVisible,
+            matchesRenderedRowOrder
         };
     }, indicatorCheck.createdName);
     const finalIndicator = await page.$eval('.gpv-overlay', root => {
@@ -1152,8 +1190,10 @@ async function captureOcbcFlow(page, summary, outputDir) {
         return /Sub-portfolio targets:\s*[\d.]+% assigned,\s*[\d.]+% remaining/i.test(text);
     });
     recordAssertion(summary, ocbcFlowName, 'allocation-target-indicator-updates', finalIndicator, 'Allocation target indicator updates after editing target %.');
-    recordAssertion(summary, ocbcFlowName, 'allocation-copy-has-target-columns', clipboardCheck.hasCopyHeader, 'Copy balances output includes current %, target %, target amount, and drift amount columns.');
-    recordAssertion(summary, ocbcFlowName, 'allocation-copy-scoped-to-subportfolio', clipboardCheck.hasDriftScope, 'Copy balances output uses sub-portfolio scoped projection header.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-button-visible', clipboardCheck.isVisible, 'Copy Values button is visible in allocation mode.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-single-row-numeric-tsv', clipboardCheck.hasNumericSingleRowTsv, 'Copy Values output is a single-row numeric TSV payload.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-matches-rendered-row-order', clipboardCheck.matchesRenderedRowOrder, 'Copy Values output follows visible instrument row order for the matching sub-portfolio.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-no-legacy-columns', clipboardCheck.hasNoLegacyColumns, 'Copy Values output excludes legacy headers, labels, percentages, and SGD fields.');
     await captureScreenshot(page, summary, outputDir, 'ocbc-allocation');
 
     const hasSubPortfolioManager = await page.$eval('.gpv-overlay', root => {
