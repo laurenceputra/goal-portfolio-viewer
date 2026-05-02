@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.10
+// @version      2.14.11
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -3055,6 +3055,17 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.fsmFixed, 'Error deleting legacy FSM fixed key');
     }
 
+    function cleanupLegacyFsmKeysForCodes(codes) {
+        (Array.isArray(codes) ? codes : []).forEach(code => {
+            const normalizedCode = utils.normalizeString(code, '');
+            if (!normalizedCode) {
+                return;
+            }
+            Storage.remove(storageKeys.fsmTarget(normalizedCode), 'Error deleting legacy FSM target key');
+            Storage.remove(storageKeys.fsmFixed(normalizedCode), 'Error deleting legacy FSM fixed key');
+        });
+    }
+
     function cleanupLegacyOcbcKeys() {
         Storage.remove(STORAGE_KEYS.ocbcHoldings, 'Error deleting legacy OCBC holdings data');
         Storage.remove(STORAGE_KEYS.ocbcSubPortfolios, 'Error deleting legacy OCBC sub-portfolios data');
@@ -3225,6 +3236,53 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return { merged, didMerge };
     }
 
+    function mergeMissingFsmEntriesFromLegacy(rawStore, normalizedStore, legacyStore) {
+        const merged = {
+            ...normalizedStore,
+            targetsByCode: { ...(normalizedStore?.targetsByCode || {}) },
+            fixedByCode: { ...(normalizedStore?.fixedByCode || {}) }
+        };
+        let didMerge = false;
+
+        const rawTargetsByCode = rawStore?.targetsByCode;
+        const rawFixedByCode = rawStore?.fixedByCode;
+        const shouldMergeTargets = rawTargetsByCode && typeof rawTargetsByCode === 'object' && !Array.isArray(rawTargetsByCode);
+        const shouldMergeFixed = rawFixedByCode && typeof rawFixedByCode === 'object' && !Array.isArray(rawFixedByCode);
+
+        if (shouldMergeTargets) {
+            Object.entries(legacyStore?.targetsByCode || {}).forEach(([code, value]) => {
+                if (!Object.prototype.hasOwnProperty.call(merged.targetsByCode, code)) {
+                    merged.targetsByCode[code] = value;
+                    didMerge = true;
+                }
+            });
+        }
+
+        if (shouldMergeFixed) {
+            Object.entries(legacyStore?.fixedByCode || {}).forEach(([code, value]) => {
+                if (!Object.prototype.hasOwnProperty.call(merged.fixedByCode, code)) {
+                    merged.fixedByCode[code] = value;
+                    didMerge = true;
+                }
+            });
+        }
+
+        const holdings = Array.isArray(merged.holdings) ? merged.holdings : [];
+        holdings.forEach(row => {
+            const code = getFsmHoldingIdentity(row) || utils.normalizeString(row?.code, '');
+            if (!code || Object.prototype.hasOwnProperty.call(merged.targetsByCode, code)) {
+                return;
+            }
+            const legacyValue = Storage.get(storageKeys.fsmTarget(code), null);
+            if (legacyValue !== null) {
+                merged.targetsByCode[code] = legacyValue;
+                didMerge = true;
+            }
+        });
+
+        return { merged, didMerge };
+    }
+
     function readEndowusStore() {
         const rawStored = Storage.readJson(STORAGE_KEYS.endowus, data => data && typeof data === 'object' && !Array.isArray(data));
         if (rawStored) {
@@ -3259,16 +3317,28 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         if (rawStored) {
             const normalized = normalizeFsmStore(rawStored);
             const legacy = collectLegacyFsmStore();
-            const { merged, didMerge } = mergeMissingFieldsFromLegacy(
+            const { merged: mergedMissingFields, didMerge: didMergeFields } = mergeMissingFieldsFromLegacy(
                 rawStored,
                 normalized,
                 legacy,
                 ['holdings', 'targetsByCode', 'fixedByCode', 'portfolios', 'assignmentByCode']
             );
+            const { merged, didMerge: didMergeEntries } = mergeMissingFsmEntriesFromLegacy(
+                rawStored,
+                mergedMissingFields,
+                legacy
+            );
+            const didMerge = didMergeFields || didMergeEntries;
             if (didMerge) {
                 const didWrite = writePlatformStore(STORAGE_KEYS.fsm, merged, 'Error writing merged FSM store');
                 if (didWrite) {
                     cleanupLegacyFsmKeys();
+                    cleanupLegacyFsmKeysForCodes([
+                        ...Object.keys(merged?.targetsByCode || {}),
+                        ...Object.keys(merged?.fixedByCode || {}),
+                        ...Object.keys(legacy?.targetsByCode || {}),
+                        ...Object.keys(legacy?.fixedByCode || {})
+                    ]);
                 }
                 return merged;
             }
@@ -3279,6 +3349,10 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const didWrite = writePlatformStore(STORAGE_KEYS.fsm, migrated, 'Error writing migrated FSM store');
         if (didWrite) {
             cleanupLegacyFsmKeys();
+            cleanupLegacyFsmKeysForCodes([
+                ...Object.keys(migrated?.targetsByCode || {}),
+                ...Object.keys(migrated?.fixedByCode || {})
+            ]);
         }
         return migrated;
     }

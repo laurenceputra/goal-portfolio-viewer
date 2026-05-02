@@ -52,6 +52,7 @@ describe('initialization and URL monitoring', () => {
         teardownDom();
         delete global.alert;
         delete global.history;
+        delete global.GM_listValues;
     });
 
     test('auto-init stays disabled when flag is set', () => {
@@ -3692,6 +3693,7 @@ describe('initialization and URL monitoring', () => {
             storage.has(key) ? storage.get(key) : fallback
         ));
         global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_listValues = jest.fn(() => Array.from(storage.keys()));
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -3737,6 +3739,64 @@ describe('initialization and URL monitoring', () => {
         expect(JSON.parse(storage.get('fsm')).targetsByCode.AAA).toBeUndefined();
         expect(JSON.parse(storage.get('fsm')).targetsByCode['AAA|sub:AAPL']).toBeUndefined();
         expect(targetInput.value).toBe('');
+    });
+
+    test('FSM migration preserves legacy target entries when normalized target map exists', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'ESG003', subcode: 'ESG3', name: 'Growth Fund', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+        ]));
+        storage.set('fsm', JSON.stringify({
+            targetsByCode: {},
+            fixedByCode: {},
+            portfolios: [],
+            assignmentByCode: {}
+        }));
+        storage.set('fsm_target_pct_ESG003|sub:ESG3', 35);
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings')).click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
+        expect(targetInput.value).toBe('35.00');
+
+        const storedFsm = JSON.parse(storage.get('fsm'));
+        expect(storedFsm?.targetsByCode?.['ESG003|sub:ESG3']).toBe(35);
+        expect(storage.has('fsm_target_pct_ESG003|sub:ESG3')).toBe(false);
     });
 
     test('FSM migrated legacy fixed flag can be unchecked without falling back', () => {
@@ -4501,6 +4561,11 @@ describe('initialization and URL monitoring', () => {
         global.XMLHttpRequest = FakeXHR;
         window.__GPV_DISABLE_AUTO_INIT = true;
 
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 800 },
+            { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 1700 }
+        ]));
+        storage.delete('fsm');
         storage.set('fsm_target_pct_AAA|sub:AAPL', 80);
         storage.set('fsm_target_pct_BBB|sub:BOND', 20);
 
