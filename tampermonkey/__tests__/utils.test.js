@@ -344,7 +344,7 @@ describe('normalizeOcbcHoldingsPayload', () => {
             productType: 'Margin',
             currentValueLcy: -100.75
         });
-        expect(result.liabilities[0].code).toContain('P-123:gpv-ocbc-');
+        expect(result.liabilities[0].code).toBe('P-123:L-1');
     });
 
     test('applies OCBC numeric fallback chain and null-safe parsing', () => {
@@ -493,8 +493,8 @@ describe('normalizeOcbcHoldingsPayload', () => {
         expect(result.assets).toHaveLength(2);
         expect(result.assets.map(row => row.productType)).toEqual(['Global Equity', 'Global Equity']);
         expect(result.assets[0].code).not.toEqual(result.assets[1].code);
-        expect(result.assets[0].code).toContain('P-1:gpv-ocbc-');
-        expect(result.assets[1].code).toContain('P-2:gpv-ocbc-');
+        expect(result.assets[0].code).toBe('P-1:POS-SHARED');
+        expect(result.assets[1].code).toBe('P-2:POS-SHARED');
     });
 
     test('generates stable hashed OCBC code without positionId across payload reorder', () => {
@@ -557,7 +557,7 @@ describe('normalizeOcbcHoldingsPayload', () => {
         expect(firstByTicker['ISIN-BBB']).toEqual(secondByTicker['ISIN-BBB']);
     });
 
-    test('ignores holdingGuid/positionId/trancheId/subCode changes for OCBC stable identity', () => {
+    test('uses positionId-first primary code and keeps it stable across volatile and market data changes', () => {
         const buildPayload = holdings => ({
             data: [{
                 portfolioNo: 'P-IMMUTABLE',
@@ -576,31 +576,80 @@ describe('normalizeOcbcHoldingsPayload', () => {
             {
                 isin: 'ISIN-IMM-A',
                 fundCode: 'FUND-IMM-A',
-                trancheId: 'TRANCHE-OLD',
-                positionId: 'POSITION-OLD',
+                positionId: 'POSITION-SAME',
                 holdingGuid: 'GUID-OLD',
+                guuid: 'GUUID-OLD',
                 subCode: 'SUB-OLD',
-                fundName: 'Fund A'
+                fundName: 'Fund A',
+                marketValueReferenceCcy: 100
             }
         ]));
         const second = normalizeOcbcHoldingsPayload(buildPayload([
             {
                 isin: 'ISIN-IMM-A',
                 fundCode: 'FUND-IMM-A',
-                trancheId: 'TRANCHE-NEW',
-                positionId: 'POSITION-NEW',
+                positionId: 'POSITION-SAME',
                 holdingGuid: 'GUID-NEW',
+                guuid: 'GUUID-NEW',
                 subCode: 'SUB-NEW',
-                fundName: 'Fund A Renamed'
+                fundName: 'Fund A Renamed',
+                marketValueReferenceCcy: 999
             }
         ]));
 
         expect(first.assets[0].displayTicker).toBe('ISIN-IMM-A');
         expect(second.assets[0].displayTicker).toBe('ISIN-IMM-A');
         expect(first.assets[0].code).toBe(second.assets[0].code);
+        expect(first.assets[0].code).toBe('P-IMMUTABLE:POSITION-SAME');
     });
 
-    test('does not emit OCBC legacy aliases for holdingGuid/positionId/trancheId/subCode', () => {
+    test('includes previous hashed OCBC code as legacy alias for positionId rows', () => {
+        const hashedPayload = {
+            data: [{
+                portfolioNo: 'P-ALIAS-HASH',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [{
+                            isin: 'ISIN-HASH',
+                            fundCode: 'FUND-HASH',
+                            description: 'Hash Description'
+                        }]
+                    }]
+                }],
+                liabilities: []
+            }]
+        };
+        const positionPayload = {
+            data: [{
+                portfolioNo: 'P-ALIAS-HASH',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [{
+                            isin: 'ISIN-HASH',
+                            fundCode: 'FUND-HASH',
+                            description: 'Hash Description',
+                            positionId: 'POSITION-HASH',
+                            holdingGuid: 'GUID-TRANSIENT',
+                            guuid: 'GUUID-TRANSIENT'
+                        }]
+                    }]
+                }],
+                liabilities: []
+            }]
+        };
+
+        const hashed = normalizeOcbcHoldingsPayload(hashedPayload);
+        const withPosition = normalizeOcbcHoldingsPayload(positionPayload);
+
+        expect(withPosition.assets[0].code).toBe('P-ALIAS-HASH:POSITION-HASH');
+        expect(withPosition.assets[0].legacyCodeAliases).toContain(hashed.assets[0].code);
+    });
+
+    test('does not emit OCBC legacy aliases for volatile holdingGuid/guuid/positionId/trancheId/subCode', () => {
         const payload = {
             data: [{
                 portfolioNo: 'P-ALIASES',
@@ -610,6 +659,7 @@ describe('normalizeOcbcHoldingsPayload', () => {
                         subAssetClassDesc: 'Global Equity',
                         holdings: [{
                             holdingGuid: 'GUID-LEGACY',
+                            guuid: 'GUUID-LEGACY',
                             positionId: 'POSITION-LEGACY',
                             trancheId: 'TRANCHE-LEGACY',
                             subCode: 'SUB-LEGACY',
@@ -631,6 +681,7 @@ describe('normalizeOcbcHoldingsPayload', () => {
             'P-ALIASES:P-ALIASES#1'
         ]));
         expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:GUID-LEGACY');
+        expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:GUUID-LEGACY');
         expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:POSITION-LEGACY');
         expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:TRANCHE-LEGACY');
         expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:SUB-LEGACY');

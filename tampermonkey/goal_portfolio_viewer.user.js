@@ -71,7 +71,6 @@
         fsmTarget: 'fsm_target_pct_',
         fsmFixed: 'fsm_fixed_',
         ocbcTarget: 'ocbc_target_pct_',
-        ocbcFixed: 'ocbc_fixed_',
         performanceCache: 'gpv_performance_',
         collapseState: 'gpv_collapse_'
     };
@@ -305,9 +304,6 @@
         },
         ocbcTarget(code) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.ocbcTarget, code ?? '');
-        },
-        ocbcFixed(code) {
-            return buildStorageKey(STORAGE_KEY_PREFIXES.ocbcFixed, code ?? '');
         },
         performanceCache(goalId) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.performanceCache, goalId ?? '');
@@ -876,6 +872,7 @@
     function buildOcbcStableHoldingCode(row, context = {}) {
         const resolvedPortfolioNo = utils.normalizeString(context.portfolioNo, '-');
         const fallbackIndex = Number.isFinite(Number(context.index)) ? Number(context.index) : 0;
+        const positionId = utils.normalizeString(row?.positionId, '');
         const sectionType = utils.normalizeString(context.sectionType, 'assets');
         const scopeParts = [
             sectionType,
@@ -898,24 +895,40 @@
         ].map(normalizeOcbcIdentitySegment).filter(Boolean);
 
         const hasHoldingSpecificIdentity = strongIdParts.length > 0 || weakDescriptorParts.length > 0;
-        if (!hasHoldingSpecificIdentity) {
+        const fingerprintParts = hasHoldingSpecificIdentity
+            ? (strongIdParts.length > 0
+                ? [...scopeParts, ...strongIdParts]
+                : [...scopeParts, ...weakDescriptorParts])
+            : [];
+        const fingerprint = fingerprintParts.join('|');
+        const hashedCode = hasHoldingSpecificIdentity
+            ? `${resolvedPortfolioNo}:gpv-ocbc-${hashOcbcIdentityFingerprint(fingerprint)}`
+            : `${resolvedPortfolioNo}:gpv-ocbc-fallback-${resolvedPortfolioNo || '-'}-${fallbackIndex + 1}`;
+        const legacyAliases = [
+            ...buildOcbcLegacyAssignmentCodeAliases(row, resolvedPortfolioNo, fallbackIndex),
+            hashedCode
+        ];
+
+        if (positionId) {
             return {
-                code: `${resolvedPortfolioNo}:gpv-ocbc-fallback-${resolvedPortfolioNo || '-'}-${fallbackIndex + 1}`,
-                usedFallbackIndex: true,
-                legacyAliases: buildOcbcLegacyAssignmentCodeAliases(row, resolvedPortfolioNo, fallbackIndex)
+                code: `${resolvedPortfolioNo}:${positionId}`,
+                usedFallbackIndex: !hasHoldingSpecificIdentity,
+                legacyAliases: Array.from(new Set(legacyAliases))
             };
         }
 
-        const fingerprintParts = strongIdParts.length > 0
-            ? [...scopeParts, ...strongIdParts]
-            : [...scopeParts, ...weakDescriptorParts];
+        if (!hasHoldingSpecificIdentity) {
+            return {
+                code: hashedCode,
+                usedFallbackIndex: true,
+                legacyAliases: Array.from(new Set(legacyAliases))
+            };
+        }
 
-        const fingerprint = fingerprintParts.join('|');
-        const identityHash = hashOcbcIdentityFingerprint(fingerprint);
         return {
-            code: `${resolvedPortfolioNo}:gpv-ocbc-${identityHash}`,
+            code: hashedCode,
             usedFallbackIndex: false,
-            legacyAliases: buildOcbcLegacyAssignmentCodeAliases(row, resolvedPortfolioNo, fallbackIndex)
+            legacyAliases: Array.from(new Set(legacyAliases))
         };
     }
 
