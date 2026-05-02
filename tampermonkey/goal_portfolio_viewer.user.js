@@ -9374,6 +9374,7 @@ syncUi.update = function updateSyncUI() {
                 --gpv-font-size-body: 14px;
                 --gpv-font-size-small: 12px;
                 --gpv-line-height: 1.45;
+                --gpv-space-1: 6px;
                 --gpv-space-2: 8px;
                 --gpv-space-3: 12px;
                 --gpv-space-4: 16px;
@@ -9756,7 +9757,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-summary-container {
                 display: flex;
                 flex-direction: column;
-                gap: 14px;
+                gap: var(--gpv-space-4);
             }
 
             .gpv-allocation-drift-hint {
@@ -9766,7 +9767,7 @@ syncUi.update = function updateSyncUI() {
                 color: #92400e;
                 font-size: 13px;
                 font-weight: 600;
-                margin-bottom: 12px;
+                margin-bottom: var(--gpv-space-3);
                 padding: 10px 12px;
             }
 
@@ -9775,7 +9776,7 @@ syncUi.update = function updateSyncUI() {
                 border: 1px solid #fed7aa;
                 border-radius: 10px;
                 padding: 10px 12px;
-                margin-bottom: 12px;
+                margin-bottom: var(--gpv-space-3);
             }
 
             .gpv-attention-title {
@@ -9869,7 +9870,7 @@ syncUi.update = function updateSyncUI() {
                 background: #eff6ff;
                 border-radius: 10px;
                 padding: 10px 12px;
-                margin-bottom: 12px;
+                margin-bottom: var(--gpv-space-3);
             }
 
             .gpv-planning-title {
@@ -9997,6 +9998,10 @@ syncUi.update = function updateSyncUI() {
                 cursor: pointer;
                 transition: all 0.3s ease;
                 color: #111827;
+            }
+
+            .gpv-summary-container .gpv-bucket-card {
+                margin-top: 0;
             }
             
             .gpv-bucket-card:hover {
@@ -10133,20 +10138,20 @@ syncUi.update = function updateSyncUI() {
             /* Detail View Styles */
             
             .gpv-detail-header {
-                margin-bottom: 16px;
-                padding-bottom: 12px;
+                margin-bottom: var(--gpv-space-4);
+                padding-bottom: var(--gpv-space-3);
                 border-bottom: 2px solid #e5e7eb;
                 display: flex;
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 10px;
+                gap: var(--gpv-space-2);
             }
             
             .gpv-detail-title {
                 font-size: 22px;
                 font-weight: 700;
                 color: #111827;
-                margin: 0 0 12px 0;
+                margin: 0;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             }
             
@@ -10177,11 +10182,11 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-type-section {
-                margin-bottom: 24px;
+                margin-bottom: var(--gpv-space-5);
             }
             
             .gpv-type-header {
-                margin-bottom: 12px;
+                margin-bottom: var(--gpv-space-3);
             }
             
             .gpv-type-header h3 {
@@ -10209,7 +10214,7 @@ syncUi.update = function updateSyncUI() {
                 display: flex;
                 align-items: center;
                 gap: 8px;
-                margin-top: 8px;
+                margin-top: var(--gpv-space-2);
                 flex-wrap: wrap;
             }
 
@@ -10953,6 +10958,9 @@ syncUi.update = function updateSyncUI() {
                     font-size: var(--gpv-font-size-body);
                     line-height: var(--gpv-line-height);
                     font-family: inherit;
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--gpv-space-4);
                 }
 
                 .gpv-sync-settings,
@@ -10961,7 +10969,7 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-header h3 {
-                    margin: 0 0 var(--gpv-space-4) 0;
+                    margin: 0;
                     font-size: var(--gpv-font-size-title);
                     font-weight: 600;
                 }
@@ -10971,7 +10979,7 @@ syncUi.update = function updateSyncUI() {
                     border: 1px solid #ffc107;
                     border-radius: var(--gpv-radius-sm);
                     padding: var(--gpv-space-3);
-                    margin-bottom: var(--gpv-space-4);
+                    margin: 0;
                     color: #856404;
                 }
 
@@ -10980,7 +10988,7 @@ syncUi.update = function updateSyncUI() {
                     border: 1px solid #dee2e6;
                     border-radius: var(--gpv-radius-sm);
                     padding: var(--gpv-space-3);
-                    margin-bottom: var(--gpv-space-5);
+                    margin: 0;
                 }
 
                 .gpv-sync-toast {
@@ -11076,12 +11084,13 @@ syncUi.update = function updateSyncUI() {
                 .gpv-sync-form {
                     display: flex;
                     flex-direction: column;
-                    gap: var(--gpv-space-5);
+                    gap: var(--gpv-space-4);
                 }
 
                 .gpv-sync-form-group {
                     display: flex;
                     flex-direction: column;
+                    gap: var(--gpv-space-2);
                 }
 
                 .gpv-sync-form-group label {
@@ -11132,17 +11141,17 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-help {
-                    margin: 6px 0 0 0;
+                    margin: 0;
                     font-size: 13px;
                     color: var(--gpv-color-muted);
                 }
 
                 .gpv-sync-help.gpv-ocbc-target-summary {
-                    margin: 6px 0 14px 0;
+                    margin: 0;
                 }
 
                 .gpv-sync-help--lead {
-                    margin-top: 0;
+                    margin: 0;
                     font-size: 13px;
                     color: #4b5563;
                     line-height: 1.45;
@@ -11170,7 +11179,7 @@ syncUi.update = function updateSyncUI() {
                     display: flex;
                     gap: var(--gpv-space-3);
                     flex-wrap: wrap;
-                    margin-top: var(--gpv-space-3);
+                    margin-top: var(--gpv-space-1);
                 }
 
                 .gpv-sync-advanced {
@@ -11376,6 +11385,8 @@ syncUi.update = function updateSyncUI() {
                 .gpv-conflict-actions {
                     display: flex;
                     justify-content: center;
+                    gap: var(--gpv-space-3);
+                    flex-wrap: wrap;
                 }
 
                 .gpv-conflict-diff {
@@ -11459,10 +11470,28 @@ syncUi.update = function updateSyncUI() {
                 .gpv-fsm-portfolio-list-row,
                 .gpv-summary-row {
                     display: flex;
-                    gap: 8px;
+                    gap: var(--gpv-space-2);
                     align-items: center;
                     flex-wrap: wrap;
-                    margin-bottom: 10px;
+                    margin-bottom: var(--gpv-space-3);
+                }
+
+                .gpv-fsm-manager,
+                .gpv-fsm-overview {
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--gpv-space-3);
+                }
+
+                .gpv-fsm-manager,
+                .gpv-fsm-overview {
+                    align-items: stretch;
+                }
+
+                .gpv-fsm-portfolio-list {
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--gpv-space-2);
                 }
 
                 .gpv-fsm-section[hidden] {
@@ -11477,6 +11506,10 @@ syncUi.update = function updateSyncUI() {
                     font-size: 13px;
                 }
 
+                .gpv-summary-row {
+                    margin-bottom: var(--gpv-space-4);
+                }
+
                 .gpv-fsm-filter-input {
                     width: 220px;
                     max-width: 100%;
@@ -11488,6 +11521,7 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-fsm-portfolio-list-row {
                     justify-content: space-between;
+                    margin-bottom: 0;
                 }
 
                 .gpv-fsm-portfolio-actions {
@@ -11535,7 +11569,7 @@ syncUi.update = function updateSyncUI() {
                     justify-content: space-between;
                     gap: 12px;
                     flex-wrap: wrap;
-                    margin-bottom: 12px;
+                    margin-bottom: 0;
                 }
 
                 .gpv-fsm-overview-copy {
@@ -11549,6 +11583,15 @@ syncUi.update = function updateSyncUI() {
                     display: grid;
                     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
                     gap: 12px;
+                }
+
+                .gpv-fsm-filter-toolbar {
+                    margin-bottom: var(--gpv-space-4);
+                }
+
+                .gpv-fsm-table-wrap,
+                .gpv-table-wrap {
+                    margin-bottom: var(--gpv-space-4);
                 }
 
                 .gpv-fsm-overview-card {
