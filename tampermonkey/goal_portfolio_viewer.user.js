@@ -7935,8 +7935,23 @@ let GoalTargetStore;
         return controls;
     }
 
-    function buildBalanceCopyControls(goalTypeModel) {
+    function buildValueCopyControls({
+        variant = 'inline',
+        controlsClassName = '',
+        ...copyControlOptions
+    }) {
+        const variantClassName = variant === 'section' ? 'gpv-balance-copy-controls--section' : '';
+        const mergedControlsClassName = ['gpv-balance-copy-controls', variantClassName, controlsClassName]
+            .filter(Boolean)
+            .join(' ');
         return buildCopyControls({
+            ...copyControlOptions,
+            controlsClassName: mergedControlsClassName
+        });
+    }
+
+    function buildBalanceCopyControls(goalTypeModel) {
+        return buildValueCopyControls({
             buttonLabel: 'Copy balances row',
             emptyMessage: 'No goals to copy',
             successMessage: () => {
@@ -10684,6 +10699,10 @@ syncUi.update = function updateSyncUI() {
             .gpv-balance-copy-controls--section {
                 justify-content: flex-start;
                 margin: 0 0 16px 0;
+            }
+
+            .gpv-balance-copy-controls--ocbc-values {
+                margin: 8px 0 10px 0;
             }
 
             .gpv-balance-copy-button {
@@ -14671,7 +14690,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
                         }, 0);
                         section.appendChild(createElement('p', 'gpv-sync-help gpv-ocbc-target-summary', `${subPortfolioName || subPortfolioId} instrument targets: ${buildAssignedCoverageText(configuredInstrumentTargets)}`));
-                        copyControls = buildCopyControls({
+                        copyControls = buildValueCopyControls({
+                            variant: 'section',
+                            controlsClassName: 'gpv-balance-copy-controls--ocbc-values',
                             buttonLabel: 'Copy Values',
                             buttonAriaLabel: `Copy values for sub-portfolio ${subPortfolioName || subPortfolioId}`,
                             emptyMessage: 'No assigned instruments',
@@ -14681,8 +14702,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                                     const rawValue = row?.currentValueLcy;
                                     return rawValue === null || rawValue === undefined ? '' : String(rawValue);
                                 })
-                                .join('\t'),
-                            controlsClassName: 'gpv-balance-copy-controls gpv-balance-copy-controls--section'
+                                .join('\t')
                         });
                     }
                     if (copyControls) {

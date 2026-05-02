@@ -2496,6 +2496,7 @@ describe('initialization and URL monitoring', () => {
         expect(sectionSummary?.classList.contains('gpv-ocbc-target-summary')).toBe(true);
         const sectionActions = sectionSummary?.nextElementSibling;
         expect(sectionActions?.classList.contains('gpv-balance-copy-controls--section')).toBe(true);
+        expect(sectionActions?.classList.contains('gpv-balance-copy-controls--ocbc-values')).toBe(true);
         expect(sectionActions?.contains(copyButton)).toBe(true);
         const status = sectionActions?.querySelector('.gpv-balance-copy-status');
         expect(status).toBeTruthy();
