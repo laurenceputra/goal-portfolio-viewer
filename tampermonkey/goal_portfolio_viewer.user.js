@@ -7325,6 +7325,51 @@ let GoalTargetStore;
         return item;
     }
 
+    function createKeyboardSelectableCard(element, { ariaLabel, onSelect }) {
+        if (!element) {
+            return element;
+        }
+        element.setAttribute('role', 'button');
+        element.setAttribute('tabindex', '0');
+        if (ariaLabel) {
+            element.setAttribute('aria-label', ariaLabel);
+        }
+        if (typeof onSelect === 'function') {
+            const handleSelect = event => {
+                if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') {
+                    return;
+                }
+                if (event.type === 'keydown') {
+                    event.preventDefault();
+                }
+                onSelect(event);
+            };
+            element.addEventListener('click', handleSelect);
+            element.addEventListener('keydown', handleSelect);
+        }
+        return element;
+    }
+
+    function createTableCell(value, className = null) {
+        return createElement('td', className, value);
+    }
+
+    function createPercentTargetInput(value, ariaLabel, onChange) {
+        const input = createElement('input', 'gpv-target-input');
+        input.type = 'number';
+        input.min = '0';
+        input.max = '100';
+        input.step = '0.01';
+        input.value = Number.isFinite(value) ? value.toFixed(2) : '';
+        if (ariaLabel) {
+            input.setAttribute('aria-label', ariaLabel);
+        }
+        if (typeof onChange === 'function') {
+            input.onchange = onChange;
+        }
+        return input;
+    }
+
     function buildBucketStatsFragment({
         endingBalanceDisplay,
         returnDisplay,
@@ -7771,9 +7816,9 @@ let GoalTargetStore;
         summaryViewModel.buckets.forEach(bucketModel => {
             const bucketCard = createElement('div', 'gpv-bucket-card');
             bucketCard.dataset.bucket = bucketModel.bucketName;
-            bucketCard.setAttribute('role', 'button');
-            bucketCard.setAttribute('tabindex', '0');
-            bucketCard.setAttribute('aria-label', `Open ${bucketModel.bucketName} bucket`);
+            createKeyboardSelectableCard(bucketCard, {
+                ariaLabel: `Open ${bucketModel.bucketName} bucket`
+            });
 
             const bucketHeader = createElement('div', 'gpv-bucket-header');
             const bucketTitle = createElement('h2', 'gpv-bucket-title', bucketModel.bucketName);
@@ -7914,33 +7959,58 @@ let GoalTargetStore;
         statusElement.setAttribute('aria-live', isError ? 'assertive' : 'polite');
     }
 
-    function buildBalanceCopyControls(goalTypeModel) {
-        const controls = createElement('div', 'gpv-balance-copy-controls');
-
-        const copyButton = createElement('button', 'gpv-section-toggle gpv-balance-copy-button', 'Copy balances row');
+    function buildCopyControls({
+        buttonLabel,
+        buttonAriaLabel = null,
+        emptyMessage,
+        successMessage,
+        copyText,
+        controlsClassName = 'gpv-balance-copy-controls',
+        buttonClassName = 'gpv-section-toggle gpv-balance-copy-button',
+        statusClassName = 'gpv-balance-copy-status'
+    }) {
+        const controls = createElement('div', controlsClassName);
+        const copyButton = createElement('button', buttonClassName, buttonLabel);
         copyButton.type = 'button';
-
-        const status = createElement('div', 'gpv-balance-copy-status');
+        if (buttonAriaLabel) {
+            copyButton.setAttribute('aria-label', buttonAriaLabel);
+        }
+        const status = createElement('div', statusClassName);
         status.setAttribute('role', 'status');
         status.setAttribute('aria-live', 'polite');
-
+        status.setAttribute('aria-atomic', 'true');
         copyButton.addEventListener('click', async () => {
-            const matchingGoals = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
-            if (matchingGoals.length === 0) {
-                setBalanceCopyFeedback(status, 'No goals to copy');
-                return;
-            }
             try {
-                await copyTextToClipboard(buildGoalBalancesTsvRow(matchingGoals));
-                setBalanceCopyFeedback(status, `Copied ${matchingGoals.length} balances`);
+                const payload = typeof copyText === 'function' ? copyText() : '';
+                if (!payload) {
+                    setBalanceCopyFeedback(status, emptyMessage || 'Nothing to copy');
+                    return;
+                }
+                await copyTextToClipboard(payload);
+                const success = typeof successMessage === 'function' ? successMessage(payload) : successMessage;
+                setBalanceCopyFeedback(status, success || 'Copied');
             } catch (_error) {
                 setBalanceCopyFeedback(status, 'Copy failed', 'error');
             }
         });
-
         controls.appendChild(copyButton);
         controls.appendChild(status);
         return controls;
+    }
+
+    function buildBalanceCopyControls(goalTypeModel) {
+        return buildCopyControls({
+            buttonLabel: 'Copy balances row',
+            emptyMessage: 'No goals to copy',
+            successMessage: () => {
+                const matchingGoals = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
+                return `Copied ${matchingGoals.length} balances`;
+            },
+            copyText: () => {
+                const matchingGoals = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
+                return matchingGoals.length > 0 ? buildGoalBalancesTsvRow(matchingGoals) : '';
+            }
+        });
     }
 
     function renderBucketView({
@@ -9317,11 +9387,7 @@ function renderSyncOverlayView({
         overlay.remove();
     };
 
-    const header = document.createElement('div');
-    header.className = 'gpv-header';
-
-    const headerButtons = document.createElement('div');
-    headerButtons.className = 'gpv-header-buttons';
+    const actionButtons = [];
 
     if (typeof onBack === 'function') {
         const backBtn = document.createElement('button');
@@ -9333,7 +9399,7 @@ function renderSyncOverlayView({
             closeOverlay();
             onBack();
         };
-        headerButtons.appendChild(backBtn);
+        actionButtons.push(backBtn);
     }
 
     const closeBtn = document.createElement('button');
@@ -9341,15 +9407,16 @@ function renderSyncOverlayView({
     closeBtn.type = 'button';
     closeBtn.textContent = '✕';
     closeBtn.onclick = closeOverlay;
-    headerButtons.appendChild(closeBtn);
-
-    const titleNode = document.createElement('h1');
-    titleNode.textContent = title;
+    const { header } = buildOverlayHeader({
+        title,
+        actionButtons,
+        closeButton: closeBtn
+    });
     const titleId = 'gpv-sync-overlay-title';
-    titleNode.id = titleId;
-
-    header.appendChild(titleNode);
-    header.appendChild(headerButtons);
+    const headerTitleNode = header.querySelector('h1');
+    if (headerTitleNode) {
+        headerTitleNode.id = titleId;
+    }
 
     const body = document.createElement('div');
     body.className = 'gpv-content';
@@ -9828,8 +9895,8 @@ syncUi.update = function updateSyncUI() {
                 --gpv-line-height: 1.45;
                 --gpv-space-1: 6px;
                 --gpv-space-2: 8px;
-                --gpv-space-3: 12px;
-                --gpv-space-4: 16px;
+                --gpv-space-3: 10px;
+                --gpv-space-4: 14px;
                 --gpv-space-5: 20px;
                 --gpv-space-6: 24px;
                 --gpv-radius-sm: 8px;
@@ -10019,7 +10086,7 @@ syncUi.update = function updateSyncUI() {
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                padding: 16px 24px;
+                padding: 14px 20px;
                 border-bottom: 1px solid #e5e7eb;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 border-radius: 20px 20px 0 0;
@@ -10043,7 +10110,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-header-buttons {
                 display: flex;
                 align-items: center;
-                gap: 12px;
+                gap: 10px;
             }
             
             .gpv-close-btn {
@@ -10051,8 +10118,8 @@ syncUi.update = function updateSyncUI() {
                 border: none;
                 color: #ffffff;
                 font-size: 24px;
-                width: 36px;
-                height: 36px;
+                width: 34px;
+                height: 34px;
                 border-radius: 50%;
                 cursor: pointer;
                 display: flex;
@@ -10119,12 +10186,12 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-controls {
-                padding: 12px 24px;
+                padding: 10px 20px;
                 background: #f9fafb;
                 border-bottom: 1px solid #e5e7eb;
                 display: flex;
                 align-items: center;
-                gap: 12px;
+                gap: 10px;
             }
             
             .gpv-select-label {
@@ -10200,7 +10267,7 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-content {
                 overflow-y: auto;
-                padding: 16px 24px;
+                padding: 14px 20px;
                 flex: 1;
             }
             
@@ -10361,7 +10428,7 @@ syncUi.update = function updateSyncUI() {
                 border: 1px solid #dbeafe;
                 border-radius: 12px;
                 background: #f8fbff;
-                padding: 16px;
+                padding: 14px;
             }
 
             .gpv-readiness.gpv-readiness-ready {
@@ -10486,7 +10553,7 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-stats {
                 display: flex;
-                gap: 24px;
+                gap: 20px;
             }
 
             .gpv-bucket-stats {
@@ -11843,7 +11910,7 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-conflict-diff {
                     margin-bottom: 15px;
-                    padding: 16px;
+                    padding: 14px;
                     background: #f8fafc;
                     border-radius: 8px;
                     border: 1px solid #e5e7eb;
@@ -12719,20 +12786,16 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function buildFsmHeader({ overlay, cleanupCallbacks, titleText = 'Portfolio Viewer (FSM)', syncReturnTo = 'fsm' }) {
-        const header = createElement('div', 'gpv-header');
-        const title = createElement('h1', null, titleText);
-        const titleId = 'gpv-portfolio-title';
-        title.id = titleId;
-
-        const buttonContainer = createElement('div', 'gpv-header-buttons');
-        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
-        syncBtn.title = 'Configure cross-device sync';
-        syncBtn.onclick = () => {
-            if (typeof showSyncSettings === 'function') {
-                showSyncSettings({ returnTo: syncReturnTo });
-            }
+        const createSyncButton = () => {
+            const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
+            syncBtn.title = 'Configure cross-device sync';
+            syncBtn.onclick = () => {
+                if (typeof showSyncSettings === 'function') {
+                    showSyncSettings({ returnTo: syncReturnTo });
+                }
+            };
+            return syncBtn;
         };
-
         const closeBtn = createElement('button', 'gpv-close-btn', '✕');
         const closeOverlay = () => {
             if (!overlay.isConnected) {
@@ -12748,11 +12811,34 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         };
         closeBtn.onclick = closeOverlay;
 
-        buttonContainer.appendChild(syncBtn);
-        buttonContainer.appendChild(closeBtn);
-        header.appendChild(title);
-        header.appendChild(buttonContainer);
+        const { header, titleId } = buildOverlayHeader({
+            title: titleText,
+            actionButtons: [createSyncButton()],
+            closeButton: closeBtn
+        });
         return { header, closeBtn, titleId, closeOverlay };
+    }
+
+    function buildOverlayHeader({ title, actionButtons = [], closeButton, centerNode = null }) {
+        const header = createElement('div', 'gpv-header');
+        const titleNode = createElement('h1', null, title || 'Portfolio Viewer');
+        const titleId = 'gpv-portfolio-title';
+        titleNode.id = titleId;
+        const buttonContainer = createElement('div', 'gpv-header-buttons');
+        actionButtons.forEach(button => {
+            if (button) {
+                buttonContainer.appendChild(button);
+            }
+        });
+        if (closeButton) {
+            buttonContainer.appendChild(closeButton);
+        }
+        header.appendChild(titleNode);
+        if (centerNode) {
+            header.appendChild(centerNode);
+        }
+        header.appendChild(buttonContainer);
+        return { header, titleId };
     }
 
     function calculateFsmRowDrift(total, row) {
@@ -13024,10 +13110,15 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 ? 'gpv-fsm-overview-card gpv-fsm-overview-card--unassigned'
                 : 'gpv-fsm-overview-card';
             const buttonCard = createElement('div', className);
-            buttonCard.setAttribute('role', 'button');
-            buttonCard.setAttribute('tabindex', '0');
             buttonCard.dataset.scope = card.id;
-            buttonCard.setAttribute('aria-label', `Open ${card.label} holdings`);
+            createKeyboardSelectableCard(buttonCard, {
+                ariaLabel: `Open ${card.label} holdings`,
+                onSelect: () => {
+                    if (typeof onSelectScope === 'function') {
+                        onSelectScope(card.id);
+                    }
+                }
+            });
             buttonCard.innerHTML = `
                 <div class="gpv-fsm-overview-card-header">
                     <div>
@@ -13062,19 +13153,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 });
                 buttonCard.appendChild(reasonList);
             }
-            const handleSelect = event => {
-                if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') {
-                    return;
-                }
-                if (event.type === 'keydown') {
-                    event.preventDefault();
-                }
-                if (typeof onSelectScope === 'function') {
-                    onSelectScope(card.id);
-                }
-            };
-            buttonCard.addEventListener('click', handleSelect);
-            buttonCard.addEventListener('keydown', handleSelect);
             grid.appendChild(buttonCard);
         });
         wrapper.appendChild(grid);
@@ -14555,20 +14633,16 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     const driftModel = targetPercent === null
                         ? { driftPercent: null, driftAmount: null }
                         : calculateAllocationDrift(subPortfolioValue, targetPercent, portfolioTotal);
-                    tr.appendChild(createElement('td', null, subPortfolio.name));
-                    tr.appendChild(createElement('td', null, formatMoney(subPortfolioValue)));
-                    tr.appendChild(createElement('td', null, formatPercent(currentPercent, { multiplier: 100, showSign: false })));
+                    tr.appendChild(createTableCell(subPortfolio.name));
+                    tr.appendChild(createTableCell(formatMoney(subPortfolioValue)));
+                    tr.appendChild(createTableCell(formatPercent(currentPercent, { multiplier: 100, showSign: false })));
 
                     const targetCell = createElement('td');
                     if (subPortfolio.id) {
-                        const targetInput = createElement('input', 'gpv-target-input');
-                        targetInput.type = 'number';
-                        targetInput.min = '0';
-                        targetInput.max = '100';
-                        targetInput.step = '0.01';
-                        targetInput.value = Number.isFinite(targetPercent) ? targetPercent.toFixed(2) : '';
-                        targetInput.setAttribute('aria-label', `Target percentage for portfolio ${portfolioNo} sub-portfolio ${subPortfolio.name}`);
-                        targetInput.onchange = () => {
+                        const targetInput = createPercentTargetInput(
+                            targetPercent,
+                            `Target percentage for portfolio ${portfolioNo} sub-portfolio ${subPortfolio.name}`,
+                            () => {
                             const parsed = toOptionalFiniteNumber(targetInput.value);
                             const scope = buildOcbcTargetScope(activeView, portfolioNo, subPortfolio.id, '');
                             if (parsed === null) {
@@ -14593,15 +14667,16 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                                 }
                             }
                             rerender();
-                        };
+                            }
+                        );
                         targetCell.appendChild(targetInput);
                     } else {
                         targetCell.textContent = '-';
                     }
                     tr.appendChild(targetCell);
-                    tr.appendChild(createElement('td', getDriftSeverityClass(driftModel?.driftPercent), formatDriftDisplay(driftModel?.driftPercent, driftModel?.driftAmount)));
-                    tr.appendChild(createElement('td', null, String(subPortfolio.rows.length)));
-                    tr.appendChild(createElement('td', subPortfolioSummary?.profitClass, subPortfolioSummary?.profitDisplay || '-'));
+                    tr.appendChild(createTableCell(formatDriftDisplay(driftModel?.driftPercent, driftModel?.driftAmount), getDriftSeverityClass(driftModel?.driftPercent)));
+                    tr.appendChild(createTableCell(String(subPortfolio.rows.length)));
+                    tr.appendChild(createTableCell(subPortfolioSummary?.profitDisplay || '-', subPortfolioSummary?.profitClass));
                     subPortfolioBody.appendChild(tr);
                 });
                 section.appendChild(createElement(
@@ -14659,34 +14734,19 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
                         }, 0);
                         section.appendChild(createElement('p', 'gpv-sync-help gpv-ocbc-target-summary', `${subPortfolioName || subPortfolioId} instrument targets: ${buildAssignedCoverageText(configuredInstrumentTargets)}`));
-                        const status = createElement('span', 'gpv-balance-copy-status');
-                        status.setAttribute('role', 'status');
-                        status.setAttribute('aria-live', 'polite');
-                        status.setAttribute('aria-atomic', 'true');
-                        copyControls = createElement('div', 'gpv-balance-copy-controls gpv-balance-copy-controls--section');
-                        const copyButton = createElement('button', 'gpv-section-toggle gpv-balance-copy-button', 'Copy Values');
-                        copyButton.type = 'button';
-                        copyButton.setAttribute('aria-label', `Copy values for sub-portfolio ${subPortfolioName || subPortfolioId}`);
-                        copyButton.onclick = async () => {
-                            if (orderedRows.length === 0) {
-                                setBalanceCopyFeedback(status, 'No assigned instruments');
-                                return;
-                            }
-                            const valuesLine = orderedRows
+                        copyControls = buildCopyControls({
+                            buttonLabel: 'Copy Values',
+                            buttonAriaLabel: `Copy values for sub-portfolio ${subPortfolioName || subPortfolioId}`,
+                            emptyMessage: 'No assigned instruments',
+                            successMessage: () => `Copied ${orderedRows.length} values`,
+                            copyText: () => orderedRows
                                 .map(row => {
                                     const rawValue = row?.currentValueLcy;
                                     return rawValue === null || rawValue === undefined ? '' : String(rawValue);
                                 })
-                                .join('\t');
-                            try {
-                                await copyTextToClipboard(valuesLine);
-                                setBalanceCopyFeedback(status, `Copied ${orderedRows.length} values`);
-                            } catch (_error) {
-                                setBalanceCopyFeedback(status, 'Copy failed', 'error');
-                            }
-                        };
-                        copyControls.appendChild(copyButton);
-                        copyControls.appendChild(status);
+                                .join('\t'),
+                            controlsClassName: 'gpv-balance-copy-controls gpv-balance-copy-controls--section'
+                        });
                     }
                     if (copyControls) {
                         section.appendChild(copyControls);
@@ -14735,15 +14795,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             ? getOcbcInstrumentTargetPercent(activeView, portfolioNo, effectiveSubPortfolioId, row)
                             : null;
                         if (effectiveSubPortfolioId) {
-                            const targetInput = createElement('input', 'gpv-target-input');
                             const inputSubPortfolioName = subPortfolioName || (persistedSubPortfolios.find(item => item.id === effectiveSubPortfolioId)?.name) || effectiveSubPortfolioId;
-                            targetInput.type = 'number';
-                            targetInput.min = '0';
-                            targetInput.max = '100';
-                            targetInput.step = '0.01';
-                            targetInput.value = Number.isFinite(targetPercent) ? targetPercent.toFixed(2) : '';
-                            targetInput.setAttribute('aria-label', `Target percentage for instrument ${row.displayTicker || row.code || row.name || '-'} in sub-portfolio ${inputSubPortfolioName}`);
-                            targetInput.onchange = () => {
+                            const targetInput = createPercentTargetInput(
+                                targetPercent,
+                                `Target percentage for instrument ${row.displayTicker || row.code || row.name || '-'} in sub-portfolio ${inputSubPortfolioName}`,
+                                () => {
                                 const parsed = toOptionalFiniteNumber(targetInput.value);
                                 const scope = buildOcbcTargetScope(activeView, portfolioNo, effectiveSubPortfolioId, code);
                                 if (parsed === null) {
@@ -14768,7 +14824,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                                     }
                                 }
                                 rerender();
-                            };
+                                }
+                            );
                             targetCell.appendChild(targetInput);
                         } else {
                             targetCell.textContent = '-';
@@ -14962,12 +15019,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         container.gpvCleanupCallbacks = cleanupCallbacks;
         overlay.gpvCleanupCallbacks = cleanupCallbacks;
 
-        const header = createElement('div', 'gpv-header');
-        const heading = createElement('h1', null, title || 'Portfolio Viewer');
-        const titleId = 'gpv-portfolio-title';
-        heading.id = titleId;
-
-        const buttonContainer = createElement('div', 'gpv-header-buttons');
         const closeBtn = createElement('button', 'gpv-close-btn', '✕');
         closeBtn.type = 'button';
 
@@ -14986,9 +15037,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
 
         closeBtn.onclick = closeOverlay;
-        buttonContainer.appendChild(closeBtn);
-        header.appendChild(heading);
-        header.appendChild(buttonContainer);
+        const { header, titleId } = buildOverlayHeader({
+            title: title || 'Portfolio Viewer',
+            closeButton: closeBtn
+        });
         container.appendChild(header);
 
         const contentDiv = createElement('div', 'gpv-content');
@@ -15126,11 +15178,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         container.gpvCleanupCallbacks = cleanupCallbacks;
         overlay.gpvCleanupCallbacks = cleanupCallbacks;
 
-        const header = createElement('div', 'gpv-header');
-        const title = createElement('h1', null, 'Portfolio Viewer');
-        const titleId = 'gpv-portfolio-title';
-        title.id = titleId;
-        
         // Add sync status indicator if sync is enabled
         const syncIndicatorContainer = createElement('div', 'gpv-sync-indicator-container');
         if (typeof createSyncIndicatorHTML === 'function') {
@@ -15144,9 +15191,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
         }
         
-        // Create button container for sync and close buttons
-        const buttonContainer = createElement('div', 'gpv-header-buttons');
-        
         // Add sync settings button
         const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
         syncBtn.title = 'Configure cross-device sync';
@@ -15158,6 +15202,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 alert('Sync settings are not available. Please ensure the sync module is loaded.');
             }
         };
+
+        const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary gpv-bucket-manage-btn', '🗂️ Buckets');
+        bucketManageBtn.type = 'button';
+        bucketManageBtn.title = 'Manage Endowus bucket assignments';
 
         let isOverlayExpanded = false;
         const expandBtn = createElement('button', 'gpv-expand-btn');
@@ -15203,14 +15251,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
 
         closeBtn.onclick = closeOverlay;
-        
-        buttonContainer.appendChild(syncBtn);
-        buttonContainer.appendChild(expandBtn);
-        buttonContainer.appendChild(closeBtn);
-        
-        header.appendChild(title);
-        header.appendChild(syncIndicatorContainer);
-        header.appendChild(buttonContainer);
+
+        const { header, titleId } = buildOverlayHeader({
+            title: 'Portfolio Viewer',
+            actionButtons: [bucketManageBtn, syncBtn, expandBtn],
+            closeButton: closeBtn,
+            centerNode: syncIndicatorContainer
+        });
         container.appendChild(header);
 
         const controls = createElement('div', 'gpv-controls');
@@ -15495,9 +15542,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             });
         }
 
-        const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary gpv-bucket-manage-btn', '🗂️ Buckets');
-        bucketManageBtn.type = 'button';
-        bucketManageBtn.title = 'Manage Endowus bucket assignments';
         bucketManageBtn.addEventListener('click', () => {
             const managerView = renderSyncOverlayView({
                 title: 'Bucket Manager',
@@ -15507,7 +15551,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             });
             setupBucketManagerListeners(managerView?.body);
         });
-        buttonContainer.insertBefore(bucketManageBtn, syncBtn);
 
         select.onchange = function() {
             renderView(select.value, { scrollToTop: true });

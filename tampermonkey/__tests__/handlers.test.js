@@ -325,11 +325,13 @@ describe('handlers and cache', () => {
 
         const above = GoalTargetStore.setTarget('g-above', 150);
         expect(above).toBe(100);
-        expect(storage.get('goal_target_pct_g-above')).toBe(100);
+        const endowusAfterAbove = JSON.parse(storage.get('endowus'));
+        expect(endowusAfterAbove.goalTargets['g-above']).toBe(100);
 
         const below = GoalTargetStore.setTarget('g-below', -10);
         expect(below).toBe(0);
-        expect(storage.get('goal_target_pct_g-below')).toBe(0);
+        const endowusAfterBelow = JSON.parse(storage.get('endowus'));
+        expect(endowusAfterBelow.goalTargets['g-below']).toBe(0);
     });
 
     test('handleGoalFixedToggle disables target input and stores flag', () => {
@@ -699,9 +701,9 @@ describe('handlers and cache', () => {
         baseFetchMock.mockResolvedValueOnce(responseFactory(body));
 
         await window.fetch('/v1/goals/performance');
-        const stored = storage.get('api_performance');
+        const stored = storage.get('endowus');
         expect(stored).toBeDefined();
-        expect(JSON.parse(stored)).toEqual(body);
+        expect(JSON.parse(stored).performance).toEqual(body);
     });
 
     test('hydrateVisibleGoalMetricRows updates all matching rows', () => {
