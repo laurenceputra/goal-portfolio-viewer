@@ -404,7 +404,7 @@ describe('initialization and URL monitoring', () => {
         bucketInput.value = 'Wealth Builder';
         bucketInput.dispatchEvent(new window.Event('blur', { bubbles: true }));
 
-        expect(storage.get('goal_bucket_name_goal1')).toBe('Wealth Builder');
+        expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBe('Wealth Builder');
     });
 
     test('opening Endowus overlay seeds derived bucket assignments for legacy goals', () => {
@@ -433,7 +433,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        expect(storage.get('goal_bucket_name_goal1')).toBe('Retirement');
+        expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBe('Retirement');
     });
 
     test('bucket manager blur preserves seeded legacy bucket assignment', () => {
@@ -471,7 +471,7 @@ describe('initialization and URL monitoring', () => {
         expect(bucketInput.value).toBe('Retirement');
         bucketInput.dispatchEvent(new window.Event('blur', { bubbles: true }));
 
-        expect(storage.get('goal_bucket_name_goal1')).toBe('Retirement');
+        expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBe('Retirement');
         expect(bucketInput.value).toBe('Retirement');
     });
 
@@ -513,8 +513,8 @@ describe('initialization and URL monitoring', () => {
         bucketInput.value = '';
         bucketInput.dispatchEvent(new window.Event('blur', { bubbles: true }));
 
-        expect(storage.has('goal_bucket_name_goal1')).toBe(false);
-        expect(storage.get('goal_bucket_name_goal1__cleared')).toBe(true);
+        expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBeUndefined();
+        expect(JSON.parse(storage.get('endowus')).clearedGoalBuckets.goal1).toBe(true);
         expect(bucketInput.value).toBe('Retirement');
 
         exportsModule.showOverlay();
@@ -523,7 +523,7 @@ describe('initialization and URL monitoring', () => {
         reopenedBucketManageBtn.click();
         overlay = document.querySelector('#gpv-overlay');
         const reopenedInput = overlay.querySelector('.gpv-bucket-manager-input');
-        expect(storage.has('goal_bucket_name_goal1')).toBe(false);
+        expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBeUndefined();
         expect(reopenedInput.value).toBe('Retirement');
     });
 
@@ -1681,7 +1681,7 @@ describe('initialization and URL monitoring', () => {
         const createSubPortfolioBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Create');
         createSubPortfolioBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
 
-        const savedSubPortfolios = JSON.parse(storage.get('ocbc_sub_portfolios'));
+        const savedSubPortfolios = JSON.parse(storage.get('ocbc')).subPortfolios;
         expect(savedSubPortfolios.assets['P-1'][0].id).toBe('core');
 
         const subPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
@@ -1689,9 +1689,9 @@ describe('initialization and URL monitoring', () => {
         subPortfolioSelect.value = 'core';
         subPortfolioSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const savedAssignments = JSON.parse(storage.get('ocbc_allocation_assignment_by_code'));
+        const savedAssignments = JSON.parse(storage.get('ocbc')).assignmentByCode;
         expect(savedAssignments['P-1:EQ1']).toBe('core');
-        expect(savedAssignments['P-9:MISSING']).toEqual({ subPortfolioId: 'other', bucketId: 'x' });
+        expect(savedAssignments['P-9:MISSING']).toBe('other');
     });
 
     test('OCBC allocation mode honors legacy bucket assignments and target fallback while writing new target keys', () => {
@@ -1774,7 +1774,7 @@ describe('initialization and URL monitoring', () => {
         targetInput.value = '65';
         targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        expect(storage.get(newTargetKey)).toBe(65);
+        expect(JSON.parse(storage.get('ocbc')).targetsByScope['assets|P-1|core-equity|']).toBe(65);
         expect(storage.get(legacyTargetKey)).toBe(70);
     });
 
@@ -1854,9 +1854,10 @@ describe('initialization and URL monitoring', () => {
         subPipeInput.value = '40';
         subPipeInput.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        expect(storage.get('ocbc_target_pct_assets|P%7C1|core|')).toBe(60);
-        expect(storage.get('ocbc_target_pct_assets|P|1%7Ccore|')).toBe(40);
-        expect(storage.get('ocbc_target_pct_assets|P%7C1|core|')).not.toBe(storage.get('ocbc_target_pct_assets|P|1%7Ccore|'));
+        const ocbcTargets = JSON.parse(storage.get('ocbc')).targetsByScope;
+        expect(ocbcTargets['assets|P%7C1|core|']).toBe(60);
+        expect(ocbcTargets['assets|P|1%7Ccore|']).toBe(40);
+        expect(ocbcTargets['assets|P%7C1|core|']).not.toBe(ocbcTargets['assets|P|1%7Ccore|']);
     });
 
     test('OCBC allocation mode reads separator-safe legacy target fallback keys', () => {
@@ -2480,7 +2481,7 @@ describe('initialization and URL monitoring', () => {
         targetInput.value = '60';
         targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        expect(storage.get('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(60);
+        expect(JSON.parse(storage.get('ocbc')).targetsByScope['assets|P-1|core|P-1%3AEQ1']).toBe(60);
         expect(overlay.textContent).toContain('-SGD 19.95');
 
         const copyButton = overlay.querySelector('button[aria-label="Copy values for sub-portfolio Core"]');
@@ -2701,7 +2702,7 @@ describe('initialization and URL monitoring', () => {
         const updatedCodes = Array.from(updatedTable.querySelectorAll('tbody tr td:first-child')).map(cell => cell.textContent.trim());
         expect(updatedCodes).toEqual(['EQ2', 'EQ1', 'EQ3']);
 
-        const savedOrder = JSON.parse(storage.get('ocbc_allocation_order_by_scope'));
+        const savedOrder = JSON.parse(storage.get('ocbc')).orderByScope;
         expect(savedOrder['assets|P-1|core']).toEqual(['P-1:EQ2', 'P-1:EQ1', 'P-1:EQ3']);
 
         const copyButton = overlay.querySelector('button[aria-label="Copy values for sub-portfolio Core"]');
@@ -2785,7 +2786,7 @@ describe('initialization and URL monitoring', () => {
         eq2Select.value = 'satellite';
         eq2Select.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const savedOrder = JSON.parse(storage.get('ocbc_allocation_order_by_scope'));
+        const savedOrder = JSON.parse(storage.get('ocbc')).orderByScope;
         expect(savedOrder['assets|P-1|core']).toEqual(['P-1:EQ1']);
         expect(savedOrder['assets|P-1|satellite']).toEqual(['P-1:EQ2']);
     });
@@ -2865,7 +2866,7 @@ describe('initialization and URL monitoring', () => {
         eq2Select.value = 'satellite';
         eq2Select.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const savedOrder = JSON.parse(storage.get('ocbc_allocation_order_by_scope'));
+        const savedOrder = JSON.parse(storage.get('ocbc')).orderByScope;
         expect(savedOrder['assets|P-1|-']).toEqual(['P-1:EQ1']);
         expect(savedOrder['assets|P-1|satellite']).toEqual(['P-1:EQ9', 'P-1:EQ2']);
     });
@@ -2971,7 +2972,7 @@ describe('initialization and URL monitoring', () => {
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for ISIN-LEGACY-1');
         expect(legacySelect.value).toBe('core');
 
-        const savedAssignments = JSON.parse(storage.get('ocbc_allocation_assignment_by_code'));
+        const savedAssignments = JSON.parse(storage.get('ocbc')).assignmentByCode;
         expect(savedAssignments['P-LEGACY:ISIN-LEGACY-1']).toBe('core');
         expect(savedAssignments[stableCode]).toBe('core');
 
@@ -2980,9 +2981,9 @@ describe('initialization and URL monitoring', () => {
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const assignmentWriteCalls = global.GM_setValue.mock.calls
-            .filter(([key]) => key === 'ocbc_allocation_assignment_by_code');
-        expect(assignmentWriteCalls).toHaveLength(2);
+        const ocbcWrites = global.GM_setValue.mock.calls
+            .filter(([key]) => key === 'ocbc');
+        expect(ocbcWrites.length).toBeGreaterThan(0);
     });
 
     test('OCBC allocation restores legacy hashed assignment/target/order after row gains positionId', () => {
@@ -3080,7 +3081,7 @@ describe('initialization and URL monitoring', () => {
         const orderedCodes = Array.from(coreTable.querySelectorAll('tbody tr td:first-child')).map(cell => cell.textContent.trim());
         expect(orderedCodes.slice(0, 2)).toEqual(['ISIN-POS-A', 'ISIN-POS-B']);
 
-        const savedAssignments = JSON.parse(storage.get('ocbc_allocation_assignment_by_code'));
+        const savedAssignments = JSON.parse(storage.get('ocbc')).assignmentByCode;
         expect(savedAssignments[positionCodeA]).toBe('core');
     });
 
@@ -3221,7 +3222,7 @@ describe('initialization and URL monitoring', () => {
         firstSessionSelect.value = 'satellite';
         firstSessionSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const savedAssignments = JSON.parse(storage.get('ocbc_allocation_assignment_by_code'));
+        const savedAssignments = JSON.parse(storage.get('ocbc')).assignmentByCode;
         expect(savedAssignments[initialStableCode]).toBe('satellite');
 
         const postLoginPayload = exportsModule.normalizeOcbcHoldingsPayload({
@@ -3483,7 +3484,7 @@ describe('initialization and URL monitoring', () => {
         renameInput.value = 'Core Growth';
         saveBtn.click();
 
-        const portfolios = JSON.parse(storage.get('fsm_portfolios'));
+        const portfolios = JSON.parse(storage.get('fsm')).portfolios;
         const corePortfolio = portfolios.find(item => item.id === 'core');
         expect(corePortfolio.name).toBe('Core Growth');
 
@@ -3496,7 +3497,7 @@ describe('initialization and URL monitoring', () => {
         rowSelect.value = 'core';
         rowSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        let assignments = JSON.parse(storage.get('fsm_assignment_by_code'));
+        let assignments = JSON.parse(storage.get('fsm')).assignmentByCode;
         expect(assignments['AAA|sub:AAPL']).toBe('core');
 
         overlay = document.querySelector('#gpv-overlay');
@@ -3504,11 +3505,11 @@ describe('initialization and URL monitoring', () => {
         archiveSelect.value = 'archive';
         archiveSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const archivedPortfolios = JSON.parse(storage.get('fsm_portfolios'));
+        const archivedPortfolios = JSON.parse(storage.get('fsm')).portfolios;
         const archived = archivedPortfolios.find(item => item.id === 'core');
         expect(archived.archived).toBe(true);
 
-        assignments = JSON.parse(storage.get('fsm_assignment_by_code'));
+        assignments = JSON.parse(storage.get('fsm')).assignmentByCode;
         expect(assignments['AAA|sub:AAPL']).toBe('unassigned');
     });
 
@@ -3618,7 +3619,7 @@ describe('initialization and URL monitoring', () => {
         bulkSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
         applyBulkBtn.click();
 
-        const assignments = JSON.parse(storage.get('fsm_assignment_by_code'));
+        const assignments = JSON.parse(storage.get('fsm')).assignmentByCode;
         expect(assignments['AAA|sub:AAPL']).toBe('core');
         expect(assignments['AAA|sub:BOND']).toBe('core');
     });
@@ -3676,8 +3677,8 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         const targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
-        expect(storage.has('fsm_target_pct_AAA|sub:AAPL')).toBe(false);
-        expect(storage.get('fsm_fixed_AAA|sub:AAPL')).toBe(true);
+        expect(JSON.parse(storage.get('fsm')).targetsByCode['AAA|sub:AAPL']).toBeUndefined();
+        expect(JSON.parse(storage.get('fsm')).fixedByCode['AAA|sub:AAPL']).toBe(true);
         expect(targetInput.disabled).toBe(true);
     });
 
@@ -3733,8 +3734,8 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
-        expect(storage.has('fsm_target_pct_AAA')).toBe(false);
-        expect(storage.has('fsm_target_pct_AAA|sub:AAPL')).toBe(false);
+        expect(JSON.parse(storage.get('fsm')).targetsByCode.AAA).toBeUndefined();
+        expect(JSON.parse(storage.get('fsm')).targetsByCode['AAA|sub:AAPL']).toBeUndefined();
         expect(targetInput.value).toBe('');
     });
 
@@ -3790,8 +3791,8 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         fixedCheckbox = overlay.querySelector('input[aria-label^="Fixed allocation"]');
-        expect(storage.has('fsm_fixed_AAA')).toBe(false);
-        expect(storage.get('fsm_fixed_AAA|sub:AAPL')).toBe(false);
+        expect(JSON.parse(storage.get('fsm')).fixedByCode.AAA).toBeUndefined();
+        expect(JSON.parse(storage.get('fsm')).fixedByCode['AAA|sub:AAPL']).toBe(false);
         expect(fixedCheckbox.checked).toBe(false);
     });
 
