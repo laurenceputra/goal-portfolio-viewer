@@ -5,6 +5,8 @@ import { webcrypto } from 'node:crypto';
 import worker from '../src/index.js';
 import { tokens } from '../src/auth.js';
 
+const MAX_PAYLOAD_SIZE = 64 * 1024;
+
 if (!globalThis.crypto) {
   globalThis.crypto = webcrypto;
 }
@@ -59,6 +61,21 @@ function createEnv(kvOverrides = {}) {
     JWT_SECRET: 'test-secret',
     ...kvOverrides
   };
+}
+
+function createSyncRequestBodyOfSize(size, userId) {
+  const body = {
+    userId,
+    deviceId: 'device-1',
+    encryptedData: '',
+    timestamp: Date.now(),
+    version: 1
+  };
+  const baseSize = JSON.stringify(body).length;
+  body.encryptedData = 'x'.repeat(size - baseSize);
+  const jsonBody = JSON.stringify(body);
+  assert.equal(jsonBody.length, size);
+  return jsonBody;
 }
 
 test('OPTIONS request returns CORS preflight response for allowed origin', async () => {
@@ -225,7 +242,7 @@ test('POST /sync rejects payloads larger than MAX_PAYLOAD_SIZE', async () => {
     headers: {
       Authorization: `Bearer ${issuedTokens.accessToken}`,
       'Content-Type': 'application/json',
-      'Content-Length': String(10 * 1024 + 1)
+      'Content-Length': String(MAX_PAYLOAD_SIZE + 1)
     },
     body: JSON.stringify({ userId: 'payload-user', data: 'ok' })
   });
@@ -246,7 +263,7 @@ test('POST /sync rejects oversized payload without Content-Length', async () => 
       Authorization: `Bearer ${issuedTokens.accessToken}`,
       'Content-Type': 'application/json'
     },
-    body: 'x'.repeat(10 * 1024 + 1)
+    body: 'x'.repeat(MAX_PAYLOAD_SIZE + 1)
   });
 
   const response = await worker.fetch(request, env, {});
@@ -254,6 +271,42 @@ test('POST /sync rejects oversized payload without Content-Length', async () => 
 
   assert.equal(parsed.status, 413);
   assert.equal(parsed.body.error, 'PAYLOAD_TOO_LARGE');
+});
+
+test('POST /sync accepts payload exactly at MAX_PAYLOAD_SIZE boundary', async () => {
+  const scenarios = [
+    {
+      name: 'with Content-Length set to MAX_PAYLOAD_SIZE',
+      headers: {
+        'Content-Length': String(MAX_PAYLOAD_SIZE)
+      }
+    },
+    {
+      name: 'without Content-Length header',
+      headers: {}
+    }
+  ];
+
+  for (const scenario of scenarios) {
+    const env = createEnv();
+    const userId = 'boundary-user@example.com';
+    const issuedTokens = await tokens.issueTokens(userId, env);
+    const request = new Request('https://worker.example/sync', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${issuedTokens.accessToken}`,
+        'Content-Type': 'application/json',
+        ...scenario.headers
+      },
+      body: createSyncRequestBodyOfSize(MAX_PAYLOAD_SIZE, userId)
+    });
+
+    const response = await worker.fetch(request, env, {});
+    const parsed = await parseJsonResponse(response);
+
+    assert.equal(parsed.status, 200, scenario.name);
+    assert.equal(parsed.body.success, true, scenario.name);
+  }
 });
 
 test('GET/DELETE /sync/:userId blocks access for mismatched authenticated user', async () => {

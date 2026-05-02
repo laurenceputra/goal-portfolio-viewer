@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.8
-// @description  View and organize your investment portfolio by buckets with a modern interface. Groups goals by bucket names and displays comprehensive portfolio analytics. Currently supports Endowus (Singapore). Now with optional cross-device sync!
+// @version      2.14.10
+// @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
 // @match        https://secure.fundsupermart.com/fsmone/*
+// @match        https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/*
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
@@ -45,7 +46,8 @@
         performance: '/v1/goals/performance',
         investible: '/v2/goals/investible',
         summary: '/v1/goals',
-        fsmHoldings: '/fsmone/rest/holding/client/protected/find-holdings-with-pnl'
+        fsmHoldings: '/fsmone/rest/holding/client/protected/find-holdings-with-pnl',
+        ocbcHoldings: '/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry'
     };
     const SUMMARY_ENDPOINT_REGEX = /\/v1\/goals(?:[?#]|$)/;
 
@@ -54,8 +56,13 @@
         investible: 'api_investible',
         summary: 'api_summary',
         fsmHoldings: 'api_fsm_holdings',
+        ocbcHoldings: 'api_ocbc_holdings',
         fsmPortfolios: 'fsm_portfolios',
-        fsmAssignmentByCode: 'fsm_assignment_by_code'
+        fsmAssignmentByCode: 'fsm_assignment_by_code',
+        ocbcAllocationBuckets: 'ocbc_allocation_buckets',
+        ocbcSubPortfolios: 'ocbc_sub_portfolios',
+        ocbcAllocationAssignmentByCode: 'ocbc_allocation_assignment_by_code',
+        ocbcAllocationOrderByScope: 'ocbc_allocation_order_by_scope'
     };
     const STORAGE_KEY_PREFIXES = {
         goalTarget: 'goal_target_pct_',
@@ -63,6 +70,7 @@
         goalBucket: 'goal_bucket_name_',
         fsmTarget: 'fsm_target_pct_',
         fsmFixed: 'fsm_fixed_',
+        ocbcTarget: 'ocbc_target_pct_',
         performanceCache: 'gpv_performance_',
         collapseState: 'gpv_collapse_'
     };
@@ -293,6 +301,9 @@
         },
         fsmFixed(code) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.fsmFixed, code ?? '');
+        },
+        ocbcTarget(code) {
+            return buildStorageKey(STORAGE_KEY_PREFIXES.ocbcTarget, code ?? '');
         },
         performanceCache(goalId) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.performanceCache, goalId ?? '');
@@ -758,6 +769,274 @@
         } catch (_error) {
             return false;
         }
+    }
+
+    function isOcbcPortfolioHoldingsRoute(url, originFallback = 'https://internet.ocbc.com') {
+        if (typeof url !== 'string' || !url) {
+            return false;
+        }
+        try {
+            const target = new URL(url, originFallback);
+            const expectedOrigin = 'https://internet.ocbc.com';
+            const normalizedPath = target.pathname.replace(/\/+$/, '');
+            const isExpectedPath = normalizedPath === '/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings';
+            if (!isExpectedPath) {
+                return false;
+            }
+            if (target.origin === expectedOrigin) {
+                return true;
+            }
+
+            const demoRouteEnabled = typeof window !== 'undefined' && window.__GPV_OCBC_DEMO_ROUTE__ === true;
+            if (!demoRouteEnabled) {
+                return false;
+            }
+
+            return target.hostname === 'localhost' || target.hostname === '127.0.0.1';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function isOcbcDashboardRoute(url, originFallback = 'https://internet.ocbc.com') {
+        if (typeof url !== 'string' || !url) {
+            return false;
+        }
+        try {
+            const target = new URL(url, originFallback);
+            const normalizedPath = target.pathname.replace(/\/+$/, '');
+            return normalizedPath === '/internet-banking/digital/web/sg/cfo/dashboard';
+        } catch (_error) {
+            return false;
+        }
+    }
+
+    function parseOcbcNumericValue(value) {
+        if (value === null || value === undefined) {
+            return null;
+        }
+        if (typeof value === 'string' && value.trim() === '') {
+            return null;
+        }
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            const parsedValue = parseOcbcNumericValue(value.parsedValue);
+            if (parsedValue !== null) {
+                return parsedValue;
+            }
+            const parsedFromSource = parseOcbcNumericValue(value.source);
+            if (parsedFromSource !== null) {
+                return parsedFromSource;
+            }
+            return null;
+        }
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function normalizeOcbcIdentitySegment(value) {
+        return utils.normalizeString(value, '').trim().toLowerCase();
+    }
+
+    function hashOcbcIdentityFingerprint(input) {
+        const source = utils.normalizeString(input, '');
+        let hashA = 2166136261;
+        let hashB = 2166136261;
+        for (let index = 0; index < source.length; index += 1) {
+            const code = source.charCodeAt(index);
+            hashA ^= code;
+            hashA = Math.imul(hashA, 16777619);
+            hashB ^= (code ^ ((index + 1) & 0xff));
+            hashB = Math.imul(hashB, 16777619);
+        }
+        return `${(hashA >>> 0).toString(16).padStart(8, '0')}${(hashB >>> 0).toString(16).padStart(8, '0')}`;
+    }
+
+    function buildOcbcLegacyAssignmentCodeAliases(row, resolvedPortfolioNo, fallbackIndex) {
+        const portfolioNo = utils.normalizeString(resolvedPortfolioNo, '-');
+        const aliases = [];
+        const stableKeys = [
+            row?.isin,
+            row?.fundCode,
+            row?.description
+        ];
+        stableKeys.forEach(value => {
+            const normalized = utils.normalizeString(value, '');
+            if (normalized) {
+                aliases.push(`${portfolioNo}:${normalized}`);
+            }
+        });
+        aliases.push(`${portfolioNo}:${portfolioNo || '-'}#${fallbackIndex + 1}`);
+        return Array.from(new Set(aliases));
+    }
+
+    function buildOcbcStableHoldingCode(row, context = {}) {
+        const resolvedPortfolioNo = utils.normalizeString(context.portfolioNo, '-');
+        const fallbackIndex = Number.isFinite(Number(context.index)) ? Number(context.index) : 0;
+        const positionId = utils.normalizeString(row?.positionId, '');
+        const sectionType = utils.normalizeString(context.sectionType, 'assets');
+        const scopeParts = [
+            sectionType,
+            resolvedPortfolioNo,
+            utils.normalizeString(context.assetClassDesc, ''),
+            utils.normalizeString(context.subAssetClassDesc, '')
+        ].map(normalizeOcbcIdentitySegment).filter(Boolean);
+
+        const strongIdParts = [
+            row?.isin,
+            row?.fundCode
+        ].map(normalizeOcbcIdentitySegment).filter(Boolean);
+        const weakDescriptorParts = [
+            row?.description,
+            row?.fundName,
+            row?.companyName,
+            row?.assetDesc,
+            row?.shortName,
+            row?.originalCcy
+        ].map(normalizeOcbcIdentitySegment).filter(Boolean);
+
+        const hasHoldingSpecificIdentity = strongIdParts.length > 0 || weakDescriptorParts.length > 0;
+        const fingerprintParts = hasHoldingSpecificIdentity
+            ? (strongIdParts.length > 0
+                ? [...scopeParts, ...strongIdParts]
+                : [...scopeParts, ...weakDescriptorParts])
+            : [];
+        const fingerprint = fingerprintParts.join('|');
+        const hashedCode = hasHoldingSpecificIdentity
+            ? `${resolvedPortfolioNo}:gpv-ocbc-${hashOcbcIdentityFingerprint(fingerprint)}`
+            : `${resolvedPortfolioNo}:gpv-ocbc-fallback-${resolvedPortfolioNo || '-'}-${fallbackIndex + 1}`;
+        const legacyAliases = [
+            ...buildOcbcLegacyAssignmentCodeAliases(row, resolvedPortfolioNo, fallbackIndex),
+            hashedCode
+        ];
+
+        if (positionId) {
+            const isAssetsSection = sectionType === 'assets';
+            const primaryCode = isAssetsSection
+                ? `${resolvedPortfolioNo}:${positionId}`
+                : `${resolvedPortfolioNo}:${sectionType}:${positionId}`;
+            return {
+                code: primaryCode,
+                usedFallbackIndex: !hasHoldingSpecificIdentity,
+                legacyAliases: Array.from(new Set(legacyAliases))
+            };
+        }
+
+        if (!hasHoldingSpecificIdentity) {
+            return {
+                code: hashedCode,
+                usedFallbackIndex: true,
+                legacyAliases: Array.from(new Set(legacyAliases))
+            };
+        }
+
+        return {
+            code: hashedCode,
+            usedFallbackIndex: false,
+            legacyAliases: Array.from(new Set(legacyAliases))
+        };
+    }
+
+    function mapOcbcHoldingRow(row, context = {}) {
+        if (!row || typeof row !== 'object') {
+            return null;
+        }
+        const resolvedPortfolioNo = utils.normalizeString(context.portfolioNo, '-');
+        const index = Number.isFinite(Number(context.index)) ? Number(context.index) : 0;
+        const identity = buildOcbcStableHoldingCode(row, context);
+        const code = identity.code;
+        const fallbackLabel = `Holding ${index + 1}`;
+        const displayTicker = utils.normalizeString(
+            row.isin
+            || row.fundCode
+            || row.description
+            || row.shortName
+            || fallbackLabel,
+            fallbackLabel
+        );
+        const currentValueLcy = parseOcbcNumericValue(row.marketValueReferenceCcy)
+            ?? parseOcbcNumericValue(row.marketValue)
+            ?? parseOcbcNumericValue(row.marketValueOriginalCcy)
+            ?? 0;
+        return {
+            code,
+            legacyCodeAliases: identity.legacyAliases,
+            portfolioNo: resolvedPortfolioNo,
+            subcode: utils.normalizeString(row.subcode ?? row.subCode, ''),
+            displayTicker,
+            name: utils.normalizeString(row.fundName || row.companyName || row.description || row.shortName, '-'),
+            assetClassDesc: utils.normalizeString(context.assetClassDesc, ''),
+            subAssetClassDesc: utils.normalizeString(context.subAssetClassDesc, ''),
+            productType: utils.normalizeString(
+                context.subAssetClassDesc || context.assetClassDesc || row.shortName,
+                '-'
+            ),
+            currentValueLcy,
+            profitValueLcy: parseOcbcNumericValue(row.totalUnrealisedPLRefCcy) ?? parseOcbcNumericValue(row.totalPl),
+            profitPercentLcy: parseOcbcNumericValue(row.unrealisedPLPercent)
+        };
+    }
+
+    function normalizeOcbcHoldingsPayload(data) {
+        const groups = Array.isArray(data?.data) ? data.data : [];
+        const assets = [];
+        const liabilities = [];
+        let assetIndex = 0;
+        let liabilityIndex = 0;
+
+        function flattenSectionRows(sectionType, rows) {
+            const isAssets = sectionType === 'assets';
+            (Array.isArray(rows) ? rows : []).forEach(group => {
+                const portfolioNo = utils.normalizeString(group?.portfolioNo, '-');
+                const sections = Array.isArray(group?.[sectionType]) ? group[sectionType] : [];
+                sections.forEach(section => {
+                    const assetClassDesc = utils.normalizeString(section?.assetClassDesc, '');
+                    const subAssets = Array.isArray(section?.subAssets) ? section.subAssets : [];
+                    subAssets.forEach(subAsset => {
+                        const subAssetClassDesc = utils.normalizeString(subAsset?.subAssetClassDesc, '');
+                        const holdings = Array.isArray(subAsset?.holdings) ? subAsset.holdings : [];
+                        holdings.forEach(row => {
+                            const normalized = mapOcbcHoldingRow(row, {
+                                portfolioNo,
+                                assetClassDesc,
+                                subAssetClassDesc,
+                                sectionType,
+                                index: isAssets ? assetIndex : liabilityIndex
+                            });
+                            if (!normalized) {
+                                return;
+                            }
+                            if (isAssets) {
+                                assetIndex += 1;
+                                assets.push(normalized);
+                            } else {
+                                liabilityIndex += 1;
+                                liabilities.push(normalized);
+                            }
+                        });
+                    });
+                });
+            });
+        }
+
+        flattenSectionRows('assets', groups);
+        flattenSectionRows('liabilities', groups);
+        return { assets, liabilities };
+    }
+
+    function getOcbcAssignmentLookupCandidates(row) {
+        const candidates = [];
+        const primaryCode = utils.normalizeString(row?.code, '');
+        if (primaryCode) {
+            candidates.push(primaryCode);
+        }
+        const aliases = Array.isArray(row?.legacyCodeAliases) ? row.legacyCodeAliases : [];
+        aliases.forEach(alias => {
+            const normalizedAlias = utils.normalizeString(alias, '');
+            if (normalizedAlias) {
+                candidates.push(normalizedAlias);
+            }
+        });
+        return Array.from(new Set(candidates));
     }
 
     // ============================================
@@ -1517,6 +1796,19 @@ function buildTargetCoverageLabel(targetTotalPercent) {
         return `Target total is ${rounded.toFixed(2)}% (${Math.abs(difference).toFixed(2)}% unallocated)`;
     }
     return `Target total is ${rounded.toFixed(2)}% (${difference.toFixed(2)}% over-allocated)`;
+}
+
+function buildAssignedCoverageText(assignedPercent) {
+    const safeAssigned = Number.isFinite(assignedPercent) ? assignedPercent : 0;
+    const roundedAssigned = Number(safeAssigned.toFixed(2));
+    const difference = roundedAssigned - 100;
+    if (Math.abs(difference) <= TARGET_TOTAL_TOLERANCE_PERCENT) {
+        return `${roundedAssigned.toFixed(2)}% assigned`;
+    }
+    if (difference < 0) {
+        return `${roundedAssigned.toFixed(2)}% assigned, ${Math.abs(difference).toFixed(2)}% remaining`;
+    }
+    return `${roundedAssigned.toFixed(2)}% assigned, ${difference.toFixed(2)}% overallocated`;
 }
 
 function calculateRecommendedContributionSplit(goalModels, additionalAmount) {
@@ -3123,6 +3415,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             if (sanitized.platforms.fsm && typeof sanitized.platforms.fsm === 'object') {
                 delete sanitized.platforms.fsm.timestamp;
             }
+            if (sanitized.platforms.ocbc && typeof sanitized.platforms.ocbc === 'object') {
+                delete sanitized.platforms.ocbc.timestamp;
+            }
         }
         return SyncEncryption.hash(JSON.stringify(sanitized));
     }
@@ -3311,6 +3606,126 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return fsm;
     }
 
+    function normalizeOcbcSubPortfoliosConfig(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const normalized = {};
+        Object.entries(source).forEach(([viewKey, portfolios]) => {
+            if (!portfolios || typeof portfolios !== 'object' || Array.isArray(portfolios)) {
+                return;
+            }
+            const normalizedView = {};
+            Object.entries(portfolios).forEach(([portfolioNo, items]) => {
+                if (!Array.isArray(items)) {
+                    return;
+                }
+                const filtered = items
+                    .map(item => {
+                        if (!item || typeof item !== 'object') {
+                            return null;
+                        }
+                        const id = utils.normalizeString(item.id, '');
+                        if (!id) {
+                            return null;
+                        }
+                        return {
+                            id,
+                            name: utils.normalizeString(item.name, 'Untitled sub-portfolio'),
+                            archived: item.archived === true,
+                            legacyProductType: utils.normalizeString(item.legacyProductType, ''),
+                            legacyBucketId: utils.normalizeString(item.legacyBucketId, '')
+                        };
+                    })
+                    .filter(Boolean)
+                    .map(item => ({ ...item }));
+                if (filtered.length) {
+                    normalizedView[portfolioNo] = filtered;
+                }
+            });
+            if (Object.keys(normalizedView).length) {
+                normalized[viewKey] = normalizedView;
+            }
+        });
+        return normalized;
+    }
+
+    function normalizeOcbcAssignmentByCodeConfig(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const normalized = {};
+        Object.entries(source).forEach(([code, rawAssignment]) => {
+            const normalizedCode = utils.normalizeString(code, '');
+            if (!normalizedCode) {
+                return;
+            }
+            const subPortfolioId = utils.normalizeString(
+                rawAssignment && typeof rawAssignment === 'object' && !Array.isArray(rawAssignment)
+                    ? rawAssignment.subPortfolioId
+                    : rawAssignment,
+                ''
+            );
+            if (subPortfolioId) {
+                normalized[normalizedCode] = subPortfolioId;
+            }
+        });
+        return normalized;
+    }
+
+    function normalizeOcbcOrderByScopeEntries(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const normalized = {};
+        Object.entries(source).forEach(([scope, value]) => {
+            const normalizedScope = utils.normalizeString(scope, '');
+            if (!normalizedScope || !Array.isArray(value)) {
+                return;
+            }
+            const deduped = [];
+            const seen = new Set();
+            value.forEach(code => {
+                const normalizedCode = utils.normalizeString(code, '');
+                if (!normalizedCode || seen.has(normalizedCode)) {
+                    return;
+                }
+                seen.add(normalizedCode);
+                deduped.push(normalizedCode);
+            });
+            if (deduped.length) {
+                normalized[normalizedScope] = deduped;
+            }
+        });
+        return normalized;
+    }
+
+    function normalizeOcbcOrderByScopeConfig(data) {
+        return normalizeOcbcOrderByScopeEntries(data);
+    }
+
+    function collectOcbcSyncConfig() {
+        const targetsByScope = {};
+        const allKeys = GM_listValues ? GM_listValues() : [];
+        for (const key of allKeys) {
+            if (!key.startsWith(STORAGE_KEY_PREFIXES.ocbcTarget)) {
+                continue;
+            }
+            const scope = key.substring(STORAGE_KEY_PREFIXES.ocbcTarget.length);
+            const value = Storage.get(key, null);
+            if (value !== null) {
+                targetsByScope[scope] = value;
+            }
+        }
+        return {
+            subPortfolios: normalizeOcbcSubPortfoliosConfig(
+                Storage.readJson(STORAGE_KEYS.ocbcSubPortfolios, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC sub-portfolios') || {}
+            ),
+            assignmentByCode: normalizeOcbcAssignmentByCodeConfig(
+                Storage.readJson(STORAGE_KEYS.ocbcAllocationAssignmentByCode, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC assignments') || {}
+            ),
+            orderByScope: normalizeOcbcOrderByScopeConfig(
+                Storage.readJson(STORAGE_KEYS.ocbcAllocationOrderByScope, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC order') || {}
+            ),
+            targetsByScope,
+            timestamp: Date.now()
+        };
+    }
+
     function normalizeSyncConfig(config) {
         if (!config || typeof config !== 'object') {
             return null;
@@ -3322,6 +3737,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             const fsm = config.platforms.fsm && typeof config.platforms.fsm === 'object'
                 ? config.platforms.fsm
                 : { targetsByCode: {}, fixedByCode: {}, timestamp: config.timestamp || Date.now() };
+            const ocbc = config.platforms.ocbc && typeof config.platforms.ocbc === 'object'
+                ? config.platforms.ocbc
+                : { subPortfolios: {}, assignmentByCode: {}, targetsByScope: {}, timestamp: config.timestamp || Date.now() };
             return {
                 version: 2,
                 platforms: {
@@ -3338,6 +3756,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                         portfolios: normalizeFsmPortfolios(Array.isArray(fsm.portfolios) ? fsm.portfolios : []),
                         assignmentByCode: fsm.assignmentByCode && typeof fsm.assignmentByCode === 'object' ? fsm.assignmentByCode : {},
                         timestamp: typeof fsm.timestamp === 'number' ? fsm.timestamp : (config.timestamp || Date.now())
+                    },
+                    ocbc: {
+                        subPortfolios: normalizeOcbcSubPortfoliosConfig(ocbc.subPortfolios),
+                        assignmentByCode: normalizeOcbcAssignmentByCodeConfig(ocbc.assignmentByCode),
+                        orderByScope: normalizeOcbcOrderByScopeEntries(ocbc.orderByScope),
+                        targetsByScope: ocbc.targetsByScope && typeof ocbc.targetsByScope === 'object' ? ocbc.targetsByScope : {},
+                        timestamp: typeof ocbc.timestamp === 'number' ? ocbc.timestamp : (config.timestamp || Date.now())
                     }
                 },
                 metadata: config.metadata && typeof config.metadata === 'object' ? config.metadata : {},
@@ -3359,6 +3784,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     fixedByCode: {},
                     portfolios: [],
                     assignmentByCode: {},
+                    timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
+                },
+                ocbc: {
+                    subPortfolios: {},
+                    assignmentByCode: {},
+                    orderByScope: {},
+                    targetsByScope: {},
                     timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
                 }
             },
@@ -3388,6 +3820,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const timestamp = Date.now();
         const endowus = collectLegacyEndowusConfig();
         const fsm = collectFsmSyncConfig();
+        const ocbc = collectOcbcSyncConfig();
         return {
             version: 2,
             platforms: {
@@ -3397,6 +3830,10 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 },
                 fsm: {
                     ...fsm,
+                    timestamp
+                },
+                ocbc: {
+                    ...ocbc,
                     timestamp
                 }
             },
@@ -3510,6 +3947,23 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         Storage.writeJson(STORAGE_KEYS.fsmPortfolios, fsmPortfolios, 'Error saving FSM portfolios');
         Storage.writeJson(STORAGE_KEYS.fsmAssignmentByCode, sanitizedAssignments, 'Error saving FSM assignments');
 
+        const ocbc = normalized.platforms.ocbc || {};
+        const ocbcSubPortfolios = normalizeOcbcSubPortfoliosConfig(ocbc.subPortfolios);
+        const ocbcAssignmentByCode = normalizeOcbcAssignmentByCodeConfig(ocbc.assignmentByCode);
+        const ocbcOrderByScope = normalizeOcbcOrderByScopeEntries(ocbc.orderByScope);
+        const ocbcTargetsByScope = ocbc.targetsByScope && typeof ocbc.targetsByScope === 'object' ? ocbc.targetsByScope : {};
+        Storage.writeJson(STORAGE_KEYS.ocbcSubPortfolios, ocbcSubPortfolios, 'Error saving OCBC sub-portfolios');
+        Storage.writeJson(STORAGE_KEYS.ocbcAllocationAssignmentByCode, ocbcAssignmentByCode, 'Error saving OCBC assignments');
+        Storage.writeJson(STORAGE_KEYS.ocbcAllocationOrderByScope, ocbcOrderByScope, 'Error saving OCBC order');
+        removeStalePrefixedKeys(
+            STORAGE_KEY_PREFIXES.ocbcTarget,
+            new Set(Object.keys(ocbcTargetsByScope)),
+            'Error deleting stale OCBC target'
+        );
+        Object.entries(ocbcTargetsByScope).forEach(([scope, value]) => {
+            Storage.set(storageKeys.ocbcTarget(scope), value);
+        });
+
         logDebug('[Goal Portfolio Viewer] Applied sync config data', {
             endowusTargets: Object.keys(endowusTargets).length,
             endowusFixed: Object.keys(endowusFixed).length,
@@ -3517,7 +3971,11 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             fsmTargets: Object.keys(fsmTargets).length,
             fsmFixed: Object.keys(fsmFixed).length,
             fsmPortfolios: fsmPortfolios.length,
-            fsmAssignments: Object.keys(sanitizedAssignments).length
+            fsmAssignments: Object.keys(sanitizedAssignments).length,
+            ocbcSubPortfolios: Object.keys(ocbcSubPortfolios).length,
+            ocbcAssignments: Object.keys(ocbcAssignmentByCode).length,
+            ocbcOrderScopes: Object.keys(ocbcOrderByScope).length,
+            ocbcTargets: Object.keys(ocbcTargetsByScope).length
         });
     }
 
@@ -4528,6 +4986,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             setSyncStatus: status => {
                 syncStatus = status;
             },
+            hashConfigData,
             getAutoSyncIntervalMs,
             isStartupSyncDue,
             getLastDataTimestamp
@@ -4873,7 +5332,8 @@ let GoalTargetStore;
             performance: null,
             investible: null,
             summary: null,
-            fsmHoldings: null
+            fsmHoldings: null,
+            ocbcHoldings: null
         },
         projectedInvestments: {},
         performance: {
@@ -4900,6 +5360,9 @@ let GoalTargetStore;
                 summaryLoaded: false
             },
             fsm: {
+                holdingsLoaded: false
+            },
+            ocbc: {
                 holdingsLoaded: false
             }
         }
@@ -4969,26 +5432,42 @@ let GoalTargetStore;
             Storage.writeJson(STORAGE_KEYS.fsmHoldings, filteredRows, 'Error saving FSM holdings data');
             logDebug('[Goal Portfolio Viewer] Intercepted FSM holdings data', { rows: filteredRows.length });
             notifyDataUpdates();
+        },
+        ocbcHoldings: data => {
+            const normalized = normalizeOcbcHoldingsPayload(data);
+            state.apiData.ocbcHoldings = normalized;
+            state.readiness.ocbc.holdingsLoaded = true;
+            Storage.writeJson(STORAGE_KEYS.ocbcHoldings, normalized, 'Error saving OCBC holdings data');
+            logDebug('[Goal Portfolio Viewer] Intercepted OCBC holdings data', {
+                assets: normalized.assets.length,
+                liabilities: normalized.liabilities.length
+            });
+            notifyDataUpdates();
         }
     };
 
-    function detectEndpointKey(url) {
-        if (typeof url !== 'string') {
-            return null;
+    function detectEndpointInfo(url, method = null) {
+        if (typeof url !== 'string' || !url) {
+            return { endpointKey: null };
         }
         if (url.includes(ENDPOINT_PATHS.performance)) {
-            return 'performance';
+            return { endpointKey: 'performance' };
         }
         if (url.includes(ENDPOINT_PATHS.investible)) {
-            return 'investible';
+            return { endpointKey: 'investible' };
         }
         if (url.match(SUMMARY_ENDPOINT_REGEX)) {
-            return 'summary';
+            return { endpointKey: 'summary' };
         }
         if (url.includes(ENDPOINT_PATHS.fsmHoldings)) {
-            return 'fsmHoldings';
+            return { endpointKey: 'fsmHoldings' };
         }
-        return null;
+        if (url.includes(ENDPOINT_PATHS.ocbcHoldings)) {
+            if (!method || method === 'POST') {
+                return { endpointKey: 'ocbcHoldings' };
+            }
+        }
+        return { endpointKey: null };
     }
 
 
@@ -4996,7 +5475,7 @@ let GoalTargetStore;
         if (!data || typeof data !== 'object') {
             return { valid: false, reason: 'Expected object payload' };
         }
-        if (!Array.isArray(data) && endpointKey !== 'fsmHoldings') {
+        if (!Array.isArray(data) && endpointKey !== 'fsmHoldings' && endpointKey !== 'ocbcHoldings') {
             return { valid: false, reason: `Expected array payload for ${endpointKey}` };
         }
         if (endpointKey === 'performance') {
@@ -5019,11 +5498,20 @@ let GoalTargetStore;
             const isValid = groups.every(group => group && typeof group === 'object' && Array.isArray(group.holdings));
             return { valid: isValid, reason: isValid ? null : 'Invalid holdings group format in FSM payload' };
         }
+        if (endpointKey === 'ocbcHoldings') {
+            const groups = Array.isArray(data.data) ? data.data : null;
+            if (!groups) {
+                return { valid: false, reason: 'Missing data array in OCBC holdings payload' };
+            }
+            const isValid = groups.every(group => group && typeof group === 'object');
+            return { valid: isValid, reason: isValid ? null : 'Invalid portfolio group format in OCBC payload' };
+        }
         return { valid: true, reason: null };
     }
 
-    async function handleInterceptedResponse(url, readData) {
-        const endpointKey = detectEndpointKey(url);
+    async function handleInterceptedResponse(url, readData, method = null) {
+        const endpointInfo = detectEndpointInfo(url, method);
+        const endpointKey = endpointInfo.endpointKey;
         if (!endpointKey) {
             return;
         }
@@ -5075,9 +5563,26 @@ let GoalTargetStore;
     // Fetch interception
     window.fetch = async function(...args) {
         const response = await originalFetch.apply(this, args);
-        const url = args[0];
+        const input = args[0];
+        const init = args[1];
+        const requestCtor = (typeof globalThis !== 'undefined' && globalThis.Request)
+            || (typeof window !== 'undefined' && window.Request)
+            || null;
+        const isRequestInput = Boolean(requestCtor && input instanceof requestCtor);
+        const url = typeof input === 'string'
+            ? input
+            : (input instanceof URL
+                ? input.toString()
+                : (isRequestInput
+                    ? input.url
+                    : ''));
+        const method = utils.normalizeString(
+            init?.method
+            || (isRequestInput ? input.method : ''),
+            'GET'
+        ).toUpperCase();
         if (response?.ok) {
-            void handleInterceptedResponse(url, () => response.clone().json());
+            void handleInterceptedResponse(url, () => response.clone().json(), method);
         }
         return response;
     };
@@ -5085,17 +5590,19 @@ let GoalTargetStore;
     // XMLHttpRequest interception
     XMLHttpRequest.prototype.open = function(method, url, ...rest) {
         this._url = url;
+        this._method = method;
         return originalXHROpen.apply(this, [method, url, ...rest]);
     };
 
     XMLHttpRequest.prototype.send = function(...args) {
         const url = this._url;
+        const method = utils.normalizeString(this._method, 'GET').toUpperCase();
         
         if (url && typeof url === 'string') {
             this.addEventListener('load', function() {
                 const status = Number(this.status);
                 if (!Number.isFinite(status) || (status >= 200 && status < 300)) {
-                    handleInterceptedResponse(url, () => Promise.resolve(parseJsonSafely(this.responseText)));
+                    handleInterceptedResponse(url, () => Promise.resolve(parseJsonSafely(this.responseText)), method);
                 }
             });
         }
@@ -5241,6 +5748,16 @@ let GoalTargetStore;
             apiDataState.fsmHoldings = fsmHoldings;
             appState.readiness.fsm.holdingsLoaded = true;
             logDebug('[Goal Portfolio Viewer] Loaded FSM holdings data from storage');
+        }
+        const ocbcHoldings = Storage.readJson(
+            STORAGE_KEYS.ocbcHoldings,
+            data => data && typeof data === 'object' && Array.isArray(data.assets) && Array.isArray(data.liabilities),
+            'Error loading OCBC holdings data'
+        );
+        if (ocbcHoldings) {
+            apiDataState.ocbcHoldings = ocbcHoldings;
+            appState.readiness.ocbc.holdingsLoaded = true;
+            logDebug('[Goal Portfolio Viewer] Loaded OCBC holdings data from storage');
         }
     }
 
@@ -6258,10 +6775,15 @@ let GoalTargetStore;
         };
 
         const handleFocusIn = event => {
-            if (!container.contains(event.target)) {
-                const focusables = getFocusableElements(container);
-                (focusables[0] || container).focus();
+            if (container.contains(event.target)) {
+                return;
             }
+            const activeElement = document.activeElement;
+            if (activeElement instanceof HTMLElement && container.contains(activeElement)) {
+                return;
+            }
+            const focusables = getFocusableElements(container);
+            (focusables[0] || container).focus();
         };
 
         overlay.addEventListener('keydown', handleKeydown);
@@ -8356,8 +8878,8 @@ function renderSyncOverlayView({
         backBtn.textContent = backLabel || '← Back';
         backBtn.title = 'Return to previous view';
         backBtn.onclick = () => {
-            onBack();
             closeOverlay();
+            onBack();
         };
         headerButtons.appendChild(backBtn);
     }
@@ -8413,7 +8935,45 @@ function renderSyncOverlayView({
  * Show sync settings modal
  */
 
-function showSyncSettings() {
+function showSyncSettings(options = {}) {
+    const returnTo = utils.normalizeString(options?.returnTo, 'endowus');
+    const syncReturnConfig = {
+        endowus: {
+            backLabel: '← Back to Portfolio Viewer',
+            onBack: () => {
+                if (typeof showOverlay === 'function') {
+                    showOverlay();
+                }
+            }
+        },
+        fsm: {
+            backLabel: '← Back to Portfolio Viewer (FSM)',
+            onBack: () => {
+                const holdings = getFsmReadinessState().fsmHoldings;
+                if (Array.isArray(holdings) && holdings.length > 0) {
+                    renderFsmOverlay(holdings);
+                    return;
+                }
+                if (typeof showOverlay === 'function') {
+                    showOverlay();
+                }
+            }
+        },
+        ocbc: {
+            backLabel: '← Back to Portfolio Viewer (OCBC)',
+            onBack: () => {
+                const holdings = getOcbcReadinessState().ocbcHoldings;
+                if (holdings) {
+                    renderOcbcOverlay(holdings);
+                    return;
+                }
+                if (typeof showOverlay === 'function') {
+                    showOverlay();
+                }
+            }
+        }
+    };
+    const resolvedReturnConfig = syncReturnConfig[returnTo] || syncReturnConfig.endowus;
     
     try {
         let settingsHTML;
@@ -8424,17 +8984,11 @@ function showSyncSettings() {
             settingsHTML = '<div style="padding: 20px; color: #ef4444;">Error loading sync settings. Please check console for details.</div>';
         }
 
-        const { overlay } = renderSyncOverlayView({
+        renderSyncOverlayView({
             title: 'Sync Settings',
             bodyHtml: settingsHTML,
-            onBack: () => {
-                if (typeof renderPortfolioView === 'function') {
-                    overlay.innerHTML = '';
-                    const event = new CustomEvent('gpv-show-portfolio');
-                    document.dispatchEvent(event);
-                }
-            },
-            backLabel: '← Back to Investments'
+            onBack: resolvedReturnConfig.onBack,
+            backLabel: resolvedReturnConfig.backLabel
         });
 
         // Setup listeners
@@ -8496,6 +9050,19 @@ function createConflictDialogHTML(conflict) {
                 <td>${escapeHtml(item.remoteDisplay)}</td>
             </tr>
         `).join('');
+    const fsmInstrumentRows = diffSections.fsm
+        .filter(item => item.section === 'instrument')
+        .map(item => `
+            <tr>
+                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
+                <td>${escapeHtml(item.localDisplay)}</td>
+                <td>${escapeHtml(item.remoteDisplay)}</td>
+            </tr>
+        `).join('');
+    const hasTargetRows = endowusRows.length > 0 || fsmInstrumentRows.length > 0;
+    const targetRowsHtml = hasTargetRows
+        ? `${endowusRows.length > 0 ? sectionRows(endowusRows, 'Goal') : ''}${fsmInstrumentRows.length > 0 ? sectionRows(fsmInstrumentRows, 'Instrument') : ''}`
+        : '<div class="gpv-conflict-diff-empty">No differences detected.</div>';
 
     return `
         <div class="gpv-conflict-dialog" data-step="1">
@@ -8526,7 +9093,7 @@ function createConflictDialogHTML(conflict) {
             </div>
             <div class="gpv-conflict-step-panel" data-step-panel="4" hidden>
                 <h4>Targets and drift changes</h4>
-                ${sectionRows(endowusRows, 'Goal')}
+                ${targetRowsHtml}
             </div>
             <div class="gpv-conflict-step-panel" data-step-panel="5" hidden>
                 <h4>Final decision</h4>
@@ -8797,6 +9364,79 @@ syncUi.update = function updateSyncUI() {
     const STYLE_SECTIONS = {
         core: `
             /* Modern Portfolio Viewer Styles */
+            .gpv-overlay,
+            .gpv-trigger-btn,
+            .gpv-notification,
+            .gpv-sync-indicator {
+                --gpv-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                --gpv-font-size-title: 20px;
+                --gpv-font-size-section-title: 18px;
+                --gpv-font-size-body: 14px;
+                --gpv-font-size-small: 12px;
+                --gpv-line-height: 1.45;
+                --gpv-space-1: 6px;
+                --gpv-space-2: 8px;
+                --gpv-space-3: 12px;
+                --gpv-space-4: 16px;
+                --gpv-space-5: 20px;
+                --gpv-space-6: 24px;
+                --gpv-radius-sm: 8px;
+                --gpv-radius-md: 12px;
+                --gpv-radius-lg: 20px;
+                --gpv-color-text: #1f2937;
+                --gpv-color-muted: #6b7280;
+                --gpv-color-border: #e5e7eb;
+                --gpv-color-primary: #667eea;
+                --gpv-color-primary-strong: #4f46e5;
+                --gpv-color-success: #059669;
+                --gpv-color-danger: #dc2626;
+            }
+
+            .gpv-overlay,
+            .gpv-overlay *,
+            .gpv-trigger-btn,
+            .gpv-notification,
+            .gpv-sync-indicator,
+            .gpv-sync-indicator * {
+                box-sizing: border-box;
+                font-family: var(--gpv-font-family);
+            }
+
+            .gpv-overlay,
+            .gpv-trigger-btn,
+            .gpv-sync-indicator,
+            .gpv-notification {
+                font-size: var(--gpv-font-size-body);
+                line-height: var(--gpv-line-height);
+                color: var(--gpv-color-text);
+            }
+
+            .gpv-container h1,
+            .gpv-container h2,
+            .gpv-container h3,
+            .gpv-container h4,
+            .gpv-container p,
+            .gpv-container label,
+            .gpv-container button,
+            .gpv-container input,
+            .gpv-container select,
+            .gpv-container textarea,
+            .gpv-container table,
+            .gpv-container th,
+            .gpv-container td {
+                font-family: inherit;
+            }
+
+            .gpv-trigger-btn,
+            .gpv-container button,
+            .gpv-container input,
+            .gpv-container select,
+            .gpv-container textarea,
+            .gpv-sync-btn,
+            .gpv-sync-input {
+                font-family: var(--gpv-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif) !important;
+                line-height: var(--gpv-line-height, 1.45) !important;
+            }
             
             .gpv-trigger-btn {
                 position: fixed;
@@ -8812,7 +9452,7 @@ syncUi.update = function updateSyncUI() {
                 cursor: pointer;
                 font-size: 15px;
                 font-weight: 600;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
                 transition: all 0.3s ease;
                 backdrop-filter: blur(10px);
             }
@@ -8859,6 +9499,17 @@ syncUi.update = function updateSyncUI() {
                 display: flex;
                 flex-direction: column;
                 animation: gpv-slideUp 0.3s ease;
+                font-family: var(--gpv-font-family);
+                font-size: var(--gpv-font-size-body);
+                line-height: var(--gpv-line-height);
+            }
+
+            .gpv-container button,
+            .gpv-container input,
+            .gpv-container select,
+            .gpv-container textarea,
+            .gpv-container label {
+                font-family: inherit;
             }
 
             .gpv-container--expanded {
@@ -8924,10 +9575,10 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-header h1 {
                 margin: 0;
-                font-size: 20px;
+                font-size: var(--gpv-font-size-title);
                 font-weight: 700;
                 color: #ffffff;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: inherit;
             }
             
             .gpv-sync-indicator-container {
@@ -9027,21 +9678,21 @@ syncUi.update = function updateSyncUI() {
             .gpv-select-label {
                 font-weight: 600;
                 color: #1f2937;
-                font-size: 16px;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-size: var(--gpv-font-size-body);
+                font-family: inherit;
             }
             
             .gpv-select {
                 padding: 10px 18px;
                 border: 2px solid #e5e7eb;
                 border-radius: 8px;
-                font-size: 16px;
+                font-size: var(--gpv-font-size-body);
                 font-weight: 500;
                 color: #1f2937;
                 background: #ffffff;
                 cursor: pointer;
                 transition: all 0.2s ease;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: inherit;
                 min-width: 220px;
             }
             
@@ -9106,7 +9757,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-summary-container {
                 display: flex;
                 flex-direction: column;
-                gap: 14px;
+                gap: var(--gpv-space-4);
             }
 
             .gpv-allocation-drift-hint {
@@ -9116,7 +9767,7 @@ syncUi.update = function updateSyncUI() {
                 color: #92400e;
                 font-size: 13px;
                 font-weight: 600;
-                margin-bottom: 12px;
+                margin-bottom: var(--gpv-space-3);
                 padding: 10px 12px;
             }
 
@@ -9125,7 +9776,7 @@ syncUi.update = function updateSyncUI() {
                 border: 1px solid #fed7aa;
                 border-radius: 10px;
                 padding: 10px 12px;
-                margin-bottom: 12px;
+                margin-bottom: var(--gpv-space-3);
             }
 
             .gpv-attention-title {
@@ -9219,7 +9870,7 @@ syncUi.update = function updateSyncUI() {
                 background: #eff6ff;
                 border-radius: 10px;
                 padding: 10px 12px;
-                margin-bottom: 12px;
+                margin-bottom: var(--gpv-space-3);
             }
 
             .gpv-planning-title {
@@ -9347,6 +9998,10 @@ syncUi.update = function updateSyncUI() {
                 cursor: pointer;
                 transition: all 0.3s ease;
                 color: #111827;
+            }
+
+            .gpv-summary-container .gpv-bucket-card {
+                margin-top: 0;
             }
             
             .gpv-bucket-card:hover {
@@ -9483,35 +10138,55 @@ syncUi.update = function updateSyncUI() {
             /* Detail View Styles */
             
             .gpv-detail-header {
-                margin-bottom: 16px;
-                padding-bottom: 12px;
+                margin-bottom: var(--gpv-space-4);
+                padding-bottom: var(--gpv-space-3);
                 border-bottom: 2px solid #e5e7eb;
-                display: grid;
-                grid-template-columns: auto 1fr;
-                gap: 8px 12px;
-                align-items: center;
+                display: flex;
+                flex-direction: column;
+                align-items: flex-start;
+                gap: var(--gpv-space-2);
             }
             
             .gpv-detail-title {
                 font-size: 22px;
                 font-weight: 700;
                 color: #111827;
-                margin: 0 0 12px 0;
+                margin: 0;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             }
             
             .gpv-detail-stats {
                 gap: 28px;
                 flex-wrap: nowrap;
-                grid-column: 1 / -1;
+                width: auto;
+                align-self: flex-start;
+            }
+
+            .gpv-ocbc-portfolio-header {
+                margin-bottom: 16px;
+            }
+
+            .gpv-ocbc-detail-stats {
+                gap: 16px;
+                flex-wrap: wrap;
+            }
+
+            .gpv-ocbc-detail-stats .gpv-stat-label {
+                font-size: 11px;
+                letter-spacing: 0.3px;
+            }
+
+            .gpv-ocbc-detail-stats .gpv-stat-value {
+                font-size: 16px;
+                line-height: 1.2;
             }
             
             .gpv-type-section {
-                margin-bottom: 24px;
+                margin-bottom: var(--gpv-space-5);
             }
             
             .gpv-type-header {
-                margin-bottom: 12px;
+                margin-bottom: var(--gpv-space-3);
             }
             
             .gpv-type-header h3 {
@@ -9531,11 +10206,15 @@ syncUi.update = function updateSyncUI() {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             }
 
+            .gpv-summary-row .gpv-summary-card-label {
+                font-weight: 700;
+            }
+
             .gpv-type-actions {
                 display: flex;
                 align-items: center;
                 gap: 8px;
-                margin-top: 8px;
+                margin-top: var(--gpv-space-2);
                 flex-wrap: wrap;
             }
 
@@ -9544,6 +10223,11 @@ syncUi.update = function updateSyncUI() {
                 align-items: center;
                 gap: 8px;
                 flex-wrap: wrap;
+            }
+
+            .gpv-balance-copy-controls--section {
+                justify-content: flex-start;
+                margin: 0 0 16px 0;
             }
 
             .gpv-balance-copy-button {
@@ -9592,6 +10276,23 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-collapsible.gpv-collapsible--collapsed {
                 display: none;
+            }
+
+            .gpv-ocbc-instrument-header-row {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                margin-top: 14px;
+                margin-bottom: 4px;
+                flex-wrap: wrap;
+            }
+
+            .gpv-ocbc-instrument-heading {
+                margin: 0;
+            }
+
+            .gpv-ocbc-target-summary {
+                margin-bottom: 14px;
             }
             
             /* Table Styles */
@@ -9716,6 +10417,37 @@ syncUi.update = function updateSyncUI() {
                 color: #111827;
                 font-size: 14px;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            }
+
+            .gpv-fsm-manager-row {
+                gap: 10px;
+                margin-bottom: 14px;
+                align-items: center;
+            }
+
+            .gpv-fsm-manager-row label {
+                font-weight: 600;
+                color: #334155;
+            }
+
+            .gpv-fsm-manager-row .gpv-target-input {
+                min-width: 220px;
+            }
+
+            .gpv-row-reorder-controls {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+            .gpv-row-reorder-controls .gpv-section-toggle:disabled {
+                opacity: 0.45;
+                cursor: not-allowed;
+            }
+
+            .gpv-goal-table .gpv-goal-name,
+            .gpv-table .gpv-goal-name {
+                text-align: left;
             }
             
             .gpv-table .positive {
@@ -10222,30 +10954,41 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-settings {
-                    padding: 20px;
+                    padding: var(--gpv-space-5);
+                    font-size: var(--gpv-font-size-body);
+                    line-height: var(--gpv-line-height);
+                    font-family: inherit;
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--gpv-space-4);
+                }
+
+                .gpv-sync-settings,
+                .gpv-sync-settings * {
+                    font-family: inherit;
                 }
 
                 .gpv-sync-header h3 {
-                    margin: 0 0 15px 0;
-                    font-size: 20px;
+                    margin: 0;
+                    font-size: var(--gpv-font-size-title);
                     font-weight: 600;
                 }
 
                 .gpv-sync-warning {
                     background-color: #fff3cd;
                     border: 1px solid #ffc107;
-                    border-radius: 4px;
-                    padding: 12px;
-                    margin-bottom: 15px;
+                    border-radius: var(--gpv-radius-sm);
+                    padding: var(--gpv-space-3);
+                    margin: 0;
                     color: #856404;
                 }
 
                 .gpv-sync-status-bar {
                     background-color: #f8f9fa;
                     border: 1px solid #dee2e6;
-                    border-radius: 4px;
-                    padding: 12px;
-                    margin-bottom: 20px;
+                    border-radius: var(--gpv-radius-sm);
+                    padding: var(--gpv-space-3);
+                    margin: 0;
                 }
 
                 .gpv-sync-toast {
@@ -10311,21 +11054,21 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-status-idle {
-                    color: #6c757d;
+                    color: var(--gpv-color-muted);
                 }
 
                 .gpv-sync-status-syncing {
-                    color: #007bff;
+                    color: var(--gpv-color-primary-strong);
                     font-weight: 600;
                 }
 
                 .gpv-sync-status-success {
-                    color: #28a745;
+                    color: var(--gpv-color-success);
                     font-weight: 600;
                 }
 
                 .gpv-sync-status-error {
-                    color: #dc3545;
+                    color: var(--gpv-color-danger);
                     font-weight: 600;
                 }
 
@@ -10341,12 +11084,13 @@ syncUi.update = function updateSyncUI() {
                 .gpv-sync-form {
                     display: flex;
                     flex-direction: column;
-                    gap: 20px;
+                    gap: var(--gpv-space-4);
                 }
 
                 .gpv-sync-form-group {
                     display: flex;
                     flex-direction: column;
+                    gap: var(--gpv-space-2);
                 }
 
                 .gpv-sync-form-group label {
@@ -10362,10 +11106,10 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-input {
-                    padding: 8px 12px;
+                    padding: var(--gpv-space-2) var(--gpv-space-3);
                     border: 1px solid #ced4da;
-                    border-radius: 4px;
-                    font-size: 14px;
+                    border-radius: var(--gpv-radius-sm);
+                    font-size: var(--gpv-font-size-body);
                     font-family: inherit;
                 }
 
@@ -10376,8 +11120,8 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-sync-input:focus {
                     outline: none;
-                    border-color: #007bff;
-                    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+                    border-color: var(--gpv-color-primary-strong);
+                    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
                 }
 
                 .gpv-sync-toggle {
@@ -10397,13 +11141,17 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-help {
-                    margin: 6px 0 0 0;
-                    font-size: 12px;
-                    color: #6c757d;
+                    margin: 0;
+                    font-size: 13px;
+                    color: var(--gpv-color-muted);
+                }
+
+                .gpv-sync-help.gpv-ocbc-target-summary {
+                    margin: 0;
                 }
 
                 .gpv-sync-help--lead {
-                    margin-top: 0;
+                    margin: 0;
                     font-size: 13px;
                     color: #4b5563;
                     line-height: 1.45;
@@ -10419,7 +11167,7 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-help a {
-                    color: #007bff;
+                    color: var(--gpv-color-primary-strong);
                     text-decoration: none;
                 }
 
@@ -10429,9 +11177,9 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-sync-actions {
                     display: flex;
-                    gap: 10px;
+                    gap: var(--gpv-space-3);
                     flex-wrap: wrap;
-                    margin-top: 10px;
+                    margin-top: var(--gpv-space-1);
                 }
 
                 .gpv-sync-advanced {
@@ -10462,16 +11210,16 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-sync-auth-buttons {
                     display: flex;
-                    gap: 10px;
+                    gap: var(--gpv-space-3);
                     flex-wrap: wrap;
                     justify-content: center;
                 }
 
                 .gpv-sync-btn {
-                    padding: 10px 20px;
+                    padding: var(--gpv-space-2) var(--gpv-space-4);
                     border: none;
-                    border-radius: 4px;
-                    font-size: 14px;
+                    border-radius: var(--gpv-radius-sm);
+                    font-size: var(--gpv-font-size-body);
                     font-weight: 600;
                     cursor: pointer;
                     transition: all 0.2s;
@@ -10485,8 +11233,8 @@ syncUi.update = function updateSyncUI() {
                 .gpv-sync-btn-primary {
                     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                     color: white;
-                    border-radius: 20px;
-                    padding: 12px 24px;
+                    border-radius: var(--gpv-radius-lg);
+                    padding: var(--gpv-space-3) var(--gpv-space-6);
                     box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
                     font-weight: 600;
                 }
@@ -10502,8 +11250,8 @@ syncUi.update = function updateSyncUI() {
                     background: rgba(255, 255, 255, 0.2);
                     color: #667eea;
                     border: 2px solid #667eea;
-                    border-radius: 20px;
-                    padding: 12px 24px;
+                    border-radius: var(--gpv-radius-lg);
+                    padding: var(--gpv-space-3) var(--gpv-space-6);
                     font-weight: 600;
                 }
 
@@ -10637,6 +11385,8 @@ syncUi.update = function updateSyncUI() {
                 .gpv-conflict-actions {
                     display: flex;
                     justify-content: center;
+                    gap: var(--gpv-space-3);
+                    flex-wrap: wrap;
                 }
 
                 .gpv-conflict-diff {
@@ -10720,10 +11470,28 @@ syncUi.update = function updateSyncUI() {
                 .gpv-fsm-portfolio-list-row,
                 .gpv-summary-row {
                     display: flex;
-                    gap: 8px;
+                    gap: var(--gpv-space-2);
                     align-items: center;
                     flex-wrap: wrap;
-                    margin-bottom: 10px;
+                    margin-bottom: var(--gpv-space-3);
+                }
+
+                .gpv-fsm-manager,
+                .gpv-fsm-overview {
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--gpv-space-3);
+                }
+
+                .gpv-fsm-manager,
+                .gpv-fsm-overview {
+                    align-items: stretch;
+                }
+
+                .gpv-fsm-portfolio-list {
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--gpv-space-2);
                 }
 
                 .gpv-fsm-section[hidden] {
@@ -10738,6 +11506,10 @@ syncUi.update = function updateSyncUI() {
                     font-size: 13px;
                 }
 
+                .gpv-summary-row {
+                    margin-bottom: var(--gpv-space-4);
+                }
+
                 .gpv-fsm-filter-input {
                     width: 220px;
                     max-width: 100%;
@@ -10749,6 +11521,7 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-fsm-portfolio-list-row {
                     justify-content: space-between;
+                    margin-bottom: 0;
                 }
 
                 .gpv-fsm-portfolio-actions {
@@ -10796,7 +11569,7 @@ syncUi.update = function updateSyncUI() {
                     justify-content: space-between;
                     gap: 12px;
                     flex-wrap: wrap;
-                    margin-bottom: 12px;
+                    margin-bottom: 0;
                 }
 
                 .gpv-fsm-overview-copy {
@@ -10810,6 +11583,15 @@ syncUi.update = function updateSyncUI() {
                     display: grid;
                     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
                     gap: 12px;
+                }
+
+                .gpv-fsm-filter-toolbar {
+                    margin-bottom: var(--gpv-space-4);
+                }
+
+                .gpv-fsm-table-wrap,
+                .gpv-table-wrap {
+                    margin-bottom: var(--gpv-space-4);
                 }
 
                 .gpv-fsm-overview-card {
@@ -10954,9 +11736,9 @@ syncUi.update = function updateSyncUI() {
                     bottom: 20px;
                     right: 20px;
                     background-color: white;
-                    border: 1px solid #dee2e6;
-                    border-radius: 20px;
-                    padding: 8px 16px;
+                    border: 1px solid var(--gpv-color-border);
+                    border-radius: var(--gpv-radius-lg);
+                    padding: var(--gpv-space-2) var(--gpv-space-4);
                     display: flex;
                     align-items: center;
                     gap: 8px;
@@ -10998,8 +11780,8 @@ syncUi.update = function updateSyncUI() {
                     top: 20px;
                     right: 20px;
                     background-color: white;
-                    border-radius: 4px;
-                    padding: 12px 16px;
+                    border-radius: var(--gpv-radius-sm);
+                    padding: var(--gpv-space-3) var(--gpv-space-4);
                     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
                     z-index: 10000;
                     opacity: 0;
@@ -11022,7 +11804,7 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-notification-info {
-                    border-left: 4px solid #007bff;
+                    border-left: 4px solid var(--gpv-color-primary-strong);
                 }
 
                 /* Responsive adjustments */
@@ -11201,6 +11983,19 @@ syncUi.update = function updateSyncUI() {
         return {
             ready: state.readiness.fsm.holdingsLoaded === true,
             fsmHoldings
+        };
+    }
+
+    function getOcbcReadinessState() {
+        const ocbcHoldings = state.apiData.ocbcHoldings && typeof state.apiData.ocbcHoldings === 'object'
+            ? state.apiData.ocbcHoldings
+            : { assets: [], liabilities: [] };
+        return {
+            ready: state.readiness.ocbc.holdingsLoaded === true,
+            ocbcHoldings: {
+                assets: Array.isArray(ocbcHoldings.assets) ? ocbcHoldings.assets : [],
+                liabilities: Array.isArray(ocbcHoldings.liabilities) ? ocbcHoldings.liabilities : []
+            }
         };
     }
 
@@ -11466,9 +12261,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return calculateAllocationRatio(row?.currentValueLcy, total);
     }
 
-    function buildFsmHeader({ overlay, cleanupCallbacks }) {
+    function buildFsmHeader({ overlay, cleanupCallbacks, titleText = 'Portfolio Viewer (FSM)', syncReturnTo = 'fsm' }) {
         const header = createElement('div', 'gpv-header');
-        const title = createElement('h1', null, 'Portfolio Viewer (FSM)');
+        const title = createElement('h1', null, titleText);
         const titleId = 'gpv-portfolio-title';
         title.id = titleId;
 
@@ -11477,7 +12272,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         syncBtn.title = 'Configure cross-device sync';
         syncBtn.onclick = () => {
             if (typeof showSyncSettings === 'function') {
-                showSyncSettings();
+                showSyncSettings({ returnTo: syncReturnTo });
             }
         };
 
@@ -11664,6 +12459,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const showDrift = options.showDrift !== false;
         const showProfit = options.showProfit === true;
         const showFixed = options.showFixed !== false;
+        const showTargetAssigned = options.showTargetAssigned !== false;
+        const showUnassigned = options.showUnassigned !== false;
         const summaryRow = createElement('div', 'gpv-summary-row');
         const driftClassName = summary?.driftClass
             ? `gpv-summary-card ${summary.driftClass}`
@@ -11682,9 +12479,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             : '';
         summaryRow.innerHTML = `
             <div class="gpv-summary-card"><strong>Total Value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
-            <div class="gpv-summary-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>
+            ${showTargetAssigned ? `<div class="gpv-summary-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>` : ''}
             <div class="gpv-summary-card"><strong>Holdings:</strong> ${escapeHtml(String(summary.holdingsCount))}</div>
-            <div class="gpv-summary-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>
+            ${showUnassigned ? `<div class="gpv-summary-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>` : ''}
             ${profitCardHtml}
             ${fixedCardHtml}
             ${driftCardHtml}
@@ -12108,7 +12905,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         container.gpvCleanupCallbacks = cleanupCallbacks;
         overlay.gpvCleanupCallbacks = cleanupCallbacks;
 
-        const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({ overlay, cleanupCallbacks });
+        const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({ overlay, cleanupCallbacks, titleText: 'Portfolio Viewer (FSM)' });
         container.appendChild(header);
 
         const contentDiv = createElement('div', 'gpv-content');
@@ -12581,6 +13378,1051 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
     }
 
+    function buildOcbcSimpleTable(rows, total) {
+        const displayRows = buildFsmDisplayRows(rows, total);
+        if (displayRows.length === 0) {
+            return createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.');
+        }
+        const table = createElement('table', 'gpv-table');
+        table.innerHTML = `
+            <thead>
+                <tr>
+                    <th>Identifier</th>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Value (SGD)</th>
+                    <th>Profit</th>
+                    <th>Current %</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        `;
+        const tbody = table.querySelector('tbody');
+        displayRows.forEach(row => {
+            const tr = createElement('tr');
+            tr.innerHTML = `
+                <td>${escapeHtml(row.displayTicker || row.code || '-')}</td>
+                <td>${escapeHtml(row.name || '-')}</td>
+                <td>${escapeHtml(row.productType || '-')}</td>
+                <td>${escapeHtml(formatMoney(row.currentValueLcy))}</td>
+                <td class="${escapeHtml(row.profitClass || '')}">${escapeHtml(row.profitDisplay || '-')}</td>
+                <td>${escapeHtml(row.currentAllocationDisplay || '-')}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+        return table;
+    }
+
+    function buildOcbcRowsByPortfolioAndProductType(rows) {
+        return (Array.isArray(rows) ? rows : []).reduce((acc, row) => {
+            const portfolioNo = utils.normalizeString(row?.portfolioNo, '-');
+            const productType = utils.normalizeString(row?.productType, '-');
+            if (!acc[portfolioNo]) {
+                acc[portfolioNo] = {};
+            }
+            if (!acc[portfolioNo][productType]) {
+                acc[portfolioNo][productType] = [];
+            }
+            acc[portfolioNo][productType].push(row);
+            return acc;
+        }, {});
+    }
+
+    function buildOcbcSummary(rows) {
+        const safeRows = Array.isArray(rows) ? rows : [];
+        const summary = buildFsmScopedSummary(safeRows.map(row => ({
+            ...row,
+            portfolioId: FSM_UNASSIGNED_PORTFOLIO_ID,
+            targetPercent: null,
+            fixed: false
+        })));
+        const knownProfitRows = safeRows.filter(row => Number.isFinite(toOptionalFiniteNumber(row?.profitValueLcy)));
+        const missingProfitCount = Math.max(0, safeRows.length - knownProfitRows.length);
+        if (knownProfitRows.length === 0) {
+            return summary;
+        }
+        const profitValue = knownProfitRows.reduce((sum, row) => sum + toFiniteNumber(row.profitValueLcy, 0), 0);
+        const total = toFiniteNumber(summary.total, 0);
+        const profitPercent = calculateProfitPercentFromValue(total, profitValue);
+        const partialSuffix = missingProfitCount > 0 ? ` · partial (${missingProfitCount} missing)` : '';
+        return {
+            ...summary,
+            profitValue,
+            profitPercent,
+            profitDisplay: `${formatFsmProfitDisplay(profitValue, profitPercent)}${partialSuffix}`,
+            profitClass: getFsmProfitClass(profitPercent)
+        };
+    }
+
+    function buildOcbcPortfolioHeader(portfolioNo, summary) {
+        const detailHeader = createElement('div', 'gpv-detail-header gpv-ocbc-portfolio-header');
+        const detailTitle = createElement('h2', 'gpv-detail-title', `Portfolio ${portfolioNo}`);
+        const detailStats = createElement('div', 'gpv-stats gpv-detail-stats gpv-ocbc-detail-stats');
+        const profitClass = summary?.profitClass === 'positive' || summary?.profitClass === 'negative'
+            ? summary.profitClass
+            : null;
+
+        detailStats.appendChild(createStatItem('Total Value', formatMoney(summary?.total || 0)));
+        detailStats.appendChild(createStatItem('Holdings', String(summary?.holdingsCount || 0)));
+        detailStats.appendChild(createStatItem('Profit', summary?.profitDisplay || '-', profitClass));
+
+        detailHeader.appendChild(detailTitle);
+        detailHeader.appendChild(detailStats);
+        return detailHeader;
+    }
+
+    function buildOcbcProductTypeHeader(productType, summary) {
+        const typeHeader = createElement('div', 'gpv-type-header');
+        const typeTitle = createElement('h3', null, productType);
+        const typeSummary = createElement('div', 'gpv-type-summary');
+
+        appendLabeledValue(typeSummary, null, 'Value:', formatMoney(summary?.total || 0));
+        appendLabeledValue(typeSummary, null, 'Holdings:', String(summary?.holdingsCount || 0));
+        appendLabeledValue(
+            typeSummary,
+            null,
+            'Profit:',
+            summary?.profitDisplay || '-',
+            { valueClass: summary?.profitClass === 'positive' || summary?.profitClass === 'negative' ? summary.profitClass : null }
+        );
+
+        typeHeader.appendChild(typeTitle);
+        typeHeader.appendChild(typeSummary);
+        return typeHeader;
+    }
+
+    function encodeOcbcTargetScopeSegment(value, fallback) {
+        return encodeURIComponent(utils.normalizeString(value, fallback)).replace(/\|/g, '%7C');
+    }
+
+    function buildOcbcTargetScope(viewKey, portfolioNo, subPortfolioId, instrumentCode) {
+        const safeView = encodeOcbcTargetScopeSegment(viewKey, 'assets');
+        const safePortfolioNo = encodeOcbcTargetScopeSegment(portfolioNo, '-');
+        const safeSubPortfolioId = encodeOcbcTargetScopeSegment(subPortfolioId, '');
+        const safeInstrumentCode = encodeOcbcTargetScopeSegment(instrumentCode, '');
+        return `${safeView}${PROJECTED_KEY_SEPARATOR}${safePortfolioNo}${PROJECTED_KEY_SEPARATOR}${safeSubPortfolioId}${PROJECTED_KEY_SEPARATOR}${safeInstrumentCode}`;
+    }
+
+    function buildLegacyOcbcTargetScope(viewKey, productType, bucketId) {
+        const safeView = encodeOcbcTargetScopeSegment(viewKey, 'assets');
+        const safeProductType = encodeOcbcTargetScopeSegment(productType, '');
+        const safeBucketId = encodeOcbcTargetScopeSegment(bucketId, '');
+        return `${safeView}${PROJECTED_KEY_SEPARATOR}${safeProductType}${PROJECTED_KEY_SEPARATOR}${safeBucketId}`;
+    }
+
+    function getOcbcAllocationTargetPercent(viewKey, portfolioNo, subPortfolioId, bucketId, legacyProductType, legacyBucketId) {
+        const key = storageKeys.ocbcTarget(buildOcbcTargetScope(viewKey, portfolioNo, subPortfolioId, bucketId));
+        if (Storage.has(key)) {
+            return toOptionalFiniteNumber(Storage.get(key, null));
+        }
+        const normalizedLegacyBucketId = utils.normalizeString(legacyBucketId, '');
+        const normalizedBucketId = utils.normalizeString(bucketId, '');
+        const normalizedLegacyProductType = utils.normalizeString(legacyProductType, '');
+        if (!normalizedBucketId && normalizedLegacyProductType) {
+            const legacyScopeBucketId = normalizedLegacyBucketId || utils.normalizeString(subPortfolioId, '');
+            const legacyKey = storageKeys.ocbcTarget(buildLegacyOcbcTargetScope(viewKey, normalizedLegacyProductType, legacyScopeBucketId));
+            if (Storage.has(legacyKey)) {
+                return toOptionalFiniteNumber(Storage.get(legacyKey, null));
+            }
+        }
+        return null;
+    }
+
+    function normalizeOcbcOrderByScopeForUi(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const normalized = {};
+        Object.entries(source).forEach(([scope, value]) => {
+            const normalizedScope = utils.normalizeString(scope, '');
+            if (!normalizedScope || !Array.isArray(value)) {
+                return;
+            }
+            const deduped = [];
+            const seen = new Set();
+            value.forEach(code => {
+                const normalizedCode = utils.normalizeString(code, '');
+                if (!normalizedCode || seen.has(normalizedCode)) {
+                    return;
+                }
+                seen.add(normalizedCode);
+                deduped.push(normalizedCode);
+            });
+            if (deduped.length) {
+                normalized[normalizedScope] = deduped;
+            }
+        });
+        return normalized;
+    }
+
+    function buildOcbcOrderScopeCompatibilityKeys(activeView, portfolioNo, subPortfolioId) {
+        const normalizedView = utils.normalizeString(activeView, 'assets');
+        const normalizedPortfolioNo = utils.normalizeString(portfolioNo, '-');
+        const normalizedSubPortfolioId = utils.normalizeString(subPortfolioId, '');
+
+        const viewVariants = new Set([
+            normalizedView,
+            encodeOcbcTargetScopeSegment(normalizedView, 'assets')
+        ]);
+        const portfolioVariants = new Set([
+            normalizedPortfolioNo,
+            encodeOcbcTargetScopeSegment(normalizedPortfolioNo, '-')
+        ]);
+        const subPortfolioVariants = new Set();
+        if (normalizedSubPortfolioId) {
+            subPortfolioVariants.add(normalizedSubPortfolioId);
+            subPortfolioVariants.add(encodeOcbcTargetScopeSegment(normalizedSubPortfolioId, ''));
+        } else {
+            subPortfolioVariants.add('');
+            subPortfolioVariants.add('-');
+        }
+
+        const keys = new Set();
+        viewVariants.forEach(viewVariant => {
+            portfolioVariants.forEach(portfolioVariant => {
+                subPortfolioVariants.forEach(subPortfolioVariant => {
+                    keys.add(`${viewVariant}${PROJECTED_KEY_SEPARATOR}${portfolioVariant}${PROJECTED_KEY_SEPARATOR}${subPortfolioVariant}`);
+                });
+            });
+        });
+        return Array.from(keys);
+    }
+
+    function loadOcbcAllocationConfig() {
+        const bucketsByView = Storage.readJson(
+            STORAGE_KEYS.ocbcAllocationBuckets,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error reading OCBC allocation buckets'
+        ) || {};
+        const subPortfoliosByView = Storage.readJson(
+            STORAGE_KEYS.ocbcSubPortfolios,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error reading OCBC sub-portfolios'
+        ) || {};
+        const assignmentByCode = Storage.readJson(
+            STORAGE_KEYS.ocbcAllocationAssignmentByCode,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error reading OCBC allocation assignments'
+        ) || {};
+        const orderByScope = normalizeOcbcOrderByScopeForUi(Storage.readJson(
+            STORAGE_KEYS.ocbcAllocationOrderByScope,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error reading OCBC allocation order'
+        ) || {});
+        return { bucketsByView, subPortfoliosByView, assignmentByCode, orderByScope };
+    }
+
+    function saveOcbcSubPortfoliosConfig(subPortfoliosByView, options = {}) {
+        Storage.writeJson(STORAGE_KEYS.ocbcSubPortfolios, subPortfoliosByView || {}, 'Error saving OCBC sub-portfolios');
+        if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
+            SyncManager.scheduleSyncOnChange('ocbc-sub-portfolios-update');
+        }
+    }
+
+    function saveOcbcAllocationAssignmentsConfig(assignmentByCode, options = {}) {
+        Storage.writeJson(
+            STORAGE_KEYS.ocbcAllocationAssignmentByCode,
+            assignmentByCode || {},
+            'Error saving OCBC allocation assignments'
+        );
+        if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
+            SyncManager.scheduleSyncOnChange('ocbc-assignment-update');
+        }
+    }
+
+    function saveOcbcAllocationOrderConfig(orderByScope, options = {}) {
+        Storage.writeJson(
+            STORAGE_KEYS.ocbcAllocationOrderByScope,
+            normalizeOcbcOrderByScopeForUi(orderByScope),
+            'Error saving OCBC allocation order'
+        );
+        if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
+            SyncManager.scheduleSyncOnChange('ocbc-order-update');
+        }
+    }
+
+    function buildOcbcAllocationOrderScope(activeView, portfolioNo, subPortfolioId) {
+        return [
+            encodeOcbcTargetScopeSegment(activeView, 'assets'),
+            encodeOcbcTargetScopeSegment(portfolioNo, '-'),
+            encodeOcbcTargetScopeSegment(subPortfolioId, '')
+        ].join(PROJECTED_KEY_SEPARATOR);
+    }
+
+    function normalizeOcbcSubPortfolioItem(item) {
+        if (!item || typeof item !== 'object') {
+            return null;
+        }
+        const id = utils.normalizeString(item.id, '');
+        if (!id) {
+            return null;
+        }
+        return {
+            id,
+            name: utils.normalizeString(item.name, 'Untitled sub-portfolio'),
+            archived: item.archived === true,
+            legacyProductType: utils.normalizeString(item.legacyProductType, ''),
+            legacyBucketId: utils.normalizeString(item.legacyBucketId, '')
+        };
+    }
+
+    function getActiveOcbcSubPortfolios(subPortfoliosByView, activeView, portfolioNo) {
+        const scoped = subPortfoliosByView && typeof subPortfoliosByView === 'object' ? subPortfoliosByView[activeView] : null;
+        const items = scoped && typeof scoped === 'object' ? scoped[portfolioNo] : null;
+        if (!Array.isArray(items)) {
+            return [];
+        }
+        return items
+            .map(normalizeOcbcSubPortfolioItem)
+            .filter(item => item && item.archived !== true);
+    }
+
+    function ensureOcbcViewSubPortfolioStore(subPortfoliosByView, activeView) {
+        if (!subPortfoliosByView[activeView] || typeof subPortfoliosByView[activeView] !== 'object' || Array.isArray(subPortfoliosByView[activeView])) {
+            subPortfoliosByView[activeView] = {};
+        }
+        return subPortfoliosByView[activeView];
+    }
+
+    function normalizeOcbcAllocationAssignment(value) {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            return {
+                subPortfolioId: utils.normalizeString(value.subPortfolioId, '')
+            };
+        }
+        return {
+            subPortfolioId: utils.normalizeString(value, '')
+        };
+    }
+
+    function buildOcbcAllocationRowsByPortfolio(rows) {
+        return (Array.isArray(rows) ? rows : []).reduce((acc, row) => {
+            const portfolioNo = utils.normalizeString(row?.portfolioNo, '-');
+            if (!acc[portfolioNo]) {
+                acc[portfolioNo] = [];
+            }
+            acc[portfolioNo].push(row);
+            return acc;
+        }, {});
+    }
+
+    function buildLegacyOcbcSubPortfolios(activeView, bucketsByView) {
+        const legacyProductBuckets = bucketsByView?.[activeView] || {};
+        const legacySubPortfolios = [];
+        const bucketUsageCount = new Map();
+        Object.values(legacyProductBuckets).forEach(buckets => {
+            if (!Array.isArray(buckets)) {
+                return;
+            }
+            buckets.forEach(bucket => {
+                const normalizedId = utils.normalizeString(bucket?.id, '');
+                if (!normalizedId) {
+                    return;
+                }
+                bucketUsageCount.set(normalizedId, (bucketUsageCount.get(normalizedId) || 0) + 1);
+            });
+        });
+        Object.entries(legacyProductBuckets).forEach(([productType, buckets]) => {
+            if (!Array.isArray(buckets)) {
+                return;
+            }
+            buckets.forEach(bucket => {
+                const normalizedId = utils.normalizeString(bucket?.id, '');
+                const normalizedProductType = utils.normalizeString(productType, '');
+                if (!normalizedId) {
+                    return;
+                }
+                const isDuplicateLegacyBucketId = (bucketUsageCount.get(normalizedId) || 0) > 1;
+                const internalId = isDuplicateLegacyBucketId
+                    ? `legacy-${normalizedProductType.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'product'}-${normalizedId}`
+                    : normalizedId;
+                legacySubPortfolios.push({
+                    id: internalId,
+                    name: utils.normalizeString(bucket?.name, normalizedId),
+                    archived: bucket?.archived === true,
+                    buckets: [],
+                    legacyProductType: normalizedProductType,
+                    legacyBucketId: normalizedId
+                });
+            });
+        });
+        return legacySubPortfolios.filter(item => item.archived !== true);
+    }
+
+    function resolveOcbcAllocationAssignmentForRow(rawAssignment, row, subPortfolios) {
+        const normalizedFromRaw = normalizeOcbcAllocationAssignment(rawAssignment);
+        if (rawAssignment && typeof rawAssignment === 'object' && !Array.isArray(rawAssignment)) {
+            return normalizedFromRaw;
+        }
+        const rawLegacyId = normalizedFromRaw.subPortfolioId;
+        if (!rawLegacyId) {
+            return normalizedFromRaw;
+        }
+        const items = Array.isArray(subPortfolios) ? subPortfolios : [];
+        const directMatch = items.find(item => utils.normalizeString(item?.id, '') === rawLegacyId);
+        if (directMatch && isOcbcSubPortfolioAllowedForRow(directMatch, row)) {
+            return normalizedFromRaw;
+        }
+        const rowProductType = utils.normalizeString(row?.productType, '');
+        const productScopedLegacyMatch = items.find(item => (
+            utils.normalizeString(item?.legacyBucketId, '') === rawLegacyId
+            && utils.normalizeString(item?.legacyProductType, '') === rowProductType
+        ));
+        if (productScopedLegacyMatch) {
+            return { subPortfolioId: productScopedLegacyMatch.id };
+        }
+        const legacyBucketMatches = items.filter(item => utils.normalizeString(item?.legacyBucketId, '') === rawLegacyId);
+        if (legacyBucketMatches.length === 1) {
+            return { subPortfolioId: legacyBucketMatches[0].id };
+        }
+        return normalizedFromRaw;
+    }
+
+    function isOcbcSubPortfolioAllowedForRow(subPortfolio, row) {
+        const legacyProductType = utils.normalizeString(subPortfolio?.legacyProductType, '');
+        if (!legacyProductType) {
+            return true;
+        }
+        return legacyProductType === utils.normalizeString(row?.productType, '');
+    }
+
+    function getEffectiveOcbcAssignmentForRow(rawAssignment, row, subPortfolios) {
+        const normalizedAssignment = resolveOcbcAllocationAssignmentForRow(rawAssignment, row, subPortfolios);
+        const subPortfolioId = utils.normalizeString(normalizedAssignment?.subPortfolioId, '');
+        if (!subPortfolioId) {
+            return { subPortfolioId: '' };
+        }
+        const selectedSubPortfolio = (Array.isArray(subPortfolios) ? subPortfolios : []).find(item => item.id === subPortfolioId);
+        if (!selectedSubPortfolio || !isOcbcSubPortfolioAllowedForRow(selectedSubPortfolio, row)) {
+            return { subPortfolioId: '' };
+        }
+        return { subPortfolioId };
+    }
+
+    function resolveOcbcAssignmentByRow(assignmentByCode, row, subPortfolios) {
+        const source = assignmentByCode && typeof assignmentByCode === 'object' ? assignmentByCode : {};
+        const candidates = getOcbcAssignmentLookupCandidates(row);
+        for (const code of candidates) {
+            const assignment = getEffectiveOcbcAssignmentForRow(source[code], row, subPortfolios);
+            if (assignment.subPortfolioId) {
+                return assignment;
+            }
+        }
+        return { subPortfolioId: '' };
+    }
+
+    function getOcbcInstrumentTargetPercent(viewKey, portfolioNo, subPortfolioId, row) {
+        const candidates = getOcbcAssignmentLookupCandidates(row);
+        for (const code of candidates) {
+            const targetPercent = getOcbcAllocationTargetPercent(viewKey, portfolioNo, subPortfolioId, code);
+            if (Number.isFinite(targetPercent)) {
+                return targetPercent;
+            }
+        }
+        return null;
+    }
+
+    function normalizeOcbcRowOrderCodes(currentOrder, rows) {
+        const normalizedRows = Array.isArray(rows) ? rows : [];
+        const rowCodes = normalizedRows.map(row => utils.normalizeString(row?.code, '')).filter(Boolean);
+        const canonicalByAlias = {};
+        normalizedRows.forEach(row => {
+            const canonicalCode = utils.normalizeString(row?.code, '');
+            if (!canonicalCode) {
+                return;
+            }
+            const aliases = getOcbcAssignmentLookupCandidates(row);
+            aliases.forEach(alias => {
+                const normalizedAlias = utils.normalizeString(alias, '');
+                if (normalizedAlias && !canonicalByAlias[normalizedAlias]) {
+                    canonicalByAlias[normalizedAlias] = canonicalCode;
+                }
+            });
+        });
+        const seenCodes = new Set();
+        const orderedCodes = [];
+        (Array.isArray(currentOrder) ? currentOrder : []).forEach(code => {
+            const normalizedCode = utils.normalizeString(code, '');
+            const canonicalCode = canonicalByAlias[normalizedCode] || normalizedCode;
+            if (!canonicalCode || seenCodes.has(canonicalCode) || !rowCodes.includes(canonicalCode)) {
+                return;
+            }
+            seenCodes.add(canonicalCode);
+            orderedCodes.push(canonicalCode);
+        });
+        rowCodes.forEach(code => {
+            if (!seenCodes.has(code)) {
+                seenCodes.add(code);
+                orderedCodes.push(code);
+            }
+        });
+        return orderedCodes;
+    }
+
+    function mergeOcbcSubPortfolios(scopedSubPortfolios, legacySubPortfolios) {
+        const mergedMap = new Map();
+        (Array.isArray(scopedSubPortfolios) ? scopedSubPortfolios : []).forEach(item => {
+            const id = utils.normalizeString(item?.id, '');
+            if (!id || mergedMap.has(id)) {
+                return;
+            }
+            mergedMap.set(id, item);
+        });
+        (Array.isArray(legacySubPortfolios) ? legacySubPortfolios : []).forEach(item => {
+            const id = utils.normalizeString(item?.id, '');
+            if (!id || mergedMap.has(id)) {
+                return;
+            }
+            mergedMap.set(id, item);
+        });
+        return Array.from(mergedMap.values());
+    }
+
+    function renderOcbcOverlay(ocbcHoldings) {
+        const overlay = createElement('div', 'gpv-overlay');
+        overlay.id = 'gpv-overlay';
+        const container = createElement('div', 'gpv-container gpv-container--expanded');
+        const cleanupCallbacks = [];
+        container.gpvCleanupCallbacks = cleanupCallbacks;
+        overlay.gpvCleanupCallbacks = cleanupCallbacks;
+
+        const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({
+            overlay,
+            cleanupCallbacks,
+            titleText: 'Portfolio Viewer (OCBC)',
+            syncReturnTo: 'ocbc'
+        });
+        container.appendChild(header);
+
+        const controls = createElement('div', 'gpv-controls');
+        const viewLabel = createElement('label', 'gpv-select-label', 'View:');
+        const viewSelect = createElement('select', 'gpv-select');
+        const viewSelectId = 'gpv-ocbc-view-select';
+        viewSelect.id = viewSelectId;
+        viewLabel.setAttribute('for', viewSelectId);
+        viewSelect.setAttribute('aria-label', 'Select OCBC holdings view');
+        viewSelect.innerHTML = `
+            <option value="assets">Assets</option>
+            <option value="liabilities">Liabilities</option>
+        `;
+        controls.appendChild(viewLabel);
+        controls.appendChild(viewSelect);
+
+        const modeLabel = createElement('label', 'gpv-select-label', 'Mode:');
+        const modeSelect = createElement('select', 'gpv-select');
+        const modeSelectId = 'gpv-ocbc-mode-select';
+        modeSelect.id = modeSelectId;
+        modeLabel.setAttribute('for', modeSelectId);
+        modeSelect.setAttribute('aria-label', 'Select OCBC layout mode');
+        modeSelect.innerHTML = `
+            <option value="portfolio">Portfolio</option>
+            <option value="allocation">Allocation</option>
+        `;
+        controls.appendChild(modeLabel);
+        controls.appendChild(modeSelect);
+        container.appendChild(controls);
+
+        const contentDiv = createElement('div', 'gpv-content');
+        container.appendChild(contentDiv);
+        overlay.appendChild(container);
+
+        const safeHoldings = ocbcHoldings && typeof ocbcHoldings === 'object'
+            ? ocbcHoldings
+            : { assets: [], liabilities: [] };
+        const assets = Array.isArray(safeHoldings.assets) ? safeHoldings.assets : [];
+        const liabilities = Array.isArray(safeHoldings.liabilities) ? safeHoldings.liabilities : [];
+
+        const allocationConfig = loadOcbcAllocationConfig();
+        const bucketsByView = allocationConfig.bucketsByView;
+        const subPortfoliosByView = allocationConfig.subPortfoliosByView;
+        const assignmentByCode = allocationConfig.assignmentByCode;
+        const orderByScope = allocationConfig.orderByScope;
+
+        function renderAllocationMode(activeView, rows) {
+            let assignmentConfigChanged = false;
+            const groupedByPortfolio = buildOcbcAllocationRowsByPortfolio(rows);
+            const portfolioNos = Object.keys(groupedByPortfolio);
+            if (portfolioNos.length === 0) {
+                contentDiv.appendChild(createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.'));
+                return;
+            }
+
+            portfolioNos.forEach(portfolioNo => {
+                const portfolioRows = groupedByPortfolio[portfolioNo] || [];
+                const portfolioSummary = buildOcbcSummary(portfolioRows);
+                const portfolioTotal = toFiniteNumber(portfolioSummary.total, 0);
+                const section = createElement('section', 'gpv-bucket-detail-section');
+                section.appendChild(buildOcbcPortfolioHeader(portfolioNo, portfolioSummary));
+
+                const scopedSubPortfolios = getActiveOcbcSubPortfolios(subPortfoliosByView, activeView, portfolioNo);
+                const legacySubPortfolios = buildLegacyOcbcSubPortfolios(activeView, bucketsByView);
+                const persistedSubPortfolios = mergeOcbcSubPortfolios(scopedSubPortfolios, legacySubPortfolios);
+                const assignmentReferencedIds = Array.from(new Set(portfolioRows
+                    .map(row => resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios).subPortfolioId)
+                    .filter(Boolean)));
+                assignmentReferencedIds.forEach(id => {
+                    const ambiguousLegacyMatches = persistedSubPortfolios.filter(item => (
+                        utils.normalizeString(item?.legacyBucketId, '') === id
+                        && utils.normalizeString(item?.legacyProductType, '')
+                    ));
+                    if (ambiguousLegacyMatches.length > 1) {
+                        return;
+                    }
+                    if (!persistedSubPortfolios.some(item => item.id === id)) {
+                        persistedSubPortfolios.push({ id, name: id, archived: false });
+                    }
+                });
+
+                const managerRow = createElement('div', 'gpv-fsm-manager-row');
+                const createSubPortfolioId = `gpv-ocbc-sub-portfolio-create-${activeView}-${encodeURIComponent(portfolioNo)}`;
+                const createSubPortfolioLabel = createElement('label', null, 'New sub-portfolio');
+                createSubPortfolioLabel.setAttribute('for', createSubPortfolioId);
+                const createSubPortfolioInput = createElement('input', 'gpv-target-input');
+                createSubPortfolioInput.id = createSubPortfolioId;
+                createSubPortfolioInput.maxLength = 80;
+                createSubPortfolioInput.placeholder = 'Sub-portfolio name';
+                const createSubPortfolioBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', 'Create');
+                createSubPortfolioBtn.type = 'button';
+                createSubPortfolioBtn.onclick = () => {
+                    const name = utils.normalizeString(createSubPortfolioInput.value, '');
+                    if (!name) {
+                        return;
+                    }
+                    const normalizedId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                    const subPortfolioId = normalizedId || `sub-portfolio-${Date.now()}`;
+                    const viewStore = ensureOcbcViewSubPortfolioStore(subPortfoliosByView, activeView);
+                    const currentItems = Array.isArray(viewStore[portfolioNo]) ? viewStore[portfolioNo] : [];
+                    if (!currentItems.some(item => utils.normalizeString(item?.id, '') === subPortfolioId)) {
+                        currentItems.push({ id: subPortfolioId, name, archived: false });
+                        viewStore[portfolioNo] = currentItems;
+                        saveOcbcSubPortfoliosConfig(subPortfoliosByView);
+                        rerender();
+                    }
+                };
+                managerRow.appendChild(createSubPortfolioLabel);
+                managerRow.appendChild(createSubPortfolioInput);
+                managerRow.appendChild(createSubPortfolioBtn);
+                section.appendChild(managerRow);
+                section.appendChild(createElement('h3', 'gpv-detail-title', `Sub-portfolio allocation within Portfolio ${portfolioNo}`));
+
+                const subPortfolioRows = createElement('table', 'gpv-table');
+                subPortfolioRows.innerHTML = `
+                    <thead>
+                        <tr>
+                            <th>Sub-portfolio</th>
+                            <th>Value (SGD)</th>
+                            <th>Current % of portfolio</th>
+                            <th>Target % of portfolio</th>
+                            <th>Drift</th>
+                            <th>Holdings</th>
+                            <th>Profit</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                `;
+                const subPortfolioBody = subPortfolioRows.querySelector('tbody');
+                const subPortfolioRowsData = [{ id: '', name: 'Unassigned', rows: [] }];
+                persistedSubPortfolios.forEach(item => subPortfolioRowsData.push({ ...item, rows: [] }));
+                const configuredSubPortfolioTargets = subPortfolioRowsData.reduce((sum, subPortfolio) => {
+                    if (!subPortfolio.id) {
+                        return sum;
+                    }
+                    const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId);
+                    return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
+                }, 0);
+
+                portfolioRows.forEach(row => {
+                    const code = utils.normalizeString(row?.code, '');
+                    const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
+                    const matchedSubPortfolio = subPortfolioRowsData.find(item => item.id === assignment.subPortfolioId);
+                    (matchedSubPortfolio || subPortfolioRowsData[0]).rows.push(row);
+                    if (code && assignment.subPortfolioId && assignmentByCode[code] !== assignment.subPortfolioId) {
+                        assignmentByCode[code] = assignment.subPortfolioId;
+                        assignmentConfigChanged = true;
+                    }
+                });
+
+                subPortfolioRowsData.forEach(subPortfolio => {
+                    const tr = createElement('tr');
+                    const subPortfolioSummary = buildOcbcSummary(subPortfolio.rows);
+                    const subPortfolioValue = toFiniteNumber(subPortfolioSummary.total, 0);
+                    const currentPercent = calculateAllocationRatio(subPortfolioValue, portfolioTotal);
+                    const targetPercent = subPortfolio.id
+                        ? getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId)
+                        : null;
+                    const driftModel = targetPercent === null
+                        ? { driftPercent: null, driftAmount: null }
+                        : calculateAllocationDrift(subPortfolioValue, targetPercent, portfolioTotal);
+                    tr.appendChild(createElement('td', null, subPortfolio.name));
+                    tr.appendChild(createElement('td', null, formatMoney(subPortfolioValue)));
+                    tr.appendChild(createElement('td', null, formatPercent(currentPercent, { multiplier: 100, showSign: false })));
+
+                    const targetCell = createElement('td');
+                    if (subPortfolio.id) {
+                        const targetInput = createElement('input', 'gpv-target-input');
+                        targetInput.type = 'number';
+                        targetInput.min = '0';
+                        targetInput.max = '100';
+                        targetInput.step = '0.01';
+                        targetInput.value = Number.isFinite(targetPercent) ? targetPercent.toFixed(2) : '';
+                        targetInput.setAttribute('aria-label', `Target percentage for portfolio ${portfolioNo} sub-portfolio ${subPortfolio.name}`);
+                        targetInput.onchange = () => {
+                            const parsed = toOptionalFiniteNumber(targetInput.value);
+                            const key = storageKeys.ocbcTarget(buildOcbcTargetScope(activeView, portfolioNo, subPortfolio.id, ''));
+                            if (parsed === null) {
+                                Storage.remove(key);
+                                if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
+                                    SyncManager.scheduleSyncOnChange('ocbc-target-clear');
+                                }
+                            } else {
+                                Storage.set(key, Number(Math.min(100, Math.max(0, parsed)).toFixed(2)));
+                                if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
+                                    SyncManager.scheduleSyncOnChange('ocbc-target-update');
+                                }
+                            }
+                            rerender();
+                        };
+                        targetCell.appendChild(targetInput);
+                    } else {
+                        targetCell.textContent = '-';
+                    }
+                    tr.appendChild(targetCell);
+                    tr.appendChild(createElement('td', getDriftSeverityClass(driftModel?.driftPercent), formatDriftDisplay(driftModel?.driftPercent, driftModel?.driftAmount)));
+                    tr.appendChild(createElement('td', null, String(subPortfolio.rows.length)));
+                    tr.appendChild(createElement('td', subPortfolioSummary?.profitClass, subPortfolioSummary?.profitDisplay || '-'));
+                    subPortfolioBody.appendChild(tr);
+                });
+                section.appendChild(createElement(
+                    'p',
+                    'gpv-sync-help gpv-ocbc-target-summary',
+                    `Sub-portfolio targets: ${buildAssignedCoverageText(configuredSubPortfolioTargets)}`
+                ));
+                section.appendChild(subPortfolioRows);
+
+                const displayRows = buildFsmDisplayRows(portfolioRows, portfolioTotal);
+                const instrumentRowsBySubPortfolio = [{ id: '', name: 'Unassigned', rows: [] }];
+                persistedSubPortfolios.forEach(item => instrumentRowsBySubPortfolio.push({ ...item, rows: [] }));
+                displayRows.forEach(row => {
+                    const code = utils.normalizeString(row?.code, '');
+                    const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
+                    const matchedSubPortfolio = instrumentRowsBySubPortfolio.find(item => item.id === assignment.subPortfolioId);
+                    (matchedSubPortfolio || instrumentRowsBySubPortfolio[0]).rows.push(row);
+                    if (code && assignment.subPortfolioId && assignmentByCode[code] !== assignment.subPortfolioId) {
+                        assignmentByCode[code] = assignment.subPortfolioId;
+                        assignmentConfigChanged = true;
+                    }
+                });
+
+                const buildInstrumentTable = ({
+                    heading,
+                    rows,
+                    sectionClass = '',
+                    subPortfolioId = '',
+                    subPortfolioName = '',
+                    denominatorTotal = null
+                }) => {
+                    if (!rows.length) {
+                        return;
+                    }
+                    const headerRow = createElement('div', 'gpv-ocbc-instrument-header-row');
+                    const headingElement = createElement('h3', `gpv-detail-title gpv-ocbc-instrument-heading ${sectionClass}`.trim(), heading);
+                    headerRow.appendChild(headingElement);
+                    section.appendChild(headerRow);
+                    const scopeKey = buildOcbcAllocationOrderScope(activeView, portfolioNo, subPortfolioId);
+                    const currentOrder = Array.isArray(orderByScope[scopeKey]) ? orderByScope[scopeKey] : [];
+                    const orderedCodes = normalizeOcbcRowOrderCodes(currentOrder, rows);
+                    const rowsByCode = rows.reduce((acc, row) => {
+                        const code = utils.normalizeString(row?.code, '');
+                        if (code && !acc[code]) {
+                            acc[code] = row;
+                        }
+                        return acc;
+                    }, {});
+                    const orderedRows = orderedCodes.map(code => rowsByCode[code]).filter(Boolean);
+                    let copyControls = null;
+                    if (subPortfolioId) {
+                        const configuredInstrumentTargets = rows.reduce((sum, row) => {
+                            const rowCode = utils.normalizeString(row?.code, '');
+                            const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolioId, rowCode);
+                            return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
+                        }, 0);
+                        section.appendChild(createElement('p', 'gpv-sync-help gpv-ocbc-target-summary', `${subPortfolioName || subPortfolioId} instrument targets: ${buildAssignedCoverageText(configuredInstrumentTargets)}`));
+                        const status = createElement('span', 'gpv-balance-copy-status');
+                        status.setAttribute('role', 'status');
+                        status.setAttribute('aria-live', 'polite');
+                        status.setAttribute('aria-atomic', 'true');
+                        copyControls = createElement('div', 'gpv-balance-copy-controls gpv-balance-copy-controls--section');
+                        const copyButton = createElement('button', 'gpv-section-toggle gpv-balance-copy-button', 'Copy Values');
+                        copyButton.type = 'button';
+                        copyButton.setAttribute('aria-label', `Copy values for sub-portfolio ${subPortfolioName || subPortfolioId}`);
+                        copyButton.onclick = async () => {
+                            if (orderedRows.length === 0) {
+                                setBalanceCopyFeedback(status, 'No assigned instruments');
+                                return;
+                            }
+                            const valuesLine = orderedRows
+                                .map(row => {
+                                    const rawValue = row?.currentValueLcy;
+                                    return rawValue === null || rawValue === undefined ? '' : String(rawValue);
+                                })
+                                .join('\t');
+                            try {
+                                await copyTextToClipboard(valuesLine);
+                                setBalanceCopyFeedback(status, `Copied ${orderedRows.length} values`);
+                            } catch (_error) {
+                                setBalanceCopyFeedback(status, 'Copy failed', 'error');
+                            }
+                        };
+                        copyControls.appendChild(copyButton);
+                        copyControls.appendChild(status);
+                    }
+                    if (copyControls) {
+                        section.appendChild(copyControls);
+                    }
+                    const holdingsTable = createElement('table', 'gpv-table');
+                    holdingsTable.innerHTML = `
+                    <thead>
+                        <tr>
+                            <th>Identifier</th>
+                            <th>Name</th>
+                            <th>Product Type</th>
+                            <th>Value (SGD)</th>
+                            <th>Current % of sub-portfolio</th>
+                            <th>Target % of sub-portfolio</th>
+                            <th>Drift</th>
+                            <th>Sub-portfolio</th>
+                            <th>Reorder</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                `;
+                    const holdingsBody = holdingsTable.querySelector('tbody');
+                    orderedRows.forEach((row, index) => {
+                        const tr = createElement('tr');
+                        tr.appendChild(createElement('td', null, row.displayTicker || row.code || '-'));
+                        tr.appendChild(createElement('td', null, row.name || '-'));
+                        tr.appendChild(createElement('td', null, row.productType || '-'));
+                        tr.appendChild(createElement('td', null, formatMoney(row.currentValueLcy)));
+                        const code = utils.normalizeString(row.code, '');
+                        const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
+                        const effectiveSubPortfolioId = utils.normalizeString(subPortfolioId || assignment.subPortfolioId, '');
+                        const resolvedAssignedTotal = Number.isFinite(denominatorTotal)
+                            ? toFiniteNumber(denominatorTotal, 0)
+                            : toFiniteNumber(buildOcbcSummary(portfolioRows.filter(candidate => (
+                                resolveOcbcAssignmentByRow(assignmentByCode, candidate, persistedSubPortfolios).subPortfolioId === effectiveSubPortfolioId
+                            ))).total, 0);
+                        const currentPercentInSubPortfolio = effectiveSubPortfolioId
+                            ? calculateAllocationRatio(toFiniteNumber(row.currentValueLcy, 0), resolvedAssignedTotal)
+                            : null;
+                        tr.appendChild(createElement('td', null, effectiveSubPortfolioId
+                            ? formatPercent(currentPercentInSubPortfolio, { multiplier: 100, showSign: false })
+                            : '-'));
+
+                        const targetCell = createElement('td');
+                        const targetPercent = effectiveSubPortfolioId
+                            ? getOcbcInstrumentTargetPercent(activeView, portfolioNo, effectiveSubPortfolioId, row)
+                            : null;
+                        if (effectiveSubPortfolioId) {
+                            const targetInput = createElement('input', 'gpv-target-input');
+                            const inputSubPortfolioName = subPortfolioName || (persistedSubPortfolios.find(item => item.id === effectiveSubPortfolioId)?.name) || effectiveSubPortfolioId;
+                            targetInput.type = 'number';
+                            targetInput.min = '0';
+                            targetInput.max = '100';
+                            targetInput.step = '0.01';
+                            targetInput.value = Number.isFinite(targetPercent) ? targetPercent.toFixed(2) : '';
+                            targetInput.setAttribute('aria-label', `Target percentage for instrument ${row.displayTicker || row.code || row.name || '-'} in sub-portfolio ${inputSubPortfolioName}`);
+                            targetInput.onchange = () => {
+                                const parsed = toOptionalFiniteNumber(targetInput.value);
+                                const key = storageKeys.ocbcTarget(buildOcbcTargetScope(activeView, portfolioNo, effectiveSubPortfolioId, code));
+                                if (parsed === null) {
+                                    Storage.remove(key);
+                                    if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
+                                        SyncManager.scheduleSyncOnChange('ocbc-target-clear');
+                                    }
+                                } else {
+                                    Storage.set(key, Number(Math.min(100, Math.max(0, parsed)).toFixed(2)));
+                                    if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
+                                        SyncManager.scheduleSyncOnChange('ocbc-target-update');
+                                    }
+                                }
+                                rerender();
+                            };
+                            targetCell.appendChild(targetInput);
+                        } else {
+                            targetCell.textContent = '-';
+                        }
+                        tr.appendChild(targetCell);
+
+                        const driftModel = (effectiveSubPortfolioId && Number.isFinite(targetPercent))
+                            ? calculateAllocationDrift(toFiniteNumber(row.currentValueLcy, 0), targetPercent, resolvedAssignedTotal)
+                            : { driftPercent: null, driftAmount: null };
+                        tr.appendChild(createElement('td', getDriftSeverityClass(driftModel?.driftPercent), formatDriftDisplay(driftModel?.driftPercent, driftModel?.driftAmount)));
+
+                        const subPortfolioCell = createElement('td');
+                        const subPortfolioSelect = createElement('select', 'gpv-select');
+                        const labelTicker = row.displayTicker || row.code || row.name || 'this holding';
+                        subPortfolioSelect.setAttribute('aria-label', `Sub-portfolio for ${labelTicker}`);
+                        const unassignedOption = createElement('option', null, 'Unassigned');
+                        unassignedOption.value = '';
+                        subPortfolioSelect.appendChild(unassignedOption);
+                        const rowProductType = utils.normalizeString(row?.productType, '');
+                        const rowSubPortfolioOptions = persistedSubPortfolios.filter(subPortfolio => {
+                            const legacyProductType = utils.normalizeString(subPortfolio?.legacyProductType, '');
+                            return !legacyProductType || legacyProductType === rowProductType;
+                        });
+                        rowSubPortfolioOptions.forEach(subPortfolio => {
+                            const option = createElement('option', null, subPortfolio.name);
+                            option.value = subPortfolio.id;
+                            subPortfolioSelect.appendChild(option);
+                        });
+                        subPortfolioSelect.value = assignment.subPortfolioId;
+                        subPortfolioSelect.onchange = () => {
+                            const previousSubPortfolioId = utils.normalizeString(assignment.subPortfolioId, '');
+                            const nextSubPortfolioId = utils.normalizeString(subPortfolioSelect.value, '');
+                            assignmentByCode[code] = nextSubPortfolioId;
+                            const nextScopeKey = buildOcbcAllocationOrderScope(activeView, portfolioNo, nextSubPortfolioId);
+                            const previousScopeCompatibilityKeys = buildOcbcOrderScopeCompatibilityKeys(activeView, portfolioNo, previousSubPortfolioId);
+                            previousScopeCompatibilityKeys.forEach(scopeKey => {
+                                const currentScopeOrder = Array.isArray(orderByScope[scopeKey]) ? orderByScope[scopeKey] : null;
+                                if (!currentScopeOrder) {
+                                    return;
+                                }
+                                const nextScopeOrder = currentScopeOrder.filter(item => item !== code);
+                                if (nextScopeOrder.length) {
+                                    orderByScope[scopeKey] = nextScopeOrder;
+                                } else {
+                                    delete orderByScope[scopeKey];
+                                }
+                            });
+                            const nextScope = Array.isArray(orderByScope[nextScopeKey]) ? orderByScope[nextScopeKey].filter(Boolean) : [];
+                            orderByScope[nextScopeKey] = nextScope.filter(item => item !== code).concat(code);
+                            saveOcbcAllocationAssignmentsConfig(assignmentByCode);
+                            saveOcbcAllocationOrderConfig(orderByScope);
+                            rerender();
+                        };
+                        subPortfolioCell.appendChild(subPortfolioSelect);
+                        tr.appendChild(subPortfolioCell);
+
+                        const reorderCell = createElement('td', 'gpv-fixed-cell');
+                        const reorderGroup = createElement('div', 'gpv-row-reorder-controls');
+                        const moveUpButton = createElement('button', 'gpv-section-toggle', 'Up');
+                        const moveDownButton = createElement('button', 'gpv-section-toggle', 'Down');
+                        moveUpButton.type = 'button';
+                        moveDownButton.type = 'button';
+                        moveUpButton.disabled = index === 0;
+                        moveDownButton.disabled = index === (orderedRows.length - 1);
+                        moveUpButton.setAttribute('aria-label', `Move ${labelTicker} up within ${subPortfolioName || 'unassigned instruments'}`);
+                        moveDownButton.setAttribute('aria-label', `Move ${labelTicker} down within ${subPortfolioName || 'unassigned instruments'}`);
+                        moveUpButton.onclick = () => {
+                            if (index === 0) {
+                                return;
+                            }
+                            const nextOrder = orderedCodes.slice();
+                            [nextOrder[index - 1], nextOrder[index]] = [nextOrder[index], nextOrder[index - 1]];
+                            orderByScope[scopeKey] = nextOrder;
+                            saveOcbcAllocationOrderConfig(orderByScope);
+                            rerender();
+                        };
+                        moveDownButton.onclick = () => {
+                            if (index >= orderedRows.length - 1) {
+                                return;
+                            }
+                            const nextOrder = orderedCodes.slice();
+                            [nextOrder[index], nextOrder[index + 1]] = [nextOrder[index + 1], nextOrder[index]];
+                            orderByScope[scopeKey] = nextOrder;
+                            saveOcbcAllocationOrderConfig(orderByScope);
+                            rerender();
+                        };
+                        reorderGroup.appendChild(moveUpButton);
+                        reorderGroup.appendChild(moveDownButton);
+                        reorderCell.appendChild(reorderGroup);
+                        tr.appendChild(reorderCell);
+                        holdingsBody.appendChild(tr);
+                    });
+                    section.appendChild(holdingsTable);
+                };
+
+                instrumentRowsBySubPortfolio.forEach(subPortfolio => {
+                    if (!subPortfolio.id) {
+                        return;
+                    }
+                    const assignedTotal = toFiniteNumber(buildOcbcSummary(subPortfolio.rows).total, 0);
+                    buildInstrumentTable({
+                        heading: `Instrument allocation · ${subPortfolio.name}`,
+                        rows: subPortfolio.rows,
+                        subPortfolioId: subPortfolio.id,
+                        subPortfolioName: subPortfolio.name,
+                        denominatorTotal: assignedTotal
+                    });
+                });
+                buildInstrumentTable({
+                    heading: 'Unassigned instruments',
+                    rows: instrumentRowsBySubPortfolio[0].rows,
+                    sectionClass: 'gpv-unassigned-title'
+                });
+
+                contentDiv.appendChild(section);
+            });
+
+            if (assignmentConfigChanged) {
+                saveOcbcAllocationAssignmentsConfig(assignmentByCode);
+            }
+        }
+
+        function rerender() {
+            const activeView = viewSelect.value === 'liabilities' ? 'liabilities' : 'assets';
+            const rows = activeView === 'liabilities' ? liabilities : assets;
+            const mode = modeSelect.value === 'allocation' ? 'allocation' : 'portfolio';
+            contentDiv.innerHTML = '';
+
+            if (mode === 'allocation') {
+                renderAllocationMode(activeView, rows);
+                return;
+            }
+
+            const grouped = buildOcbcRowsByPortfolioAndProductType(rows);
+            const portfolioNos = Object.keys(grouped);
+            if (portfolioNos.length === 0) {
+                contentDiv.appendChild(createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.'));
+                return;
+            }
+            portfolioNos.forEach(portfolioNo => {
+                const portfolioSection = createElement('section', 'gpv-bucket-detail-section');
+                const portfolioRows = Object.values(grouped[portfolioNo]).flat();
+                const portfolioSummary = buildOcbcSummary(portfolioRows);
+                portfolioSection.appendChild(buildOcbcPortfolioHeader(portfolioNo, portfolioSummary));
+
+                Object.keys(grouped[portfolioNo]).forEach(productType => {
+                    const productSection = createElement('section', 'gpv-type-section');
+                    const productRows = grouped[portfolioNo][productType] || [];
+                    const productSummary = buildOcbcSummary(productRows);
+                    productSection.appendChild(buildOcbcProductTypeHeader(productType, productSummary));
+                    productSection.appendChild(buildOcbcSimpleTable(productRows, productSummary.total));
+                    portfolioSection.appendChild(productSection);
+                });
+                contentDiv.appendChild(portfolioSection);
+            });
+        }
+        viewSelect.onchange = rerender;
+        modeSelect.onchange = rerender;
+        rerender();
+
+        overlay.onclick = event => {
+            if (event.target === overlay) {
+                closeOverlay();
+            }
+        };
+        document.body.appendChild(overlay);
+        const modalCleanup = setupModalAccessibility({
+            overlay,
+            container,
+            titleId,
+            onClose: closeOverlay,
+            initialFocus: closeBtn
+        });
+        if (typeof modalCleanup === 'function') {
+            cleanupCallbacks.push(modalCleanup);
+        }
+    }
+
     function renderDataReadinessOverlay({
         title,
         description,
@@ -12709,6 +14551,27 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             return;
         }
 
+        const isOcbcRoute = isOcbcDashboardRoute(window.location.href, window.location.origin)
+            || isOcbcPortfolioHoldingsRoute(window.location.href, window.location.origin);
+        if (isOcbcRoute) {
+            const readinessState = getOcbcReadinessState();
+            if (!readinessState.ready) {
+                renderDataReadinessOverlay({
+                    title: 'Portfolio Viewer (OCBC)',
+                    description: 'Waiting for OCBC portfolio holdings response. This updates automatically when data arrives.',
+                    getItems: () => [{
+                        label: 'OCBC portfolio holdings data',
+                        ready: getOcbcReadinessState().ready
+                    }],
+                    isReady: () => getOcbcReadinessState().ready,
+                    onReady: () => showOverlay()
+                });
+                return;
+            }
+            renderOcbcOverlay(readinessState.ocbcHoldings);
+            return;
+        }
+
         const readinessState = getEndowusReadinessState();
         if (!readinessState.ready) {
             logDebug('[Goal Portfolio Viewer] Not all API data available yet');
@@ -12765,7 +14628,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         syncBtn.title = 'Configure cross-device sync';
         syncBtn.onclick = () => {
             if (typeof showSyncSettings === 'function') {
-                showSyncSettings();
+                showSyncSettings({ returnTo: 'endowus' });
             } else {
                 console.error('[Goal Portfolio Viewer] showSyncSettings is not a function!');
                 alert('Sync settings are not available. Please ensure the sync module is loaded.');
@@ -13156,7 +15019,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     function shouldShowButton() {
         const href = window.location.href;
         const origin = window.location.origin;
-        return isDashboardRoute(href, origin) || isFsmInvestmentsRoute(href, origin);
+        return isDashboardRoute(href, origin)
+            || isFsmInvestmentsRoute(href, origin)
+            || isOcbcPortfolioHoldingsRoute(href, origin);
     }
     
     function createButton() {
@@ -13381,6 +15246,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             calculateGoalDiff,
             isDashboardRoute,
             isFsmInvestmentsRoute,
+            isOcbcDashboardRoute,
+            isOcbcPortfolioHoldingsRoute,
+            normalizeOcbcHoldingsPayload,
             calculateFixedTargetPercent,
             calculateRemainingTargetPercent,
             isRemainingTargetAboveThreshold,

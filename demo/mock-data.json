@@ -22440,5 +22440,141 @@
         ]
       }
     ]
+  },
+  "ocbcHoldings": {
+    "data": [
+      {
+        "portfolioNo": "6500142646-2",
+        "assets": [
+          {
+            "assetClassDesc": "Deposits and Investment Products",
+            "subAssets": [
+              {
+                "subAssetClassDesc": "Current Accounts",
+                "holdings": [
+                  {
+                    "description": "Premier Dividend Account",
+                    "companyName": "OCBC Bank",
+                    "positionId": "DDA-6500142646-2-01",
+                    "originalCcy": "SGD",
+                    "marketValue": { "original": "15234.18", "parsedValue": 15234.18 },
+                    "marketValueReferenceCcy": { "currencyCode": "SGD", "original": "15234.18", "parsedValue": 15234.18 },
+                    "totalUnrealisedPLRefCcy": { "original": "0.00", "parsedValue": 0 },
+                    "unrealisedPLPercent": { "original": "0", "parsedValue": 0 }
+                  }
+                ]
+              },
+              {
+                "subAssetClassDesc": "Equity Funds",
+                "holdings": [
+                  {
+                    "fundName": "OCBC Global Equity Opportunities Fund",
+                    "isin": "SG00EQUITY001",
+                    "fundCode": "EQ-GLOB-001",
+                    "originalCcy": "USD",
+                    "marketValue": { "original": "12450.40", "parsedValue": 12450.4 },
+                    "marketValueReferenceCcy": { "currencyCode": "SGD", "original": "16758.20", "parsedValue": 16758.2 },
+                    "totalUnrealisedPLRefCcy": { "original": "742.10", "parsedValue": 742.1 },
+                    "totalPl": { "original": "742.10", "parsedValue": 742.1 },
+                    "unrealisedPLPercent": { "original": "4.63", "parsedValue": 4.63 }
+                  }
+                ]
+              },
+              {
+                "subAssetClassDesc": "Hedge Funds",
+                "holdings": [
+                  {
+                    "description": "OCBC Global Macro Absolute Return",
+                    "trancheId": "TR-HF-0009",
+                    "originalCcy": "USD",
+                    "marketValue": { "original": "4230.22", "parsedValue": 4230.22 },
+                    "marketValueReferenceCcy": { "currencyCode": "SGD", "original": "5701.40", "parsedValue": 5701.4 },
+                    "totalPl": { "original": "318.90", "parsedValue": 318.9 },
+                    "unrealisedPLPercent": { "original": "5.92", "parsedValue": 5.92 }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "liabilities": []
+      },
+      {
+        "portfolioNo": "6500142647-2",
+        "assets": [
+          {
+            "assetClassDesc": "Deposits and Investment Products",
+            "subAssets": [
+              {
+                "subAssetClassDesc": "Current Accounts",
+                "holdings": [
+                  {
+                    "description": "360 Account",
+                    "companyName": "OCBC Bank",
+                    "positionId": "DDA-6500142647-2-01",
+                    "originalCcy": "SGD",
+                    "marketValue": { "original": "8360.55", "parsedValue": 8360.55 },
+                    "marketValueReferenceCcy": { "currencyCode": "SGD", "original": "8360.55", "parsedValue": 8360.55 },
+                    "totalUnrealisedPLRefCcy": { "original": "0.00", "parsedValue": 0 },
+                    "unrealisedPLPercent": { "original": "0", "parsedValue": 0 }
+                  }
+                ]
+              },
+              {
+                "subAssetClassDesc": "Equity Funds",
+                "holdings": [
+                  {
+                    "fundName": "OCBC Asia Equity Leaders Fund",
+                    "isin": "SG00EQUITY002",
+                    "fundCode": "EQ-ASIA-002",
+                    "originalCcy": "USD",
+                    "marketValue": { "original": "6825.00", "parsedValue": 6825 },
+                    "marketValueReferenceCcy": { "currencyCode": "SGD", "original": "9198.65", "parsedValue": 9198.65 },
+                    "totalUnrealisedPLRefCcy": { "original": "-125.80", "parsedValue": -125.8 },
+                    "unrealisedPLPercent": { "original": "-1.35", "parsedValue": -1.35 }
+                  }
+                ]
+              },
+              {
+                "subAssetClassDesc": "Structured Products",
+                "holdings": [
+                  {
+                    "description": "OCBC USD Autocallable Note 2029",
+                    "positionId": "SPN-77910",
+                    "originalCcy": "USD",
+                    "marketValue": { "original": "9800.00", "parsedValue": 9800 },
+                    "marketValueReferenceCcy": { "currencyCode": "SGD", "original": "13211.10", "parsedValue": 13211.1 },
+                    "totalUnrealisedPLRefCcy": { "original": "211.10", "parsedValue": 211.1 },
+                    "unrealisedPLPercent": { "original": "1.62", "parsedValue": 1.62 }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "liabilities": [
+          {
+            "assetClassDesc": "Loans",
+            "subAssets": [
+              {
+                "subAssetClassDesc": "Investment Loans",
+                "holdings": [
+                  {
+                    "assetDesc": "OCBC Investment Credit Line",
+                    "description": "OCBC Investment Credit Line",
+                    "positionId": "L-INV-98314",
+                    "originalCcy": "SGD",
+                    "marketValue": { "original": "-5240.75", "parsedValue": -5240.75 },
+                    "marketValueReferenceCcy": { "currencyCode": "SGD", "original": "-5240.75", "parsedValue": -5240.75 },
+                    "totalUnrealisedPLRefCcy": { "original": "-14.20", "parsedValue": -14.2 },
+                    "unrealisedPLPercent": { "original": "-0.27", "parsedValue": -0.27 }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

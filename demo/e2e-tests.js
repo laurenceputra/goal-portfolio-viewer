@@ -23,6 +23,10 @@ const MODE = ['smoke', 'regression', 'update-baseline'].includes(E2E_MODE)
     : 'smoke';
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 const DEFAULT_DIFF_THRESHOLD = Number.parseFloat(process.env.E2E_DIFF_THRESHOLD || '0.001');
+const FLOW_DIFF_THRESHOLD_OVERRIDES = {
+    'endowus-performance-mode': 0.008,
+    'fsm-assignment-manager': 0.0015
+};
 const REGRESSION_DIR = path.join(__dirname, 'regression');
 const REGRESSION_BASELINE_DIR = path.join(REGRESSION_DIR, 'baseline');
 const REGRESSION_ACTUAL_DIR = path.join(REGRESSION_DIR, 'actual');
@@ -97,6 +101,12 @@ function buildSummaryPaths(outputDir) {
         ? path.resolve(process.env.E2E_SUMMARY_PATH)
         : path.join(outputDir, 'e2e-summary.json');
     return { summaryPath };
+}
+
+function getDiffThresholdForFlow(flowName) {
+    const normalizedFlowName = normalizeName(flowName);
+    const thresholdOverride = FLOW_DIFF_THRESHOLD_OVERRIDES[normalizedFlowName];
+    return typeof thresholdOverride === 'number' ? thresholdOverride : DEFAULT_DIFF_THRESHOLD;
 }
 
 async function runE2ETests() {
@@ -202,9 +212,12 @@ async function runE2ETests() {
     recordAssertion(summary, 'retirement', 'detail-title', true, 'Retirement detail loaded.');
         await captureScreenshot(page, summary, outputDir, 'retirement');
 
+        await captureEndowusExtendedFlow(page, summary, outputDir);
+
         await captureSyncScreens(page, outputDir, summary);
 
         await captureFsmFlow(page, summary, outputDir);
+        await captureOcbcFlow(page, summary, outputDir);
     } catch (error) {
         summary.status = 'failed';
         summary.error = error instanceof Error ? error.message : String(error);
@@ -367,14 +380,15 @@ async function captureScreenshot(page, summary, outputDir, flowName) {
         diffPath: paths.diff
     });
 
-    const pass = diffResult.mismatchRatio <= DEFAULT_DIFF_THRESHOLD;
+    const diffThreshold = getDiffThresholdForFlow(flowName);
+    const pass = diffResult.mismatchRatio <= diffThreshold;
     summary.diffs.push({
         flow: flowName,
         screenshot: paths.relative,
         status: pass ? 'passed' : 'failed',
         mismatchPixels: diffResult.mismatchPixels,
         mismatchRatio: diffResult.mismatchRatio,
-        threshold: DEFAULT_DIFF_THRESHOLD
+        threshold: diffThreshold
     });
     if (!pass) {
         summary.status = 'failed';
@@ -423,6 +437,38 @@ async function captureSyncScreens(page, outputDir, summary) {
         const required = ['gpv-sync-status-bar', 'gpv-sync-actions', 'gpv-sync-form'];
         return required.every(token => root.querySelector(`.${token}`));
     }, null, { timeout: 5000 });
+
+    const syncAuthReady = await page.$eval('.gpv-sync-settings', root => {
+        const text = root.textContent || '';
+        const hasServerUrlInput = root.querySelector('#gpv-sync-server-url') instanceof HTMLInputElement;
+        const hasUserIdInput = root.querySelector('#gpv-sync-user-id') instanceof HTMLInputElement;
+        const hasPasswordInput = root.querySelector('#gpv-sync-password') instanceof HTMLInputElement;
+        const hasRememberKey = root.querySelector('#gpv-sync-remember-key') instanceof HTMLInputElement;
+        const buttons = Array.from(root.querySelectorAll('button')).map(btn => (btn.textContent || '').trim());
+        const hasSaveButton = root.querySelector('#gpv-sync-save-btn') instanceof HTMLButtonElement
+            || buttons.some(text => /save settings/i.test(text));
+        const hasLoginButton = root.querySelector('#gpv-sync-login-btn') instanceof HTMLButtonElement
+            || buttons.some(text => /login/i.test(text));
+        const hasSignUpButton = root.querySelector('#gpv-sync-register-btn') instanceof HTMLButtonElement
+            || buttons.some(text => /sign up/i.test(text));
+        return /quick\s*setup/i.test(text)
+            && text.includes('Server URL')
+            && text.includes('User ID')
+            && text.includes('Password')
+            && text.includes('Remember encryption key on this device')
+            && /login/i.test(text)
+            && /sign\s*up/i.test(text)
+            && /save\s*settings/i.test(text)
+            && hasServerUrlInput
+            && hasUserIdInput
+            && hasPasswordInput
+            && hasRememberKey
+            && hasSaveButton
+            && hasLoginButton
+            && hasSignUpButton;
+    });
+    recordAssertion(summary, 'sync-auth-ready', 'auth-controls', syncAuthReady, 'Sync auth-ready controls are present.');
+    await captureScreenshot(page, summary, outputDir, 'sync-auth-ready');
 
     recordAssertion(summary, 'sync-unconfigured', 'sync-settings', true, 'Sync settings rendered.');
     await captureScreenshot(page, summary, outputDir, 'sync-unconfigured');
@@ -631,6 +677,89 @@ async function captureFsmFlow(page, summary, outputDir) {
         };
     });
 
+    const fsmFilterInputs = page.locator('input.gpv-fsm-filter-input');
+    const fsmFilterInputsVisible = page.locator('input.gpv-fsm-filter-input:visible');
+    assertCondition(await fsmFilterInputs.count() > 0, 'Expected FSM filter input in holdings table view.');
+    assertCondition(await fsmFilterInputsVisible.count() > 0, 'Expected visible FSM filter input when filter toolbar is rendered.');
+    {
+        const fsmFilterInput = fsmFilterInputsVisible.first();
+        const filterSeed = await page.$eval('.gpv-fsm-table-wrap tbody', tbody => {
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            const visibleRows = rows.filter(row => {
+                const element = row;
+                return !!(element && element.offsetParent !== null);
+            });
+            const sourceRow = visibleRows[0] || rows[0] || null;
+            if (!sourceRow) {
+                return { token: '', beforeCount: 0 };
+            }
+            const sourceCell = sourceRow.querySelector('[data-col="name"], [data-col="ticker"], td:nth-child(2), td:nth-child(3)') || sourceRow;
+            const sourceText = ((sourceCell && sourceCell.textContent) || sourceRow.textContent || '').trim();
+            const parts = sourceText.split(/\s+/).map(part => part.replace(/[^a-z0-9-]/gi, '')).filter(Boolean);
+            const token = (parts.find(part => part.length >= 4) || parts.find(part => part.length >= 3) || parts[0] || '').toLowerCase();
+            const strictMatches = token
+                ? rows.filter(row => (row.textContent || '').toLowerCase().includes(token)).length
+                : rows.length;
+            return { token, beforeCount: rows.length, strictMatches };
+        });
+        assertCondition(filterSeed.beforeCount > 0, 'Expected FSM holdings rows before applying filter.');
+        assertCondition(filterSeed.token.length > 0, 'Expected FSM filter token derived from visible holdings row.');
+
+        await fsmFilterInput.fill(filterSeed.token);
+        await page.waitForFunction(token => {
+            const rows = Array.from(document.querySelectorAll('.gpv-fsm-table-wrap tbody tr'));
+            if (rows.length === 0) {
+                return false;
+            }
+            return rows.every(row => (row.textContent || '').toLowerCase().includes(token));
+        }, filterSeed.token, { timeout: 5000 });
+
+        const filteredState = await page.$eval('.gpv-fsm-table-wrap tbody', (tbody, token) => {
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            const tableText = (tbody.textContent || '').toLowerCase();
+            const allRowsContainToken = rows.length > 0 && rows.every(row => (row.textContent || '').toLowerCase().includes(token));
+            return {
+                rowCount: rows.length,
+                allRowsContainToken,
+                tableContainsToken: tableText.includes(token)
+            };
+        }, filterSeed.token);
+        const mustStrictlyNarrow = filterSeed.beforeCount > 1 && filterSeed.strictMatches < filterSeed.beforeCount;
+        const filterNarrowed = filteredState.rowCount > 0
+            && (mustStrictlyNarrow ? filteredState.rowCount < filterSeed.beforeCount : filteredState.rowCount <= filterSeed.beforeCount)
+            && filteredState.allRowsContainToken
+            && filteredState.tableContainsToken;
+        recordAssertion(summary, 'fsm-filtered-holdings', 'text-filter', filterNarrowed, 'FSM holdings filter narrows table rows to a token from visible holdings.');
+        await captureScreenshot(page, summary, outputDir, 'fsm-filtered-holdings');
+
+        await fsmFilterInput.fill('');
+        const restoredCount = await page.waitForFunction(initialCount => {
+            const rows = Array.from(document.querySelectorAll('.gpv-fsm-table-wrap tbody tr'));
+            const projectedInput = document.querySelector('.gpv-projected-input');
+            if (projectedInput === null) {
+                return null;
+            }
+            return rows.length >= initialCount ? rows.length : null;
+        }, filterSeed.beforeCount, { timeout: 5000 });
+        const restoredRowCount = await restoredCount.jsonValue();
+        recordAssertion(summary, 'fsm-filtered-holdings', 'filter-clears-rows', Number.isFinite(restoredRowCount) && restoredRowCount >= filterSeed.beforeCount, 'Clearing FSM filter restores holdings rows and projection controls.');
+    }
+
+    const bulkApplyButtons = page.locator('.gpv-fsm-bulk-apply-btn');
+    const bulkApplyButtonsVisible = page.locator('.gpv-fsm-bulk-apply-btn:visible');
+    assertCondition(await bulkApplyButtons.count() > 0, 'Expected FSM assignment apply button in holdings table view.');
+    assertCondition(await bulkApplyButtonsVisible.count() > 0, 'Expected visible FSM bulk assignment button in holdings table view.');
+    {
+        const hasAssignmentControls = await page.$eval('.gpv-overlay', root => {
+            const hasBulkButton = root.querySelector('.gpv-fsm-bulk-apply-btn') !== null;
+            const hasBulkSelect = root.querySelector('.gpv-fsm-table-wrap + .gpv-fsm-toolbar select.gpv-select, .gpv-fsm-toolbar select.gpv-select') !== null;
+            const hasSelectAll = root.querySelector('input[aria-label="Select all filtered holdings"]') !== null;
+            return hasBulkButton && hasBulkSelect && hasSelectAll;
+        });
+        recordAssertion(summary, 'fsm-assignment-manager', 'bulk-assignment-controls', hasAssignmentControls, 'FSM assignment controls show select-all, portfolio bulk select, and apply action.');
+        await captureScreenshot(page, summary, outputDir, 'fsm-assignment-manager');
+    }
+
     const projectionInput = page.locator('.gpv-projected-input').first();
     await projectionInput.click();
     await projectionInput.fill('1000');
@@ -741,4 +870,473 @@ async function captureFsmFlow(page, summary, outputDir) {
         summary.status = 'failed';
     }
     await captureScreenshot(page, summary, outputDir, 'fsm-conflict');
+}
+
+async function captureOcbcFlow(page, summary, outputDir) {
+    const ocbcFlowName = 'ocbc-overlay';
+    if (!summary.flowsTested.includes(ocbcFlowName)) {
+        summary.flowsTested.push(ocbcFlowName);
+    }
+
+    const ocbcUrl = `http://localhost:${DEFAULT_PORT}/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=e2e-ocbc`;
+    await page.goto(ocbcUrl, { waitUntil: 'networkidle' });
+    await page.waitForFunction(() => window.__GPV_E2E_READY__ === true, null, { timeout: 20000 });
+
+    await page.click('.gpv-trigger-btn');
+    await page.waitForSelector('.gpv-overlay', { timeout: 5000 });
+
+    const overlayTextAssets = await page.$eval('.gpv-overlay', node => node.textContent || '');
+    const titleText = await page.$eval('.gpv-overlay', root => {
+        const titleNode = root.querySelector('.gpv-title, .gpv-header h2, .gpv-header');
+        return titleNode ? (titleNode.textContent || '') : '';
+    });
+    const hasOcbcTitle = /Portfolio Viewer\s*\(OCBC\)/i.test(titleText);
+    recordAssertion(summary, ocbcFlowName, 'title-contains-ocbc', hasOcbcTitle, 'Overlay title contains Portfolio Viewer (OCBC).');
+
+    const hasPortfolioLabelA = overlayTextAssets.includes('Portfolio 6500142646-2');
+    recordAssertion(summary, ocbcFlowName, 'assets-has-portfolio-1', hasPortfolioLabelA, 'Assets portfolio view contains Portfolio 6500142646-2.');
+
+    const hasPortfolioLabelB = overlayTextAssets.includes('Portfolio 6500142647-2');
+    recordAssertion(summary, ocbcFlowName, 'assets-has-portfolio-2', hasPortfolioLabelB, 'Assets portfolio view contains Portfolio 6500142647-2.');
+
+    const hasIdentifierColumn = overlayTextAssets.includes('Identifier');
+    recordAssertion(summary, ocbcFlowName, 'assets-has-identifier-column', hasIdentifierColumn, 'Assets portfolio view contains Identifier column.');
+
+    const hasAssetName = overlayTextAssets.includes('OCBC Global Equity Opportunities Fund');
+    recordAssertion(summary, ocbcFlowName, 'assets-has-fund-name', hasAssetName, 'Assets view contains OCBC Global Equity Opportunities Fund.');
+
+    const hasAssetClass = overlayTextAssets.includes('Equity Funds') && overlayTextAssets.includes('Structured Products');
+    recordAssertion(summary, ocbcFlowName, 'assets-has-sub-asset-classes', hasAssetClass, 'Assets view contains Equity Funds and Structured Products.');
+
+    const hasReferenceAmount = /16,758\.20/.test(overlayTextAssets);
+    recordAssertion(summary, ocbcFlowName, 'assets-has-reference-amount', hasReferenceAmount, 'Assets view contains 16,758.20 reference amount.');
+
+    const excludesLiabilityByDefault = !overlayTextAssets.includes('OCBC Investment Credit Line');
+    recordAssertion(summary, ocbcFlowName, 'assets-excludes-liability', excludesLiabilityByDefault, 'Assets view does not contain OCBC Investment Credit Line.');
+
+    await captureScreenshot(page, summary, outputDir, 'ocbc-assets');
+
+    const isViewLabelAssociated = await page.$eval('.gpv-overlay', root => {
+        const labels = Array.from(root.querySelectorAll('label'));
+        const target = labels.find(label => (label.textContent || '').trim() === 'View:');
+        return Boolean(target && target.getAttribute('for') === 'gpv-ocbc-view-select');
+    });
+    recordAssertion(summary, ocbcFlowName, 'view-label-associated', isViewLabelAssociated, 'View label is associated with gpv-ocbc-view-select.');
+
+    const isModeLabelAssociated = await page.$eval('.gpv-overlay', root => {
+        const labels = Array.from(root.querySelectorAll('label'));
+        const target = labels.find(label => (label.textContent || '').trim() === 'Mode:');
+        return Boolean(target && target.getAttribute('for') === 'gpv-ocbc-mode-select');
+    });
+    recordAssertion(summary, ocbcFlowName, 'mode-label-associated', isModeLabelAssociated, 'Mode label is associated with gpv-ocbc-mode-select.');
+
+    await page.selectOption('#gpv-ocbc-mode-select', 'allocation');
+    await page.waitForFunction(() => {
+        const overlay = document.querySelector('.gpv-overlay');
+        if (!overlay) {
+            return false;
+        }
+        const text = overlay.textContent || '';
+        return text.includes('New sub-portfolio')
+            && text.includes('Unassigned')
+            && text.includes('Portfolio 6500142646-2');
+    }, null, { timeout: 5000 });
+
+    const overlayTextAllocation = await page.$eval('.gpv-overlay', node => node.textContent || '');
+    const allocationHeaders = await page.$$eval('.gpv-overlay th', cells => cells.map(cell => (cell.textContent || '').trim()));
+    const hasAllocationUi = overlayTextAllocation.includes('New sub-portfolio')
+        && overlayTextAllocation.includes('Unassigned');
+    recordAssertion(summary, ocbcFlowName, 'allocation-has-sub-portfolio-ui', hasAllocationUi, 'Allocation mode shows sub-portfolio controls and summary.');
+
+    const hasPortfolioFirstAllocation = overlayTextAllocation.includes('Portfolio 6500142646-2')
+        && overlayTextAllocation.includes('Portfolio 6500142647-2')
+        && overlayTextAllocation.includes('Unassigned')
+        && overlayTextAllocation.includes('New sub-portfolio');
+    recordAssertion(summary, ocbcFlowName, 'allocation-portfolio-first-mode', hasPortfolioFirstAllocation, 'Allocation mode is portfolio-first and includes product type rows plus sub-portfolio controls.');
+
+    const hasProductTypeColumnAndRowText = allocationHeaders.includes('Product Type')
+        && overlayTextAllocation.includes('Equity Funds');
+    recordAssertion(summary, ocbcFlowName, 'allocation-product-type-column-row', hasProductTypeColumnAndRowText, 'Allocation mode includes Product Type column and product type row text.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-no-bucket-column', !allocationHeaders.includes('Bucket'), 'Allocation mode no longer shows nested bucket column.');
+    const hasSubPortfolioHeading = overlayTextAllocation.includes('Sub-portfolio allocation within Portfolio');
+    const hasInstrumentHeading = /Instrument allocation\s*[·-]/.test(overlayTextAllocation)
+        || overlayTextAllocation.includes('Unassigned instruments');
+    recordAssertion(summary, ocbcFlowName, 'allocation-headings', hasSubPortfolioHeading && hasInstrumentHeading, 'Allocation mode shows sub-portfolio heading and instrument allocation sections.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-renamed-columns', allocationHeaders.includes('Current % of portfolio') && allocationHeaders.includes('Target % of portfolio') && allocationHeaders.includes('Current % of sub-portfolio') && allocationHeaders.includes('Target % of sub-portfolio'), 'Allocation mode shows renamed percentage columns.');
+
+    const hasBothPortfolioNumbers = overlayTextAllocation.includes('6500142646-2')
+        && overlayTextAllocation.includes('6500142647-2')
+        && overlayTextAllocation.includes('Portfolio 6500142646-2')
+        && overlayTextAllocation.includes('Portfolio 6500142647-2');
+    recordAssertion(summary, ocbcFlowName, 'allocation-has-both-portfolio-numbers', hasBothPortfolioNumbers, 'Allocation mode contains both OCBC portfolio numbers under portfolio sections.');
+
+    const indicatorCheck = await page.evaluate(() => {
+        const overlay = document.querySelector('.gpv-overlay');
+        if (!overlay) {
+            return { beforeSummary: '', createdName: 'E2E Core' };
+        }
+        const beforeText = overlay.textContent || '';
+        const summaryBeforeMatch = beforeText.match(/Sub-portfolio targets:\s*[\d.]+% assigned,\s*[\d.]+% remaining/i);
+        const existingOptions = Array.from(overlay.querySelectorAll('select[aria-label^="Sub-portfolio for "] option'))
+            .map(option => (option.textContent || '').trim())
+            .filter(Boolean);
+        const preferredName = 'E2E Core';
+        const createdName = existingOptions.includes(preferredName)
+            ? preferredName
+            : `${preferredName} ${new Date().toISOString().slice(0, 10)}`;
+        return {
+            beforeSummary: summaryBeforeMatch ? summaryBeforeMatch[0] : '',
+            createdName
+        };
+    });
+    const subPortfolioCreateInput = page.locator('input[id^="gpv-ocbc-sub-portfolio-create-"]:visible').first();
+    assertCondition((await subPortfolioCreateInput.count()) > 0, 'Expected OCBC sub-portfolio create input in allocation mode.');
+    const hasSubPortfolioOption = await page.evaluate(name => {
+        const options = Array.from(document.querySelectorAll('select[aria-label^="Sub-portfolio for "] option'));
+        return options.some(option => (option.textContent || '').trim() === name);
+    }, indicatorCheck.createdName);
+    if (!hasSubPortfolioOption) {
+        await subPortfolioCreateInput.fill(indicatorCheck.createdName);
+        const createControlRow = page.locator('.gpv-fsm-manager-row', { has: subPortfolioCreateInput }).first();
+        const createButton = createControlRow.getByRole('button', { name: /^Create$/ }).first();
+        await createButton.click();
+    }
+    await page.waitForFunction(name => {
+        const input = document.querySelector('input[aria-label^="Target percentage for portfolio "][aria-label*="sub-portfolio"]');
+        const options = Array.from(document.querySelectorAll('select[aria-label^="Sub-portfolio for "] option')).map(o => (o.textContent || '').trim());
+        return Boolean(input) && options.includes(name);
+    }, indicatorCheck.createdName, { timeout: 5000 });
+
+    const instrumentAssignmentSelect = page.locator('select[aria-label^="Sub-portfolio for "]:visible').first();
+    assertCondition((await instrumentAssignmentSelect.count()) > 0, 'Expected visible instrument assignment selector in OCBC allocation mode.');
+    await instrumentAssignmentSelect.selectOption({ label: indicatorCheck.createdName });
+    await page.waitForFunction(name => {
+        const exactLabel = `Copy values for sub-portfolio ${name}`;
+        const copyButton = Array.from(document.querySelectorAll('.gpv-balance-copy-controls--section button'))
+            .find(button => (button.getAttribute('aria-label') || '') === exactLabel);
+        if (!(copyButton instanceof HTMLButtonElement)) {
+            return false;
+        }
+        const style = window.getComputedStyle(copyButton);
+        return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+    }, indicatorCheck.createdName, { timeout: 5000 });
+
+    const targetInputsUpdated = await page.evaluate(subPortfolioName => {
+        const allInputs = Array.from(document.querySelectorAll('input[aria-label]'));
+        const subPortfolioTargetInput = allInputs.find(input => {
+            const label = (input.getAttribute('aria-label') || '').toLowerCase();
+            return label.startsWith('target percentage for portfolio ')
+                && label.includes('sub-portfolio')
+                && label.includes(subPortfolioName.toLowerCase());
+        });
+        const instrumentTargetInput = allInputs.find(input => {
+            const label = (input.getAttribute('aria-label') || '').toLowerCase();
+            return label.startsWith('target percentage for instrument ')
+                && label.includes(`in sub-portfolio ${subPortfolioName.toLowerCase()}`);
+        });
+        if (!(subPortfolioTargetInput instanceof HTMLInputElement) || !(instrumentTargetInput instanceof HTMLInputElement)) {
+            return { hasSubTargetInput: false, hasInstrumentTargetInput: false };
+        }
+        subPortfolioTargetInput.value = '85';
+        subPortfolioTargetInput.dispatchEvent(new Event('change', { bubbles: true }));
+        instrumentTargetInput.value = '100';
+        instrumentTargetInput.dispatchEvent(new Event('change', { bubbles: true }));
+        return { hasSubTargetInput: true, hasInstrumentTargetInput: true };
+    }, indicatorCheck.createdName);
+    assertCondition(targetInputsUpdated.hasSubTargetInput, 'Expected visible sub-portfolio target input for created OCBC sub-portfolio.');
+    assertCondition(targetInputsUpdated.hasInstrumentTargetInput, 'Expected instrument target input within created OCBC sub-portfolio.');
+
+    await page.waitForFunction(previousSummary => {
+        const overlayText = document.querySelector('.gpv-overlay')?.textContent || '';
+        const summaryAfterMatch = overlayText.match(/Sub-portfolio targets:\s*[\d.]+% assigned,\s*[\d.]+% remaining/i);
+        if (!summaryAfterMatch) {
+            return false;
+        }
+        return summaryAfterMatch[0] !== previousSummary;
+    }, indicatorCheck.beforeSummary, { timeout: 5000 });
+
+    const clipboardCheck = await page.evaluate(async subPortfolioName => {
+        const exactLabel = `Copy values for sub-portfolio ${subPortfolioName}`;
+        const copyButton = Array.from(document.querySelectorAll('.gpv-balance-copy-controls--section button'))
+            .find(button => (button.getAttribute('aria-label') || '') === exactLabel);
+        if (!(copyButton instanceof HTMLButtonElement)) {
+            return {
+                hasNumericSingleRowTsv: false,
+                hasNoLegacyColumns: false,
+                fallbackUsed: false,
+                isVisible: false,
+                matchesRenderedRowOrder: false
+            };
+        }
+        let captured = '';
+        const hadClipboardObject = Boolean(navigator.clipboard);
+        const originalClipboard = navigator.clipboard;
+        const originalWriteText = navigator.clipboard && typeof navigator.clipboard.writeText === 'function'
+            ? navigator.clipboard.writeText.bind(navigator.clipboard)
+            : null;
+        let restoreClipboardObject = false;
+        let fallbackUsed = false;
+        try {
+            if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+                fallbackUsed = true;
+                const fallbackClipboard = navigator.clipboard || {};
+                Object.defineProperty(fallbackClipboard, 'writeText', {
+                    value: async text => {
+                        captured = text;
+                        return Promise.resolve();
+                    },
+                    configurable: true,
+                    writable: true
+                });
+                if (!navigator.clipboard) {
+                    Object.defineProperty(navigator, 'clipboard', {
+                        value: fallbackClipboard,
+                        configurable: true
+                    });
+                    restoreClipboardObject = true;
+                }
+            }
+
+            try {
+                let resolveClipboardWrite;
+                const clipboardWriteCalled = new Promise(resolve => {
+                    resolveClipboardWrite = resolve;
+                });
+                navigator.clipboard.writeText = async text => {
+                    captured = text;
+                    if (typeof resolveClipboardWrite === 'function') {
+                        resolveClipboardWrite();
+                    }
+                    return Promise.resolve();
+                };
+                copyButton.click();
+                await Promise.race([
+                    clipboardWriteCalled,
+                    new Promise(resolve => setTimeout(resolve, 750))
+                ]);
+            } finally {
+                if (navigator.clipboard && originalWriteText) {
+                    navigator.clipboard.writeText = originalWriteText;
+                }
+            }
+        } finally {
+            if (restoreClipboardObject) {
+                if (hadClipboardObject) {
+                    Object.defineProperty(navigator, 'clipboard', {
+                        value: originalClipboard,
+                        configurable: true
+                    });
+                } else {
+                    try {
+                        delete navigator.clipboard;
+                    } catch (_error) {
+                        Object.defineProperty(navigator, 'clipboard', {
+                            value: undefined,
+                            configurable: true
+                        });
+                    }
+                }
+            }
+        }
+        const buttonStyle = window.getComputedStyle(copyButton);
+        const rect = copyButton.getBoundingClientRect();
+        const isVisible = buttonStyle.display !== 'none'
+            && buttonStyle.visibility !== 'hidden'
+            && buttonStyle.opacity !== '0'
+            && rect.width > 0
+            && rect.height > 0
+            && copyButton.offsetParent !== null;
+        const singleLine = captured.trim();
+        const hasSingleRow = singleLine.length > 0 && !singleLine.includes('\n');
+        const numericOrEmptyTokenPattern = /^(?:-?\d+(?:\.\d+)?|)$/;
+        const tokens = hasSingleRow ? singleLine.split('\t') : [];
+        const hasNumericOrEmptyTokens = tokens.length > 0 && tokens.every(token => numericOrEmptyTokenPattern.test(token));
+        const heading = Array.from(document.querySelectorAll('.gpv-ocbc-instrument-header-row'))
+            .find(node => (node.textContent || '').includes(`Instrument allocation · ${subPortfolioName}`));
+        const findNextTable = start => {
+            let current = start?.nextElementSibling || null;
+            while (current && current.tagName !== 'TABLE') {
+                current = current.nextElementSibling;
+            }
+            return current;
+        };
+        const table = findNextTable(heading);
+        const renderedValues = table
+            ? Array.from(table.querySelectorAll('tbody tr')).map(row => {
+                const valueCell = row.querySelector('td:nth-child(4)');
+                const raw = (valueCell?.textContent || '')
+                    .replace(/,/g, '')
+                    .replace(/[^0-9.-]/g, '')
+                    .trim();
+                const parsed = Number.parseFloat(raw);
+                return Number.isFinite(parsed) ? parsed : null;
+            })
+            : [];
+        const parsedTokens = hasNumericOrEmptyTokens
+            ? tokens.map(token => {
+                const trimmed = token.trim();
+                if (trimmed.length === 0) {
+                    return null;
+                }
+                const parsed = Number.parseFloat(trimmed);
+                return Number.isFinite(parsed) ? parsed : null;
+            })
+            : [];
+        const matchesRenderedRowOrder = hasNumericOrEmptyTokens
+            && renderedValues.length > 0
+            && renderedValues.length === parsedTokens.length
+            && renderedValues.every((value, index) => {
+                const tokenValue = parsedTokens[index];
+                if (value === null || tokenValue === null) {
+                    return value === tokenValue;
+                }
+                return Math.abs(value - tokenValue) < 1e-9;
+            });
+        const hasLegacyMarkers = /(Sub-portfolio|Identifier|Name|Current %|Target %|Target Amount|Drift|SGD|Total|%)/i.test(singleLine);
+        return {
+            hasNumericSingleRowTsv: hasSingleRow && hasNumericOrEmptyTokens,
+            hasNoLegacyColumns: !hasLegacyMarkers,
+            fallbackUsed,
+            isVisible,
+            matchesRenderedRowOrder
+        };
+    }, indicatorCheck.createdName);
+    const finalIndicator = await page.$eval('.gpv-overlay', root => {
+        const text = root.textContent || '';
+        return /Sub-portfolio targets:\s*[\d.]+% assigned,\s*[\d.]+% remaining/i.test(text);
+    });
+    recordAssertion(summary, ocbcFlowName, 'allocation-target-indicator-updates', finalIndicator, 'Allocation target indicator updates after editing target %.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-button-visible', clipboardCheck.isVisible, 'Copy Values button is visible in allocation mode.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-single-row-numeric-tsv', clipboardCheck.hasNumericSingleRowTsv, 'Copy Values output is a single-row numeric-or-empty TSV payload.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-matches-rendered-row-order', clipboardCheck.matchesRenderedRowOrder, 'Copy Values output follows visible instrument row order for the matching sub-portfolio.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-no-legacy-columns', clipboardCheck.hasNoLegacyColumns, 'Copy Values output excludes legacy headers, labels, percentages, and SGD fields.');
+    await captureScreenshot(page, summary, outputDir, 'ocbc-allocation');
+
+    const hasSubPortfolioManager = await page.$eval('.gpv-overlay', root => {
+        const text = root.textContent || '';
+        const hasCreationControls = text.includes('New sub-portfolio') || text.includes('Create sub-portfolio');
+        const hasAssignedSummary = text.includes('Target Assigned:') || text.includes('Sub-portfolio targets:');
+        return hasCreationControls && hasAssignedSummary;
+    });
+    recordAssertion(summary, ocbcFlowName, 'subportfolio-manager-controls', hasSubPortfolioManager, 'OCBC sub-portfolio manager controls are visible in allocation mode.');
+    assertCondition(hasSubPortfolioManager, 'Expected OCBC sub-portfolio manager controls in allocation mode.');
+    await captureScreenshot(page, summary, outputDir, 'ocbc-subportfolio-manager');
+
+    await page.selectOption('#gpv-ocbc-mode-select', 'portfolio');
+    await page.waitForFunction(() => {
+        const overlay = document.querySelector('.gpv-overlay');
+        if (!overlay) {
+            return false;
+        }
+        const text = overlay.textContent || '';
+        const allocationTextGone = !text.includes('New sub-portfolio')
+            && !text.includes('Target Assigned:')
+            && !text.includes('Unassigned');
+        return allocationTextGone || text.includes('Portfolio 6500142646-2');
+    }, null, { timeout: 5000 });
+
+    const liabilitiesValue = await page.$eval('#gpv-ocbc-view-select', select => {
+        if (!(select instanceof HTMLSelectElement)) {
+            return 'liabilities';
+        }
+        const matchingOption = Array.from(select.options).find(option => /liabilities/i.test(option.textContent || ''));
+        return matchingOption ? matchingOption.value : 'liabilities';
+    });
+    await page.selectOption('#gpv-ocbc-view-select', liabilitiesValue);
+    await page.waitForFunction(() => {
+        const overlay = document.querySelector('.gpv-overlay');
+        if (!overlay) {
+            return false;
+        }
+        const text = overlay.textContent || '';
+        return text.includes('OCBC Investment Credit Line')
+            && !text.includes('OCBC Global Equity Opportunities Fund')
+            && !text.includes('New sub-portfolio');
+    }, null, { timeout: 5000 });
+
+    const overlayTextLiabilities = await page.$eval('.gpv-overlay', node => node.textContent || '');
+    const hasLiabilityName = overlayTextLiabilities.includes('OCBC Investment Credit Line');
+    recordAssertion(summary, ocbcFlowName, 'liabilities-has-loan-name', hasLiabilityName, 'Liabilities view contains OCBC Investment Credit Line.');
+
+    const hasLiabilityClass = overlayTextLiabilities.includes('Investment Loans');
+    recordAssertion(summary, ocbcFlowName, 'liabilities-has-sub-asset-class', hasLiabilityClass, 'Liabilities view contains Investment Loans.');
+
+    const hasNegativeAmount = /-\s*SGD\s*5,240\.75|SGD\s*-\s*5,240\.75|-\s*5,240\.75/.test(overlayTextLiabilities);
+    recordAssertion(summary, ocbcFlowName, 'liabilities-has-negative-amount', hasNegativeAmount, 'Liabilities view contains negative SGD amount for investment loan.');
+
+    const assetRemovedInLiabilitiesView = !overlayTextLiabilities.includes('OCBC Global Equity Opportunities Fund');
+    recordAssertion(summary, ocbcFlowName, 'liabilities-excludes-asset', assetRemovedInLiabilitiesView, 'Liabilities view does not contain OCBC Global Equity Opportunities Fund.');
+
+    await captureScreenshot(page, summary, outputDir, 'ocbc-liabilities');
+}
+
+async function captureEndowusExtendedFlow(page, summary, outputDir) {
+    const bucketManageButtons = page.locator('.gpv-header-buttons .gpv-bucket-manage-btn');
+    const bucketManageButtonsVisible = page.locator('.gpv-header-buttons .gpv-bucket-manage-btn:visible');
+    assertCondition(await bucketManageButtons.count() > 0, 'Expected Endowus bucket manager button.');
+    assertCondition(await bucketManageButtonsVisible.count() > 0, 'Expected visible Endowus bucket manager button.');
+    {
+        await bucketManageButtonsVisible.first().click();
+        await page.waitForSelector('.gpv-bucket-manager', { timeout: 5000 });
+        const bucketManagerReady = await page.$eval('.gpv-bucket-manager', root => {
+            const hasInput = root.querySelector('.gpv-bucket-manager-input') !== null;
+            const hasTable = root.querySelector('.gpv-bucket-manager-table') !== null;
+            const text = root.textContent || '';
+            return hasInput && hasTable && text.includes('Bucket Manager');
+        });
+        recordAssertion(summary, 'endowus-bucket-manager', 'bucket-manager-controls', bucketManagerReady, 'Endowus bucket manager controls render.');
+        await captureScreenshot(page, summary, outputDir, 'endowus-bucket-manager');
+        await clickButtonByRole(page, /back to portfolio viewer/i);
+        await page.waitForSelector('.gpv-overlay .gpv-header', { timeout: 5000 });
+        await page.waitForSelector('select.gpv-select', { timeout: 5000 });
+    }
+
+    await openBucket(page, 'House Purchase');
+    await page.waitForSelector('.gpv-detail-title', { timeout: 5000 });
+
+    const performanceModeButtons = page.locator('.gpv-mode-btn[data-mode="performance"]');
+    const performanceModeButtonsVisible = page.locator('.gpv-mode-btn[data-mode="performance"]:visible');
+    assertCondition(await performanceModeButtons.count() > 0, 'Expected Endowus performance mode button in detail view.');
+    assertCondition(await performanceModeButtonsVisible.count() > 0, 'Expected visible Endowus performance mode button in detail view.');
+    {
+        await performanceModeButtonsVisible.first().click();
+        await page.waitForFunction(() => {
+            const panels = Array.from(document.querySelectorAll('.gpv-performance-panel'));
+            if (panels.length === 0) {
+                return false;
+            }
+            return panels.every(panel => !panel.classList.contains('gpv-collapsible--collapsed'));
+        }, null, { timeout: 5000 });
+        const performanceModeReady = await page.$eval('.gpv-overlay', root => {
+            const text = root.textContent || '';
+            const hasPanels = root.querySelectorAll('.gpv-performance-panel').length > 0;
+            return hasPanels && /return|performance/i.test(text);
+        });
+        recordAssertion(summary, 'endowus-performance-mode', 'performance-panels', performanceModeReady, 'Endowus performance mode renders return/performance panels.');
+        await captureScreenshot(page, summary, outputDir, 'endowus-performance-mode');
+    }
+
+    const expandButtons = page.locator('.gpv-header-buttons .gpv-expand-btn');
+    const expandButtonsVisible = page.locator('.gpv-header-buttons .gpv-expand-btn:visible');
+    const expandCount = await expandButtons.count();
+    assertCondition(expandCount > 0, 'Expected Endowus expand button.');
+    assertCondition(await expandButtonsVisible.count() > 0, 'Expected visible Endowus expand button.');
+    {
+        const containerBefore = await page.locator('#gpv-overlay .gpv-container').first().boundingBox();
+        await expandButtonsVisible.first().click();
+        await page.waitForFunction(() => {
+            const container = document.querySelector('#gpv-overlay .gpv-container');
+            return Boolean(container && container.classList.contains('gpv-container--expanded'));
+        }, null, { timeout: 5000 });
+        const expandedState = await page.$eval('#gpv-overlay .gpv-container', container => ({
+            isExpanded: container.classList.contains('gpv-container--expanded'),
+            width: container.getBoundingClientRect().width,
+            height: container.getBoundingClientRect().height
+        }));
+        const expandedBySize = Boolean(containerBefore)
+            && (expandedState.width > containerBefore.width || expandedState.height > containerBefore.height);
+        const expandedStateConfirmed = expandedState.isExpanded === true || expandedBySize;
+        recordAssertion(summary, 'endowus-expanded', 'expanded-state', expandedStateConfirmed, 'Endowus expand control sets expanded container state.');
+        await captureScreenshot(page, summary, outputDir, 'endowus-expanded');
+    }
 }

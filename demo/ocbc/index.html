@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Goal Portfolio Viewer - OCBC Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f8fafc;
+        }
+
+        .demo-shell {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+
+        .demo-card {
+            background: #ffffff;
+            padding: 32px;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(15, 23, 42, 0.12);
+            max-width: 540px;
+            text-align: center;
+        }
+
+        .demo-card h1 {
+            margin: 0 0 8px;
+            color: #0f172a;
+            font-size: 28px;
+        }
+
+        .demo-card p {
+            margin: 0 0 16px;
+            color: #475569;
+        }
+
+        .demo-status {
+            margin-top: 12px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            background: #e0f2fe;
+            color: #0369a1;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="demo-shell">
+        <div class="demo-card">
+            <h1>Goal Portfolio Viewer (OCBC)</h1>
+            <p>Mock OCBC holdings page for E2E regression tests.</p>
+            <div class="demo-status" id="demoStatus">Loading OCBC demo data…</div>
+        </div>
+    </div>
+
+    <script>
+        const mockStorage = {};
+
+        window.GM_setValue = function(key, value) {
+            mockStorage[key] = value;
+        };
+
+        window.GM_getValue = function(key, defaultValue) {
+            return Object.prototype.hasOwnProperty.call(mockStorage, key) ? mockStorage[key] : defaultValue;
+        };
+
+        window.GM_deleteValue = function(key) {
+            delete mockStorage[key];
+        };
+
+        window.GM_listValues = function() {
+            return Object.keys(mockStorage);
+        };
+
+        window.GM_cookie = undefined;
+    </script>
+
+    <script>
+        function updateStatus(message, isError = false) {
+            const status = document.getElementById('demoStatus');
+            status.textContent = message;
+            if (isError) {
+                status.style.background = '#fee2e2';
+                status.style.color = '#991b1b';
+            } else {
+                status.style.background = '#dcfce7';
+                status.style.color = '#166534';
+            }
+        }
+
+        function loadUserscript() {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = '/tampermonkey/goal_portfolio_viewer.user.js';
+                script.onload = () => resolve();
+                script.onerror = () => reject(new Error('Failed to load userscript'));
+                document.head.appendChild(script);
+            });
+        }
+
+        async function bootstrapMockData() {
+            const response = await fetch('/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry', {
+                method: 'POST'
+            });
+            await response.json();
+        }
+
+        function waitForButton() {
+            return new Promise(resolve => {
+                const check = () => {
+                    if (document.querySelector('.gpv-trigger-btn')) {
+                        resolve();
+                        return;
+                    }
+                    setTimeout(check, 100);
+                };
+                check();
+            });
+        }
+
+        function signalReady() {
+            window.__GPV_E2E_READY__ = true;
+            window.dispatchEvent(new Event('gpv:e2e-ready'));
+        }
+
+        window.__GPV_OCBC_DEMO_ROUTE__ = true;
+
+        loadUserscript()
+            .then(bootstrapMockData)
+            .then(waitForButton)
+            .then(() => {
+                updateStatus('OCBC demo data loaded. Ready for E2E tests.');
+                signalReady();
+            })
+            .catch(error => {
+                console.error('[OCBC Demo] Failed to initialize:', error);
+                updateStatus('Failed to initialize OCBC demo environment.', true);
+            });
+    </script>
+</body>
+</html>

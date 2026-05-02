@@ -29,6 +29,8 @@ const {
     formatPercentage,
     isDashboardRoute,
     isFsmInvestmentsRoute,
+    isOcbcDashboardRoute,
+    isOcbcPortfolioHoldingsRoute,
     normalizeTimeSeriesData,
     normalizePerformanceResponse,
     getLatestTimeSeriesPoint,
@@ -45,7 +47,8 @@ const {
     buildPerformanceMetricsRows,
     summarizePerformanceMetrics,
     derivePerformanceWindows,
-    parseJsonSafely
+    parseJsonSafely,
+    normalizeOcbcHoldingsPayload
 } = require('../goal_portfolio_viewer.user.js');
 
 describe('storage key helpers', () => {
@@ -184,6 +187,540 @@ describe('extractBucketName', () => {
 
     test('should handle multiple separators', () => {
         expect(utils.extractBucketName('Bucket - Goal - Extra')).toBe('Bucket');
+    });
+});
+
+describe('route matchers', () => {
+    test('matches OCBC dashboard route and ignores query/hash', () => {
+        expect(
+            isOcbcDashboardRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/dashboard?menuId=e62c3103-da60-4e8a-8717-72f11ebaaebe#overview'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcDashboardRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/dashboard/'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcDashboardRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(false);
+    });
+
+    test('matches OCBC portfolio holdings route regardless of menuId', () => {
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings/?menuId=111'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=222&foo=bar'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/other-page?menuId=111'
+            )
+        ).toBe(false);
+    });
+
+    test('does not match localhost OCBC route without explicit demo flag', () => {
+        window.__GPV_OCBC_DEMO_ROUTE__ = false;
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'http://localhost:4173/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(false);
+    });
+
+    test('matches localhost OCBC route only when explicit demo flag is enabled', () => {
+        window.__GPV_OCBC_DEMO_ROUTE__ = true;
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'http://localhost:4173/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'http://127.0.0.1:8787/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(true);
+        window.__GPV_OCBC_DEMO_ROUTE__ = false;
+    });
+
+    test('does not match non-OCBC/non-localhost route even when demo flag is enabled', () => {
+        window.__GPV_OCBC_DEMO_ROUTE__ = true;
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://evil.example/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(false);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'http://[::1]:4173/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(false);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'http://localhost./internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111'
+            )
+        ).toBe(false);
+        window.__GPV_OCBC_DEMO_ROUTE__ = false;
+    });
+});
+
+describe('normalizeOcbcHoldingsPayload', () => {
+    test('flattens nested assets and liabilities holdings with parent class context', () => {
+        const payload = {
+            data: [
+                {
+                    portfolioNo: 'P-123',
+                    assets: [
+                        {
+                            assetClassDesc: 'Equities',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'US Equity',
+                                    holdings: [
+                                        {
+                                            holdingGuid: 'A-1',
+                                            fundName: 'Asset One',
+                                            shortName: 'A1',
+                                            marketValueReferenceCcy: { source: '500.25', parsedValue: 500.25 }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: [
+                        {
+                            assetClassDesc: 'Liability',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Margin',
+                                    holdings: [
+                                        {
+                                            positionId: 'L-1',
+                                            description: 'Margin Loan',
+                                            marketValueReferenceCcy: { source: '-100.75', parsedValue: -100.75 }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+
+        const result = normalizeOcbcHoldingsPayload(payload);
+        expect(result.assets).toHaveLength(1);
+        expect(result.liabilities).toHaveLength(1);
+        expect(result.assets[0]).toMatchObject({
+            portfolioNo: 'P-123',
+            subcode: '',
+            displayTicker: 'A1',
+            assetClassDesc: 'Equities',
+            subAssetClassDesc: 'US Equity',
+            productType: 'US Equity',
+            currentValueLcy: 500.25
+        });
+        expect(result.assets[0].code).toContain('P-123:gpv-ocbc-');
+        expect(result.liabilities[0]).toMatchObject({
+            portfolioNo: 'P-123',
+            subcode: '',
+            displayTicker: 'Margin Loan',
+            assetClassDesc: 'Liability',
+            subAssetClassDesc: 'Margin',
+            productType: 'Margin',
+            currentValueLcy: -100.75
+        });
+        expect(result.liabilities[0].code).toBe('P-123:liabilities:L-1');
+        expect(result.liabilities[0].legacyCodeAliases).not.toContain('P-123:L-1');
+    });
+
+    test('applies OCBC numeric fallback chain and null-safe parsing', () => {
+        const payload = {
+            data: [
+                {
+                    portfolioNo: 'P-456',
+                    assets: [
+                        {
+                            assetClassDesc: 'Mixed Asset',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Balanced',
+                                    holdings: [
+                                        {
+                                            holdingGuid: 'MV-FALLBACK',
+                                            fundName: 'Fallback Fund',
+                                            marketValueReferenceCcy: null,
+                                            marketValue: '45.67'
+                                        },
+                                        {
+                                            holdingGuid: 'SRC-FALLBACK',
+                                            fundName: 'Source Fund',
+                                            marketValueReferenceCcy: {
+                                                parsedValue: null,
+                                                source: '12.34'
+                                            }
+                                        },
+                                        {
+                                            holdingGuid: 'BLANK-NUMERIC',
+                                            fundName: 'Blank Fund',
+                                            marketValueReferenceCcy: '',
+                                            marketValue: ' ',
+                                            marketValueOriginalCcy: null,
+                                            totalUnrealisedPLRefCcy: '',
+                                            totalPl: ' '
+                                        },
+                                        {
+                                            holdingGuid: 'ACTUAL-ZERO',
+                                            fundName: 'Zero Fund',
+                                            marketValueReferenceCcy: { parsedValue: null, source: '0E-9' },
+                                            totalUnrealisedPLRefCcy: { parsedValue: null, source: '0E-9' }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: []
+                }
+            ]
+        };
+
+        const result = normalizeOcbcHoldingsPayload(payload);
+        expect(result.assets).toHaveLength(4);
+
+        expect(result.assets.map(row => row.displayTicker)).toEqual(['Holding 1', 'Holding 2', 'Holding 3', 'Holding 4']);
+        expect(result.assets[0].currentValueLcy).toBe(45.67);
+        expect(result.assets[1].currentValueLcy).toBe(12.34);
+        expect(result.assets[2].currentValueLcy).toBe(0);
+        expect(result.assets[2].profitValueLcy).toBeNull();
+        expect(result.assets[3].currentValueLcy).toBe(0);
+        expect(result.assets[3].profitValueLcy).toBe(0);
+    });
+
+    test('uses non-portfolio identifier fallback when all OCBC id fields are missing', () => {
+        const payload = {
+            data: [
+                {
+                    portfolioNo: 'P-LEAK-CHECK',
+                    assets: [
+                        {
+                            assetClassDesc: 'Equities',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Global Equity',
+                                    holdings: [
+                                        {
+                                            marketValueReferenceCcy: 10
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: []
+                }
+            ]
+        };
+
+        const result = normalizeOcbcHoldingsPayload(payload);
+        expect(result.assets).toHaveLength(1);
+        expect(result.assets[0].code).toBe('P-LEAK-CHECK:gpv-ocbc-fallback-P-LEAK-CHECK-1');
+        expect(result.assets[0].displayTicker).toBe('Holding 1');
+        expect(result.assets[0].displayTicker).not.toContain('P-LEAK-CHECK');
+        expect(result.assets[0].displayTicker.length).toBeGreaterThan(0);
+    });
+
+    test('keeps same product type holdings separated by portfolio via code', () => {
+        const payload = {
+            data: [
+                {
+                    portfolioNo: 'P-1',
+                    assets: [
+                        {
+                            assetClassDesc: 'Equities',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Global Equity',
+                                    holdings: [
+                                        {
+                                            positionId: 'POS-SHARED',
+                                            marketValueReferenceCcy: 100
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: []
+                },
+                {
+                    portfolioNo: 'P-2',
+                    assets: [
+                        {
+                            assetClassDesc: 'Equities',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Global Equity',
+                                    holdings: [
+                                        {
+                                            positionId: 'POS-SHARED',
+                                            marketValueReferenceCcy: 200
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: []
+                }
+            ]
+        };
+
+        const result = normalizeOcbcHoldingsPayload(payload);
+        expect(result.assets).toHaveLength(2);
+        expect(result.assets.map(row => row.productType)).toEqual(['Global Equity', 'Global Equity']);
+        expect(result.assets[0].code).not.toEqual(result.assets[1].code);
+        expect(result.assets[0].code).toBe('P-1:POS-SHARED');
+        expect(result.assets[1].code).toBe('P-2:POS-SHARED');
+    });
+
+    test('generates stable hashed OCBC code without positionId across payload reorder', () => {
+        const buildPayload = holdings => ({
+            data: [{
+                portfolioNo: 'P-7',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings
+                    }]
+                }],
+                liabilities: []
+            }]
+        });
+        const first = normalizeOcbcHoldingsPayload(buildPayload([
+            { isin: 'ISIN-A', fundName: 'Fund A', originalCcy: 'USD', marketValueReferenceCcy: 11 },
+            { isin: 'ISIN-B', fundName: 'Fund B', originalCcy: 'USD', marketValueReferenceCcy: 22 }
+        ]));
+        const second = normalizeOcbcHoldingsPayload(buildPayload([
+            { isin: 'ISIN-B', fundName: 'Fund B', originalCcy: 'USD', marketValueReferenceCcy: 22 },
+            { isin: 'ISIN-A', fundName: 'Fund A', originalCcy: 'USD', marketValueReferenceCcy: 11 }
+        ]));
+
+        const firstByTicker = Object.fromEntries(first.assets.map(row => [row.displayTicker, row.code]));
+        const secondByTicker = Object.fromEntries(second.assets.map(row => [row.displayTicker, row.code]));
+        expect(firstByTicker['ISIN-A']).toEqual(secondByTicker['ISIN-A']);
+        expect(firstByTicker['ISIN-B']).toEqual(secondByTicker['ISIN-B']);
+        expect(firstByTicker['ISIN-A']).toContain('P-7:gpv-ocbc-');
+    });
+
+    test('keeps OCBC code stable when names drift with strong identifiers', () => {
+        const buildPayload = holdings => ({
+            data: [{
+                portfolioNo: 'P-9',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings
+                    }]
+                }],
+                liabilities: []
+            }]
+        });
+
+        const first = normalizeOcbcHoldingsPayload(buildPayload([
+            { isin: 'ISIN-AAA', fundCode: 'FUND-AAA', trancheId: 'TR-AAA', subCode: 'SUB-AAA', fundName: 'Alpha Fund', description: 'Alpha Desc' },
+            { isin: 'ISIN-BBB', fundCode: 'FUND-BBB', trancheId: 'TR-BBB', subCode: 'SUB-BBB', fundName: 'Beta Fund', description: 'Beta Desc' }
+        ]));
+        const second = normalizeOcbcHoldingsPayload(buildPayload([
+            { isin: 'ISIN-BBB', fundCode: 'FUND-BBB', trancheId: 'TR-BBB', subCode: 'SUB-BBB', fundName: 'Beta Fund Renamed', description: 'Beta Desc Updated' },
+            { isin: 'ISIN-AAA', fundCode: 'FUND-AAA', trancheId: 'TR-AAA', subCode: 'SUB-AAA', fundName: 'Alpha Fund Renamed', description: 'Alpha Desc Updated' }
+        ]));
+
+        const firstByTicker = Object.fromEntries(first.assets.map(row => [row.displayTicker, row.code]));
+        const secondByTicker = Object.fromEntries(second.assets.map(row => [row.displayTicker, row.code]));
+        expect(firstByTicker['ISIN-AAA']).toEqual(secondByTicker['ISIN-AAA']);
+        expect(firstByTicker['ISIN-BBB']).toEqual(secondByTicker['ISIN-BBB']);
+    });
+
+    test('uses positionId-first primary code and keeps it stable across volatile and market data changes', () => {
+        const buildPayload = holdings => ({
+            data: [{
+                portfolioNo: 'P-IMMUTABLE',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings
+                    }]
+                }],
+                liabilities: []
+            }]
+        });
+
+        const first = normalizeOcbcHoldingsPayload(buildPayload([
+            {
+                isin: 'ISIN-IMM-A',
+                fundCode: 'FUND-IMM-A',
+                positionId: 'POSITION-SAME',
+                holdingGuid: 'GUID-OLD',
+                guuid: 'GUUID-OLD',
+                subCode: 'SUB-OLD',
+                fundName: 'Fund A',
+                marketValueReferenceCcy: 100
+            }
+        ]));
+        const second = normalizeOcbcHoldingsPayload(buildPayload([
+            {
+                isin: 'ISIN-IMM-A',
+                fundCode: 'FUND-IMM-A',
+                positionId: 'POSITION-SAME',
+                holdingGuid: 'GUID-NEW',
+                guuid: 'GUUID-NEW',
+                subCode: 'SUB-NEW',
+                fundName: 'Fund A Renamed',
+                marketValueReferenceCcy: 999
+            }
+        ]));
+
+        expect(first.assets[0].displayTicker).toBe('ISIN-IMM-A');
+        expect(second.assets[0].displayTicker).toBe('ISIN-IMM-A');
+        expect(first.assets[0].code).toBe(second.assets[0].code);
+        expect(first.assets[0].code).toBe('P-IMMUTABLE:POSITION-SAME');
+    });
+
+    test('includes previous hashed OCBC code as legacy alias for positionId rows', () => {
+        const hashedPayload = {
+            data: [{
+                portfolioNo: 'P-ALIAS-HASH',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [{
+                            isin: 'ISIN-HASH',
+                            fundCode: 'FUND-HASH',
+                            description: 'Hash Description'
+                        }]
+                    }]
+                }],
+                liabilities: []
+            }]
+        };
+        const positionPayload = {
+            data: [{
+                portfolioNo: 'P-ALIAS-HASH',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [{
+                            isin: 'ISIN-HASH',
+                            fundCode: 'FUND-HASH',
+                            description: 'Hash Description',
+                            positionId: 'POSITION-HASH',
+                            holdingGuid: 'GUID-TRANSIENT',
+                            guuid: 'GUUID-TRANSIENT'
+                        }]
+                    }]
+                }],
+                liabilities: []
+            }]
+        };
+
+        const hashed = normalizeOcbcHoldingsPayload(hashedPayload);
+        const withPosition = normalizeOcbcHoldingsPayload(positionPayload);
+
+        expect(withPosition.assets[0].code).toBe('P-ALIAS-HASH:POSITION-HASH');
+        expect(withPosition.assets[0].legacyCodeAliases).toContain(hashed.assets[0].code);
+    });
+
+    test('keeps asset/liability positionId codes distinct within same portfolio', () => {
+        const payload = {
+            data: [{
+                portfolioNo: 'P-COLLIDE',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [{
+                            isin: 'ISIN-COLLIDE',
+                            fundCode: 'FUND-COLLIDE',
+                            positionId: 'POS-SHARED'
+                        }]
+                    }]
+                }],
+                liabilities: [{
+                    assetClassDesc: 'Liabilities',
+                    subAssets: [{
+                        subAssetClassDesc: 'Margin Liability',
+                        holdings: [{
+                            description: 'Margin Liability',
+                            positionId: 'POS-SHARED'
+                        }]
+                    }]
+                }]
+            }]
+        };
+
+        const normalized = normalizeOcbcHoldingsPayload(payload);
+
+        expect(normalized.assets[0].code).toBe('P-COLLIDE:POS-SHARED');
+        expect(normalized.liabilities[0].code).toBe('P-COLLIDE:liabilities:POS-SHARED');
+        expect(normalized.liabilities[0].legacyCodeAliases).not.toContain('P-COLLIDE:POS-SHARED');
+    });
+
+    test('does not emit OCBC legacy aliases for volatile holdingGuid/guuid/positionId/trancheId/subCode', () => {
+        const payload = {
+            data: [{
+                portfolioNo: 'P-ALIASES',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [{
+                            holdingGuid: 'GUID-LEGACY',
+                            guuid: 'GUUID-LEGACY',
+                            positionId: 'POSITION-LEGACY',
+                            trancheId: 'TRANCHE-LEGACY',
+                            subCode: 'SUB-LEGACY',
+                            isin: 'ISIN-ALIAS',
+                            fundCode: 'FUND-ALIAS',
+                            description: 'Alias Description'
+                        }]
+                    }]
+                }],
+                liabilities: []
+            }]
+        };
+
+        const result = normalizeOcbcHoldingsPayload(payload);
+        expect(result.assets[0].legacyCodeAliases).toEqual(expect.arrayContaining([
+            'P-ALIASES:ISIN-ALIAS',
+            'P-ALIASES:FUND-ALIAS',
+            'P-ALIASES:Alias Description',
+            'P-ALIASES:P-ALIASES#1'
+        ]));
+        expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:GUID-LEGACY');
+        expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:GUUID-LEGACY');
+        expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:POSITION-LEGACY');
+        expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:TRANCHE-LEGACY');
+        expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:SUB-LEGACY');
     });
 });
 

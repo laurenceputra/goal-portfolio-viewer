@@ -54,6 +54,13 @@ function resolveStaticFile(demoDir, repoRoot, requestPath) {
         return path.join(demoDir, 'fsm', 'index.html');
     }
 
+    if (
+        requestPath === '/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings'
+        || requestPath === '/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings/'
+    ) {
+        return path.join(demoDir, 'ocbc', 'index.html');
+    }
+
     if (requestPath === '/') {
         return path.join(demoDir, 'index.html');
     }
@@ -106,6 +113,13 @@ function startDemoServer({
 
         if (pathname === '/fsmone/rest/holding/client/protected/find-holdings-with-pnl') {
             return sendJson(res, mockData.fsmHoldings || { data: [] });
+        }
+
+        if (pathname === '/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry') {
+            if (req.method !== 'POST') {
+                return sendText(res, 'Method not allowed', 405);
+            }
+            return sendJson(res, mockData.ocbcHoldings || { data: [] });
         }
 
         const filePath = resolveStaticFile(demoDir, repoRoot, pathname);

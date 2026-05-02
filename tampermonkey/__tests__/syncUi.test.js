@@ -239,6 +239,53 @@ describe('sync settings UI', () => {
         expectClassTokens(cancelBtn, ['gpv-sync-btn', 'gpv-sync-btn-secondary']);
     });
 
+    test('renders FSM instrument differences in targets step', () => {
+        const { createConflictDialogHTML } = exportsModule;
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: {
+                        targetsByCode: { AAA: 15 },
+                        fixedByCode: { AAA: true },
+                        tagsByCode: {},
+                        tagCatalog: [],
+                        portfolios: [],
+                        assignmentByCode: {},
+                        driftSettings: {}
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: {
+                        targetsByCode: { AAA: 25 },
+                        fixedByCode: { AAA: false },
+                        tagsByCode: {},
+                        tagCatalog: [],
+                        portfolios: [],
+                        assignmentByCode: {},
+                        driftSettings: {}
+                    }
+                }
+            }
+        };
+
+        document.body.innerHTML = createConflictDialogHTML(conflict);
+
+        const summaryPanel = document.querySelector('[data-step-panel="1"]');
+        expect(summaryPanel.textContent).toMatch(/FSM differences:\s*1/);
+
+        const targetsPanel = document.querySelector('[data-step-panel="4"]');
+        expect(targetsPanel.textContent).toContain('Instrument AAA');
+        expect(targetsPanel.textContent).toContain('Target 15.00% · Fixed Yes');
+        expect(targetsPanel.textContent).toContain('Target 25.00% · Fixed No');
+        expect(targetsPanel.textContent).not.toContain('No differences detected.');
+    });
+
     test('renders remember-key control as explicit opt-in by default', () => {
         const { createSyncSettingsHTML } = exportsModule;
         seedStatus();

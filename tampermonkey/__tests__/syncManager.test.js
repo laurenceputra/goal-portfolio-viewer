@@ -628,6 +628,105 @@ describe('SyncManager', () => {
         expect(JSON.parse(storage.get('fsm_assignment_by_code'))).toEqual({ AAPL: 'income', BOND: 'unassigned' });
     });
 
+    test('collectConfigData includes OCBC config and excludes raw holdings', () => {
+        const { SyncManager } = loadModule();
+        storage.set('ocbc_sub_portfolios', JSON.stringify({ assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false, buckets: [{ id: 'legacy' }] }] } }));
+        storage.set('ocbc_allocation_assignment_by_code', JSON.stringify({ 'P-1:EQ1': { subPortfolioId: 'core', bucketId: 'legacy' } }));
+        storage.set('ocbc_allocation_order_by_scope', JSON.stringify({
+            'assets|P-1|core': ['P-1:EQ2', ' P-1:EQ1 ', 'P-1:EQ2', '', null]
+        }));
+        storage.set('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1', 55);
+        storage.set('api_ocbc_holdings', JSON.stringify({ assets: [{ code: 'P-1:EQ1' }], liabilities: [] }));
+        global.GM_listValues = () => [
+            'ocbc_sub_portfolios',
+            'ocbc_allocation_assignment_by_code',
+            'ocbc_allocation_order_by_scope',
+            'ocbc_target_pct_assets|P-1|core|P-1%3AEQ1',
+            'api_ocbc_holdings'
+        ];
+
+        const config = SyncManager.collectConfigData();
+        expect(config.platforms.ocbc.subPortfolios.assets['P-1'][0]).toEqual(expect.objectContaining({ id: 'core', name: 'Core' }));
+        expect(config.platforms.ocbc.subPortfolios.assets['P-1'][0].buckets).toBeUndefined();
+        expect(config.platforms.ocbc.assignmentByCode).toEqual({ 'P-1:EQ1': 'core' });
+        expect(config.platforms.ocbc.orderByScope).toEqual({
+            'assets|P-1|core': ['P-1:EQ2', 'P-1:EQ1']
+        });
+        expect(config.platforms.ocbc.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 55 });
+        expect(JSON.stringify(config)).not.toContain('api_ocbc_holdings');
+        expect(JSON.stringify(config)).not.toContain('marketValueReferenceCcy');
+
+        storage.clear();
+        global.GM_listValues = () => [];
+        SyncManager.applyConfigData(config);
+
+        expect(JSON.parse(storage.get('ocbc_allocation_order_by_scope'))).toEqual({
+            'assets|P-1|core': ['P-1:EQ2', 'P-1:EQ1']
+        });
+    });
+
+    test('hashConfigData ignores OCBC timestamp-only differences', async () => {
+        const { SyncManager } = loadModule();
+        const baseConfig = {
+            version: 2,
+            platforms: {
+                endowus: { goalTargets: {}, goalFixed: {}, timestamp: 100 },
+                fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: 100 },
+                ocbc: {
+                    subPortfolios: { assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false }] } },
+                    assignmentByCode: { 'P-1:gpv-ocbc-deadbeef': 'core' },
+                    orderByScope: { 'assets|P-1|core': ['P-1:gpv-ocbc-deadbeef'] },
+                    targetsByScope: { 'assets|P-1|core|P-1%3Agpv-ocbc-deadbeef': 40 },
+                    timestamp: 111
+                }
+            },
+            metadata: { lastModified: 100 },
+            timestamp: 100
+        };
+        const sameConfigDifferentOcbcTimestamp = {
+            ...baseConfig,
+            platforms: {
+                ...baseConfig.platforms,
+                ocbc: {
+                    ...baseConfig.platforms.ocbc,
+                    timestamp: 222
+                }
+            },
+            metadata: { lastModified: 200 },
+            timestamp: 200
+        };
+
+        const firstHash = await SyncManager.__test.hashConfigData(baseConfig);
+        const secondHash = await SyncManager.__test.hashConfigData(sameConfigDifferentOcbcTimestamp);
+        expect(firstHash).toBe(secondHash);
+    });
+
+    test('applyConfigData stores OCBC config and removes stale OCBC targets', () => {
+        const { SyncManager } = loadModule();
+        storage.set('ocbc_target_pct_assets|P-1|old|P-1%3AOLD', 10);
+        global.GM_listValues = () => ['ocbc_target_pct_assets|P-1|old|P-1%3AOLD'];
+
+        SyncManager.applyConfigData({
+            version: 2,
+            platforms: {
+                endowus: { goalTargets: {}, goalFixed: {}, timestamp: Date.now() },
+                fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
+                ocbc: {
+                    subPortfolios: { assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false, buckets: [{ id: 'drop-me' }] }] } },
+                    assignmentByCode: { 'P-1:EQ1': { subPortfolioId: 'core', bucketId: 'legacy' } },
+                    targetsByScope: { 'assets|P-1|core|P-1%3AEQ1': 60 },
+                    timestamp: Date.now()
+                }
+            },
+            timestamp: Date.now()
+        });
+
+        expect(JSON.parse(storage.get('ocbc_sub_portfolios')).assets['P-1'][0].buckets).toBeUndefined();
+        expect(JSON.parse(storage.get('ocbc_allocation_assignment_by_code'))).toEqual({ 'P-1:EQ1': 'core' });
+        expect(storage.has('ocbc_target_pct_assets|P-1|old|P-1%3AOLD')).toBe(false);
+        expect(storage.get('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(60);
+    });
+
     describe('multi-device reconciliation', () => {
         test('resolveConflict(local) records attempt time separately from forced data timestamp', async () => {
             seedConfiguredState();

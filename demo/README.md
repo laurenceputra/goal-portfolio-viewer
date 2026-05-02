@@ -90,12 +90,23 @@ Screenshots are saved to `demo/screenshots/` by default (override with `E2E_SCRE
 - `e2e-summary.png`
 - `e2e-house-purchase.png`
 - `e2e-retirement.png`
+- `e2e-endowus-bucket-manager.png`
+- `e2e-endowus-performance-mode.png`
+- `e2e-endowus-expanded.png`
+- `e2e-sync-auth-ready.png`
 - `e2e-sync-unconfigured.png`
 - `e2e-sync-configured.png`
 - `e2e-sync-conflict.png`
 - `e2e-fsm-overlay.png`
 - `e2e-fsm-manager.png`
+- `e2e-fsm-filtered-holdings.png`
+- `e2e-fsm-assignment-manager.png`
+- `e2e-fsm-projection.png`
 - `e2e-fsm-conflict.png`
+- `e2e-ocbc-assets.png`
+- `e2e-ocbc-allocation.png`
+- `e2e-ocbc-subportfolio-manager.png`
+- `e2e-ocbc-liabilities.png`
 
 If Playwright is missing system dependencies on Linux, run:
 
@@ -122,9 +133,22 @@ To update baselines:
 pnpm --filter ./demo test:e2e:update-baseline
 ```
 
+If you are using Corepack-managed pnpm in CI parity workflows:
+
+```bash
+corepack pnpm --filter ./demo test:e2e:update-baseline
+```
+
 Baseline files in `demo/regression/baseline/` are committed to the repository so GitHub Actions can compare PR screenshots against the same checked-in reference images.
 
+`demo/e2e-tests.js` uses a strict default regression threshold (`E2E_DIFF_THRESHOLD`, default `0.001`) and allows small per-flow overrides for known cross-environment rendering drift. This keeps most flows strict while documenting and constraining tolerance only where needed.
+
 Only update baselines intentionally. Treat baseline refreshes as reviewable UI changes and include them in the same PR as the visual change they validate.
+
+Baseline refresh checklist:
+1. Run `test:e2e:update-baseline` after intentional UI or flow coverage changes.
+2. Confirm new files under `demo/regression/baseline/` match added flow names (name mapping uses `normalizeName` in `demo/e2e-tests.js`).
+3. Re-run `pnpm --filter ./demo test:e2e:regression` to verify diffs are stable.
 
 ### Take Screenshots
 
