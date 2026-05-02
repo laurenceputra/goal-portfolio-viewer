@@ -345,7 +345,7 @@ describe('normalizeOcbcHoldingsPayload', () => {
             currentValueLcy: -100.75
         });
         expect(result.liabilities[0].code).toBe('P-123:liabilities:L-1');
-        expect(result.liabilities[0].legacyCodeAliases).toContain('P-123:L-1');
+        expect(result.liabilities[0].legacyCodeAliases).not.toContain('P-123:L-1');
     });
 
     test('applies OCBC numeric fallback chain and null-safe parsing', () => {
@@ -682,7 +682,7 @@ describe('normalizeOcbcHoldingsPayload', () => {
 
         expect(normalized.assets[0].code).toBe('P-COLLIDE:POS-SHARED');
         expect(normalized.liabilities[0].code).toBe('P-COLLIDE:liabilities:POS-SHARED');
-        expect(normalized.liabilities[0].legacyCodeAliases).toContain('P-COLLIDE:POS-SHARED');
+        expect(normalized.liabilities[0].legacyCodeAliases).not.toContain('P-COLLIDE:POS-SHARED');
     });
 
     test('does not emit OCBC legacy aliases for volatile holdingGuid/guuid/positionId/trancheId/subCode', () => {

@@ -914,16 +914,10 @@
             const primaryCode = isAssetsSection
                 ? `${resolvedPortfolioNo}:${positionId}`
                 : `${resolvedPortfolioNo}:${sectionType}:${positionId}`;
-            const nonAssetLegacyPositionAlias = !isAssetsSection
-                ? `${resolvedPortfolioNo}:${positionId}`
-                : '';
             return {
                 code: primaryCode,
                 usedFallbackIndex: !hasHoldingSpecificIdentity,
-                legacyAliases: Array.from(new Set([
-                    ...legacyAliases,
-                    nonAssetLegacyPositionAlias
-                ].filter(Boolean)))
+                legacyAliases: Array.from(new Set(legacyAliases))
             };
         }
 
