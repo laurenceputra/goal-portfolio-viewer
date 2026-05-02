@@ -3959,97 +3959,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return deviceId;
     }
 
-    function collectLegacyEndowusConfig() {
-        const config = {
-            goalTargets: {},
-            goalFixed: {},
-            goalBuckets: {},
-            clearedGoalBuckets: {}
-        };
-        const allKeys = typeof GM_listValues === 'function' ? GM_listValues() : [];
-        for (const key of allKeys) {
-            if (key.startsWith(STORAGE_KEY_PREFIXES.goalTarget)) {
-                const goalId = key.substring(STORAGE_KEY_PREFIXES.goalTarget.length);
-                const value = Storage.get(key, null);
-                if (value !== null) {
-                    config.goalTargets[goalId] = value;
-                }
-            } else if (key.startsWith(STORAGE_KEY_PREFIXES.goalFixed)) {
-                const goalId = key.substring(STORAGE_KEY_PREFIXES.goalFixed.length);
-                const value = Storage.get(key, false);
-                config.goalFixed[goalId] = value;
-            } else if (key.startsWith(STORAGE_KEY_PREFIXES.goalBucket)) {
-                if (key.endsWith('__cleared')) {
-                    const goalId = key.substring(STORAGE_KEY_PREFIXES.goalBucket.length, key.length - '__cleared'.length);
-                    config.clearedGoalBuckets[goalId] = Storage.get(key, false) === true;
-                    continue;
-                }
-                const goalId = key.substring(STORAGE_KEY_PREFIXES.goalBucket.length);
-                const value = utils.normalizeString(Storage.get(key, ''), '');
-                if (value) {
-                    config.goalBuckets[goalId] = value;
-                }
-            }
-        }
-        Object.entries(config.goalFixed).forEach(([goalId, isFixed]) => {
-            if (isFixed === true) {
-                delete config.goalTargets[goalId];
-            }
-        });
-        return config;
-    }
-
-    function collectFsmSyncConfig() {
-        const fsm = {
-            targetsByCode: {},
-            fixedByCode: {},
-            portfolios: [],
-            assignmentByCode: {},
-            timestamp: Date.now()
-        };
-        const allKeys = typeof GM_listValues === 'function' ? GM_listValues() : [];
-        for (const key of allKeys) {
-            if (key.startsWith(STORAGE_KEY_PREFIXES.fsmTarget)) {
-                const code = key.substring(STORAGE_KEY_PREFIXES.fsmTarget.length);
-                const value = Storage.get(key, null);
-                if (value !== null) {
-                    fsm.targetsByCode[code] = value;
-                }
-                continue;
-            }
-            if (key.startsWith(STORAGE_KEY_PREFIXES.fsmFixed)) {
-                const code = key.substring(STORAGE_KEY_PREFIXES.fsmFixed.length);
-                fsm.fixedByCode[code] = Storage.get(key, false) === true;
-                continue;
-            }
-        }
-        Object.entries(fsm.fixedByCode).forEach(([code, isFixed]) => {
-            if (isFixed === true) {
-                delete fsm.targetsByCode[code];
-            }
-        });
-        fsm.portfolios = normalizeFsmPortfolios(
-            Storage.readJson(STORAGE_KEYS.fsmPortfolios, data => Array.isArray(data), 'Error loading FSM portfolios') || []
-        );
-        const assignmentByCode = Storage.readJson(
-            STORAGE_KEYS.fsmAssignmentByCode,
-            data => data && typeof data === 'object' && !Array.isArray(data),
-            'Error loading FSM assignments'
-        ) || {};
-        const validPortfolioIds = new Set(fsm.portfolios.filter(item => item.archived !== true).map(item => item.id));
-        Object.entries(assignmentByCode).forEach(([code, portfolioId]) => {
-            const normalizedCode = utils.normalizeString(code, '');
-            if (!normalizedCode) {
-                return;
-            }
-            const normalizedPortfolioId = utils.normalizeString(portfolioId, '');
-            fsm.assignmentByCode[normalizedCode] = validPortfolioIds.has(normalizedPortfolioId)
-                ? normalizedPortfolioId
-                : FSM_UNASSIGNED_PORTFOLIO_ID;
-        });
-        return fsm;
-    }
-
     function normalizeOcbcSubPortfoliosConfig(data) {
         const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
         const normalized = {};
@@ -4138,38 +4047,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return normalized;
     }
 
-    function normalizeOcbcOrderByScopeConfig(data) {
-        return normalizeOcbcOrderByScopeEntries(data);
-    }
-
-    function collectOcbcSyncConfig() {
-        const targetsByScope = {};
-        const allKeys = typeof GM_listValues === 'function' ? GM_listValues() : [];
-        for (const key of allKeys) {
-            if (!key.startsWith(STORAGE_KEY_PREFIXES.ocbcTarget)) {
-                continue;
-            }
-            const scope = key.substring(STORAGE_KEY_PREFIXES.ocbcTarget.length);
-            const value = Storage.get(key, null);
-            if (value !== null) {
-                targetsByScope[scope] = value;
-            }
-        }
-        return {
-            subPortfolios: normalizeOcbcSubPortfoliosConfig(
-                Storage.readJson(STORAGE_KEYS.ocbcSubPortfolios, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC sub-portfolios') || {}
-            ),
-            assignmentByCode: normalizeOcbcAssignmentByCodeConfig(
-                Storage.readJson(STORAGE_KEYS.ocbcAllocationAssignmentByCode, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC assignments') || {}
-            ),
-            orderByScope: normalizeOcbcOrderByScopeConfig(
-                Storage.readJson(STORAGE_KEYS.ocbcAllocationOrderByScope, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC order') || {}
-            ),
-            targetsByScope,
-            timestamp: Date.now()
-        };
-    }
-
     function normalizeSyncConfig(config) {
         if (!config || typeof config !== 'object') {
             return null;
@@ -4241,20 +4118,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             metadata: {},
             timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
         };
-    }
-
-    function removeStalePrefixedKeys(prefix, activeSuffixes, errorMessage = 'Error deleting stale sync key') {
-        const allKeys = typeof GM_listValues === 'function' ? GM_listValues() : [];
-        const active = activeSuffixes instanceof Set ? activeSuffixes : new Set(activeSuffixes || []);
-        for (const key of allKeys) {
-            if (!key.startsWith(prefix)) {
-                continue;
-            }
-            const suffix = key.substring(prefix.length);
-            if (!active.has(suffix)) {
-                Storage.remove(key, errorMessage);
-            }
-        }
     }
 
     /**

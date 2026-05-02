@@ -351,7 +351,6 @@ describe('SyncManager', () => {
     test('applyConfigData skips Endowus targets when goal is fixed for v2 payload', () => {
         const { SyncManager, storageKeys } = loadModule();
         const targetKey = storageKeys.goalTarget('goal-1');
-        const fixedKey = storageKeys.goalFixed('goal-1');
 
         SyncManager.applyConfigData({
             version: 2,
@@ -909,7 +908,7 @@ describe('SyncManager', () => {
 
         test('resolveConflict(remote) records attempt time separately from remote data timestamp', async () => {
             seedConfiguredState();
-            const { SyncManager, storageKeys } = loadModule();
+            const { SyncManager } = loadModule();
             unlockSync(SyncManager);
 
             const remoteTimestamp = 2_000_000_000_000;
@@ -1334,7 +1333,7 @@ describe('SyncManager', () => {
             seedConfiguredState();
             storage.set('sync_access_token_expiry', Date.now() - 1_000);
             global.GM_xmlhttpRequest = undefined;
-            const { SyncManager, SyncEncryption, storageKeys } = loadModule();
+            const { SyncManager, SyncEncryption } = loadModule();
             unlockSync(SyncManager);
 
             const serverUrl = 'https://sync.example.com';
