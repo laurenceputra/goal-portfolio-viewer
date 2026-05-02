@@ -910,10 +910,20 @@
         ];
 
         if (positionId) {
+            const isAssetsSection = sectionType === 'assets';
+            const primaryCode = isAssetsSection
+                ? `${resolvedPortfolioNo}:${positionId}`
+                : `${resolvedPortfolioNo}:${sectionType}:${positionId}`;
+            const nonAssetLegacyPositionAlias = !isAssetsSection
+                ? `${resolvedPortfolioNo}:${positionId}`
+                : '';
             return {
-                code: `${resolvedPortfolioNo}:${positionId}`,
+                code: primaryCode,
                 usedFallbackIndex: !hasHoldingSpecificIdentity,
-                legacyAliases: Array.from(new Set(legacyAliases))
+                legacyAliases: Array.from(new Set([
+                    ...legacyAliases,
+                    nonAssetLegacyPositionAlias
+                ].filter(Boolean)))
             };
         }
 

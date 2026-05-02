@@ -231,12 +231,13 @@ describe('API interception', () => {
         });
 
         expect(normalized.assets[0].code).toMatch(/^P-001:gpv-ocbc-/);
-        expect(normalized.liabilities[0].code).toBe('P-001:liab-1');
+        expect(normalized.liabilities[0].code).toBe('P-001:liabilities:liab-1');
 
         expect(normalized.assets[0].legacyCodeAliases).toEqual(expect.arrayContaining([
             'P-001:P-001#1'
         ]));
         expect(normalized.liabilities[0].legacyCodeAliases).toEqual(expect.arrayContaining([
+            'P-001:liab-1',
             expect.stringMatching(/^P-001:gpv-ocbc-/),
             'P-001:Margin Liability',
             'P-001:P-001#1'

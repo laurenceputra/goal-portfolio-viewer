@@ -344,7 +344,8 @@ describe('normalizeOcbcHoldingsPayload', () => {
             productType: 'Margin',
             currentValueLcy: -100.75
         });
-        expect(result.liabilities[0].code).toBe('P-123:L-1');
+        expect(result.liabilities[0].code).toBe('P-123:liabilities:L-1');
+        expect(result.liabilities[0].legacyCodeAliases).toContain('P-123:L-1');
     });
 
     test('applies OCBC numeric fallback chain and null-safe parsing', () => {
@@ -647,6 +648,41 @@ describe('normalizeOcbcHoldingsPayload', () => {
 
         expect(withPosition.assets[0].code).toBe('P-ALIAS-HASH:POSITION-HASH');
         expect(withPosition.assets[0].legacyCodeAliases).toContain(hashed.assets[0].code);
+    });
+
+    test('keeps asset/liability positionId codes distinct within same portfolio', () => {
+        const payload = {
+            data: [{
+                portfolioNo: 'P-COLLIDE',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [{
+                            isin: 'ISIN-COLLIDE',
+                            fundCode: 'FUND-COLLIDE',
+                            positionId: 'POS-SHARED'
+                        }]
+                    }]
+                }],
+                liabilities: [{
+                    assetClassDesc: 'Liabilities',
+                    subAssets: [{
+                        subAssetClassDesc: 'Margin Liability',
+                        holdings: [{
+                            description: 'Margin Liability',
+                            positionId: 'POS-SHARED'
+                        }]
+                    }]
+                }]
+            }]
+        };
+
+        const normalized = normalizeOcbcHoldingsPayload(payload);
+
+        expect(normalized.assets[0].code).toBe('P-COLLIDE:POS-SHARED');
+        expect(normalized.liabilities[0].code).toBe('P-COLLIDE:liabilities:POS-SHARED');
+        expect(normalized.liabilities[0].legacyCodeAliases).toContain('P-COLLIDE:POS-SHARED');
     });
 
     test('does not emit OCBC legacy aliases for volatile holdingGuid/guuid/positionId/trancheId/subCode', () => {

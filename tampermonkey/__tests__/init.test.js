@@ -2985,6 +2985,105 @@ describe('initialization and URL monitoring', () => {
         expect(assignmentWriteCalls).toHaveLength(2);
     });
 
+    test('OCBC allocation restores legacy hashed assignment/target/order after row gains positionId', () => {
+        teardownDom();
+        setupDom({ url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        const initial = exportsModule.normalizeOcbcHoldingsPayload({
+            data: [{
+                portfolioNo: 'P-POS',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [
+                            { isin: 'ISIN-POS-A', fundCode: 'FUND-POS-A', description: 'Desc A', marketValueReferenceCcy: 1000 },
+                            { isin: 'ISIN-POS-B', fundCode: 'FUND-POS-B', description: 'Desc B', marketValueReferenceCcy: 900 }
+                        ]
+                    }]
+                }],
+                liabilities: []
+            }]
+        });
+
+        const initialCodeA = initial.assets.find(row => row.displayTicker === 'ISIN-POS-A')?.code;
+        const initialCodeB = initial.assets.find(row => row.displayTicker === 'ISIN-POS-B')?.code;
+
+        const withPosition = exportsModule.normalizeOcbcHoldingsPayload({
+            data: [{
+                portfolioNo: 'P-POS',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [
+                            { isin: 'ISIN-POS-B', fundCode: 'FUND-POS-B', description: 'Desc B Updated', marketValueReferenceCcy: 900 },
+                            { isin: 'ISIN-POS-A', fundCode: 'FUND-POS-A', description: 'Desc A Updated', positionId: 'POS-A', marketValueReferenceCcy: 1000 }
+                        ]
+                    }]
+                }],
+                liabilities: []
+            }]
+        });
+
+        const positionCodeA = withPosition.assets.find(row => row.displayTicker === 'ISIN-POS-A')?.code;
+        expect(positionCodeA).toBe('P-POS:POS-A');
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify(withPosition));
+        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+            assets: {
+                'P-POS': [
+                    { id: 'core', name: 'Core', archived: false }
+                ]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            [initialCodeA]: 'core',
+            [initialCodeB]: 'core'
+        }));
+        global.GM_setValue(`ocbc_target_pct_assets|P-POS|core|${encodeURIComponent(initialCodeA)}`, 55);
+        global.GM_setValue('ocbc_allocation_order_by_scope', JSON.stringify({
+            'assets|P-POS|core': [initialCodeA, initialCodeB]
+        }));
+
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const assignmentSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
+            .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for ISIN-POS-A');
+        expect(assignmentSelect.value).toBe('core');
+
+        const targetInput = overlay.querySelector('input[aria-label="Target percentage for instrument ISIN-POS-A in sub-portfolio Core"]');
+        expect(targetInput).toBeTruthy();
+        expect(targetInput.value).toBe('55.00');
+
+        const coreSectionRow = Array.from(overlay.querySelectorAll('.gpv-ocbc-instrument-header-row'))
+            .find(row => row.textContent.includes('Instrument allocation · Core'));
+        let coreTable = coreSectionRow?.nextElementSibling;
+        while (coreTable && coreTable.tagName !== 'TABLE') {
+            coreTable = coreTable.nextElementSibling;
+        }
+        const orderedCodes = Array.from(coreTable.querySelectorAll('tbody tr td:first-child')).map(cell => cell.textContent.trim());
+        expect(orderedCodes.slice(0, 2)).toEqual(['ISIN-POS-A', 'ISIN-POS-B']);
+
+        const savedAssignments = JSON.parse(storage.get('ocbc_allocation_assignment_by_code'));
+        expect(savedAssignments[positionCodeA]).toBe('core');
+    });
+
     test('OCBC assignment stays resolved across rename and reorder with stable identifiers', () => {
         teardownDom();
         setupDom({ url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111' });
