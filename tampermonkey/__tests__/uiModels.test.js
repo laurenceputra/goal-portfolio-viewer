@@ -27,7 +27,6 @@ const {
     buildGoalFixedById,
     buildMergedInvestmentData,
     buildBucketPlanningModel,
-    getPerformanceCacheKey,
     getBucketViewModePreference,
     setBucketViewModePreference,
     getCollapseState,
@@ -422,9 +421,9 @@ describe('view model builders', () => {
         global.GM_setValue = (key, value) => storage.set(key, value);
         global.GM_deleteValue = key => storage.delete(key);
         try {
-            Object.entries(cacheFixture).forEach(([goalId, payload]) => {
-                storage.set(getPerformanceCacheKey(goalId), JSON.stringify(payload));
-            });
+            storage.set('endowus', JSON.stringify({
+                performanceCache: cacheFixture
+            }));
             const viewModel = buildBucketDetailViewModel({
                 bucketName: 'Retirement',
                 bucketMap,

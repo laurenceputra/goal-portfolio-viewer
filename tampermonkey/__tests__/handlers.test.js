@@ -547,23 +547,99 @@ describe('handlers and cache', () => {
         Date.now = () => 8 * 24 * 60 * 60 * 1000;
         const stale = readPerformanceCache('goal-x');
         expect(stale).toBeNull();
-        expect(storage.has('gpv_performance_goal-x')).toBe(false);
+        const staleEndowus = JSON.parse(storage.get('endowus'));
+        expect(staleEndowus.performanceCache?.['goal-x']).toBeUndefined();
+    });
+
+    test('readEndowusStore prunes orphaned performance cache entries', () => {
+        const { readPerformanceCache } = exportsModule;
+        if (!readPerformanceCache) return;
+
+        storage.set('endowus', JSON.stringify({
+            performance: [{ goalId: 'goal-keep', totalInvestmentValue: {} }],
+            investible: [{ goalId: 'goal-keep', goalName: 'Retirement - Keep', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            summary: [{ goalId: 'goal-keep', goalName: 'Retirement - Keep', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'goal-keep': { fetchedAt: Date.now(), response: { goalId: 'goal-keep' } },
+                'goal-drop': { fetchedAt: Date.now(), response: { goalId: 'goal-drop' } }
+            },
+            uiPreferences: { bucketMode: 'allocation', collapseState: {} }
+        }));
+
+        expect(readPerformanceCache('goal-keep')).not.toBeNull();
+        const endowus = JSON.parse(storage.get('endowus'));
+        expect(endowus.performanceCache?.['goal-keep']).toBeDefined();
+        expect(endowus.performanceCache?.['goal-drop']).toBeUndefined();
+    });
+
+    test('readEndowusStore prunes obsolete collapse-state entries', () => {
+        const { getCollapseState } = exportsModule;
+        if (!getCollapseState) return;
+
+        storage.set('endowus', JSON.stringify({
+            performance: [{ goalId: 'goal-1', totalInvestmentValue: {} }],
+            investible: [{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            summary: [{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {},
+            uiPreferences: {
+                bucketMode: 'performance',
+                collapseState: {
+                    'gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance': false,
+                    'gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|unknown-section': true,
+                    'gpv_collapse_Unknown|GENERAL_WEALTH_ACCUMULATION|projection': true,
+                    malformed: true
+                }
+            }
+        }));
+
+        expect(getCollapseState('Retirement', 'GENERAL_WEALTH_ACCUMULATION', 'performance')).toBe(false);
+        const endowus = JSON.parse(storage.get('endowus'));
+        expect(endowus.uiPreferences.bucketMode).toBe('performance');
+        expect(endowus.uiPreferences.collapseState).toEqual({
+            'gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance': false
+        });
     });
 
     test('performance cache removes invalid payloads', () => {
         const { readPerformanceCache } = exportsModule;
         if (!readPerformanceCache) return;
 
-        storage.set('gpv_performance_bad-json', '{invalid');
+        storage.set('endowus', JSON.stringify({
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'bad-json': '{invalid'
+            },
+            uiPreferences: { bucketMode: 'allocation', collapseState: {} }
+        }));
         expect(readPerformanceCache('bad-json')).toBeNull();
-        expect(storage.has('gpv_performance_bad-json')).toBe(false);
+        expect(JSON.parse(storage.get('endowus')).performanceCache?.['bad-json']).toBeUndefined();
 
-        storage.set('gpv_performance_bad-shape', JSON.stringify({ fetchedAt: 'nope', response: 'bad' }));
+        storage.set('endowus', JSON.stringify({
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'bad-shape': { fetchedAt: 'nope', response: 'bad' }
+            },
+            uiPreferences: { bucketMode: 'allocation', collapseState: {} }
+        }));
         expect(readPerformanceCache('bad-shape')).toBeNull();
-        expect(storage.has('gpv_performance_bad-shape')).toBe(false);
+        expect(JSON.parse(storage.get('endowus')).performanceCache?.['bad-shape']).toBeUndefined();
     });
 
-    test('readPerformanceCache allows stale cache when ignoreFreshness=true', () => {
+    test('readPerformanceCache cleanup removes stale cache even when ignoreFreshness=true', () => {
         const { writePerformanceCache, readPerformanceCache } = exportsModule;
         if (!writePerformanceCache || !readPerformanceCache) return;
 
@@ -573,23 +649,32 @@ describe('handlers and cache', () => {
         // Make entry stale (>7 days)
         Date.now = () => 8 * 24 * 60 * 60 * 1000;
 
-        // With ignoreFreshness=true, stale cache should be returned
+        // Local startup/read cleanup is aggressive and prunes stale entries.
         const stale = readPerformanceCache('goal-stale', true);
-        expect(stale).not.toBeNull();
-        expect(stale.response.data).toBe('old');
+        expect(stale).toBeNull();
     });
 
     test('clearPerformanceCache removes stored entries', () => {
         const { clearPerformanceCache } = exportsModule;
         if (!clearPerformanceCache) return;
 
-        storage.set('gpv_performance_goal-a', JSON.stringify({ fetchedAt: 1, response: {} }));
-        storage.set('gpv_performance_goal-b', JSON.stringify({ fetchedAt: 1, response: {} }));
+        storage.set('endowus', JSON.stringify({
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'goal-a': { fetchedAt: 1, response: {} },
+                'goal-b': { fetchedAt: 1, response: {} }
+            },
+            uiPreferences: { bucketMode: 'allocation', collapseState: {} }
+        }));
 
         clearPerformanceCache(['goal-a', 'goal-b']);
 
-        expect(storage.has('gpv_performance_goal-a')).toBe(false);
-        expect(storage.has('gpv_performance_goal-b')).toBe(false);
+        const endowus = JSON.parse(storage.get('endowus'));
+        expect(endowus.performanceCache?.['goal-a']).toBeUndefined();
+        expect(endowus.performanceCache?.['goal-b']).toBeUndefined();
     });
 
     test('ensurePerformanceData returns null when fetch fails', async () => {
@@ -707,7 +792,7 @@ describe('handlers and cache', () => {
     });
 
     test('hydrateVisibleGoalMetricRows updates all matching rows', () => {
-        const { hydrateVisibleGoalMetricRows, storageKeys } = exportsModule;
+        const { hydrateVisibleGoalMetricRows } = exportsModule;
         if (typeof hydrateVisibleGoalMetricRows !== 'function') return;
 
         const content = document.createElement('div');
@@ -717,22 +802,38 @@ describe('handlers and cache', () => {
             { goalId: 'goal-3', oneMonthValue: 0.01 }
         ];
 
-        goals.forEach(goal => {
-            storage.set(storageKeys.performanceCache(goal.goalId), JSON.stringify({
-                fetchedAt: Date.now(),
-                response: {
-                    returnsTable: {
-                        twr: {
-                            oneMonthValue: goal.oneMonthValue,
-                            sixMonthValue: null,
-                            ytdValue: null,
-                            oneYearValue: null,
-                            threeYearValue: null
+        storage.set('endowus', JSON.stringify({
+            performance: null,
+            investible: null,
+            summary: null,
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: goals.reduce((acc, goal) => {
+                acc[goal.goalId] = {
+                    fetchedAt: Date.now(),
+                    response: {
+                        returnsTable: {
+                            twr: {
+                                oneMonthValue: goal.oneMonthValue,
+                                sixMonthValue: null,
+                                ytdValue: null,
+                                oneYearValue: null,
+                                threeYearValue: null
+                            }
                         }
                     }
-                }
-            }));
+                };
+                return acc;
+            }, {}),
+            uiPreferences: {
+                bucketMode: 'allocation',
+                collapseState: {}
+            }
+        }));
 
+        goals.forEach(goal => {
             const metricsRow = document.createElement('tr');
             metricsRow.className = 'gpv-goal-metrics-row';
             metricsRow.dataset.goalId = goal.goalId;

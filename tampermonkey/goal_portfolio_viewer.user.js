@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.11
+// @version      2.14.13
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -55,6 +55,7 @@
         endowus: 'endowus',
         fsm: 'fsm',
         ocbc: 'ocbc',
+        sync: 'sync',
         performance: 'api_performance',
         investible: 'api_investible',
         summary: 'api_summary',
@@ -91,6 +92,8 @@
     const VIEW_STATE_KEYS = {
         bucketMode: 'gpv_bucket_mode'
     };
+    const LEGACY_ENDOWUS_LOCAL_EXACT_KEYS = [VIEW_STATE_KEYS.bucketMode];
+    const LEGACY_ENDOWUS_LOCAL_PREFIXES = [STORAGE_KEY_PREFIXES.performanceCache, STORAGE_KEY_PREFIXES.collapseState];
     const BUCKET_VIEW_MODES = {
         allocation: 'allocation',
         performance: 'performance'
@@ -133,6 +136,11 @@
         rememberKey: 'sync_remember_key',
         rememberedMasterKey: 'sync_master_key'
     };
+    const SYNC_STORAGE_FIELDS_BY_KEY = Object.freeze(Object.entries(SYNC_STORAGE_KEYS).reduce((acc, [field, key]) => {
+        acc[key] = field;
+        return acc;
+    }, {}));
+    const ACTIVE_SYNC_STORAGE_KEY_SET = new Set(Object.values(SYNC_STORAGE_KEYS));
 
     const SYNC_DEFAULTS = {
         serverUrl: 'https://goal-portfolio-sync.laurenceputra.workers.dev',
@@ -2217,25 +2225,37 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     };
     const PERFORMANCE_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+    function readEndowusStoreRaw() {
+        const rawStored = Storage.readJson(STORAGE_KEYS.endowus, data => data && typeof data === 'object' && !Array.isArray(data));
+        return rawStored ? normalizeEndowusStore(rawStored) : null;
+    }
+
+    function readWindowReturnsPerformanceCache(goalId) {
+        const normalizedGoalId = utils.normalizeString(goalId, '');
+        if (!normalizedGoalId) {
+            return null;
+        }
+        const cache = readEndowusStoreRaw()?.performanceCache;
+        const parsed = cache && typeof cache === 'object' && !Array.isArray(cache)
+            ? cache[normalizedGoalId]
+            : null;
+        const isValid = Boolean(
+            parsed &&
+            typeof parsed.fetchedAt === 'number' &&
+            parsed.fetchedAt > 0 &&
+            parsed.response &&
+            typeof parsed.response === 'object' &&
+            isCacheFresh(parsed.fetchedAt, PERFORMANCE_CACHE_MAX_AGE_MS)
+        );
+        return isValid ? parsed : null;
+    }
+
     function getGoalWindowReturns(goalId) {
         if (!goalId) {
             return {};
         }
-        const key = getPerformanceCacheKey(goalId);
-        const parsed = Storage.readJson(
-            key,
-            data => {
-                const fetchedAt = data?.fetchedAt;
-                const response = data?.response;
-                return typeof fetchedAt === 'number' && fetchedAt > 0 && response && typeof response === 'object';
-            },
-            'Error reading performance cache'
-        );
+        const parsed = readWindowReturnsPerformanceCache(goalId);
         if (!parsed) {
-            return {};
-        }
-        if (!isCacheFresh(parsed.fetchedAt, PERFORMANCE_CACHE_MAX_AGE_MS)) {
-            Storage.remove(key, 'Error deleting stale performance cache');
             return {};
         }
         const cachedResponse = parsed.response ? utils.normalizePerformanceResponse(parsed.response) : null;
@@ -2863,7 +2883,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
     const Storage = {
         missing: Object.freeze({ __gpvStorageMissing: true }),
-        get(key, fallback, context) {
+        getRaw(key, fallback, context) {
             try {
                 return GM_getValue(key, fallback);
             } catch (error) {
@@ -2872,10 +2892,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 return fallback;
             }
         },
-        has(key, context) {
-            return Storage.get(key, Storage.missing, context) !== Storage.missing;
-        },
-        set(key, value, context) {
+        setRaw(key, value, context) {
             try {
                 GM_setValue(key, value);
                 return true;
@@ -2885,7 +2902,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 return false;
             }
         },
-        remove(key, context) {
+        removeRaw(key, context) {
             try {
                 GM_deleteValue(key);
                 return true;
@@ -2895,8 +2912,72 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 return false;
             }
         },
+        get(key, fallback, context) {
+            const syncField = SYNC_STORAGE_FIELDS_BY_KEY[key];
+            if (syncField) {
+                const syncStore = Storage.readJson(
+                    STORAGE_KEYS.sync,
+                    data => data && typeof data === 'object' && !Array.isArray(data),
+                    context || 'Error reading sync store'
+                ) || {};
+                if (Object.prototype.hasOwnProperty.call(syncStore, syncField)) {
+                    return syncStore[syncField];
+                }
+                if (Storage.hasRaw(key)) {
+                    return Storage.getRaw(key, fallback, context);
+                }
+                return fallback;
+            }
+            return Storage.getRaw(key, fallback, context);
+        },
+        has(key, context) {
+            return Storage.get(key, Storage.missing, context) !== Storage.missing;
+        },
+        hasRaw(key, context) {
+            return Storage.getRaw(key, Storage.missing, context) !== Storage.missing;
+        },
+        set(key, value, context) {
+            const syncField = SYNC_STORAGE_FIELDS_BY_KEY[key];
+            if (syncField) {
+                const syncStore = Storage.readJson(
+                    STORAGE_KEYS.sync,
+                    data => data && typeof data === 'object' && !Array.isArray(data),
+                    context || 'Error reading sync store'
+                ) || {};
+                syncStore[syncField] = value;
+                const didWrite = Storage.writeJson(STORAGE_KEYS.sync, syncStore, context || 'Error writing sync store');
+                if (didWrite && Storage.hasRaw(key)) {
+                    Storage.removeRaw(key, context || `Error deleting legacy sync key: ${key}`);
+                }
+                return didWrite;
+            }
+            return Storage.setRaw(key, value, context);
+        },
+        remove(key, context) {
+            const syncField = SYNC_STORAGE_FIELDS_BY_KEY[key];
+            if (syncField) {
+                const syncStore = Storage.readJson(
+                    STORAGE_KEYS.sync,
+                    data => data && typeof data === 'object' && !Array.isArray(data),
+                    context || 'Error reading sync store'
+                ) || {};
+                if (!Object.prototype.hasOwnProperty.call(syncStore, syncField)) {
+                    if (Storage.hasRaw(key)) {
+                        return Storage.removeRaw(key, context || `Error deleting legacy sync key: ${key}`);
+                    }
+                    return true;
+                }
+                delete syncStore[syncField];
+                const didWrite = Storage.writeJson(STORAGE_KEYS.sync, syncStore, context || 'Error writing sync store');
+                if (didWrite && Storage.hasRaw(key)) {
+                    Storage.removeRaw(key, context || `Error deleting legacy sync key: ${key}`);
+                }
+                return didWrite;
+            }
+            return Storage.removeRaw(key, context);
+        },
         readJson(key, validateFn, context) {
-            const stored = Storage.get(key, null, context);
+            const stored = Storage.getRaw(key, null, context);
             if (!stored) {
                 return null;
             }
@@ -2909,12 +2990,26 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             return parsed;
         },
         writeJson(key, value, context) {
-            return Storage.set(key, JSON.stringify(value), context);
+            return Storage.setRaw(key, JSON.stringify(value), context);
         }
     };
 
     function normalizeEndowusStore(data) {
         const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const uiPreferencesSource = source.uiPreferences && typeof source.uiPreferences === 'object' && !Array.isArray(source.uiPreferences)
+            ? source.uiPreferences
+            : {};
+        const collapseStateSource = uiPreferencesSource.collapseState && typeof uiPreferencesSource.collapseState === 'object' && !Array.isArray(uiPreferencesSource.collapseState)
+            ? uiPreferencesSource.collapseState
+            : {};
+        const normalizedCollapseState = Object.entries(collapseStateSource).reduce((acc, [key, value]) => {
+            const normalizedKey = utils.normalizeString(key, '');
+            if (!normalizedKey) {
+                return acc;
+            }
+            acc[normalizedKey] = normalizeBooleanPreference(value, true);
+            return acc;
+        }, {});
         return {
             performance: Array.isArray(source.performance) ? source.performance : null,
             investible: Array.isArray(source.investible) ? source.investible : null,
@@ -2922,7 +3017,14 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             goalTargets: source.goalTargets && typeof source.goalTargets === 'object' ? source.goalTargets : {},
             goalFixed: source.goalFixed && typeof source.goalFixed === 'object' ? source.goalFixed : {},
             goalBuckets: source.goalBuckets && typeof source.goalBuckets === 'object' ? source.goalBuckets : {},
-            clearedGoalBuckets: source.clearedGoalBuckets && typeof source.clearedGoalBuckets === 'object' ? source.clearedGoalBuckets : {}
+            clearedGoalBuckets: source.clearedGoalBuckets && typeof source.clearedGoalBuckets === 'object' ? source.clearedGoalBuckets : {},
+            performanceCache: source.performanceCache && typeof source.performanceCache === 'object' && !Array.isArray(source.performanceCache)
+                ? source.performanceCache
+                : {},
+            uiPreferences: {
+                bucketMode: normalizeBucketViewMode(uiPreferencesSource.bucketMode),
+                collapseState: normalizedCollapseState
+            }
         };
     }
 
@@ -3056,6 +3158,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.goalTarget, 'Error deleting legacy Endowus target key');
         removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.goalFixed, 'Error deleting legacy Endowus fixed key');
         removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.goalBucket, 'Error deleting legacy Endowus bucket key');
+        Storage.remove(VIEW_STATE_KEYS.bucketMode, 'Error deleting legacy bucket mode key');
+        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.performanceCache, 'Error deleting legacy performance cache key');
+        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.collapseState, 'Error deleting legacy collapse state key');
     }
 
     function cleanupLegacyFsmKeys() {
@@ -3085,6 +3190,94 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.ocbcTarget, 'Error deleting legacy OCBC target key');
     }
 
+    function normalizeSyncStore(data) {
+        return data && typeof data === 'object' && !Array.isArray(data) ? { ...data } : {};
+    }
+
+    function readSyncStore() {
+        return normalizeSyncStore(Storage.readJson(
+            STORAGE_KEYS.sync,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error loading sync store'
+        ));
+    }
+
+    function writeSyncStore(store, context = 'Error saving sync store') {
+        return Storage.writeJson(STORAGE_KEYS.sync, normalizeSyncStore(store), context);
+    }
+
+    function cleanupLegacySyncKeys() {
+        ACTIVE_SYNC_STORAGE_KEY_SET.forEach(key => {
+            Storage.removeRaw(key, `Error deleting legacy sync key: ${key}`);
+        });
+    }
+
+    function migrateLegacySyncStore() {
+        const currentSyncStore = readSyncStore();
+        const mergedSyncStore = { ...currentSyncStore };
+        let didMergeLegacy = false;
+
+        Object.entries(SYNC_STORAGE_KEYS).forEach(([field, legacyKey]) => {
+            if (Object.prototype.hasOwnProperty.call(mergedSyncStore, field)) {
+                return;
+            }
+            if (!Storage.hasRaw(legacyKey)) {
+                return;
+            }
+            mergedSyncStore[field] = Storage.getRaw(legacyKey, null, `Error reading legacy sync key: ${legacyKey}`);
+            didMergeLegacy = true;
+        });
+
+        if (didMergeLegacy) {
+            const didWrite = writeSyncStore(mergedSyncStore, 'Error writing merged sync store');
+            if (didWrite) {
+                cleanupLegacySyncKeys();
+            }
+            return;
+        }
+
+        cleanupLegacySyncKeys();
+    }
+
+    function cleanupStaleNamespacedKeys() {
+        if (typeof GM_listValues !== 'function') {
+            return;
+        }
+
+        let allKeys;
+        try {
+            allKeys = GM_listValues();
+        } catch (error) {
+            console.warn('[Goal Portfolio Viewer] Unable to enumerate storage keys for stale cleanup:', error);
+            return;
+        }
+        const allowedGpvExactKeys = new Set([VIEW_STATE_KEYS.bucketMode]);
+        const allowedGpvPrefixes = [STORAGE_KEY_PREFIXES.performanceCache, STORAGE_KEY_PREFIXES.collapseState];
+
+        allKeys.forEach(key => {
+            if (typeof key !== 'string') {
+                return;
+            }
+
+            if (key.startsWith('gpv_')) {
+                const isAllowed = allowedGpvExactKeys.has(key)
+                    || allowedGpvPrefixes.some(prefix => key.startsWith(prefix));
+                if (!isAllowed) {
+                    Storage.removeRaw(key, `Error deleting stale GPV key: ${key}`);
+                }
+            }
+
+            // Unknown flat sync_* keys are intentionally treated as stale post-migration;
+            // active sync state now lives under the exact "sync" store key.
+            if (key.startsWith('sync_') && !ACTIVE_SYNC_STORAGE_KEY_SET.has(key)) {
+                Storage.removeRaw(key, `Error deleting stale sync key: ${key}`);
+            }
+        });
+    }
+
+    migrateLegacySyncStore();
+    cleanupStaleNamespacedKeys();
+
     const legacyCleanupSessionState = {
         endowus: false,
         fsm: false,
@@ -3108,8 +3301,18 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             return false;
         }
         const hasLegacyKeys = hasAnyLegacyStoreKeys(
-            [STORAGE_KEYS.performance, STORAGE_KEYS.investible, STORAGE_KEYS.summary],
-            [STORAGE_KEY_PREFIXES.goalTarget, STORAGE_KEY_PREFIXES.goalFixed, STORAGE_KEY_PREFIXES.goalBucket]
+            [
+                STORAGE_KEYS.performance,
+                STORAGE_KEYS.investible,
+                STORAGE_KEYS.summary,
+                ...LEGACY_ENDOWUS_LOCAL_EXACT_KEYS
+            ],
+            [
+                STORAGE_KEY_PREFIXES.goalTarget,
+                STORAGE_KEY_PREFIXES.goalFixed,
+                STORAGE_KEY_PREFIXES.goalBucket,
+                ...LEGACY_ENDOWUS_LOCAL_PREFIXES
+            ]
         );
         if (!hasLegacyKeys) {
             legacyCleanupSessionState.endowus = true;
@@ -3267,11 +3470,43 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
     function collectLegacyEndowusStore() {
         const config = collectLegacyEndowusConfigForStore();
+        const performanceCache = {};
+        const collapseState = {};
+        const allKeys = typeof GM_listValues === 'function' ? GM_listValues() : [];
+        allKeys.forEach(key => {
+            if (key.startsWith(STORAGE_KEY_PREFIXES.performanceCache)) {
+                const goalId = key.substring(STORAGE_KEY_PREFIXES.performanceCache.length);
+                if (!goalId) {
+                    return;
+                }
+                const parsed = Storage.readJson(
+                    key,
+                    data => {
+                        const fetchedAt = data?.fetchedAt;
+                        const response = data?.response;
+                        return typeof fetchedAt === 'number' && fetchedAt > 0 && response && typeof response === 'object';
+                    },
+                    'Error loading legacy performance cache data'
+                );
+                if (parsed) {
+                    performanceCache[goalId] = parsed;
+                }
+                return;
+            }
+            if (key.startsWith(STORAGE_KEY_PREFIXES.collapseState)) {
+                collapseState[key] = normalizeBooleanPreference(Storage.get(key, null), true);
+            }
+        });
         return normalizeEndowusStore({
             ...config,
             performance: Storage.readJson(STORAGE_KEYS.performance, data => Array.isArray(data), 'Error loading legacy performance data'),
             investible: Storage.readJson(STORAGE_KEYS.investible, data => Array.isArray(data), 'Error loading legacy investible data'),
-            summary: Storage.readJson(STORAGE_KEYS.summary, data => Array.isArray(data), 'Error loading legacy summary data')
+            summary: Storage.readJson(STORAGE_KEYS.summary, data => Array.isArray(data), 'Error loading legacy summary data'),
+            performanceCache,
+            uiPreferences: {
+                bucketMode: Storage.get(VIEW_STATE_KEYS.bucketMode, BUCKET_VIEW_MODES.allocation, 'Error loading legacy bucket mode'),
+                collapseState
+            }
         });
     }
 
@@ -3359,38 +3594,172 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return { merged, didMerge };
     }
 
+    function getLocalEndowusGoalIds(endowusStore) {
+        const goalIds = new Set();
+        const addGoalId = rawGoalId => {
+            const goalId = utils.normalizeString(rawGoalId, '');
+            if (goalId) {
+                goalIds.add(goalId);
+            }
+        };
+
+        const datasets = [endowusStore?.performance, endowusStore?.investible, endowusStore?.summary];
+        datasets.forEach(dataset => {
+            if (!Array.isArray(dataset)) {
+                return;
+            }
+            dataset.forEach(item => {
+                addGoalId(item?.goalId);
+            });
+        });
+
+        return goalIds;
+    }
+
+    function buildLocalEndowusCollapseKeySet(endowusStore) {
+        const bucketMap = buildMergedInvestmentData(
+            Array.isArray(endowusStore?.performance) ? endowusStore.performance : [],
+            Array.isArray(endowusStore?.investible) ? endowusStore.investible : [],
+            Array.isArray(endowusStore?.summary) ? endowusStore.summary : [],
+            endowusStore?.goalBuckets && typeof endowusStore.goalBuckets === 'object' ? endowusStore.goalBuckets : {}
+        ) || {};
+        const keys = new Set();
+        Object.entries(bucketMap).forEach(([bucketName, bucketObj]) => {
+            if (!bucketObj || typeof bucketObj !== 'object') {
+                return;
+            }
+            Object.keys(bucketObj).forEach(goalType => {
+                if (!goalType || goalType === '_meta') {
+                    return;
+                }
+                Object.values(COLLAPSE_SECTIONS).forEach(section => {
+                    keys.add(storageKeys.collapseState(bucketName, goalType, section));
+                });
+            });
+        });
+        return keys;
+    }
+
+    function cleanupEndowusLocalStore(endowusStore, nowMs = Date.now()) {
+        const performanceCache = endowusStore?.performanceCache && typeof endowusStore.performanceCache === 'object' && !Array.isArray(endowusStore.performanceCache)
+            ? endowusStore.performanceCache
+            : {};
+        const collapseState = endowusStore?.uiPreferences?.collapseState && typeof endowusStore.uiPreferences.collapseState === 'object' && !Array.isArray(endowusStore.uiPreferences.collapseState)
+            ? endowusStore.uiPreferences.collapseState
+            : {};
+        const localGoalIds = getLocalEndowusGoalIds(endowusStore);
+        const validCollapseKeys = buildLocalEndowusCollapseKeySet(endowusStore);
+        const shouldFilterByGoalIds = localGoalIds.size > 0;
+        const shouldFilterCollapseKeys = validCollapseKeys.size > 0;
+
+        let didMutate = false;
+
+        const nextPerformanceCache = {};
+        Object.entries(performanceCache).forEach(([rawGoalId, value]) => {
+            const goalId = utils.normalizeString(rawGoalId, '');
+            const isValid = Boolean(
+                goalId &&
+                (!shouldFilterByGoalIds || localGoalIds.has(goalId)) &&
+                typeof value?.fetchedAt === 'number' &&
+                value.fetchedAt > 0 &&
+                value.response &&
+                typeof value.response === 'object' &&
+                isCacheFresh(value.fetchedAt, PERFORMANCE_CACHE_MAX_AGE_MS, nowMs)
+            );
+            if (!isValid) {
+                didMutate = true;
+                return;
+            }
+            nextPerformanceCache[goalId] = value;
+        });
+
+        const nextCollapseState = {};
+        Object.entries(collapseState).forEach(([rawKey, rawValue]) => {
+            const key = utils.normalizeString(rawKey, '');
+            if (!key || (shouldFilterCollapseKeys && !validCollapseKeys.has(key))) {
+                didMutate = true;
+                return;
+            }
+            const normalized = normalizeBooleanPreference(rawValue, true);
+            if (normalized !== rawValue) {
+                didMutate = true;
+            }
+            nextCollapseState[key] = normalized;
+        });
+
+        if (!didMutate) {
+            return { value: endowusStore, didMutate: false };
+        }
+
+        return {
+            value: normalizeEndowusStore({
+                ...endowusStore,
+                performanceCache: nextPerformanceCache,
+                uiPreferences: {
+                    ...(endowusStore?.uiPreferences || {}),
+                    collapseState: nextCollapseState
+                }
+            }),
+            didMutate: true
+        };
+    }
+
     function readEndowusStore() {
         const rawStored = Storage.readJson(STORAGE_KEYS.endowus, data => data && typeof data === 'object' && !Array.isArray(data));
         if (rawStored) {
             const normalized = normalizeEndowusStore(rawStored);
-            const legacy = collectLegacyEndowusStore();
-            const { merged, didMerge } = mergeMissingFieldsFromLegacy(
-                rawStored,
-                normalized,
-                legacy,
-                ['performance', 'investible', 'summary', 'goalTargets', 'goalFixed', 'goalBuckets', 'clearedGoalBuckets']
+            const hasLegacyKeys = hasAnyLegacyStoreKeys(
+                [
+                    STORAGE_KEYS.performance,
+                    STORAGE_KEYS.investible,
+                    STORAGE_KEYS.summary,
+                    ...LEGACY_ENDOWUS_LOCAL_EXACT_KEYS
+                ],
+                [
+                    STORAGE_KEY_PREFIXES.goalTarget,
+                    STORAGE_KEY_PREFIXES.goalFixed,
+                    STORAGE_KEY_PREFIXES.goalBucket,
+                    ...LEGACY_ENDOWUS_LOCAL_PREFIXES
+                ]
             );
+            const { merged, didMerge } = hasLegacyKeys
+                ? mergeMissingFieldsFromLegacy(
+                    rawStored,
+                    normalized,
+                    collectLegacyEndowusStore(),
+                    ['performance', 'investible', 'summary', 'goalTargets', 'goalFixed', 'goalBuckets', 'clearedGoalBuckets', 'performanceCache', 'uiPreferences']
+                )
+                : { merged: normalized, didMerge: false };
             if (didMerge) {
                 const didWrite = writePlatformStore(STORAGE_KEYS.endowus, merged, 'Error writing merged Endowus store');
                 if (didWrite) {
                     cleanupLegacyEndowusKeys();
                     legacyCleanupSessionState.endowus = true;
                 }
-                return merged;
+                const { value: cleanedMerged, didMutate } = cleanupEndowusLocalStore(merged);
+                if (didMutate) {
+                    writePlatformStore(STORAGE_KEYS.endowus, cleanedMerged, 'Error writing cleaned Endowus store');
+                }
+                return cleanedMerged;
             }
             if (shouldCleanupLegacyEndowusKeysOnRead()) {
                 cleanupLegacyEndowusKeys();
                 legacyCleanupSessionState.endowus = true;
             }
-            return normalized;
+            const { value: cleanedNormalized, didMutate } = cleanupEndowusLocalStore(normalized);
+            if (didMutate) {
+                writePlatformStore(STORAGE_KEYS.endowus, cleanedNormalized, 'Error writing cleaned Endowus store');
+            }
+            return cleanedNormalized;
         }
         const migrated = collectLegacyEndowusStore();
-        const didWrite = writePlatformStore(STORAGE_KEYS.endowus, migrated, 'Error writing migrated Endowus store');
+        const { value: cleanedMigrated } = cleanupEndowusLocalStore(migrated);
+        const didWrite = writePlatformStore(STORAGE_KEYS.endowus, cleanedMigrated, 'Error writing migrated Endowus store');
         if (didWrite) {
             cleanupLegacyEndowusKeys();
             legacyCleanupSessionState.endowus = true;
         }
-        return migrated;
+        return cleanedMigrated;
     }
 
     function readFsmStore() {
@@ -3524,37 +3893,65 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     }
 
     function getBucketViewModePreference() {
-        const rawValue = Storage.get(
-            VIEW_STATE_KEYS.bucketMode,
-            BUCKET_VIEW_MODES.allocation,
-            'Error reading bucket mode'
-        );
+        const endowus = readEndowusStore();
+        const rawValue = endowus?.uiPreferences?.bucketMode;
         const normalized = normalizeBucketViewMode(rawValue);
         if (rawValue !== normalized) {
-            Storage.set(VIEW_STATE_KEYS.bucketMode, normalized, 'Error writing bucket mode');
+            updateEndowusStore(current => ({
+                ...current,
+                uiPreferences: {
+                    ...current.uiPreferences,
+                    bucketMode: normalized
+                }
+            }), 'Error writing bucket mode');
         }
         return normalized;
     }
 
     function setBucketViewModePreference(mode) {
         const normalized = normalizeBucketViewMode(mode);
-        Storage.set(VIEW_STATE_KEYS.bucketMode, normalized, 'Error writing bucket mode');
+        updateEndowusStore(current => ({
+            ...current,
+            uiPreferences: {
+                ...current.uiPreferences,
+                bucketMode: normalized
+            }
+        }), 'Error writing bucket mode');
         return normalized;
     }
 
     function getCollapseState(bucket, goalType, section) {
         const key = storageKeys.collapseState(bucket, goalType, section);
-        const rawValue = Storage.get(key, null, 'Error reading collapse state');
+        const endowus = readEndowusStore();
+        const rawValue = endowus?.uiPreferences?.collapseState?.[key];
         const normalized = normalizeBooleanPreference(rawValue, true);
         if (rawValue !== null && rawValue !== undefined && normalized !== rawValue) {
-            Storage.set(key, normalized ? 'true' : 'false', 'Error writing collapse state');
+            updateEndowusStore(current => ({
+                ...current,
+                uiPreferences: {
+                    ...current.uiPreferences,
+                    collapseState: {
+                        ...(current.uiPreferences?.collapseState || {}),
+                        [key]: normalized
+                    }
+                }
+            }), 'Error writing collapse state');
         }
         return normalized;
     }
 
     function setCollapseState(bucket, goalType, section, isCollapsed) {
         const key = storageKeys.collapseState(bucket, goalType, section);
-        Storage.set(key, isCollapsed ? 'true' : 'false', 'Error writing collapse state');
+        updateEndowusStore(current => ({
+            ...current,
+            uiPreferences: {
+                ...current.uiPreferences,
+                collapseState: {
+                    ...(current.uiPreferences?.collapseState || {}),
+                    [key]: isCollapsed === true
+                }
+            }
+        }), 'Error writing collapse state');
     }
 
     function bytesToBase64(bytes) {
@@ -4337,11 +4734,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const collectRelevantLegacyKeys = () => {
             const exactKeys = [
                 ...LEGACY_ENDOWUS_EXACT_KEYS,
+                ...LEGACY_ENDOWUS_LOCAL_EXACT_KEYS,
                 ...LEGACY_FSM_EXACT_KEYS,
                 ...LEGACY_OCBC_EXACT_KEYS
             ];
             const prefixes = [
                 ...LEGACY_ENDOWUS_PREFIXES,
+                ...LEGACY_ENDOWUS_LOCAL_PREFIXES,
                 ...LEGACY_FSM_PREFIXES,
                 ...LEGACY_OCBC_PREFIXES
             ];
@@ -4477,6 +4876,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 ...(typeof GM_listValues === 'function'
                     ? GM_listValues().filter(key => (
                         LEGACY_ENDOWUS_PREFIXES
+                            .concat(LEGACY_ENDOWUS_LOCAL_PREFIXES)
                             .concat(LEGACY_FSM_PREFIXES)
                             .concat(LEGACY_OCBC_PREFIXES)
                             .some(prefix => key.startsWith(prefix))
@@ -6489,34 +6889,50 @@ let GoalTargetStore;
     }
 
     function readPerformanceCache(goalId, ignoreFreshness = false) {
-        const key = getPerformanceCacheKey(goalId);
-        const parsed = Storage.readJson(
-            key,
-            data => {
-                const fetchedAt = data?.fetchedAt;
-                const response = data?.response;
-                return typeof fetchedAt === 'number' && fetchedAt > 0 && response && typeof response === 'object';
-            },
-            'Error reading performance cache'
-        );
+        const endowus = readEndowusStore();
+        const parsed = endowus?.performanceCache?.[goalId] || null;
         if (!parsed) {
+            return null;
+        }
+        const isValid = typeof parsed?.fetchedAt === 'number' && parsed.fetchedAt > 0 && parsed.response && typeof parsed.response === 'object';
+        if (!isValid) {
+            updateEndowusStore(current => {
+                const nextCache = { ...(current.performanceCache || {}) };
+                delete nextCache[goalId];
+                return {
+                    ...current,
+                    performanceCache: nextCache
+                };
+            }, 'Error deleting invalid performance cache');
             return null;
         }
         const shouldEnforceFreshness = !ignoreFreshness;
         if (shouldEnforceFreshness && !isCacheFresh(parsed.fetchedAt, PERFORMANCE_CACHE_MAX_AGE_MS)) {
-            Storage.remove(key, 'Error deleting stale performance cache');
+            updateEndowusStore(current => {
+                const nextCache = { ...(current.performanceCache || {}) };
+                delete nextCache[goalId];
+                return {
+                    ...current,
+                    performanceCache: nextCache
+                };
+            }, 'Error deleting stale performance cache');
             return null;
         }
         return parsed;
     }
 
     function writePerformanceCache(goalId, responseData) {
-        const key = getPerformanceCacheKey(goalId);
         const payload = {
             fetchedAt: Date.now(),
             response: responseData
         };
-        Storage.writeJson(key, payload, 'Error writing performance cache');
+        updateEndowusStore(current => ({
+            ...current,
+            performanceCache: {
+                ...(current.performanceCache || {}),
+                [goalId]: payload
+            }
+        }), 'Error writing performance cache');
     }
 
     function getCachedPerformanceResponse(goalId, ignoreFreshness = false) {
@@ -6685,14 +7101,27 @@ let GoalTargetStore;
         if (!Array.isArray(goalIds)) {
             return;
         }
+        const cacheKeys = [];
         goalIds.forEach(goalId => {
             if (!goalId) {
                 return;
             }
-            const key = getPerformanceCacheKey(goalId);
-            Storage.remove(key, 'Error deleting performance cache');
+            cacheKeys.push(goalId);
             delete state.performance.goalData[goalId];
         });
+        if (!cacheKeys.length) {
+            return;
+        }
+        updateEndowusStore(current => {
+            const nextCache = { ...(current.performanceCache || {}) };
+            cacheKeys.forEach(goalId => {
+                delete nextCache[goalId];
+            });
+            return {
+                ...current,
+                performanceCache: nextCache
+            };
+        }, 'Error deleting performance cache');
     }
 
     // ============================================

@@ -129,25 +129,140 @@ describe('SyncManager', () => {
         SyncManager.__test.setSessionMasterKey(new Uint8Array([1, 2, 3, 4]));
     }
 
+    function getSyncStore() {
+        return JSON.parse(storage.get('sync') || '{}');
+    }
+
     function seedConfiguredState() {
-        storage.set('sync_enabled', true);
-        storage.set('sync_server_url', 'https://sync.example.com');
-        storage.set('sync_user_id', 'user@example.com');
-        storage.set('sync_refresh_token', 'refresh-token');
-        storage.set('sync_refresh_token_expiry', Date.now() + 120_000);
-        storage.set('sync_access_token', 'access-token');
-        storage.set('sync_access_token_expiry', Date.now() + 120_000);
+        storage.set('sync', JSON.stringify({
+            enabled: true,
+            serverUrl: 'https://sync.example.com',
+            userId: 'user@example.com',
+            refreshToken: 'refresh-token',
+            refreshTokenExpiry: Date.now() + 120_000,
+            accessToken: 'access-token',
+            accessTokenExpiry: Date.now() + 120_000
+        }));
     }
 
     function seedConfiguredWithoutAccessToken() {
+        storage.set('sync', JSON.stringify({
+            enabled: true,
+            serverUrl: 'https://sync.example.com',
+            userId: 'user@example.com',
+            refreshToken: 'refresh-token',
+            refreshTokenExpiry: Date.now() + 120_000
+        }));
+    }
+
+    test('legacy flat sync keys migrate full sync schema into sync store and are removed', () => {
         storage.set('sync_enabled', true);
         storage.set('sync_server_url', 'https://sync.example.com');
         storage.set('sync_user_id', 'user@example.com');
-        storage.set('sync_refresh_token', 'refresh-token');
-        storage.set('sync_refresh_token_expiry', Date.now() + 120_000);
-        storage.delete('sync_access_token');
-        storage.delete('sync_access_token_expiry');
-    }
+        storage.set('sync_device_id', 'device-123');
+        storage.set('sync_last_sync', 2_000_000_000_000);
+        storage.set('sync_last_data_timestamp', 1_999_999_999_000);
+        storage.set('sync_last_sync_metadata_version', 2);
+        storage.set('sync_last_hash', 'abc123');
+        storage.set('sync_auto_sync', false);
+        storage.set('sync_interval_minutes', 45);
+        storage.set('sync_access_token', 'legacy-access-token');
+        storage.set('sync_refresh_token', 'legacy-refresh-token');
+        storage.set('sync_access_token_expiry', 2_000_000_030_000);
+        storage.set('sync_refresh_token_expiry', 2_000_000_060_000);
+        storage.set('sync_remember_key', true);
+        storage.set('sync_master_key', btoa(String.fromCharCode(1, 2, 3, 4)));
+
+        loadModule();
+
+        const syncStore = getSyncStore();
+        expect(syncStore.enabled).toBe(true);
+        expect(syncStore.serverUrl).toBe('https://sync.example.com');
+        expect(syncStore.userId).toBe('user@example.com');
+        expect(syncStore.deviceId).toBe('device-123');
+        expect(syncStore.lastSync).toBe(2_000_000_000_000);
+        expect(syncStore.lastDataTimestamp).toBe(1_999_999_999_000);
+        expect(syncStore.lastSyncMetadataVersion).toBe(2);
+        expect(syncStore.lastSyncHash).toBe('abc123');
+        expect(syncStore.autoSync).toBe(false);
+        expect(syncStore.syncInterval).toBe(45);
+        expect(syncStore.accessToken).toBe('legacy-access-token');
+        expect(syncStore.refreshToken).toBe('legacy-refresh-token');
+        expect(syncStore.accessTokenExpiry).toBe(2_000_000_030_000);
+        expect(syncStore.refreshTokenExpiry).toBe(2_000_000_060_000);
+        expect(syncStore.rememberKey).toBe(true);
+        expect(syncStore.rememberedMasterKey).toBe(btoa(String.fromCharCode(1, 2, 3, 4)));
+        expect(storage.has('sync_enabled')).toBe(false);
+        expect(storage.has('sync_server_url')).toBe(false);
+        expect(storage.has('sync_user_id')).toBe(false);
+        expect(storage.has('sync_device_id')).toBe(false);
+        expect(storage.has('sync_last_sync')).toBe(false);
+        expect(storage.has('sync_last_data_timestamp')).toBe(false);
+        expect(storage.has('sync_last_sync_metadata_version')).toBe(false);
+        expect(storage.has('sync_last_hash')).toBe(false);
+        expect(storage.has('sync_auto_sync')).toBe(false);
+        expect(storage.has('sync_interval_minutes')).toBe(false);
+        expect(storage.has('sync_access_token')).toBe(false);
+        expect(storage.has('sync_refresh_token')).toBe(false);
+        expect(storage.has('sync_access_token_expiry')).toBe(false);
+        expect(storage.has('sync_refresh_token_expiry')).toBe(false);
+        expect(storage.has('sync_remember_key')).toBe(false);
+        expect(storage.has('sync_master_key')).toBe(false);
+    });
+
+    test('legacy flat sync keys are retained when migrated sync write fails', () => {
+        storage.set('sync_enabled', true);
+        storage.set('sync_server_url', 'https://sync.example.com');
+        storage.set('sync_user_id', 'user@example.com');
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const originalSetValue = global.GM_setValue;
+        global.GM_setValue = (key, value) => {
+            if (key === 'sync') {
+                throw new Error('write failed');
+            }
+            return originalSetValue(key, value);
+        };
+
+        try {
+            loadModule();
+            expect(storage.has('sync')).toBe(false);
+            expect(storage.get('sync_enabled')).toBe(true);
+            expect(storage.get('sync_server_url')).toBe('https://sync.example.com');
+            expect(storage.get('sync_user_id')).toBe('user@example.com');
+            expect(errorSpy).toHaveBeenCalledWith('[Goal Portfolio Viewer] Error writing merged sync store:', expect.any(Error));
+        } finally {
+            global.GM_setValue = originalSetValue;
+            errorSpy.mockRestore();
+        }
+    });
+
+    test('malformed sync store migrates from legacy keys and removes legacy keys after successful write', () => {
+        storage.set('sync', '{malformed');
+        storage.set('sync_enabled', true);
+        storage.set('sync_user_id', 'user@example.com');
+
+        loadModule();
+
+        const syncStore = getSyncStore();
+        expect(syncStore.enabled).toBe(true);
+        expect(syncStore.userId).toBe('user@example.com');
+        expect(storage.has('sync_enabled')).toBe(false);
+        expect(storage.has('sync_user_id')).toBe(false);
+    });
+
+    test('existing sync values win over legacy with missing fields filled', () => {
+        storage.set('sync', JSON.stringify({ enabled: false, serverUrl: 'https://current.example.com' }));
+        storage.set('sync_enabled', true);
+        storage.set('sync_server_url', 'https://legacy.example.com');
+        storage.set('sync_user_id', 'legacy-user');
+
+        loadModule();
+
+        const syncStore = getSyncStore();
+        expect(syncStore.enabled).toBe(false);
+        expect(syncStore.serverUrl).toBe('https://current.example.com');
+        expect(syncStore.userId).toBe('legacy-user');
+    });
 
     test('startAutoSync does not schedule when auto-sync disabled', () => {
         jest.spyOn(global, 'setInterval');
@@ -270,7 +385,10 @@ describe('SyncManager', () => {
         expect(SyncManager.__test.getAutoSyncIntervalMs()).toBe(10 * 60 * 1000);
         expect(SyncManager.__test.isStartupSyncDue()).toBe(true);
 
-        storage.set('sync_last_sync', now - (9 * 60 * 1000));
+        storage.set('sync', JSON.stringify({
+            ...getSyncStore(),
+            lastSync: now - (9 * 60 * 1000)
+        }));
         expect(SyncManager.__test.isStartupSyncDue()).toBe(false);
     });
 
@@ -444,8 +562,9 @@ describe('SyncManager', () => {
             rememberKey: true
         })).resolves.toBeUndefined();
 
-        expect(storage.get('sync_remember_key')).toBe(true);
-        expect(typeof storage.get('sync_master_key')).toBe('string');
+        const syncStore = getSyncStore();
+        expect(syncStore.rememberKey).toBe(true);
+        expect(typeof syncStore.rememberedMasterKey).toBe('string');
         expect(SyncManager.getStatus().hasSessionKey).toBe(true);
     });
 
@@ -470,8 +589,9 @@ describe('SyncManager', () => {
             rememberKey: false
         });
 
-        expect(storage.get('sync_remember_key')).toBe(false);
-        expect(storage.has('sync_master_key')).toBe(false);
+        const syncStore = getSyncStore();
+        expect(syncStore.rememberKey).toBe(false);
+        expect(syncStore.rememberedMasterKey).toBeUndefined();
     });
 
     test('enable clears stale crypto lock error after unlocking session key', async () => {
@@ -589,8 +709,15 @@ describe('SyncManager', () => {
     });
 
     test('collectConfigData migrates legacy platform keys and removes them', () => {
-        const { SyncManager } = loadModule();
+        const { SyncManager, storageKeys } = loadModule();
+        const freshFetchedAt = Date.now();
+        const collapseKey = storageKeys.collapseState('Retirement', 'GENERAL_WEALTH_ACCUMULATION', 'performance');
         storage.set('api_performance', JSON.stringify([{ goalId: 'goal-1' }]));
+        storage.set('api_investible', JSON.stringify([{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }]));
+        storage.set('api_summary', JSON.stringify([{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }]));
+        storage.set('gpv_performance_goal-1', JSON.stringify({ fetchedAt: freshFetchedAt, response: { goalId: 'goal-1' } }));
+        storage.set('gpv_bucket_mode', 'performance');
+        storage.set(collapseKey, 'false');
         storage.set('goal_target_pct_goal-1', 25);
         storage.set('goal_fixed_goal-2', true);
         storage.set('fsm_portfolios', JSON.stringify([{ id: 'core', name: 'Core', archived: false }]));
@@ -618,6 +745,16 @@ describe('SyncManager', () => {
         expect(storage.has('api_fsm_holdings')).toBe(false);
         expect(storage.has('ocbc_sub_portfolios')).toBe(false);
         expect(storage.has('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(false);
+        expect(storage.has('gpv_performance_goal-1')).toBe(false);
+        expect(storage.has('gpv_bucket_mode')).toBe(false);
+        expect(storage.has(collapseKey)).toBe(false);
+
+        const endowusStore = JSON.parse(storage.get('endowus'));
+        expect(endowusStore.performanceCache?.['goal-1']).toEqual({ fetchedAt: freshFetchedAt, response: { goalId: 'goal-1' } });
+        expect(endowusStore.uiPreferences).toEqual(expect.objectContaining({
+            bucketMode: 'performance'
+        }));
+        expect(endowusStore.uiPreferences.collapseState?.[collapseKey]).toBe(false);
     });
 
     test('collectConfigData preserves existing top-level store over legacy values while cleaning legacy keys', () => {
@@ -771,6 +908,10 @@ describe('SyncManager', () => {
             assignmentByCode: {}
         }));
         storage.set('goal_target_pct_legacy-goal', 42);
+        const rollbackPerformancePayload = JSON.stringify({ fetchedAt: Date.now(), response: { goalId: 'goal-rollback' } });
+        storage.set('gpv_bucket_mode', 'target');
+        storage.set('gpv_performance_goal-rollback', rollbackPerformancePayload);
+        storage.set('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance', 'true');
         global.GM_listValues = () => Array.from(storage.keys());
 
         global.GM_setValue = jest.fn((key, value) => {
@@ -791,6 +932,9 @@ describe('SyncManager', () => {
         })).toThrow('Failed to save OCBC sync config data');
 
         expect(storage.get('goal_target_pct_legacy-goal')).toBe(42);
+        expect(storage.get('gpv_bucket_mode')).toBe('target');
+        expect(storage.get('gpv_performance_goal-rollback')).toBe(rollbackPerformancePayload);
+        expect(storage.get('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance')).toBe('true');
         expect(JSON.parse(storage.get('endowus')).goalTargets).toEqual({ keep: 25 });
         expect(storage.has('ocbc')).toBe(false);
     });
@@ -852,6 +996,104 @@ describe('SyncManager', () => {
         expect(config.platforms.endowus.performance).toBeUndefined();
         expect(config.platforms.endowus.investible).toBeUndefined();
         expect(config.platforms.endowus.summary).toBeUndefined();
+    });
+
+    test('collectConfigData excludes Endowus local-only fields', () => {
+        const { SyncManager } = loadModule();
+        storage.set('endowus', JSON.stringify({
+            performance: [{ goalId: 'goal-1' }],
+            investible: [{ goalId: 'goal-1' }],
+            summary: [{ goalId: 'goal-1' }],
+            goalTargets: { 'goal-1': 42 },
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'goal-1': { fetchedAt: 1_234, response: { goalId: 'goal-1' } }
+            },
+            uiPreferences: {
+                bucketMode: 'performance',
+                collapseState: {
+                    'gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance': false
+                }
+            }
+        }));
+
+        const config = SyncManager.collectConfigData();
+        expect(config.platforms.endowus.goalTargets).toEqual({ 'goal-1': 42 });
+        expect(config.platforms.endowus.performanceCache).toBeUndefined();
+        expect(config.platforms.endowus.uiPreferences).toBeUndefined();
+    });
+
+    test('collectConfigData prunes stale Endowus performance cache on store read', () => {
+        const { SyncManager } = loadModule();
+        const now = 8 * 24 * 60 * 60 * 1000;
+        Date.now = jest.fn(() => now);
+        storage.set('endowus', JSON.stringify({
+            performance: [{ goalId: 'goal-1' }],
+            investible: [{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            summary: [{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'goal-1': { fetchedAt: 1_000, response: { goalId: 'goal-1' } }
+            },
+            uiPreferences: {
+                bucketMode: 'allocation',
+                collapseState: {}
+            }
+        }));
+
+        SyncManager.collectConfigData();
+
+        const endowusStore = JSON.parse(storage.get('endowus'));
+        expect(endowusStore.performanceCache?.['goal-1']).toBeUndefined();
+    });
+
+    test('applyConfigData preserves Endowus local-only fields', () => {
+        const { SyncManager } = loadModule();
+        const freshFetchedAt = Date.now();
+        storage.set('endowus', JSON.stringify({
+            goalTargets: { legacy: 10 },
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'goal-1': { fetchedAt: freshFetchedAt, response: { goalId: 'goal-1' } }
+            },
+            uiPreferences: {
+                bucketMode: 'performance',
+                collapseState: {
+                    'gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance': false
+                }
+            }
+        }));
+
+        SyncManager.applyConfigData({
+            version: 2,
+            platforms: {
+                endowus: {
+                    goalTargets: { 'goal-new': 55 },
+                    goalFixed: {},
+                    goalBuckets: {},
+                    clearedGoalBuckets: {},
+                    timestamp: Date.now()
+                },
+                fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
+                ocbc: { subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+            },
+            timestamp: Date.now()
+        });
+
+        const endowusStore = JSON.parse(storage.get('endowus'));
+        expect(endowusStore.goalTargets).toEqual({ 'goal-new': 55 });
+        expect(endowusStore.performanceCache?.['goal-1']).toEqual({ fetchedAt: freshFetchedAt, response: { goalId: 'goal-1' } });
+        expect(endowusStore.uiPreferences).toEqual(expect.objectContaining({
+            bucketMode: 'performance'
+        }));
+        expect(endowusStore.uiPreferences.collapseState?.['gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance']).toBe(false);
     });
 
     test('collectConfigData does not run legacy cleanup repeatedly without legacy keys', () => {
@@ -1010,10 +1252,11 @@ describe('SyncManager', () => {
 
             expect(document.dispatchEvent).toHaveBeenCalled();
 
-            expect(storage.get('sync_last_sync')).toBe(now);
-            expect(storage.get('sync_last_sync_metadata_version')).toBe(2);
-            expect(storage.get('sync_last_data_timestamp')).toBe(serverTimestamp);
-            expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
+            const syncStore = getSyncStore();
+            expect(syncStore.lastSync).toBe(now);
+            expect(syncStore.lastSyncMetadataVersion).toBe(2);
+            expect(syncStore.lastDataTimestamp).toBe(serverTimestamp);
+            expect(syncStore.lastSyncHash).toEqual(expect.any(String));
         });
 
         test('resolveConflict(remote) records attempt time separately from remote data timestamp', async () => {
@@ -1053,10 +1296,11 @@ describe('SyncManager', () => {
 
             expect(document.dispatchEvent).toHaveBeenCalled();
             expect(JSON.parse(storage.get('endowus')).goalTargets['goal-1']).toBe(50);
-            expect(storage.get('sync_last_sync')).toBe(now);
-            expect(storage.get('sync_last_sync_metadata_version')).toBe(2);
-            expect(storage.get('sync_last_data_timestamp')).toBe(remoteTimestamp);
-            expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
+            const syncStore = getSyncStore();
+            expect(syncStore.lastSync).toBe(now);
+            expect(syncStore.lastSyncMetadataVersion).toBe(2);
+            expect(syncStore.lastDataTimestamp).toBe(remoteTimestamp);
+            expect(syncStore.lastSyncHash).toEqual(expect.any(String));
         });
 
         test('performSync(both) treats identical content from another device as up to date', async () => {
@@ -1072,7 +1316,16 @@ describe('SyncManager', () => {
 
             const serverTimestamp = Date.now() + 60_000;
             Date.now = jest.fn(() => serverTimestamp + 1);
-            storage.set('sync_refresh_token_expiry', serverTimestamp + 120_000);
+            storage.set('sync', JSON.stringify({
+                ...getSyncStore(),
+                enabled: true,
+                serverUrl: 'https://sync.example.com',
+                userId: 'user@example.com',
+                refreshToken: 'refresh-token',
+                refreshTokenExpiry: serverTimestamp + 120_000,
+                accessToken: 'access-token',
+                accessTokenExpiry: Date.now() - 1_000
+            }));
             const serverUrl = 'https://sync.example.com';
             const serverConfig = {
                 version: 2,
@@ -1173,9 +1426,10 @@ describe('SyncManager', () => {
 
             const syncPostCalls = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth'));
             expect(syncPostCalls).toHaveLength(0);
-            expect(storage.get('sync_last_sync')).toBe(serverTimestamp + 1);
-            expect(storage.get('sync_last_data_timestamp')).toBe(serverTimestamp);
-            expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
+            const syncStore = getSyncStore();
+            expect(syncStore.lastSync).toBe(serverTimestamp + 1);
+            expect(syncStore.lastDataTimestamp).toBe(serverTimestamp);
+            expect(syncStore.lastSyncHash).toEqual(expect.any(String));
         });
 
         test('performSync(both) bootstraps from remote when local sync metadata is missing', async () => {
@@ -1193,7 +1447,16 @@ describe('SyncManager', () => {
 
             const serverTimestamp = Date.now() + 60_000;
             Date.now = jest.fn(() => serverTimestamp + 1);
-            storage.set('sync_refresh_token_expiry', serverTimestamp + 120_000);
+            storage.set('sync', JSON.stringify({
+                ...getSyncStore(),
+                enabled: true,
+                serverUrl: 'https://sync.example.com',
+                userId: 'user@example.com',
+                refreshToken: 'refresh-token',
+                refreshTokenExpiry: serverTimestamp + 120_000,
+                accessToken: 'access-token',
+                accessTokenExpiry: Date.now() - 1_000
+            }));
             const serverUrl = 'https://sync.example.com';
             const serverConfig = {
                 version: 2,
@@ -1296,9 +1559,10 @@ describe('SyncManager', () => {
             expect(syncPostCalls).toHaveLength(0);
             expect(storage.has(localTargetKey)).toBe(false);
             expect(JSON.parse(storage.get('endowus')).goalTargets['remote-goal']).toBe(45);
-            expect(storage.get('sync_last_sync')).toBe(serverTimestamp + 1);
-            expect(storage.get('sync_last_data_timestamp')).toBe(serverTimestamp);
-            expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
+            const syncStore = getSyncStore();
+            expect(syncStore.lastSync).toBe(serverTimestamp + 1);
+            expect(syncStore.lastDataTimestamp).toBe(serverTimestamp);
+            expect(syncStore.lastSyncHash).toEqual(expect.any(String));
         });
 
         test('attempt-only sync after partial migration metadata does not become data freshness', async () => {
@@ -1341,8 +1605,16 @@ describe('SyncManager', () => {
 
             let phase = 'initial-upload';
             Date.now = jest.fn(() => initialTimestamp);
-            storage.set('sync_access_token_expiry', attemptTimestamp + 120_000);
-            storage.set('sync_refresh_token_expiry', attemptTimestamp + 120_000);
+            storage.set('sync', JSON.stringify({
+                ...getSyncStore(),
+                enabled: true,
+                serverUrl: 'https://sync.example.com',
+                userId: 'user@example.com',
+                refreshToken: 'refresh-token',
+                refreshTokenExpiry: attemptTimestamp + 120_000,
+                accessToken: 'access-token',
+                accessTokenExpiry: attemptTimestamp + 120_000
+            }));
             fetchMock = jest.fn((url, options = {}) => {
                 if (url === `${serverUrl}/auth/refresh`) {
                     return Promise.resolve({
@@ -1416,16 +1688,19 @@ describe('SyncManager', () => {
             window.fetch = fetchMock;
 
             await expect(SyncManager.performSync({ direction: 'both' })).resolves.toEqual({ status: 'success' });
-            expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
+            expect(getSyncStore().lastSyncHash).toEqual(expect.any(String));
 
-            storage.delete('sync_last_data_timestamp');
-            storage.delete('sync_last_sync_metadata_version');
+            const syncStoreBeforeAttempt = getSyncStore();
+            delete syncStoreBeforeAttempt.lastDataTimestamp;
+            delete syncStoreBeforeAttempt.lastSyncMetadataVersion;
+            storage.set('sync', JSON.stringify(syncStoreBeforeAttempt));
             Date.now = jest.fn(() => attemptTimestamp);
             phase = 'attempt-only';
             await expect(SyncManager.performSync({ direction: 'download' })).resolves.toEqual({ status: 'success' });
-            expect(storage.get('sync_last_sync')).toBe(attemptTimestamp);
-            expect(storage.get('sync_last_sync_metadata_version')).toBe(2);
-            expect(storage.has('sync_last_data_timestamp')).toBe(false);
+            const syncStore = getSyncStore();
+            expect(syncStore.lastSync).toBe(attemptTimestamp);
+            expect(syncStore.lastSyncMetadataVersion).toBe(2);
+            expect(syncStore.lastDataTimestamp).toBeUndefined();
 
             phase = 'remote-available';
             const postCountBeforeRemoteSync = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth')).length;
@@ -1435,8 +1710,9 @@ describe('SyncManager', () => {
             const postCountAfterRemoteSync = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth')).length;
             expect(postCountAfterRemoteSync).toBe(postCountBeforeRemoteSync);
             expect(JSON.parse(storage.get('endowus')).goalTargets['goal-1']).toBe(50);
-            expect(storage.get('sync_last_sync')).toBe(attemptTimestamp);
-            expect(storage.get('sync_last_data_timestamp')).toBe(serverTimestamp);
+            const syncStoreAfterRemote = getSyncStore();
+            expect(syncStoreAfterRemote.lastSync).toBe(attemptTimestamp);
+            expect(syncStoreAfterRemote.lastDataTimestamp).toBe(serverTimestamp);
         });
 
         test('performSync(download) stores attempt and data timestamps separately', async () => {
@@ -1535,9 +1811,10 @@ describe('SyncManager', () => {
 
             await expect(SyncManager.performSync({ direction: 'download' })).resolves.toEqual({ status: 'success' });
 
-            expect(storage.get('sync_last_sync')).toBe(serverTimestamp + 1);
-            expect(storage.get('sync_last_data_timestamp')).toBe(serverTimestamp);
-            expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
+            const syncStore = getSyncStore();
+            expect(syncStore.lastSync).toBe(serverTimestamp + 1);
+            expect(syncStore.lastDataTimestamp).toBe(serverTimestamp);
+            expect(syncStore.lastSyncHash).toEqual(expect.any(String));
             expect(JSON.parse(storage.get('endowus')).goalTargets['goal-2']).toBe(40);
         });
     });
@@ -1560,7 +1837,6 @@ describe('SyncManager', () => {
 
     describe('token helpers', () => {
         const ACCESS_EXPIRY_KEY = 'sync_access_token_expiry';
-        const REFRESH_EXPIRY_KEY = 'sync_refresh_token_expiry';
 
         function createJwt(payload) {
             const base64 = Buffer.from(JSON.stringify(payload))
@@ -1618,10 +1894,13 @@ describe('SyncManager', () => {
             const { SyncManager } = loadModule();
             const { refreshAccessToken } = SyncManager.__test;
 
-            storage.set('sync_refresh_token', 'refresh-token');
-            storage.set('sync_access_token', 'access-token');
-            storage.set(ACCESS_EXPIRY_KEY, Date.now() + 120_000);
-            storage.set(REFRESH_EXPIRY_KEY, Date.now() + 240_000);
+            storage.set('sync', JSON.stringify({
+                ...getSyncStore(),
+                refreshToken: 'refresh-token',
+                accessToken: 'access-token',
+                accessTokenExpiry: Date.now() + 120_000,
+                refreshTokenExpiry: Date.now() + 240_000
+            }));
 
             const errorMock = jest.fn(() => Promise.resolve({
                 ok: false,
@@ -1636,10 +1915,11 @@ describe('SyncManager', () => {
             global.GM_xmlhttpRequest = undefined;
 
             await expect(refreshAccessToken()).rejects.toThrow('Session expired.');
-            expect(storage.has('sync_access_token')).toBe(false);
-            expect(storage.has('sync_refresh_token')).toBe(false);
-            expect(storage.has(ACCESS_EXPIRY_KEY)).toBe(false);
-            expect(storage.has(REFRESH_EXPIRY_KEY)).toBe(false);
+            const syncStore = getSyncStore();
+            expect(syncStore.accessToken).toBeUndefined();
+            expect(syncStore.refreshToken).toBeUndefined();
+            expect(syncStore.accessTokenExpiry).toBeUndefined();
+            expect(syncStore.refreshTokenExpiry).toBeUndefined();
         });
 
         test('refreshAccessToken stores new tokens on success', async () => {
@@ -1648,7 +1928,10 @@ describe('SyncManager', () => {
             const { refreshAccessToken } = SyncManager.__test;
             const now = Date.now();
 
-            storage.set('sync_refresh_token', 'refresh-token');
+            storage.set('sync', JSON.stringify({
+                ...getSyncStore(),
+                refreshToken: 'refresh-token'
+            }));
 
             const successMock = jest.fn(() => Promise.resolve({
                 ok: true,
@@ -1685,10 +1968,11 @@ describe('SyncManager', () => {
             window.fetch = successMock;
 
             await expect(refreshAccessToken()).resolves.toBe('new-access');
-            expect(storage.get('sync_access_token')).toBe('new-access');
-            expect(storage.get('sync_refresh_token')).toBe('new-refresh');
-            expect(storage.get(ACCESS_EXPIRY_KEY)).toBe(now + 60_000);
-            expect(storage.get(REFRESH_EXPIRY_KEY)).toBe(now + 120_000);
+            const syncStore = getSyncStore();
+            expect(syncStore.accessToken).toBe('new-access');
+            expect(syncStore.refreshToken).toBe('new-refresh');
+            expect(syncStore.accessTokenExpiry).toBe(now + 60_000);
+            expect(syncStore.refreshTokenExpiry).toBe(now + 120_000);
         });
 
         test('getAccessToken refreshes expired access tokens and preserves valid ones', async () => {
@@ -1743,8 +2027,9 @@ describe('SyncManager', () => {
             window.fetch = refreshMock;
 
             await expect(getAccessToken()).resolves.toBe('refreshed-access');
-            expect(storage.get('sync_access_token')).toBe('refreshed-access');
-            expect(storage.get('sync_refresh_token')).toBe('refreshed-refresh');
+            const syncStore = getSyncStore();
+            expect(syncStore.accessToken).toBe('refreshed-access');
+            expect(syncStore.refreshToken).toBe('refreshed-refresh');
         });
     });
 });
