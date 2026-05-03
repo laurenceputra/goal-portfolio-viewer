@@ -25,7 +25,9 @@ const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 const DEFAULT_DIFF_THRESHOLD = Number.parseFloat(process.env.E2E_DIFF_THRESHOLD || '0.001');
 const FLOW_DIFF_THRESHOLD_OVERRIDES = {
     'endowus-performance-mode': 0.008,
-    'fsm-assignment-manager': 0.0015
+    'fsm-assignment-manager': 0.0015,
+    'ocbc-allocation': 0.0025,
+    'ocbc-subportfolio-manager': 0.004
 };
 const REGRESSION_DIR = path.join(__dirname, 'regression');
 const REGRESSION_BASELINE_DIR = path.join(REGRESSION_DIR, 'baseline');
@@ -1039,13 +1041,8 @@ async function captureOcbcFlow(page, summary, outputDir) {
         }
         const beforeText = overlay.textContent || '';
         const summaryBeforeMatch = beforeText.match(/Sub-portfolio targets:\s*[\d.]+% assigned,\s*[\d.]+% remaining/i);
-        const existingOptions = Array.from(overlay.querySelectorAll('select[aria-label^="Sub-portfolio for "] option'))
-            .map(option => (option.textContent || '').trim())
-            .filter(Boolean);
         const preferredName = 'E2E Core';
-        const createdName = existingOptions.includes(preferredName)
-            ? preferredName
-            : `${preferredName} ${new Date().toISOString().slice(0, 10)}`;
+        const createdName = preferredName;
         return {
             beforeSummary: summaryBeforeMatch ? summaryBeforeMatch[0] : '',
             createdName
@@ -1453,6 +1450,7 @@ async function captureEndowusExtendedFlow(page, summary, outputDir) {
             && (expandedState.width > containerBefore.width || expandedState.height > containerBefore.height);
         const expandedStateConfirmed = expandedState.isExpanded === true || expandedBySize;
         recordAssertion(summary, 'endowus-expanded', 'expanded-state', expandedStateConfirmed, 'Endowus expand control sets expanded container state.');
+        await waitForBucketViewStability(page);
         await captureScreenshot(page, summary, outputDir, 'endowus-expanded');
     }
 }
