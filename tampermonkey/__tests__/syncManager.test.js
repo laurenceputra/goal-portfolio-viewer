@@ -589,11 +589,15 @@ describe('SyncManager', () => {
     });
 
     test('collectConfigData migrates legacy platform keys and removes them', () => {
-        const { SyncManager } = loadModule();
+        const { SyncManager, storageKeys } = loadModule();
+        const freshFetchedAt = Date.now();
+        const collapseKey = storageKeys.collapseState('Retirement', 'GENERAL_WEALTH_ACCUMULATION', 'performance');
         storage.set('api_performance', JSON.stringify([{ goalId: 'goal-1' }]));
-        storage.set('gpv_performance_goal-1', JSON.stringify({ fetchedAt: 1234, response: { goalId: 'goal-1' } }));
+        storage.set('api_investible', JSON.stringify([{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }]));
+        storage.set('api_summary', JSON.stringify([{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }]));
+        storage.set('gpv_performance_goal-1', JSON.stringify({ fetchedAt: freshFetchedAt, response: { goalId: 'goal-1' } }));
         storage.set('gpv_bucket_mode', 'performance');
-        storage.set('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance', 'false');
+        storage.set(collapseKey, 'false');
         storage.set('goal_target_pct_goal-1', 25);
         storage.set('goal_fixed_goal-2', true);
         storage.set('fsm_portfolios', JSON.stringify([{ id: 'core', name: 'Core', archived: false }]));
@@ -623,14 +627,14 @@ describe('SyncManager', () => {
         expect(storage.has('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(false);
         expect(storage.has('gpv_performance_goal-1')).toBe(false);
         expect(storage.has('gpv_bucket_mode')).toBe(false);
-        expect(storage.has('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance')).toBe(false);
+        expect(storage.has(collapseKey)).toBe(false);
 
         const endowusStore = JSON.parse(storage.get('endowus'));
-        expect(endowusStore.performanceCache?.['goal-1']).toEqual({ fetchedAt: 1234, response: { goalId: 'goal-1' } });
+        expect(endowusStore.performanceCache?.['goal-1']).toEqual({ fetchedAt: freshFetchedAt, response: { goalId: 'goal-1' } });
         expect(endowusStore.uiPreferences).toEqual(expect.objectContaining({
             bucketMode: 'performance'
         }));
-        expect(endowusStore.uiPreferences.collapseState?.['gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance']).toBe(false);
+        expect(endowusStore.uiPreferences.collapseState?.[collapseKey]).toBe(false);
     });
 
     test('collectConfigData preserves existing top-level store over legacy values while cleaning legacy keys', () => {
@@ -923,13 +927,14 @@ describe('SyncManager', () => {
 
     test('applyConfigData preserves Endowus local-only fields', () => {
         const { SyncManager } = loadModule();
+        const freshFetchedAt = Date.now();
         storage.set('endowus', JSON.stringify({
             goalTargets: { legacy: 10 },
             goalFixed: {},
             goalBuckets: {},
             clearedGoalBuckets: {},
             performanceCache: {
-                'goal-1': { fetchedAt: 1_234, response: { goalId: 'goal-1' } }
+                'goal-1': { fetchedAt: freshFetchedAt, response: { goalId: 'goal-1' } }
             },
             uiPreferences: {
                 bucketMode: 'performance',
@@ -957,7 +962,7 @@ describe('SyncManager', () => {
 
         const endowusStore = JSON.parse(storage.get('endowus'));
         expect(endowusStore.goalTargets).toEqual({ 'goal-new': 55 });
-        expect(endowusStore.performanceCache?.['goal-1']).toEqual({ fetchedAt: 1_234, response: { goalId: 'goal-1' } });
+        expect(endowusStore.performanceCache?.['goal-1']).toEqual({ fetchedAt: freshFetchedAt, response: { goalId: 'goal-1' } });
         expect(endowusStore.uiPreferences).toEqual(expect.objectContaining({
             bucketMode: 'performance'
         }));

@@ -792,7 +792,7 @@ describe('handlers and cache', () => {
     });
 
     test('hydrateVisibleGoalMetricRows updates all matching rows', () => {
-        const { hydrateVisibleGoalMetricRows, storageKeys } = exportsModule;
+        const { hydrateVisibleGoalMetricRows } = exportsModule;
         if (typeof hydrateVisibleGoalMetricRows !== 'function') return;
 
         const content = document.createElement('div');
@@ -802,22 +802,38 @@ describe('handlers and cache', () => {
             { goalId: 'goal-3', oneMonthValue: 0.01 }
         ];
 
-        goals.forEach(goal => {
-            storage.set(storageKeys.performanceCache(goal.goalId), JSON.stringify({
-                fetchedAt: Date.now(),
-                response: {
-                    returnsTable: {
-                        twr: {
-                            oneMonthValue: goal.oneMonthValue,
-                            sixMonthValue: null,
-                            ytdValue: null,
-                            oneYearValue: null,
-                            threeYearValue: null
+        storage.set('endowus', JSON.stringify({
+            performance: null,
+            investible: null,
+            summary: null,
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: goals.reduce((acc, goal) => {
+                acc[goal.goalId] = {
+                    fetchedAt: Date.now(),
+                    response: {
+                        returnsTable: {
+                            twr: {
+                                oneMonthValue: goal.oneMonthValue,
+                                sixMonthValue: null,
+                                ytdValue: null,
+                                oneYearValue: null,
+                                threeYearValue: null
+                            }
                         }
                     }
-                }
-            }));
+                };
+                return acc;
+            }, {}),
+            uiPreferences: {
+                bucketMode: 'allocation',
+                collapseState: {}
+            }
+        }));
 
+        goals.forEach(goal => {
             const metricsRow = document.createElement('tr');
             metricsRow.className = 'gpv-goal-metrics-row';
             metricsRow.dataset.goalId = goal.goalId;

@@ -2219,11 +2219,36 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     };
     const PERFORMANCE_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+    function readEndowusStoreRaw() {
+        const rawStored = Storage.readJson(STORAGE_KEYS.endowus, data => data && typeof data === 'object' && !Array.isArray(data));
+        return rawStored ? normalizeEndowusStore(rawStored) : null;
+    }
+
+    function readWindowReturnsPerformanceCache(goalId) {
+        const normalizedGoalId = utils.normalizeString(goalId, '');
+        if (!normalizedGoalId) {
+            return null;
+        }
+        const cache = readEndowusStoreRaw()?.performanceCache;
+        const parsed = cache && typeof cache === 'object' && !Array.isArray(cache)
+            ? cache[normalizedGoalId]
+            : null;
+        const isValid = Boolean(
+            parsed &&
+            typeof parsed.fetchedAt === 'number' &&
+            parsed.fetchedAt > 0 &&
+            parsed.response &&
+            typeof parsed.response === 'object' &&
+            isCacheFresh(parsed.fetchedAt, PERFORMANCE_CACHE_MAX_AGE_MS)
+        );
+        return isValid ? parsed : null;
+    }
+
     function getGoalWindowReturns(goalId) {
         if (!goalId) {
             return {};
         }
-        const parsed = readPerformanceCache(goalId);
+        const parsed = readWindowReturnsPerformanceCache(goalId);
         if (!parsed) {
             return {};
         }
@@ -3469,6 +3494,8 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             : {};
         const localGoalIds = getLocalEndowusGoalIds(endowusStore);
         const validCollapseKeys = buildLocalEndowusCollapseKeySet(endowusStore);
+        const shouldFilterByGoalIds = localGoalIds.size > 0;
+        const shouldFilterCollapseKeys = validCollapseKeys.size > 0;
 
         let didMutate = false;
 
@@ -3477,7 +3504,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             const goalId = utils.normalizeString(rawGoalId, '');
             const isValid = Boolean(
                 goalId &&
-                localGoalIds.has(goalId) &&
+                (!shouldFilterByGoalIds || localGoalIds.has(goalId)) &&
                 typeof value?.fetchedAt === 'number' &&
                 value.fetchedAt > 0 &&
                 value.response &&
@@ -3494,7 +3521,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const nextCollapseState = {};
         Object.entries(collapseState).forEach(([rawKey, rawValue]) => {
             const key = utils.normalizeString(rawKey, '');
-            if (!key || !validCollapseKeys.has(key)) {
+            if (!key || (shouldFilterCollapseKeys && !validCollapseKeys.has(key))) {
                 didMutate = true;
                 return;
             }
@@ -3526,13 +3553,28 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const rawStored = Storage.readJson(STORAGE_KEYS.endowus, data => data && typeof data === 'object' && !Array.isArray(data));
         if (rawStored) {
             const normalized = normalizeEndowusStore(rawStored);
-            const legacy = collectLegacyEndowusStore();
-            const { merged, didMerge } = mergeMissingFieldsFromLegacy(
-                rawStored,
-                normalized,
-                legacy,
-                ['performance', 'investible', 'summary', 'goalTargets', 'goalFixed', 'goalBuckets', 'clearedGoalBuckets', 'performanceCache', 'uiPreferences']
+            const hasLegacyKeys = hasAnyLegacyStoreKeys(
+                [
+                    STORAGE_KEYS.performance,
+                    STORAGE_KEYS.investible,
+                    STORAGE_KEYS.summary,
+                    ...LEGACY_ENDOWUS_LOCAL_EXACT_KEYS
+                ],
+                [
+                    STORAGE_KEY_PREFIXES.goalTarget,
+                    STORAGE_KEY_PREFIXES.goalFixed,
+                    STORAGE_KEY_PREFIXES.goalBucket,
+                    ...LEGACY_ENDOWUS_LOCAL_PREFIXES
+                ]
             );
+            const { merged, didMerge } = hasLegacyKeys
+                ? mergeMissingFieldsFromLegacy(
+                    rawStored,
+                    normalized,
+                    collectLegacyEndowusStore(),
+                    ['performance', 'investible', 'summary', 'goalTargets', 'goalFixed', 'goalBuckets', 'clearedGoalBuckets', 'performanceCache', 'uiPreferences']
+                )
+                : { merged: normalized, didMerge: false };
             if (didMerge) {
                 const didWrite = writePlatformStore(STORAGE_KEYS.endowus, merged, 'Error writing merged Endowus store');
                 if (didWrite) {
