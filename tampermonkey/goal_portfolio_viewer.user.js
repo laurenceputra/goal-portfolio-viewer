@@ -16041,6 +16041,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             backBtn.type = 'button';
             backBtn.onclick = () => {
                 viewMode = 'overview';
+                modeSelect.value = 'portfolio';
                 rerender();
             };
             detailToolbar.appendChild(backBtn);

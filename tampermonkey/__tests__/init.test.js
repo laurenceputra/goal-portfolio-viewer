@@ -1383,6 +1383,13 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Bond');
         const headers = Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim());
         expect(headers).toContain('Product Type');
+
+        const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
+        backBtn.click();
+
+        expect(overlay.textContent).toContain('Overview');
+        expect(overlay.textContent).toContain('View all cached holdings');
+        expect(modeSelect.value).toBe('portfolio');
     });
 
     test('OCBC overview shows cached portfolios, card drill-down, and view all cached holdings', () => {
