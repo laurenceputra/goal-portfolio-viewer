@@ -867,6 +867,60 @@ describe('SyncManager', () => {
         expect(config.platforms.endowus.summary).toBeUndefined();
     });
 
+    test('collectConfigData excludes Endowus local-only fields', () => {
+        const { SyncManager } = loadModule();
+        storage.set('endowus', JSON.stringify({
+            performance: [{ goalId: 'goal-1' }],
+            investible: [{ goalId: 'goal-1' }],
+            summary: [{ goalId: 'goal-1' }],
+            goalTargets: { 'goal-1': 42 },
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'goal-1': { fetchedAt: 1_234, response: { goalId: 'goal-1' } }
+            },
+            uiPreferences: {
+                bucketMode: 'performance',
+                collapseState: {
+                    'gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance': false
+                }
+            }
+        }));
+
+        const config = SyncManager.collectConfigData();
+        expect(config.platforms.endowus.goalTargets).toEqual({ 'goal-1': 42 });
+        expect(config.platforms.endowus.performanceCache).toBeUndefined();
+        expect(config.platforms.endowus.uiPreferences).toBeUndefined();
+    });
+
+    test('collectConfigData prunes stale Endowus performance cache on store read', () => {
+        const { SyncManager } = loadModule();
+        const now = 8 * 24 * 60 * 60 * 1000;
+        Date.now = jest.fn(() => now);
+        storage.set('endowus', JSON.stringify({
+            performance: [{ goalId: 'goal-1' }],
+            investible: [{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            summary: [{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'goal-1': { fetchedAt: 1_000, response: { goalId: 'goal-1' } }
+            },
+            uiPreferences: {
+                bucketMode: 'allocation',
+                collapseState: {}
+            }
+        }));
+
+        SyncManager.collectConfigData();
+
+        const endowusStore = JSON.parse(storage.get('endowus'));
+        expect(endowusStore.performanceCache?.['goal-1']).toBeUndefined();
+    });
+
     test('applyConfigData preserves Endowus local-only fields', () => {
         const { SyncManager } = loadModule();
         storage.set('endowus', JSON.stringify({

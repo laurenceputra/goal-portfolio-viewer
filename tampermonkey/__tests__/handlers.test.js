@@ -551,6 +551,63 @@ describe('handlers and cache', () => {
         expect(staleEndowus.performanceCache?.['goal-x']).toBeUndefined();
     });
 
+    test('readEndowusStore prunes orphaned performance cache entries', () => {
+        const { readPerformanceCache } = exportsModule;
+        if (!readPerformanceCache) return;
+
+        storage.set('endowus', JSON.stringify({
+            performance: [{ goalId: 'goal-keep', totalInvestmentValue: {} }],
+            investible: [{ goalId: 'goal-keep', goalName: 'Retirement - Keep', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            summary: [{ goalId: 'goal-keep', goalName: 'Retirement - Keep', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'goal-keep': { fetchedAt: Date.now(), response: { goalId: 'goal-keep' } },
+                'goal-drop': { fetchedAt: Date.now(), response: { goalId: 'goal-drop' } }
+            },
+            uiPreferences: { bucketMode: 'allocation', collapseState: {} }
+        }));
+
+        expect(readPerformanceCache('goal-keep')).not.toBeNull();
+        const endowus = JSON.parse(storage.get('endowus'));
+        expect(endowus.performanceCache?.['goal-keep']).toBeDefined();
+        expect(endowus.performanceCache?.['goal-drop']).toBeUndefined();
+    });
+
+    test('readEndowusStore prunes obsolete collapse-state entries', () => {
+        const { getCollapseState } = exportsModule;
+        if (!getCollapseState) return;
+
+        storage.set('endowus', JSON.stringify({
+            performance: [{ goalId: 'goal-1', totalInvestmentValue: {} }],
+            investible: [{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            summary: [{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {},
+            uiPreferences: {
+                bucketMode: 'performance',
+                collapseState: {
+                    'gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance': false,
+                    'gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|unknown-section': true,
+                    'gpv_collapse_Unknown|GENERAL_WEALTH_ACCUMULATION|projection': true,
+                    malformed: true
+                }
+            }
+        }));
+
+        expect(getCollapseState('Retirement', 'GENERAL_WEALTH_ACCUMULATION', 'performance')).toBe(false);
+        const endowus = JSON.parse(storage.get('endowus'));
+        expect(endowus.uiPreferences.bucketMode).toBe('performance');
+        expect(endowus.uiPreferences.collapseState).toEqual({
+            'gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance': false
+        });
+    });
+
     test('performance cache removes invalid payloads', () => {
         const { readPerformanceCache } = exportsModule;
         if (!readPerformanceCache) return;
@@ -582,7 +639,7 @@ describe('handlers and cache', () => {
         expect(JSON.parse(storage.get('endowus')).performanceCache?.['bad-shape']).toBeUndefined();
     });
 
-    test('readPerformanceCache allows stale cache when ignoreFreshness=true', () => {
+    test('readPerformanceCache cleanup removes stale cache even when ignoreFreshness=true', () => {
         const { writePerformanceCache, readPerformanceCache } = exportsModule;
         if (!writePerformanceCache || !readPerformanceCache) return;
 
@@ -592,10 +649,9 @@ describe('handlers and cache', () => {
         // Make entry stale (>7 days)
         Date.now = () => 8 * 24 * 60 * 60 * 1000;
 
-        // With ignoreFreshness=true, stale cache should be returned
+        // Local startup/read cleanup is aggressive and prunes stale entries.
         const stale = readPerformanceCache('goal-stale', true);
-        expect(stale).not.toBeNull();
-        expect(stale.response.data).toBe('old');
+        expect(stale).toBeNull();
     });
 
     test('clearPerformanceCache removes stored entries', () => {

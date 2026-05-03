@@ -3414,6 +3414,114 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return { merged, didMerge };
     }
 
+    function getLocalEndowusGoalIds(endowusStore) {
+        const goalIds = new Set();
+        const addGoalId = rawGoalId => {
+            const goalId = utils.normalizeString(rawGoalId, '');
+            if (goalId) {
+                goalIds.add(goalId);
+            }
+        };
+
+        const datasets = [endowusStore?.performance, endowusStore?.investible, endowusStore?.summary];
+        datasets.forEach(dataset => {
+            if (!Array.isArray(dataset)) {
+                return;
+            }
+            dataset.forEach(item => {
+                addGoalId(item?.goalId);
+            });
+        });
+
+        return goalIds;
+    }
+
+    function buildLocalEndowusCollapseKeySet(endowusStore) {
+        const bucketMap = buildMergedInvestmentData(
+            Array.isArray(endowusStore?.performance) ? endowusStore.performance : [],
+            Array.isArray(endowusStore?.investible) ? endowusStore.investible : [],
+            Array.isArray(endowusStore?.summary) ? endowusStore.summary : [],
+            endowusStore?.goalBuckets && typeof endowusStore.goalBuckets === 'object' ? endowusStore.goalBuckets : {}
+        ) || {};
+        const keys = new Set();
+        Object.entries(bucketMap).forEach(([bucketName, bucketObj]) => {
+            if (!bucketObj || typeof bucketObj !== 'object') {
+                return;
+            }
+            Object.keys(bucketObj).forEach(goalType => {
+                if (!goalType || goalType === '_meta') {
+                    return;
+                }
+                Object.values(COLLAPSE_SECTIONS).forEach(section => {
+                    keys.add(storageKeys.collapseState(bucketName, goalType, section));
+                });
+            });
+        });
+        return keys;
+    }
+
+    function cleanupEndowusLocalStore(endowusStore, nowMs = Date.now()) {
+        const performanceCache = endowusStore?.performanceCache && typeof endowusStore.performanceCache === 'object' && !Array.isArray(endowusStore.performanceCache)
+            ? endowusStore.performanceCache
+            : {};
+        const collapseState = endowusStore?.uiPreferences?.collapseState && typeof endowusStore.uiPreferences.collapseState === 'object' && !Array.isArray(endowusStore.uiPreferences.collapseState)
+            ? endowusStore.uiPreferences.collapseState
+            : {};
+        const localGoalIds = getLocalEndowusGoalIds(endowusStore);
+        const validCollapseKeys = buildLocalEndowusCollapseKeySet(endowusStore);
+
+        let didMutate = false;
+
+        const nextPerformanceCache = {};
+        Object.entries(performanceCache).forEach(([rawGoalId, value]) => {
+            const goalId = utils.normalizeString(rawGoalId, '');
+            const isValid = Boolean(
+                goalId &&
+                localGoalIds.has(goalId) &&
+                typeof value?.fetchedAt === 'number' &&
+                value.fetchedAt > 0 &&
+                value.response &&
+                typeof value.response === 'object' &&
+                isCacheFresh(value.fetchedAt, PERFORMANCE_CACHE_MAX_AGE_MS, nowMs)
+            );
+            if (!isValid) {
+                didMutate = true;
+                return;
+            }
+            nextPerformanceCache[goalId] = value;
+        });
+
+        const nextCollapseState = {};
+        Object.entries(collapseState).forEach(([rawKey, rawValue]) => {
+            const key = utils.normalizeString(rawKey, '');
+            if (!key || !validCollapseKeys.has(key)) {
+                didMutate = true;
+                return;
+            }
+            const normalized = normalizeBooleanPreference(rawValue, true);
+            if (normalized !== rawValue) {
+                didMutate = true;
+            }
+            nextCollapseState[key] = normalized;
+        });
+
+        if (!didMutate) {
+            return { value: endowusStore, didMutate: false };
+        }
+
+        return {
+            value: normalizeEndowusStore({
+                ...endowusStore,
+                performanceCache: nextPerformanceCache,
+                uiPreferences: {
+                    ...(endowusStore?.uiPreferences || {}),
+                    collapseState: nextCollapseState
+                }
+            }),
+            didMutate: true
+        };
+    }
+
     function readEndowusStore() {
         const rawStored = Storage.readJson(STORAGE_KEYS.endowus, data => data && typeof data === 'object' && !Array.isArray(data));
         if (rawStored) {
@@ -3431,21 +3539,30 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     cleanupLegacyEndowusKeys();
                     legacyCleanupSessionState.endowus = true;
                 }
-                return merged;
+                const { value: cleanedMerged, didMutate } = cleanupEndowusLocalStore(merged);
+                if (didMutate) {
+                    writePlatformStore(STORAGE_KEYS.endowus, cleanedMerged, 'Error writing cleaned Endowus store');
+                }
+                return cleanedMerged;
             }
             if (shouldCleanupLegacyEndowusKeysOnRead()) {
                 cleanupLegacyEndowusKeys();
                 legacyCleanupSessionState.endowus = true;
             }
-            return normalized;
+            const { value: cleanedNormalized, didMutate } = cleanupEndowusLocalStore(normalized);
+            if (didMutate) {
+                writePlatformStore(STORAGE_KEYS.endowus, cleanedNormalized, 'Error writing cleaned Endowus store');
+            }
+            return cleanedNormalized;
         }
         const migrated = collectLegacyEndowusStore();
-        const didWrite = writePlatformStore(STORAGE_KEYS.endowus, migrated, 'Error writing migrated Endowus store');
+        const { value: cleanedMigrated } = cleanupEndowusLocalStore(migrated);
+        const didWrite = writePlatformStore(STORAGE_KEYS.endowus, cleanedMigrated, 'Error writing migrated Endowus store');
         if (didWrite) {
             cleanupLegacyEndowusKeys();
             legacyCleanupSessionState.endowus = true;
         }
-        return migrated;
+        return cleanedMigrated;
     }
 
     function readFsmStore() {
