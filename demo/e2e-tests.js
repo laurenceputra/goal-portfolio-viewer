@@ -1182,6 +1182,29 @@ async function captureOcbcFlow(page, summary, outputDir) {
     });
     recordAssertion(summary, ocbcFlowName, 'mode-label-associated', isModeLabelAssociated, 'Mode label is associated with gpv-ocbc-mode-select.');
 
+    await clickButtonByRole(page, /back to overview/i);
+    await page.waitForFunction(() => {
+        const overlay = document.querySelector('.gpv-overlay');
+        if (!overlay) {
+            return false;
+        }
+        const text = overlay.textContent || '';
+        return text.includes('Select a portfolio to open details, or view all cached holdings.')
+            && text.includes('Portfolio 6500142646-2');
+    }, null, { timeout: 5000 });
+
+    await clickButtonByRole(page, /open portfolio 6500142646-2/i);
+    await page.waitForFunction(() => {
+        const overlay = document.querySelector('.gpv-overlay');
+        if (!overlay) {
+            return false;
+        }
+        const text = overlay instanceof HTMLElement ? overlay.innerText || '' : '';
+        return text.includes('Back to overview')
+            && text.includes('Portfolio 6500142646-2')
+            && !text.includes('Portfolio 6500142647-2');
+    }, null, { timeout: 5000 });
+
     await page.selectOption('#gpv-ocbc-mode-select', 'allocation');
     await page.waitForFunction(() => {
         const overlay = document.querySelector('.gpv-overlay');
@@ -1195,6 +1218,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
     }, null, { timeout: 5000 });
 
     const overlayTextAllocation = await page.$eval('.gpv-overlay', node => node.textContent || '');
+    const allocationVisibleText = await page.$eval('.gpv-overlay', node => node instanceof HTMLElement ? node.innerText || '' : '');
     const allocationHeaders = await page.$$eval('.gpv-overlay th', cells => cells.map(cell => (cell.textContent || '').trim()));
     const hasAllocationUi = overlayTextAllocation.includes('New sub-portfolio')
         && overlayTextAllocation.includes('Unassigned');
@@ -1205,8 +1229,8 @@ async function captureOcbcFlow(page, summary, outputDir) {
         && overlayTextAllocation.includes('Scope: Assets');
     recordAssertion(summary, ocbcFlowName, 'allocation-has-planning-panel', hasPlanningPanel, 'Allocation mode includes OCBC planning framing with scope helper copy.');
 
-    const hasPortfolioFirstAllocation = overlayTextAllocation.includes('Portfolio 6500142646-2')
-        && overlayTextAllocation.includes('Portfolio 6500142647-2')
+    const hasPortfolioFirstAllocation = allocationVisibleText.includes('Portfolio 6500142646-2')
+        && !allocationVisibleText.includes('Portfolio 6500142647-2')
         && overlayTextAllocation.includes('Unassigned')
         && overlayTextAllocation.includes('New sub-portfolio');
     recordAssertion(summary, ocbcFlowName, 'allocation-portfolio-first-mode', hasPortfolioFirstAllocation, 'Allocation mode is portfolio-first and includes product type rows plus sub-portfolio controls.');
@@ -1221,11 +1245,11 @@ async function captureOcbcFlow(page, summary, outputDir) {
     recordAssertion(summary, ocbcFlowName, 'allocation-headings', hasSubPortfolioHeading && hasInstrumentHeading, 'Allocation mode shows sub-portfolio heading and instrument allocation sections.');
     recordAssertion(summary, ocbcFlowName, 'allocation-renamed-columns', allocationHeaders.includes('Current % of portfolio') && allocationHeaders.includes('Target % of portfolio') && allocationHeaders.includes('Current % of sub-portfolio') && allocationHeaders.includes('Target % of sub-portfolio'), 'Allocation mode shows renamed percentage columns.');
 
-    const hasBothPortfolioNumbers = overlayTextAllocation.includes('6500142646-2')
-        && overlayTextAllocation.includes('6500142647-2')
-        && overlayTextAllocation.includes('Portfolio 6500142646-2')
-        && overlayTextAllocation.includes('Portfolio 6500142647-2');
-    recordAssertion(summary, ocbcFlowName, 'allocation-has-both-portfolio-numbers', hasBothPortfolioNumbers, 'Allocation mode contains both OCBC portfolio numbers under portfolio sections.');
+    const hasSelectedPortfolioOnly = allocationVisibleText.includes('6500142646-2')
+        && allocationVisibleText.includes('Portfolio 6500142646-2')
+        && !allocationVisibleText.includes('6500142647-2')
+        && !allocationVisibleText.includes('Portfolio 6500142647-2');
+    recordAssertion(summary, ocbcFlowName, 'allocation-has-selected-portfolio-only', hasSelectedPortfolioOnly, 'Allocation mode contains only the selected OCBC portfolio number under portfolio sections.');
 
     const indicatorCheck = await page.evaluate(() => {
         const overlay = document.querySelector('.gpv-overlay');
