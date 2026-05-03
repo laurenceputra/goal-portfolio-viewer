@@ -10810,14 +10810,14 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-container {
                 background: #f8fafd;
-                border-radius: 20px;
+                border-radius: 16px;
                 padding: 0;
-                box-shadow: 0 24px 64px rgba(15, 23, 42, 0.24);
+                box-shadow: 0 18px 44px rgba(15, 23, 42, 0.2);
                 position: relative;
-                max-height: 85vh;
-                max-width: 1200px;
-                width: 90vw;
-                min-width: 800px;
+                max-height: 82vh;
+                max-width: 1040px;
+                width: 86vw;
+                min-width: 720px;
                 display: flex;
                 flex-direction: column;
                 animation: gpv-slideUp 0.3s ease;
@@ -10889,10 +10889,10 @@ syncUi.update = function updateSyncUI() {
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                padding: 14px 20px;
+                padding: 12px 16px;
                 border-bottom: 1px solid #dbe3ee;
                 background: linear-gradient(180deg, #f8fbff 0%, #f2f7ff 100%);
-                border-radius: 20px 20px 0 0;
+                border-radius: 16px 16px 0 0;
             }
             
             .gpv-header h1 {
@@ -10942,7 +10942,7 @@ syncUi.update = function updateSyncUI() {
                 border: none;
                 color: #1e293b;
                 font-size: 14px;
-                padding: 8px 16px;
+                padding: 7px 12px;
                 border-radius: 18px;
                 cursor: pointer;
                 display: flex;
@@ -10968,7 +10968,7 @@ syncUi.update = function updateSyncUI() {
                 border: none;
                 color: #1e293b;
                 font-size: 14px;
-                padding: 8px 14px;
+                padding: 7px 12px;
                 border-radius: 18px;
                 cursor: pointer;
                 display: flex;
@@ -10990,7 +10990,7 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-controls,
             .gpv-control-bar {
-                padding: 10px 20px;
+                padding: 8px 16px;
                 background: #f8fafc;
                 border-bottom: 1px solid #dbe3ee;
                 display: flex;
@@ -11007,7 +11007,7 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-select {
-                padding: 10px 18px;
+                padding: 8px 14px;
                 border: 1px solid #cbd5e1;
                 border-radius: 8px;
                 font-size: var(--gpv-font-size-body);
@@ -11017,7 +11017,7 @@ syncUi.update = function updateSyncUI() {
                 cursor: pointer;
                 transition: all 0.2s ease;
                 font-family: inherit;
-                min-width: 220px;
+                min-width: 180px;
             }
             
             .gpv-select:hover {
@@ -11120,7 +11120,7 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-content {
                 overflow-y: auto;
-                padding: 14px 20px;
+                padding: 12px 16px;
                 flex: 1;
             }
             
