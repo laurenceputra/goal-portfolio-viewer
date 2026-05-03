@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.10
+// @version      2.14.11
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -52,6 +52,9 @@
     const SUMMARY_ENDPOINT_REGEX = /\/v1\/goals(?:[?#]|$)/;
 
     const STORAGE_KEYS = {
+        endowus: 'endowus',
+        fsm: 'fsm',
+        ocbc: 'ocbc',
         performance: 'api_performance',
         investible: 'api_investible',
         summary: 'api_summary',
@@ -74,6 +77,17 @@
         performanceCache: 'gpv_performance_',
         collapseState: 'gpv_collapse_'
     };
+    const LEGACY_ENDOWUS_EXACT_KEYS = [STORAGE_KEYS.performance, STORAGE_KEYS.investible, STORAGE_KEYS.summary];
+    const LEGACY_ENDOWUS_PREFIXES = [STORAGE_KEY_PREFIXES.goalTarget, STORAGE_KEY_PREFIXES.goalFixed, STORAGE_KEY_PREFIXES.goalBucket];
+    const LEGACY_FSM_EXACT_KEYS = [STORAGE_KEYS.fsmHoldings, STORAGE_KEYS.fsmPortfolios, STORAGE_KEYS.fsmAssignmentByCode];
+    const LEGACY_FSM_PREFIXES = [STORAGE_KEY_PREFIXES.fsmTarget, STORAGE_KEY_PREFIXES.fsmFixed];
+    const LEGACY_OCBC_EXACT_KEYS = [
+        STORAGE_KEYS.ocbcHoldings,
+        STORAGE_KEYS.ocbcSubPortfolios,
+        STORAGE_KEYS.ocbcAllocationAssignmentByCode,
+        STORAGE_KEYS.ocbcAllocationOrderByScope
+    ];
+    const LEGACY_OCBC_PREFIXES = [STORAGE_KEY_PREFIXES.ocbcTarget];
     const VIEW_STATE_KEYS = {
         bucketMode: 'gpv_bucket_mode'
     };
@@ -1579,7 +1593,8 @@ function buildGoalBucketAssignmentMap({
 
     Array.from(goalIds).forEach(goalId => {
         const assignedBucket = utils.normalizeString(getBucket(goalId), '');
-        const wasCleared = Storage.get(storageKeys.goalBucketCleared(goalId), false) === true;
+        const wasCleared = readEndowusStore().clearedGoalBuckets[goalId] === true
+            || Storage.get(storageKeys.goalBucketCleared(goalId), false) === true;
         if (assignedBucket) {
             bucketById[goalId] = assignedBucket;
             return;
@@ -2898,6 +2913,600 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         }
     };
 
+    function normalizeEndowusStore(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        return {
+            performance: Array.isArray(source.performance) ? source.performance : null,
+            investible: Array.isArray(source.investible) ? source.investible : null,
+            summary: Array.isArray(source.summary) ? source.summary : null,
+            goalTargets: source.goalTargets && typeof source.goalTargets === 'object' ? source.goalTargets : {},
+            goalFixed: source.goalFixed && typeof source.goalFixed === 'object' ? source.goalFixed : {},
+            goalBuckets: source.goalBuckets && typeof source.goalBuckets === 'object' ? source.goalBuckets : {},
+            clearedGoalBuckets: source.clearedGoalBuckets && typeof source.clearedGoalBuckets === 'object' ? source.clearedGoalBuckets : {}
+        };
+    }
+
+    function normalizeFsmStore(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        return {
+            holdings: Array.isArray(source.holdings) ? source.holdings : null,
+            targetsByCode: source.targetsByCode && typeof source.targetsByCode === 'object' ? source.targetsByCode : {},
+            fixedByCode: source.fixedByCode && typeof source.fixedByCode === 'object' ? source.fixedByCode : {},
+            portfolios: normalizeFsmPortfolios(Array.isArray(source.portfolios) ? source.portfolios : []),
+            assignmentByCode: source.assignmentByCode && typeof source.assignmentByCode === 'object' ? source.assignmentByCode : {}
+        };
+    }
+
+    function normalizeOcbcSubPortfoliosForStore(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const normalized = {};
+        Object.entries(source).forEach(([viewKey, portfolios]) => {
+            if (!portfolios || typeof portfolios !== 'object' || Array.isArray(portfolios)) {
+                return;
+            }
+            const normalizedView = {};
+            Object.entries(portfolios).forEach(([portfolioNo, items]) => {
+                if (!Array.isArray(items)) {
+                    return;
+                }
+                const filtered = items
+                    .map(item => {
+                        if (!item || typeof item !== 'object') {
+                            return null;
+                        }
+                        const id = utils.normalizeString(item.id, '');
+                        if (!id) {
+                            return null;
+                        }
+                        return {
+                            id,
+                            name: utils.normalizeString(item.name, 'Untitled sub-portfolio'),
+                            archived: item.archived === true,
+                            legacyProductType: utils.normalizeString(item.legacyProductType, ''),
+                            legacyBucketId: utils.normalizeString(item.legacyBucketId, '')
+                        };
+                    })
+                    .filter(Boolean)
+                    .map(item => ({ ...item }));
+                if (filtered.length) {
+                    normalizedView[portfolioNo] = filtered;
+                }
+            });
+            if (Object.keys(normalizedView).length) {
+                normalized[viewKey] = normalizedView;
+            }
+        });
+        return normalized;
+    }
+
+    function normalizeOcbcAssignmentByCodeForStore(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const normalized = {};
+        Object.entries(source).forEach(([code, rawAssignment]) => {
+            const normalizedCode = utils.normalizeString(code, '');
+            if (!normalizedCode) {
+                return;
+            }
+            const subPortfolioId = utils.normalizeString(
+                rawAssignment && typeof rawAssignment === 'object' && !Array.isArray(rawAssignment)
+                    ? rawAssignment.subPortfolioId
+                    : rawAssignment,
+                ''
+            );
+            if (subPortfolioId) {
+                normalized[normalizedCode] = subPortfolioId;
+            }
+        });
+        return normalized;
+    }
+
+    function normalizeOcbcOrderByScopeForStore(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const normalized = {};
+        Object.entries(source).forEach(([scope, value]) => {
+            const normalizedScope = utils.normalizeString(scope, '');
+            if (!normalizedScope || !Array.isArray(value)) {
+                return;
+            }
+            const deduped = [];
+            const seen = new Set();
+            value.forEach(code => {
+                const normalizedCode = utils.normalizeString(code, '');
+                if (!normalizedCode || seen.has(normalizedCode)) {
+                    return;
+                }
+                seen.add(normalizedCode);
+                deduped.push(normalizedCode);
+            });
+            if (deduped.length) {
+                normalized[normalizedScope] = deduped;
+            }
+        });
+        return normalized;
+    }
+
+    function normalizeOcbcStore(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        return {
+            holdings: source.holdings && typeof source.holdings === 'object' ? source.holdings : null,
+            subPortfolios: normalizeOcbcSubPortfoliosForStore(source.subPortfolios),
+            assignmentByCode: normalizeOcbcAssignmentByCodeForStore(source.assignmentByCode),
+            orderByScope: normalizeOcbcOrderByScopeForStore(source.orderByScope),
+            targetsByScope: source.targetsByScope && typeof source.targetsByScope === 'object' ? source.targetsByScope : {}
+        };
+    }
+
+    function writePlatformStore(key, store, context) {
+        return Storage.writeJson(key, store, context || `Error saving ${key} store`);
+    }
+
+    function removeLegacyPrefixedKeys(prefix, errorMessage) {
+        const allKeys = typeof GM_listValues === 'function' ? GM_listValues() : [];
+        allKeys.forEach(key => {
+            if (key.startsWith(prefix)) {
+                Storage.remove(key, errorMessage);
+            }
+        });
+    }
+
+    function cleanupLegacyEndowusKeys() {
+        Storage.remove(STORAGE_KEYS.performance, 'Error deleting legacy Endowus performance data');
+        Storage.remove(STORAGE_KEYS.investible, 'Error deleting legacy Endowus investible data');
+        Storage.remove(STORAGE_KEYS.summary, 'Error deleting legacy Endowus summary data');
+        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.goalTarget, 'Error deleting legacy Endowus target key');
+        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.goalFixed, 'Error deleting legacy Endowus fixed key');
+        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.goalBucket, 'Error deleting legacy Endowus bucket key');
+    }
+
+    function cleanupLegacyFsmKeys() {
+        Storage.remove(STORAGE_KEYS.fsmHoldings, 'Error deleting legacy FSM holdings data');
+        Storage.remove(STORAGE_KEYS.fsmPortfolios, 'Error deleting legacy FSM portfolios data');
+        Storage.remove(STORAGE_KEYS.fsmAssignmentByCode, 'Error deleting legacy FSM assignment data');
+        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.fsmTarget, 'Error deleting legacy FSM target key');
+        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.fsmFixed, 'Error deleting legacy FSM fixed key');
+    }
+
+    function cleanupLegacyFsmKeysForCodes(codes) {
+        (Array.isArray(codes) ? codes : []).forEach(code => {
+            const normalizedCode = utils.normalizeString(code, '');
+            if (!normalizedCode) {
+                return;
+            }
+            Storage.remove(storageKeys.fsmTarget(normalizedCode), 'Error deleting legacy FSM target key');
+            Storage.remove(storageKeys.fsmFixed(normalizedCode), 'Error deleting legacy FSM fixed key');
+        });
+    }
+
+    function cleanupLegacyOcbcKeys() {
+        Storage.remove(STORAGE_KEYS.ocbcHoldings, 'Error deleting legacy OCBC holdings data');
+        Storage.remove(STORAGE_KEYS.ocbcSubPortfolios, 'Error deleting legacy OCBC sub-portfolios data');
+        Storage.remove(STORAGE_KEYS.ocbcAllocationAssignmentByCode, 'Error deleting legacy OCBC assignment data');
+        Storage.remove(STORAGE_KEYS.ocbcAllocationOrderByScope, 'Error deleting legacy OCBC order data');
+        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.ocbcTarget, 'Error deleting legacy OCBC target key');
+    }
+
+    const legacyCleanupSessionState = {
+        endowus: false,
+        fsm: false,
+        ocbc: false
+    };
+
+    function hasAnyLegacyStoreKeys(exactKeys, prefixes) {
+        const allKeys = typeof GM_listValues === 'function' ? GM_listValues() : [];
+        const exact = new Set(Array.isArray(exactKeys) ? exactKeys : []);
+        const prefixList = Array.isArray(prefixes) ? prefixes : [];
+        return allKeys.some(key => {
+            if (exact.has(key)) {
+                return true;
+            }
+            return prefixList.some(prefix => key.startsWith(prefix));
+        });
+    }
+
+    function shouldCleanupLegacyEndowusKeysOnRead() {
+        if (legacyCleanupSessionState.endowus) {
+            return false;
+        }
+        const hasLegacyKeys = hasAnyLegacyStoreKeys(
+            [STORAGE_KEYS.performance, STORAGE_KEYS.investible, STORAGE_KEYS.summary],
+            [STORAGE_KEY_PREFIXES.goalTarget, STORAGE_KEY_PREFIXES.goalFixed, STORAGE_KEY_PREFIXES.goalBucket]
+        );
+        if (!hasLegacyKeys) {
+            legacyCleanupSessionState.endowus = true;
+        }
+        return hasLegacyKeys;
+    }
+
+    function shouldCleanupLegacyFsmKeysOnRead() {
+        if (legacyCleanupSessionState.fsm) {
+            return false;
+        }
+        const hasLegacyKeys = hasAnyLegacyStoreKeys(
+            [STORAGE_KEYS.fsmHoldings, STORAGE_KEYS.fsmPortfolios, STORAGE_KEYS.fsmAssignmentByCode],
+            [STORAGE_KEY_PREFIXES.fsmTarget, STORAGE_KEY_PREFIXES.fsmFixed]
+        );
+        if (!hasLegacyKeys) {
+            legacyCleanupSessionState.fsm = true;
+        }
+        return hasLegacyKeys;
+    }
+
+    function shouldCleanupLegacyOcbcKeysOnRead() {
+        if (legacyCleanupSessionState.ocbc) {
+            return false;
+        }
+        const hasLegacyKeys = hasAnyLegacyStoreKeys(
+            [
+                STORAGE_KEYS.ocbcHoldings,
+                STORAGE_KEYS.ocbcSubPortfolios,
+                STORAGE_KEYS.ocbcAllocationAssignmentByCode,
+                STORAGE_KEYS.ocbcAllocationOrderByScope
+            ],
+            [STORAGE_KEY_PREFIXES.ocbcTarget]
+        );
+        if (!hasLegacyKeys) {
+            legacyCleanupSessionState.ocbc = true;
+        }
+        return hasLegacyKeys;
+    }
+
+    function collectLegacyEndowusConfigForStore() {
+        const config = {
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {}
+        };
+        const allKeys = typeof GM_listValues === 'function' ? GM_listValues() : [];
+        for (const key of allKeys) {
+            if (key.startsWith(STORAGE_KEY_PREFIXES.goalTarget)) {
+                const goalId = key.substring(STORAGE_KEY_PREFIXES.goalTarget.length);
+                const value = Storage.get(key, null);
+                if (value !== null) {
+                    config.goalTargets[goalId] = value;
+                }
+            } else if (key.startsWith(STORAGE_KEY_PREFIXES.goalFixed)) {
+                const goalId = key.substring(STORAGE_KEY_PREFIXES.goalFixed.length);
+                config.goalFixed[goalId] = Storage.get(key, false) === true;
+            } else if (key.startsWith(STORAGE_KEY_PREFIXES.goalBucket)) {
+                if (key.endsWith('__cleared')) {
+                    const goalId = key.substring(STORAGE_KEY_PREFIXES.goalBucket.length, key.length - '__cleared'.length);
+                    config.clearedGoalBuckets[goalId] = Storage.get(key, false) === true;
+                    continue;
+                }
+                const goalId = key.substring(STORAGE_KEY_PREFIXES.goalBucket.length);
+                const value = utils.normalizeString(Storage.get(key, ''), '');
+                if (value) {
+                    config.goalBuckets[goalId] = value;
+                }
+            }
+        }
+        Object.entries(config.goalFixed).forEach(([goalId, isFixed]) => {
+            if (isFixed === true) {
+                delete config.goalTargets[goalId];
+            }
+        });
+        return config;
+    }
+
+    function collectLegacyFsmConfigForStore() {
+        const fsm = {
+            targetsByCode: {},
+            fixedByCode: {},
+            portfolios: [],
+            assignmentByCode: {}
+        };
+        const allKeys = typeof GM_listValues === 'function' ? GM_listValues() : [];
+        for (const key of allKeys) {
+            if (key.startsWith(STORAGE_KEY_PREFIXES.fsmTarget)) {
+                const code = key.substring(STORAGE_KEY_PREFIXES.fsmTarget.length);
+                const value = Storage.get(key, null);
+                if (value !== null) {
+                    fsm.targetsByCode[code] = value;
+                }
+                continue;
+            }
+            if (key.startsWith(STORAGE_KEY_PREFIXES.fsmFixed)) {
+                const code = key.substring(STORAGE_KEY_PREFIXES.fsmFixed.length);
+                fsm.fixedByCode[code] = Storage.get(key, false) === true;
+            }
+        }
+        Object.entries(fsm.fixedByCode).forEach(([code, isFixed]) => {
+            if (isFixed === true) {
+                delete fsm.targetsByCode[code];
+            }
+        });
+        fsm.portfolios = normalizeFsmPortfolios(
+            Storage.readJson(STORAGE_KEYS.fsmPortfolios, data => Array.isArray(data), 'Error loading FSM portfolios') || []
+        );
+        const assignmentByCode = Storage.readJson(
+            STORAGE_KEYS.fsmAssignmentByCode,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error loading FSM assignments'
+        ) || {};
+        const validPortfolioIds = new Set(fsm.portfolios.filter(item => item.archived !== true).map(item => item.id));
+        Object.entries(assignmentByCode).forEach(([code, portfolioId]) => {
+            const normalizedCode = utils.normalizeString(code, '');
+            if (!normalizedCode) {
+                return;
+            }
+            const normalizedPortfolioId = utils.normalizeString(portfolioId, '');
+            fsm.assignmentByCode[normalizedCode] = validPortfolioIds.has(normalizedPortfolioId)
+                ? normalizedPortfolioId
+                : FSM_UNASSIGNED_PORTFOLIO_ID;
+        });
+        return fsm;
+    }
+
+    function collectLegacyOcbcConfigForStore() {
+        const targetsByScope = {};
+        const allKeys = typeof GM_listValues === 'function' ? GM_listValues() : [];
+        for (const key of allKeys) {
+            if (!key.startsWith(STORAGE_KEY_PREFIXES.ocbcTarget)) {
+                continue;
+            }
+            const scope = key.substring(STORAGE_KEY_PREFIXES.ocbcTarget.length);
+            const value = Storage.get(key, null);
+            if (value !== null) {
+                targetsByScope[scope] = value;
+            }
+        }
+        return {
+            subPortfolios: normalizeOcbcSubPortfoliosForStore(
+                Storage.readJson(STORAGE_KEYS.ocbcSubPortfolios, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC sub-portfolios') || {}
+            ),
+            assignmentByCode: normalizeOcbcAssignmentByCodeForStore(
+                Storage.readJson(STORAGE_KEYS.ocbcAllocationAssignmentByCode, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC assignments') || {}
+            ),
+            orderByScope: normalizeOcbcOrderByScopeForStore(
+                Storage.readJson(STORAGE_KEYS.ocbcAllocationOrderByScope, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC order') || {}
+            ),
+            targetsByScope
+        };
+    }
+
+    function collectLegacyEndowusStore() {
+        const config = collectLegacyEndowusConfigForStore();
+        return normalizeEndowusStore({
+            ...config,
+            performance: Storage.readJson(STORAGE_KEYS.performance, data => Array.isArray(data), 'Error loading legacy performance data'),
+            investible: Storage.readJson(STORAGE_KEYS.investible, data => Array.isArray(data), 'Error loading legacy investible data'),
+            summary: Storage.readJson(STORAGE_KEYS.summary, data => Array.isArray(data), 'Error loading legacy summary data')
+        });
+    }
+
+    function collectLegacyFsmStore() {
+        const config = collectLegacyFsmConfigForStore();
+        return normalizeFsmStore({
+            ...config,
+            holdings: Storage.readJson(STORAGE_KEYS.fsmHoldings, data => Array.isArray(data), 'Error loading legacy FSM holdings data')
+        });
+    }
+
+    function collectLegacyOcbcStore() {
+        const config = collectLegacyOcbcConfigForStore();
+        return normalizeOcbcStore({
+            ...config,
+            holdings: Storage.readJson(
+                STORAGE_KEYS.ocbcHoldings,
+                data => data && typeof data === 'object' && Array.isArray(data.assets) && Array.isArray(data.liabilities),
+                'Error loading legacy OCBC holdings data'
+            )
+        });
+    }
+
+    function hasOwnField(source, field) {
+        return Boolean(source && typeof source === 'object' && !Array.isArray(source) && Object.prototype.hasOwnProperty.call(source, field));
+    }
+
+    function mergeMissingFieldsFromLegacy(rawStore, normalizedStore, legacyStore, fieldNames) {
+        const merged = { ...normalizedStore };
+        let didMerge = false;
+        (Array.isArray(fieldNames) ? fieldNames : []).forEach(field => {
+            if (hasOwnField(rawStore, field)) {
+                return;
+            }
+            merged[field] = legacyStore[field];
+            didMerge = true;
+        });
+        return { merged, didMerge };
+    }
+
+    function mergeMissingFsmEntriesFromLegacy(rawStore, normalizedStore, legacyStore) {
+        const merged = {
+            ...normalizedStore,
+            targetsByCode: { ...(normalizedStore?.targetsByCode || {}) },
+            fixedByCode: { ...(normalizedStore?.fixedByCode || {}) }
+        };
+        let didMerge = false;
+
+        const rawTargetsByCode = rawStore?.targetsByCode;
+        const rawFixedByCode = rawStore?.fixedByCode;
+        const shouldMergeTargets = rawTargetsByCode && typeof rawTargetsByCode === 'object' && !Array.isArray(rawTargetsByCode);
+        const shouldMergeFixed = rawFixedByCode && typeof rawFixedByCode === 'object' && !Array.isArray(rawFixedByCode);
+
+        if (shouldMergeTargets) {
+            Object.entries(legacyStore?.targetsByCode || {}).forEach(([code, value]) => {
+                if (!Object.prototype.hasOwnProperty.call(merged.targetsByCode, code)) {
+                    merged.targetsByCode[code] = value;
+                    didMerge = true;
+                }
+            });
+        }
+
+        if (shouldMergeFixed) {
+            Object.entries(legacyStore?.fixedByCode || {}).forEach(([code, value]) => {
+                if (!Object.prototype.hasOwnProperty.call(merged.fixedByCode, code)) {
+                    merged.fixedByCode[code] = value;
+                    didMerge = true;
+                }
+            });
+        }
+
+        const holdings = Array.isArray(merged.holdings) ? merged.holdings : [];
+        holdings.forEach(row => {
+            const code = getFsmHoldingIdentity(row) || utils.normalizeString(row?.code, '');
+            if (!code || Object.prototype.hasOwnProperty.call(merged.targetsByCode, code)) {
+                return;
+            }
+            const legacyValue = Storage.get(storageKeys.fsmTarget(code), null);
+            if (legacyValue !== null) {
+                merged.targetsByCode[code] = legacyValue;
+                didMerge = true;
+            }
+        });
+
+        return { merged, didMerge };
+    }
+
+    function readEndowusStore() {
+        const rawStored = Storage.readJson(STORAGE_KEYS.endowus, data => data && typeof data === 'object' && !Array.isArray(data));
+        if (rawStored) {
+            const normalized = normalizeEndowusStore(rawStored);
+            const legacy = collectLegacyEndowusStore();
+            const { merged, didMerge } = mergeMissingFieldsFromLegacy(
+                rawStored,
+                normalized,
+                legacy,
+                ['performance', 'investible', 'summary', 'goalTargets', 'goalFixed', 'goalBuckets', 'clearedGoalBuckets']
+            );
+            if (didMerge) {
+                const didWrite = writePlatformStore(STORAGE_KEYS.endowus, merged, 'Error writing merged Endowus store');
+                if (didWrite) {
+                    cleanupLegacyEndowusKeys();
+                    legacyCleanupSessionState.endowus = true;
+                }
+                return merged;
+            }
+            if (shouldCleanupLegacyEndowusKeysOnRead()) {
+                cleanupLegacyEndowusKeys();
+                legacyCleanupSessionState.endowus = true;
+            }
+            return normalized;
+        }
+        const migrated = collectLegacyEndowusStore();
+        const didWrite = writePlatformStore(STORAGE_KEYS.endowus, migrated, 'Error writing migrated Endowus store');
+        if (didWrite) {
+            cleanupLegacyEndowusKeys();
+            legacyCleanupSessionState.endowus = true;
+        }
+        return migrated;
+    }
+
+    function readFsmStore() {
+        const rawStored = Storage.readJson(STORAGE_KEYS.fsm, data => data && typeof data === 'object' && !Array.isArray(data));
+        if (rawStored) {
+            const normalized = normalizeFsmStore(rawStored);
+            const legacy = collectLegacyFsmStore();
+            const { merged: mergedMissingFields, didMerge: didMergeFields } = mergeMissingFieldsFromLegacy(
+                rawStored,
+                normalized,
+                legacy,
+                ['holdings', 'targetsByCode', 'fixedByCode', 'portfolios', 'assignmentByCode']
+            );
+            const { merged, didMerge: didMergeEntries } = mergeMissingFsmEntriesFromLegacy(
+                rawStored,
+                mergedMissingFields,
+                legacy
+            );
+            const didMerge = didMergeFields || didMergeEntries;
+            if (didMerge) {
+                const didWrite = writePlatformStore(STORAGE_KEYS.fsm, merged, 'Error writing merged FSM store');
+                if (didWrite) {
+                    cleanupLegacyFsmKeys();
+                    cleanupLegacyFsmKeysForCodes([
+                        ...Object.keys(merged?.targetsByCode || {}),
+                        ...Object.keys(merged?.fixedByCode || {}),
+                        ...Object.keys(legacy?.targetsByCode || {}),
+                        ...Object.keys(legacy?.fixedByCode || {})
+                    ]);
+                    legacyCleanupSessionState.fsm = true;
+                }
+                return merged;
+            }
+            if (shouldCleanupLegacyFsmKeysOnRead()) {
+                cleanupLegacyFsmKeys();
+                legacyCleanupSessionState.fsm = true;
+            }
+            return normalized;
+        }
+        const migrated = collectLegacyFsmStore();
+        const didWrite = writePlatformStore(STORAGE_KEYS.fsm, migrated, 'Error writing migrated FSM store');
+        if (didWrite) {
+            cleanupLegacyFsmKeys();
+            cleanupLegacyFsmKeysForCodes([
+                ...Object.keys(migrated?.targetsByCode || {}),
+                ...Object.keys(migrated?.fixedByCode || {})
+            ]);
+            legacyCleanupSessionState.fsm = true;
+        }
+        return migrated;
+    }
+
+    function readOcbcStore() {
+        const rawStored = Storage.readJson(STORAGE_KEYS.ocbc, data => data && typeof data === 'object' && !Array.isArray(data));
+        if (rawStored) {
+            const normalized = normalizeOcbcStore(rawStored);
+            const legacy = collectLegacyOcbcStore();
+            const { merged, didMerge } = mergeMissingFieldsFromLegacy(
+                rawStored,
+                normalized,
+                legacy,
+                ['holdings', 'subPortfolios', 'assignmentByCode', 'orderByScope', 'targetsByScope']
+            );
+            if (didMerge) {
+                const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, merged, 'Error writing merged OCBC store');
+                if (didWrite) {
+                    cleanupLegacyOcbcKeys();
+                    legacyCleanupSessionState.ocbc = true;
+                }
+                return merged;
+            }
+            if (shouldCleanupLegacyOcbcKeysOnRead()) {
+                cleanupLegacyOcbcKeys();
+                legacyCleanupSessionState.ocbc = true;
+            }
+            return normalized;
+        }
+        const migrated = collectLegacyOcbcStore();
+        const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, migrated, 'Error writing migrated OCBC store');
+        if (didWrite) {
+            cleanupLegacyOcbcKeys();
+            legacyCleanupSessionState.ocbc = true;
+        }
+        return migrated;
+    }
+
+    function updateEndowusStore(updater, context = 'Error saving Endowus store') {
+        const current = readEndowusStore();
+        const updated = normalizeEndowusStore(typeof updater === 'function' ? updater(current) : current);
+        const didWrite = writePlatformStore(STORAGE_KEYS.endowus, updated, context);
+        if (didWrite) {
+            cleanupLegacyEndowusKeys();
+        }
+        return { value: updated, success: didWrite };
+    }
+
+    function updateFsmStore(updater, context = 'Error saving FSM store') {
+        const current = readFsmStore();
+        const updated = normalizeFsmStore(typeof updater === 'function' ? updater(current) : current);
+        const didWrite = writePlatformStore(STORAGE_KEYS.fsm, updated, context);
+        if (didWrite) {
+            cleanupLegacyFsmKeys();
+        }
+        return { value: updated, success: didWrite };
+    }
+
+    function updateOcbcStore(updater, context = 'Error saving OCBC store') {
+        const current = readOcbcStore();
+        const updated = normalizeOcbcStore(typeof updater === 'function' ? updater(current) : current);
+        const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, updated, context);
+        if (didWrite) {
+            cleanupLegacyOcbcKeys();
+        }
+        return { value: updated, success: didWrite };
+    }
+
     function normalizeBucketViewMode(value) {
         return value === BUCKET_VIEW_MODES.performance
             ? BUCKET_VIEW_MODES.performance
@@ -3515,97 +4124,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return deviceId;
     }
 
-    function collectLegacyEndowusConfig() {
-        const config = {
-            goalTargets: {},
-            goalFixed: {},
-            goalBuckets: {},
-            clearedGoalBuckets: {}
-        };
-        const allKeys = GM_listValues ? GM_listValues() : [];
-        for (const key of allKeys) {
-            if (key.startsWith(STORAGE_KEY_PREFIXES.goalTarget)) {
-                const goalId = key.substring(STORAGE_KEY_PREFIXES.goalTarget.length);
-                const value = Storage.get(key, null);
-                if (value !== null) {
-                    config.goalTargets[goalId] = value;
-                }
-            } else if (key.startsWith(STORAGE_KEY_PREFIXES.goalFixed)) {
-                const goalId = key.substring(STORAGE_KEY_PREFIXES.goalFixed.length);
-                const value = Storage.get(key, false);
-                config.goalFixed[goalId] = value;
-            } else if (key.startsWith(STORAGE_KEY_PREFIXES.goalBucket)) {
-                if (key.endsWith('__cleared')) {
-                    const goalId = key.substring(STORAGE_KEY_PREFIXES.goalBucket.length, key.length - '__cleared'.length);
-                    config.clearedGoalBuckets[goalId] = Storage.get(key, false) === true;
-                    continue;
-                }
-                const goalId = key.substring(STORAGE_KEY_PREFIXES.goalBucket.length);
-                const value = utils.normalizeString(Storage.get(key, ''), '');
-                if (value) {
-                    config.goalBuckets[goalId] = value;
-                }
-            }
-        }
-        Object.entries(config.goalFixed).forEach(([goalId, isFixed]) => {
-            if (isFixed === true) {
-                delete config.goalTargets[goalId];
-            }
-        });
-        return config;
-    }
-
-    function collectFsmSyncConfig() {
-        const fsm = {
-            targetsByCode: {},
-            fixedByCode: {},
-            portfolios: [],
-            assignmentByCode: {},
-            timestamp: Date.now()
-        };
-        const allKeys = GM_listValues ? GM_listValues() : [];
-        for (const key of allKeys) {
-            if (key.startsWith(STORAGE_KEY_PREFIXES.fsmTarget)) {
-                const code = key.substring(STORAGE_KEY_PREFIXES.fsmTarget.length);
-                const value = Storage.get(key, null);
-                if (value !== null) {
-                    fsm.targetsByCode[code] = value;
-                }
-                continue;
-            }
-            if (key.startsWith(STORAGE_KEY_PREFIXES.fsmFixed)) {
-                const code = key.substring(STORAGE_KEY_PREFIXES.fsmFixed.length);
-                fsm.fixedByCode[code] = Storage.get(key, false) === true;
-                continue;
-            }
-        }
-        Object.entries(fsm.fixedByCode).forEach(([code, isFixed]) => {
-            if (isFixed === true) {
-                delete fsm.targetsByCode[code];
-            }
-        });
-        fsm.portfolios = normalizeFsmPortfolios(
-            Storage.readJson(STORAGE_KEYS.fsmPortfolios, data => Array.isArray(data), 'Error loading FSM portfolios') || []
-        );
-        const assignmentByCode = Storage.readJson(
-            STORAGE_KEYS.fsmAssignmentByCode,
-            data => data && typeof data === 'object' && !Array.isArray(data),
-            'Error loading FSM assignments'
-        ) || {};
-        const validPortfolioIds = new Set(fsm.portfolios.filter(item => item.archived !== true).map(item => item.id));
-        Object.entries(assignmentByCode).forEach(([code, portfolioId]) => {
-            const normalizedCode = utils.normalizeString(code, '');
-            if (!normalizedCode) {
-                return;
-            }
-            const normalizedPortfolioId = utils.normalizeString(portfolioId, '');
-            fsm.assignmentByCode[normalizedCode] = validPortfolioIds.has(normalizedPortfolioId)
-                ? normalizedPortfolioId
-                : FSM_UNASSIGNED_PORTFOLIO_ID;
-        });
-        return fsm;
-    }
-
     function normalizeOcbcSubPortfoliosConfig(data) {
         const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
         const normalized = {};
@@ -3694,38 +4212,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return normalized;
     }
 
-    function normalizeOcbcOrderByScopeConfig(data) {
-        return normalizeOcbcOrderByScopeEntries(data);
-    }
-
-    function collectOcbcSyncConfig() {
-        const targetsByScope = {};
-        const allKeys = GM_listValues ? GM_listValues() : [];
-        for (const key of allKeys) {
-            if (!key.startsWith(STORAGE_KEY_PREFIXES.ocbcTarget)) {
-                continue;
-            }
-            const scope = key.substring(STORAGE_KEY_PREFIXES.ocbcTarget.length);
-            const value = Storage.get(key, null);
-            if (value !== null) {
-                targetsByScope[scope] = value;
-            }
-        }
-        return {
-            subPortfolios: normalizeOcbcSubPortfoliosConfig(
-                Storage.readJson(STORAGE_KEYS.ocbcSubPortfolios, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC sub-portfolios') || {}
-            ),
-            assignmentByCode: normalizeOcbcAssignmentByCodeConfig(
-                Storage.readJson(STORAGE_KEYS.ocbcAllocationAssignmentByCode, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC assignments') || {}
-            ),
-            orderByScope: normalizeOcbcOrderByScopeConfig(
-                Storage.readJson(STORAGE_KEYS.ocbcAllocationOrderByScope, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC order') || {}
-            ),
-            targetsByScope,
-            timestamp: Date.now()
-        };
-    }
-
     function normalizeSyncConfig(config) {
         if (!config || typeof config !== 'object') {
             return null;
@@ -3799,41 +4285,36 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         };
     }
 
-    function removeStalePrefixedKeys(prefix, activeSuffixes, errorMessage = 'Error deleting stale sync key') {
-        const allKeys = GM_listValues ? GM_listValues() : [];
-        const active = activeSuffixes instanceof Set ? activeSuffixes : new Set(activeSuffixes || []);
-        for (const key of allKeys) {
-            if (!key.startsWith(prefix)) {
-                continue;
-            }
-            const suffix = key.substring(prefix.length);
-            if (!active.has(suffix)) {
-                Storage.remove(key, errorMessage);
-            }
-        }
-    }
-
     /**
      * Collect syncable config data
      */
     function collectConfigData() {
         const timestamp = Date.now();
-        const endowus = collectLegacyEndowusConfig();
-        const fsm = collectFsmSyncConfig();
-        const ocbc = collectOcbcSyncConfig();
+        const endowus = readEndowusStore();
+        const fsm = readFsmStore();
+        const ocbc = readOcbcStore();
         return {
             version: 2,
             platforms: {
                 endowus: {
-                    ...endowus,
+                    goalTargets: endowus.goalTargets,
+                    goalFixed: endowus.goalFixed,
+                    goalBuckets: endowus.goalBuckets,
+                    clearedGoalBuckets: endowus.clearedGoalBuckets,
                     timestamp
                 },
                 fsm: {
-                    ...fsm,
+                    targetsByCode: fsm.targetsByCode,
+                    fixedByCode: fsm.fixedByCode,
+                    portfolios: fsm.portfolios,
+                    assignmentByCode: fsm.assignmentByCode,
                     timestamp
                 },
                 ocbc: {
-                    ...ocbc,
+                    subPortfolios: ocbc.subPortfolios,
+                    assignmentByCode: ocbc.assignmentByCode,
+                    orderByScope: ocbc.orderByScope,
+                    targetsByScope: ocbc.targetsByScope,
                     timestamp
                 }
             },
@@ -3853,57 +4334,83 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             throw new Error('Invalid config data');
         }
 
+        const collectRelevantLegacyKeys = () => {
+            const exactKeys = [
+                ...LEGACY_ENDOWUS_EXACT_KEYS,
+                ...LEGACY_FSM_EXACT_KEYS,
+                ...LEGACY_OCBC_EXACT_KEYS
+            ];
+            const prefixes = [
+                ...LEGACY_ENDOWUS_PREFIXES,
+                ...LEGACY_FSM_PREFIXES,
+                ...LEGACY_OCBC_PREFIXES
+            ];
+            const relevant = new Set(exactKeys);
+            if (typeof GM_listValues === 'function') {
+                GM_listValues().forEach(key => {
+                    if (prefixes.some(prefix => key.startsWith(prefix))) {
+                        relevant.add(key);
+                    }
+                });
+            }
+            return Array.from(relevant);
+        };
+
+        const legacyKeysToSnapshot = collectRelevantLegacyKeys();
+        const legacySnapshotByKey = legacyKeysToSnapshot.reduce((acc, key) => {
+            acc[key] = Storage.has(key)
+                ? { exists: true, value: Storage.get(key, null, `Error reading legacy sync config snapshot for ${key}`) }
+                : { exists: false, value: null };
+            return acc;
+        }, {});
+
+        const rawSnapshotByKey = {
+            [STORAGE_KEYS.endowus]: Storage.has(STORAGE_KEYS.endowus)
+                ? { exists: true, value: Storage.get(STORAGE_KEYS.endowus, null, 'Error reading Endowus sync config snapshot') }
+                : { exists: false, value: null },
+            [STORAGE_KEYS.fsm]: Storage.has(STORAGE_KEYS.fsm)
+                ? { exists: true, value: Storage.get(STORAGE_KEYS.fsm, null, 'Error reading FSM sync config snapshot') }
+                : { exists: false, value: null },
+            [STORAGE_KEYS.ocbc]: Storage.has(STORAGE_KEYS.ocbc)
+                ? { exists: true, value: Storage.get(STORAGE_KEYS.ocbc, null, 'Error reading OCBC sync config snapshot') }
+                : { exists: false, value: null }
+        };
+
         const endowus = normalized.platforms.endowus || {};
         const endowusTargets = endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {};
         const endowusFixed = endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {};
         const endowusBuckets = endowus.goalBuckets && typeof endowus.goalBuckets === 'object' ? endowus.goalBuckets : {};
         const clearedGoalBuckets = endowus.clearedGoalBuckets && typeof endowus.clearedGoalBuckets === 'object' ? endowus.clearedGoalBuckets : {};
 
-        removeStalePrefixedKeys(
-            STORAGE_KEY_PREFIXES.goalTarget,
-            new Set(Object.keys(endowusTargets).filter(goalId => endowusFixed[goalId] !== true)),
-            'Error deleting stale Endowus target'
-        );
-        removeStalePrefixedKeys(
-            STORAGE_KEY_PREFIXES.goalFixed,
-            new Set(Object.keys(endowusFixed)),
-            'Error deleting stale Endowus fixed flag'
-        );
-        removeStalePrefixedKeys(
-            STORAGE_KEY_PREFIXES.goalBucket,
-            new Set([
-                ...Object.keys(endowusBuckets),
-                ...Object.keys(clearedGoalBuckets).filter(goalId => clearedGoalBuckets[goalId] === true).map(goalId => `${goalId}__cleared`)
-            ]),
-            'Error deleting stale Endowus bucket setting'
-        );
-
-        for (const [goalId, value] of Object.entries(endowusTargets)) {
-            if (endowusFixed[goalId] === true) {
-                continue;
+        const sanitizedEndowusTargets = Object.entries(endowusTargets).reduce((acc, [goalId, value]) => {
+            if (endowusFixed[goalId] !== true) {
+                acc[goalId] = value;
             }
-            Storage.set(storageKeys.goalTarget(goalId), value);
-        }
+            return acc;
+        }, {});
 
-        for (const [goalId, value] of Object.entries(endowusFixed)) {
-            Storage.set(storageKeys.goalFixed(goalId), value === true);
-        }
-
-        for (const [goalId, value] of Object.entries(endowusBuckets)) {
-            const normalizedBucket = utils.normalizeString(value, '');
-            if (normalizedBucket) {
-                Storage.set(storageKeys.goalBucket(goalId), normalizedBucket);
-                Storage.remove(storageKeys.goalBucketCleared(goalId), 'Error deleting cleared goal bucket flag');
-            }
-        }
-
-        for (const [goalId, wasCleared] of Object.entries(clearedGoalBuckets)) {
-            if (wasCleared !== true) {
-                continue;
-            }
-            Storage.remove(storageKeys.goalBucket(goalId), 'Error deleting goal bucket assignment');
-            Storage.set(storageKeys.goalBucketCleared(goalId), true, 'Error saving cleared goal bucket flag');
-        }
+        const currentEndowusStore = readEndowusStore();
+        const updatedEndowusStore = normalizeEndowusStore({
+            ...currentEndowusStore,
+            goalTargets: sanitizedEndowusTargets,
+            goalFixed: Object.entries(endowusFixed).reduce((acc, [goalId, value]) => {
+                acc[goalId] = value === true;
+                return acc;
+            }, {}),
+            goalBuckets: Object.entries(endowusBuckets).reduce((acc, [goalId, value]) => {
+                const normalizedBucket = utils.normalizeString(value, '');
+                if (normalizedBucket) {
+                    acc[goalId] = normalizedBucket;
+                }
+                return acc;
+            }, {}),
+            clearedGoalBuckets: Object.entries(clearedGoalBuckets).reduce((acc, [goalId, value]) => {
+                if (value === true) {
+                    acc[goalId] = true;
+                }
+                return acc;
+            }, {})
+        });
 
         const fsm = normalized.platforms.fsm || {};
         const fsmTargets = fsm.targetsByCode && typeof fsm.targetsByCode === 'object' ? fsm.targetsByCode : {};
@@ -3911,26 +4418,12 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const fsmPortfolios = normalizeFsmPortfolios(Array.isArray(fsm.portfolios) ? fsm.portfolios : []);
         const fsmAssignmentByCode = fsm.assignmentByCode && typeof fsm.assignmentByCode === 'object' ? fsm.assignmentByCode : {};
 
-        removeStalePrefixedKeys(
-            STORAGE_KEY_PREFIXES.fsmTarget,
-            new Set(Object.keys(fsmTargets).filter(code => fsmFixed[code] !== true)),
-            'Error deleting stale FSM target'
-        );
-        removeStalePrefixedKeys(
-            STORAGE_KEY_PREFIXES.fsmFixed,
-            new Set(Object.keys(fsmFixed)),
-            'Error deleting stale FSM fixed flag'
-        );
-        for (const [code, value] of Object.entries(fsmTargets)) {
-            if (fsmFixed[code] === true) {
-                continue;
+        const sanitizedFsmTargets = Object.entries(fsmTargets).reduce((acc, [code, value]) => {
+            if (fsmFixed[code] !== true) {
+                acc[code] = value;
             }
-            Storage.set(storageKeys.fsmTarget(code), value);
-        }
-
-        for (const [code, value] of Object.entries(fsmFixed)) {
-            Storage.set(storageKeys.fsmFixed(code), value === true);
-        }
+            return acc;
+        }, {});
 
         const validPortfolioIds = new Set(fsmPortfolios.filter(item => item.archived !== true).map(item => item.id));
         const sanitizedAssignments = {};
@@ -3944,25 +4437,83 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 ? normalizedPortfolioId
                 : FSM_UNASSIGNED_PORTFOLIO_ID;
         });
-        Storage.writeJson(STORAGE_KEYS.fsmPortfolios, fsmPortfolios, 'Error saving FSM portfolios');
-        Storage.writeJson(STORAGE_KEYS.fsmAssignmentByCode, sanitizedAssignments, 'Error saving FSM assignments');
+        const currentFsmStore = readFsmStore();
+        const updatedFsmStore = normalizeFsmStore({
+            ...currentFsmStore,
+            targetsByCode: sanitizedFsmTargets,
+            fixedByCode: Object.entries(fsmFixed).reduce((acc, [code, value]) => {
+                acc[code] = value === true;
+                return acc;
+            }, {}),
+            portfolios: fsmPortfolios,
+            assignmentByCode: sanitizedAssignments
+        });
 
         const ocbc = normalized.platforms.ocbc || {};
         const ocbcSubPortfolios = normalizeOcbcSubPortfoliosConfig(ocbc.subPortfolios);
         const ocbcAssignmentByCode = normalizeOcbcAssignmentByCodeConfig(ocbc.assignmentByCode);
         const ocbcOrderByScope = normalizeOcbcOrderByScopeEntries(ocbc.orderByScope);
         const ocbcTargetsByScope = ocbc.targetsByScope && typeof ocbc.targetsByScope === 'object' ? ocbc.targetsByScope : {};
-        Storage.writeJson(STORAGE_KEYS.ocbcSubPortfolios, ocbcSubPortfolios, 'Error saving OCBC sub-portfolios');
-        Storage.writeJson(STORAGE_KEYS.ocbcAllocationAssignmentByCode, ocbcAssignmentByCode, 'Error saving OCBC assignments');
-        Storage.writeJson(STORAGE_KEYS.ocbcAllocationOrderByScope, ocbcOrderByScope, 'Error saving OCBC order');
-        removeStalePrefixedKeys(
-            STORAGE_KEY_PREFIXES.ocbcTarget,
-            new Set(Object.keys(ocbcTargetsByScope)),
-            'Error deleting stale OCBC target'
-        );
-        Object.entries(ocbcTargetsByScope).forEach(([scope, value]) => {
-            Storage.set(storageKeys.ocbcTarget(scope), value);
+        const currentOcbcStore = readOcbcStore();
+        const updatedOcbcStore = normalizeOcbcStore({
+            ...currentOcbcStore,
+            subPortfolios: ocbcSubPortfolios,
+            assignmentByCode: ocbcAssignmentByCode,
+            orderByScope: ocbcOrderByScope,
+            targetsByScope: ocbcTargetsByScope
         });
+
+        const restoreNamespacedSnapshots = () => {
+            Object.entries(rawSnapshotByKey).forEach(([key, snapshot]) => {
+                if (snapshot.exists) {
+                    Storage.set(key, snapshot.value, `Error rolling back ${key} sync config data`);
+                    return;
+                }
+                Storage.remove(key, `Error rolling back ${key} sync config data`);
+            });
+
+            const currentRelevantLegacyKeys = new Set([
+                ...legacyKeysToSnapshot,
+                ...(typeof GM_listValues === 'function'
+                    ? GM_listValues().filter(key => (
+                        LEGACY_ENDOWUS_PREFIXES
+                            .concat(LEGACY_FSM_PREFIXES)
+                            .concat(LEGACY_OCBC_PREFIXES)
+                            .some(prefix => key.startsWith(prefix))
+                    ))
+                    : [])
+            ]);
+            currentRelevantLegacyKeys.forEach(key => {
+                const snapshot = legacySnapshotByKey[key] || { exists: false, value: null };
+                if (snapshot.exists) {
+                    Storage.set(key, snapshot.value, `Error rolling back legacy sync config data for ${key}`);
+                    return;
+                }
+                Storage.remove(key, `Error rolling back legacy sync config data for ${key}`);
+            });
+        };
+
+        const endowusResult = writePlatformStore(STORAGE_KEYS.endowus, updatedEndowusStore, 'Error saving Endowus store');
+        if (!endowusResult) {
+            restoreNamespacedSnapshots();
+            throw new Error('Failed to save Endowus sync config data');
+        }
+
+        const fsmResult = writePlatformStore(STORAGE_KEYS.fsm, updatedFsmStore, 'Error saving FSM store');
+        if (!fsmResult) {
+            restoreNamespacedSnapshots();
+            throw new Error('Failed to save FSM sync config data');
+        }
+
+        const ocbcResult = writePlatformStore(STORAGE_KEYS.ocbc, updatedOcbcStore, 'Error saving OCBC store');
+        if (!ocbcResult) {
+            restoreNamespacedSnapshots();
+            throw new Error('Failed to save OCBC sync config data');
+        }
+
+        cleanupLegacyEndowusKeys();
+        cleanupLegacyFsmKeys();
+        cleanupLegacyOcbcKeys();
 
         logDebug('[Goal Portfolio Viewer] Applied sync config data', {
             endowusTargets: Object.keys(endowusTargets).length,
@@ -5072,11 +5623,8 @@ function formatSyncValue(value) {
 }
 
 function getFsmHoldingsFromStorage() {
-    return Storage.readJson(
-        STORAGE_KEYS.fsmHoldings,
-        data => Array.isArray(data),
-        'Error reading FSM holdings'
-    ) || [];
+    const store = readFsmStore();
+    return Array.isArray(store.holdings) ? store.holdings : [];
 }
 
 function buildFsmHoldingsNameMap(fsmHoldings) {
@@ -5398,7 +5946,7 @@ let GoalTargetStore;
             }
             state.apiData.performance = data;
             state.readiness.endowus.performanceLoaded = true;
-            Storage.writeJson(STORAGE_KEYS.performance, data, 'Error saving performance data');
+            updateEndowusStore(current => ({ ...current, performance: data }), 'Error saving performance data');
             logDebug('[Goal Portfolio Viewer] Intercepted performance data');
             notifyDataUpdates();
         },
@@ -5408,7 +5956,7 @@ let GoalTargetStore;
             }
             state.apiData.investible = data;
             state.readiness.endowus.investibleLoaded = true;
-            Storage.writeJson(STORAGE_KEYS.investible, data, 'Error saving investible data');
+            updateEndowusStore(current => ({ ...current, investible: data }), 'Error saving investible data');
             logDebug('[Goal Portfolio Viewer] Intercepted investible data');
             notifyDataUpdates();
         },
@@ -5418,7 +5966,7 @@ let GoalTargetStore;
             }
             state.apiData.summary = data;
             state.readiness.endowus.summaryLoaded = true;
-            Storage.writeJson(STORAGE_KEYS.summary, data, 'Error saving summary data');
+            updateEndowusStore(current => ({ ...current, summary: data }), 'Error saving summary data');
             logDebug('[Goal Portfolio Viewer] Intercepted summary data');
             notifyDataUpdates();
         },
@@ -5429,7 +5977,7 @@ let GoalTargetStore;
             const filteredRows = rows.filter(row => row && row.productType !== 'DPMS_HEADER');
             state.apiData.fsmHoldings = filteredRows;
             state.readiness.fsm.holdingsLoaded = true;
-            Storage.writeJson(STORAGE_KEYS.fsmHoldings, filteredRows, 'Error saving FSM holdings data');
+            updateFsmStore(current => ({ ...current, holdings: filteredRows }), 'Error saving FSM holdings data');
             logDebug('[Goal Portfolio Viewer] Intercepted FSM holdings data', { rows: filteredRows.length });
             notifyDataUpdates();
         },
@@ -5437,7 +5985,7 @@ let GoalTargetStore;
             const normalized = normalizeOcbcHoldingsPayload(data);
             state.apiData.ocbcHoldings = normalized;
             state.readiness.ocbc.holdingsLoaded = true;
-            Storage.writeJson(STORAGE_KEYS.ocbcHoldings, normalized, 'Error saving OCBC holdings data');
+            updateOcbcStore(current => ({ ...current, holdings: normalized }), 'Error saving OCBC holdings data');
             logDebug('[Goal Portfolio Viewer] Intercepted OCBC holdings data', {
                 assets: normalized.assets.length,
                 liabilities: normalized.liabilities.length
@@ -5614,8 +6162,8 @@ let GoalTargetStore;
 
     GoalTargetStore = {
         getTarget(goalId) {
-            const key = storageKeys.goalTarget(goalId);
-            const value = Storage.get(key, null, 'Error loading goal target percentage');
+            const storeValue = readEndowusStore().goalTargets[goalId];
+            const value = storeValue ?? Storage.get(storageKeys.goalTarget(goalId), null, 'Error loading goal target percentage');
             if (value === null) {
                 return null;
             }
@@ -5628,9 +6176,11 @@ let GoalTargetStore;
                 return null;
             }
             const validPercentage = Math.max(0, Math.min(100, numericPercentage));
-            const key = storageKeys.goalTarget(goalId);
-            const didSet = Storage.set(key, validPercentage, 'Error saving goal target percentage');
-            if (!didSet) {
+            const result = updateEndowusStore(current => ({
+                ...current,
+                goalTargets: { ...current.goalTargets, [goalId]: validPercentage }
+            }), 'Error saving goal target percentage');
+            if (!result.success) {
                 return null;
             }
             logDebug(`[Goal Portfolio Viewer] Saved goal target percentage for ${goalId}: ${validPercentage}%`);
@@ -5640,49 +6190,86 @@ let GoalTargetStore;
             return validPercentage;
         },
         clearTarget(goalId) {
-            const key = storageKeys.goalTarget(goalId);
-            Storage.remove(key, 'Error deleting goal target percentage');
+            const result = updateEndowusStore(current => {
+                const next = { ...current.goalTargets };
+                delete next[goalId];
+                return { ...current, goalTargets: next };
+            }, 'Error deleting goal target percentage');
+            if (!result.success) {
+                return;
+            }
             logDebug(`[Goal Portfolio Viewer] Deleted goal target percentage for ${goalId}`);
             if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                 SyncManager.scheduleSyncOnChange('target-clear');
             }
         },
         getFixed(goalId) {
-            const key = storageKeys.goalFixed(goalId);
-            return Storage.get(key, false, 'Error loading goal fixed state') === true;
+            const storeValue = readEndowusStore().goalFixed[goalId];
+            if (storeValue === true || storeValue === false) {
+                return storeValue === true;
+            }
+            return Storage.get(storageKeys.goalFixed(goalId), false, 'Error loading goal fixed state') === true;
         },
         setFixed(goalId, isFixed) {
-            const key = storageKeys.goalFixed(goalId);
-            Storage.set(key, isFixed === true, 'Error saving goal fixed state');
+            const result = updateEndowusStore(current => ({
+                ...current,
+                goalFixed: { ...current.goalFixed, [goalId]: isFixed === true }
+            }), 'Error saving goal fixed state');
+            if (!result.success) {
+                return;
+            }
             logDebug(`[Goal Portfolio Viewer] Saved goal fixed state for ${goalId}: ${isFixed === true}`);
             if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                 SyncManager.scheduleSyncOnChange('fixed-update');
             }
         },
         clearFixed(goalId) {
-            const key = storageKeys.goalFixed(goalId);
-            Storage.remove(key, 'Error deleting goal fixed state');
+            const result = updateEndowusStore(current => {
+                const next = { ...current.goalFixed };
+                delete next[goalId];
+                return { ...current, goalFixed: next };
+            }, 'Error deleting goal fixed state');
+            if (!result.success) {
+                return;
+            }
             logDebug(`[Goal Portfolio Viewer] Deleted goal fixed state for ${goalId}`);
             if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                 SyncManager.scheduleSyncOnChange('fixed-clear');
             }
         },
         getBucket(goalId) {
-            const key = storageKeys.goalBucket(goalId);
-            const value = utils.normalizeString(Storage.get(key, ''), '');
+            const cleared = readEndowusStore().clearedGoalBuckets[goalId] === true
+                || Storage.get(storageKeys.goalBucketCleared(goalId), false) === true;
+            if (cleared) {
+                return null;
+            }
+            const storeValue = utils.normalizeString(readEndowusStore().goalBuckets[goalId] || '', '');
+            const value = storeValue || utils.normalizeString(Storage.get(storageKeys.goalBucket(goalId), ''), '');
             return value || null;
         },
         setBucket(goalId, bucketName, options = {}) {
             const normalizedBucket = utils.normalizeString(bucketName, '');
-            const key = storageKeys.goalBucket(goalId);
-            const clearedKey = storageKeys.goalBucketCleared(goalId);
             if (!normalizedBucket) {
-                Storage.remove(key, 'Error deleting goal bucket assignment');
+                const result = updateEndowusStore(current => {
+                    const goalBuckets = { ...current.goalBuckets };
+                    delete goalBuckets[goalId];
+                    return { ...current, goalBuckets };
+                }, 'Error deleting goal bucket assignment');
+                if (!result.success) {
+                    return null;
+                }
                 return null;
             }
-            Storage.remove(clearedKey, 'Error deleting cleared goal bucket flag');
-            const didSet = Storage.set(key, normalizedBucket, 'Error saving goal bucket assignment');
-            if (!didSet) {
+            const result = updateEndowusStore(current => {
+                const clearedGoalBuckets = { ...current.clearedGoalBuckets };
+                delete clearedGoalBuckets[goalId];
+                return {
+                    ...current,
+                    goalBuckets: { ...current.goalBuckets, [goalId]: normalizedBucket },
+                    clearedGoalBuckets
+                };
+            }, 'Error saving goal bucket assignment');
+            if (!result.success) {
                 return null;
             }
             if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
@@ -5691,10 +6278,18 @@ let GoalTargetStore;
             return normalizedBucket;
         },
         clearBucket(goalId, options = {}) {
-            const key = storageKeys.goalBucket(goalId);
-            const clearedKey = storageKeys.goalBucketCleared(goalId);
-            Storage.remove(key, 'Error deleting goal bucket assignment');
-            Storage.set(clearedKey, true, 'Error saving cleared goal bucket flag');
+            const result = updateEndowusStore(current => {
+                const goalBuckets = { ...current.goalBuckets };
+                delete goalBuckets[goalId];
+                return {
+                    ...current,
+                    goalBuckets,
+                    clearedGoalBuckets: { ...current.clearedGoalBuckets, [goalId]: true }
+                };
+            }, 'Error saving cleared goal bucket flag');
+            if (!result.success) {
+                return;
+            }
             if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
                 SyncManager.scheduleSyncOnChange('bucket-clear');
             }
@@ -5709,53 +6304,36 @@ let GoalTargetStore;
         if (!apiDataState) {
             return;
         }
-        const performance = Storage.readJson(
-            STORAGE_KEYS.performance,
-            data => Array.isArray(data),
-            'Error loading performance data'
+        const rawEndowusStore = Storage.readJson(
+            STORAGE_KEYS.endowus,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error loading Endowus data'
         );
-        if (performance) {
-            apiDataState.performance = performance;
+        const endowusStore = rawEndowusStore ? normalizeEndowusStore(rawEndowusStore) : readEndowusStore();
+        if (Array.isArray(endowusStore.performance)) {
+            apiDataState.performance = endowusStore.performance;
             appState.readiness.endowus.performanceLoaded = true;
             logDebug('[Goal Portfolio Viewer] Loaded performance data from storage');
         }
-        const investible = Storage.readJson(
-            STORAGE_KEYS.investible,
-            data => Array.isArray(data),
-            'Error loading investible data'
-        );
-        if (investible) {
-            apiDataState.investible = investible;
+        if (Array.isArray(endowusStore.investible)) {
+            apiDataState.investible = endowusStore.investible;
             appState.readiness.endowus.investibleLoaded = true;
             logDebug('[Goal Portfolio Viewer] Loaded investible data from storage');
         }
-        const summary = Storage.readJson(
-            STORAGE_KEYS.summary,
-            data => Array.isArray(data),
-            'Error loading summary data'
-        );
-        if (summary) {
-            apiDataState.summary = summary;
+        if (Array.isArray(endowusStore.summary)) {
+            apiDataState.summary = endowusStore.summary;
             appState.readiness.endowus.summaryLoaded = true;
             logDebug('[Goal Portfolio Viewer] Loaded summary data from storage');
         }
-        const fsmHoldings = Storage.readJson(
-            STORAGE_KEYS.fsmHoldings,
-            data => Array.isArray(data),
-            'Error loading FSM holdings data'
-        );
-        if (fsmHoldings) {
-            apiDataState.fsmHoldings = fsmHoldings;
+        const fsmStore = readFsmStore();
+        if (Array.isArray(fsmStore.holdings)) {
+            apiDataState.fsmHoldings = fsmStore.holdings;
             appState.readiness.fsm.holdingsLoaded = true;
             logDebug('[Goal Portfolio Viewer] Loaded FSM holdings data from storage');
         }
-        const ocbcHoldings = Storage.readJson(
-            STORAGE_KEYS.ocbcHoldings,
-            data => data && typeof data === 'object' && Array.isArray(data.assets) && Array.isArray(data.liabilities),
-            'Error loading OCBC holdings data'
-        );
-        if (ocbcHoldings) {
-            apiDataState.ocbcHoldings = ocbcHoldings;
+        const ocbcStore = readOcbcStore();
+        if (ocbcStore.holdings && Array.isArray(ocbcStore.holdings.assets) && Array.isArray(ocbcStore.holdings.liabilities)) {
+            apiDataState.ocbcHoldings = ocbcStore.holdings;
             appState.readiness.ocbc.holdingsLoaded = true;
             logDebug('[Goal Portfolio Viewer] Loaded OCBC holdings data from storage');
         }
@@ -6873,6 +7451,51 @@ let GoalTargetStore;
         return item;
     }
 
+    function createKeyboardSelectableCard(element, { ariaLabel, onSelect }) {
+        if (!element) {
+            return element;
+        }
+        element.setAttribute('role', 'button');
+        element.setAttribute('tabindex', '0');
+        if (ariaLabel) {
+            element.setAttribute('aria-label', ariaLabel);
+        }
+        if (typeof onSelect === 'function') {
+            const handleSelect = event => {
+                if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') {
+                    return;
+                }
+                if (event.type === 'keydown') {
+                    event.preventDefault();
+                }
+                onSelect(event);
+            };
+            element.addEventListener('click', handleSelect);
+            element.addEventListener('keydown', handleSelect);
+        }
+        return element;
+    }
+
+    function createTableCell(value, className = null) {
+        return createElement('td', className, value);
+    }
+
+    function createPercentTargetInput(value, ariaLabel, onChange) {
+        const input = createElement('input', 'gpv-target-input');
+        input.type = 'number';
+        input.min = '0';
+        input.max = '100';
+        input.step = '0.01';
+        input.value = Number.isFinite(value) ? value.toFixed(2) : '';
+        if (ariaLabel) {
+            input.setAttribute('aria-label', ariaLabel);
+        }
+        if (typeof onChange === 'function') {
+            input.onchange = onChange;
+        }
+        return input;
+    }
+
     function buildBucketStatsFragment({
         endingBalanceDisplay,
         returnDisplay,
@@ -7319,9 +7942,9 @@ let GoalTargetStore;
         summaryViewModel.buckets.forEach(bucketModel => {
             const bucketCard = createElement('div', 'gpv-bucket-card');
             bucketCard.dataset.bucket = bucketModel.bucketName;
-            bucketCard.setAttribute('role', 'button');
-            bucketCard.setAttribute('tabindex', '0');
-            bucketCard.setAttribute('aria-label', `Open ${bucketModel.bucketName} bucket`);
+            createKeyboardSelectableCard(bucketCard, {
+                ariaLabel: `Open ${bucketModel.bucketName} bucket`
+            });
 
             const bucketHeader = createElement('div', 'gpv-bucket-header');
             const bucketTitle = createElement('h2', 'gpv-bucket-title', bucketModel.bucketName);
@@ -7462,33 +8085,73 @@ let GoalTargetStore;
         statusElement.setAttribute('aria-live', isError ? 'assertive' : 'polite');
     }
 
-    function buildBalanceCopyControls(goalTypeModel) {
-        const controls = createElement('div', 'gpv-balance-copy-controls');
-
-        const copyButton = createElement('button', 'gpv-section-toggle gpv-balance-copy-button', 'Copy balances row');
+    function buildCopyControls({
+        buttonLabel,
+        buttonAriaLabel = null,
+        emptyMessage,
+        successMessage,
+        copyText,
+        controlsClassName = 'gpv-balance-copy-controls',
+        buttonClassName = 'gpv-section-toggle gpv-balance-copy-button',
+        statusClassName = 'gpv-balance-copy-status'
+    }) {
+        const controls = createElement('div', controlsClassName);
+        const copyButton = createElement('button', buttonClassName, buttonLabel);
         copyButton.type = 'button';
-
-        const status = createElement('div', 'gpv-balance-copy-status');
+        if (buttonAriaLabel) {
+            copyButton.setAttribute('aria-label', buttonAriaLabel);
+        }
+        const status = createElement('div', statusClassName);
         status.setAttribute('role', 'status');
         status.setAttribute('aria-live', 'polite');
-
+        status.setAttribute('aria-atomic', 'true');
         copyButton.addEventListener('click', async () => {
-            const matchingGoals = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
-            if (matchingGoals.length === 0) {
-                setBalanceCopyFeedback(status, 'No goals to copy');
-                return;
-            }
             try {
-                await copyTextToClipboard(buildGoalBalancesTsvRow(matchingGoals));
-                setBalanceCopyFeedback(status, `Copied ${matchingGoals.length} balances`);
+                const payload = typeof copyText === 'function' ? copyText() : '';
+                if (!payload) {
+                    setBalanceCopyFeedback(status, emptyMessage || 'Nothing to copy');
+                    return;
+                }
+                await copyTextToClipboard(payload);
+                const success = typeof successMessage === 'function' ? successMessage(payload) : successMessage;
+                setBalanceCopyFeedback(status, success || 'Copied');
             } catch (_error) {
                 setBalanceCopyFeedback(status, 'Copy failed', 'error');
             }
         });
-
         controls.appendChild(copyButton);
         controls.appendChild(status);
         return controls;
+    }
+
+    function buildValueCopyControls({
+        variant = 'inline',
+        controlsClassName = '',
+        ...copyControlOptions
+    }) {
+        const variantClassName = variant === 'section' ? 'gpv-balance-copy-controls--section' : '';
+        const mergedControlsClassName = ['gpv-balance-copy-controls', variantClassName, controlsClassName]
+            .filter(Boolean)
+            .join(' ');
+        return buildCopyControls({
+            ...copyControlOptions,
+            controlsClassName: mergedControlsClassName
+        });
+    }
+
+    function buildBalanceCopyControls(goalTypeModel) {
+        return buildValueCopyControls({
+            buttonLabel: 'Copy balances row',
+            emptyMessage: 'No goals to copy',
+            successMessage: () => {
+                const matchingGoals = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
+                return `Copied ${matchingGoals.length} balances`;
+            },
+            copyText: () => {
+                const matchingGoals = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
+                return matchingGoals.length > 0 ? buildGoalBalancesTsvRow(matchingGoals) : '';
+            }
+        });
     }
 
     function renderBucketView({
@@ -8865,11 +9528,7 @@ function renderSyncOverlayView({
         overlay.remove();
     };
 
-    const header = document.createElement('div');
-    header.className = 'gpv-header';
-
-    const headerButtons = document.createElement('div');
-    headerButtons.className = 'gpv-header-buttons';
+    const actionButtons = [];
 
     if (typeof onBack === 'function') {
         const backBtn = document.createElement('button');
@@ -8881,7 +9540,7 @@ function renderSyncOverlayView({
             closeOverlay();
             onBack();
         };
-        headerButtons.appendChild(backBtn);
+        actionButtons.push(backBtn);
     }
 
     const closeBtn = document.createElement('button');
@@ -8889,15 +9548,16 @@ function renderSyncOverlayView({
     closeBtn.type = 'button';
     closeBtn.textContent = '✕';
     closeBtn.onclick = closeOverlay;
-    headerButtons.appendChild(closeBtn);
-
-    const titleNode = document.createElement('h1');
-    titleNode.textContent = title;
+    const { header } = buildOverlayHeader({
+        title,
+        actionButtons,
+        closeButton: closeBtn
+    });
     const titleId = 'gpv-sync-overlay-title';
-    titleNode.id = titleId;
-
-    header.appendChild(titleNode);
-    header.appendChild(headerButtons);
+    const headerTitleNode = header.querySelector('h1');
+    if (headerTitleNode) {
+        headerTitleNode.id = titleId;
+    }
 
     const body = document.createElement('div');
     body.className = 'gpv-content';
@@ -9113,7 +9773,7 @@ function createConflictDialogHTML(conflict) {
 }
 
 function buildGoalNameMap() {
-    const cached = Storage.readJson(STORAGE_KEYS.summary, null);
+    const cached = readEndowusStore().summary;
     const goalMap = Array.isArray(cached)
         ? utils.indexBy(cached, item => item?.goalId)
         : null;
@@ -9376,8 +10036,8 @@ syncUi.update = function updateSyncUI() {
                 --gpv-line-height: 1.45;
                 --gpv-space-1: 6px;
                 --gpv-space-2: 8px;
-                --gpv-space-3: 12px;
-                --gpv-space-4: 16px;
+                --gpv-space-3: 10px;
+                --gpv-space-4: 14px;
                 --gpv-space-5: 20px;
                 --gpv-space-6: 24px;
                 --gpv-radius-sm: 8px;
@@ -9567,7 +10227,7 @@ syncUi.update = function updateSyncUI() {
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                padding: 16px 24px;
+                padding: 14px 20px;
                 border-bottom: 1px solid #e5e7eb;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 border-radius: 20px 20px 0 0;
@@ -9591,7 +10251,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-header-buttons {
                 display: flex;
                 align-items: center;
-                gap: 12px;
+                gap: 10px;
             }
             
             .gpv-close-btn {
@@ -9599,8 +10259,8 @@ syncUi.update = function updateSyncUI() {
                 border: none;
                 color: #ffffff;
                 font-size: 24px;
-                width: 36px;
-                height: 36px;
+                width: 34px;
+                height: 34px;
                 border-radius: 50%;
                 cursor: pointer;
                 display: flex;
@@ -9667,12 +10327,12 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-controls {
-                padding: 12px 24px;
+                padding: 10px 20px;
                 background: #f9fafb;
                 border-bottom: 1px solid #e5e7eb;
                 display: flex;
                 align-items: center;
-                gap: 12px;
+                gap: 10px;
             }
             
             .gpv-select-label {
@@ -9748,7 +10408,7 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-content {
                 overflow-y: auto;
-                padding: 16px 24px;
+                padding: 14px 20px;
                 flex: 1;
             }
             
@@ -9909,7 +10569,7 @@ syncUi.update = function updateSyncUI() {
                 border: 1px solid #dbeafe;
                 border-radius: 12px;
                 background: #f8fbff;
-                padding: 16px;
+                padding: 14px;
             }
 
             .gpv-readiness.gpv-readiness-ready {
@@ -10034,7 +10694,7 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-stats {
                 display: flex;
-                gap: 24px;
+                gap: 20px;
             }
 
             .gpv-bucket-stats {
@@ -10228,6 +10888,10 @@ syncUi.update = function updateSyncUI() {
             .gpv-balance-copy-controls--section {
                 justify-content: flex-start;
                 margin: 0 0 16px 0;
+            }
+
+            .gpv-balance-copy-controls--ocbc-values {
+                margin: 8px 0 10px 0;
             }
 
             .gpv-balance-copy-button {
@@ -11391,7 +12055,7 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-conflict-diff {
                     margin-bottom: 15px;
-                    padding: 16px;
+                    padding: 14px;
                     background: #f8fafc;
                     border-radius: 8px;
                     border: 1px solid #e5e7eb;
@@ -12053,14 +12717,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     // ============================================
 
     function loadFsmPortfolioConfig(fsmHoldings = []) {
-        const portfolios = normalizeFsmPortfolios(
-            Storage.readJson(STORAGE_KEYS.fsmPortfolios, data => Array.isArray(data), 'Error reading FSM portfolios') || []
-        );
-        const assignmentByCode = Storage.readJson(
-            STORAGE_KEYS.fsmAssignmentByCode,
-            data => data && typeof data === 'object' && !Array.isArray(data),
-            'Error reading FSM assignments'
-        ) || {};
+        const fsmStore = readFsmStore();
+        const portfolios = normalizeFsmPortfolios(Array.isArray(fsmStore.portfolios) ? fsmStore.portfolios : []);
+        const assignmentByCode = fsmStore.assignmentByCode && typeof fsmStore.assignmentByCode === 'object'
+            ? fsmStore.assignmentByCode
+            : {};
         const validPortfolioIds = new Set(portfolios.filter(item => item.archived !== true).map(item => item.id));
         const sanitizedAssignments = {};
         const codeCounts = buildFsmCodeCounts(fsmHoldings);
@@ -12084,29 +12745,37 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
     function saveFsmPortfolioConfig(portfolios, assignmentByCode) {
         const safePortfolios = normalizeFsmPortfolios(portfolios);
-        Storage.writeJson(STORAGE_KEYS.fsmPortfolios, safePortfolios, 'Error saving FSM portfolios');
-        Storage.writeJson(STORAGE_KEYS.fsmAssignmentByCode, assignmentByCode || {}, 'Error saving FSM assignments');
+        updateFsmStore(current => ({
+            ...current,
+            portfolios: safePortfolios,
+            assignmentByCode: assignmentByCode || {}
+        }), 'Error saving FSM portfolio config');
         if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
             SyncManager.scheduleSyncOnChange('fsm-portfolio-config-update');
         }
     }
 
     function getFsmTarget(code) {
-        const key = storageKeys.fsmTarget(code);
-        if (!Storage.has(key)) {
+        const store = readFsmStore();
+        const value = Object.prototype.hasOwnProperty.call(store.targetsByCode, code)
+            ? store.targetsByCode[code]
+            : Storage.get(storageKeys.fsmTarget(code), null);
+        if (value === null || value === undefined || value === '') {
             return null;
         }
-        const value = Storage.get(key, null);
         const parsed = Number(value);
         return Number.isFinite(parsed) ? parsed : null;
     }
 
     function getFsmFixedValue(code) {
-        const key = storageKeys.fsmFixed(code);
-        if (!Storage.has(key)) {
+        const store = readFsmStore();
+        if (Object.prototype.hasOwnProperty.call(store.fixedByCode, code)) {
+            return store.fixedByCode[code] === true;
+        }
+        if (!Storage.has(storageKeys.fsmFixed(code))) {
             return null;
         }
-        return Storage.get(key, false) === true;
+        return Storage.get(storageKeys.fsmFixed(code), false) === true;
     }
 
     function buildFsmCodeCounts(fsmHoldings) {
@@ -12262,20 +12931,16 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function buildFsmHeader({ overlay, cleanupCallbacks, titleText = 'Portfolio Viewer (FSM)', syncReturnTo = 'fsm' }) {
-        const header = createElement('div', 'gpv-header');
-        const title = createElement('h1', null, titleText);
-        const titleId = 'gpv-portfolio-title';
-        title.id = titleId;
-
-        const buttonContainer = createElement('div', 'gpv-header-buttons');
-        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
-        syncBtn.title = 'Configure cross-device sync';
-        syncBtn.onclick = () => {
-            if (typeof showSyncSettings === 'function') {
-                showSyncSettings({ returnTo: syncReturnTo });
-            }
+        const createSyncButton = () => {
+            const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
+            syncBtn.title = 'Configure cross-device sync';
+            syncBtn.onclick = () => {
+                if (typeof showSyncSettings === 'function') {
+                    showSyncSettings({ returnTo: syncReturnTo });
+                }
+            };
+            return syncBtn;
         };
-
         const closeBtn = createElement('button', 'gpv-close-btn', '✕');
         const closeOverlay = () => {
             if (!overlay.isConnected) {
@@ -12291,11 +12956,34 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         };
         closeBtn.onclick = closeOverlay;
 
-        buttonContainer.appendChild(syncBtn);
-        buttonContainer.appendChild(closeBtn);
-        header.appendChild(title);
-        header.appendChild(buttonContainer);
+        const { header, titleId } = buildOverlayHeader({
+            title: titleText,
+            actionButtons: [createSyncButton()],
+            closeButton: closeBtn
+        });
         return { header, closeBtn, titleId, closeOverlay };
+    }
+
+    function buildOverlayHeader({ title, actionButtons = [], closeButton, centerNode = null }) {
+        const header = createElement('div', 'gpv-header');
+        const titleNode = createElement('h1', null, title || 'Portfolio Viewer');
+        const titleId = 'gpv-portfolio-title';
+        titleNode.id = titleId;
+        const buttonContainer = createElement('div', 'gpv-header-buttons');
+        actionButtons.forEach(button => {
+            if (button) {
+                buttonContainer.appendChild(button);
+            }
+        });
+        if (closeButton) {
+            buttonContainer.appendChild(closeButton);
+        }
+        header.appendChild(titleNode);
+        if (centerNode) {
+            header.appendChild(centerNode);
+        }
+        header.appendChild(buttonContainer);
+        return { header, titleId };
     }
 
     function calculateFsmRowDrift(total, row) {
@@ -12567,10 +13255,15 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 ? 'gpv-fsm-overview-card gpv-fsm-overview-card--unassigned'
                 : 'gpv-fsm-overview-card';
             const buttonCard = createElement('div', className);
-            buttonCard.setAttribute('role', 'button');
-            buttonCard.setAttribute('tabindex', '0');
             buttonCard.dataset.scope = card.id;
-            buttonCard.setAttribute('aria-label', `Open ${card.label} holdings`);
+            createKeyboardSelectableCard(buttonCard, {
+                ariaLabel: `Open ${card.label} holdings`,
+                onSelect: () => {
+                    if (typeof onSelectScope === 'function') {
+                        onSelectScope(card.id);
+                    }
+                }
+            });
             buttonCard.innerHTML = `
                 <div class="gpv-fsm-overview-card-header">
                     <div>
@@ -12605,19 +13298,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 });
                 buttonCard.appendChild(reasonList);
             }
-            const handleSelect = event => {
-                if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') {
-                    return;
-                }
-                if (event.type === 'keydown') {
-                    event.preventDefault();
-                }
-                if (typeof onSelectScope === 'function') {
-                    onSelectScope(card.id);
-                }
-            };
-            buttonCard.addEventListener('click', handleSelect);
-            buttonCard.addEventListener('keydown', handleSelect);
             grid.appendChild(buttonCard);
         });
         wrapper.appendChild(grid);
@@ -12939,6 +13619,17 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             if (options.fixed === true) {
                 Storage.remove(storageKeys.fsmFixed(code));
             }
+            updateFsmStore(current => {
+                const targetsByCode = { ...current.targetsByCode };
+                const fixedByCode = { ...current.fixedByCode };
+                if (options.target === true) {
+                    delete targetsByCode[code];
+                }
+                if (options.fixed === true) {
+                    delete fixedByCode[code];
+                }
+                return { ...current, targetsByCode, fixedByCode };
+            });
         }
 
         const managerSection = createElement('div', 'gpv-fsm-section');
@@ -13298,7 +13989,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     const holdingId = row.holdingId || row.code;
                     if (!rawValue) {
                         delete targetErrorsByHoldingId[holdingId];
-                        Storage.remove(storageKeys.fsmTarget(holdingId));
+                        updateFsmStore(current => {
+                            const targetsByCode = { ...current.targetsByCode };
+                            delete targetsByCode[holdingId];
+                            return { ...current, targetsByCode };
+                        });
                         clearLegacyFsmAllocationKeys(row, holdingId, { target: true });
                         if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                             SyncManager.scheduleSyncOnChange('fsm-target-clear');
@@ -13313,7 +14008,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         return;
                     }
                     delete targetErrorsByHoldingId[holdingId];
-                    Storage.set(storageKeys.fsmTarget(holdingId), Number(parsed.toFixed(2)));
+                    updateFsmStore(current => ({
+                        ...current,
+                        targetsByCode: { ...current.targetsByCode, [holdingId]: Number(parsed.toFixed(2)) }
+                    }));
                     clearLegacyFsmAllocationKeys(row, holdingId, { target: true });
                     if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                         SyncManager.scheduleSyncOnChange('fsm-target-update');
@@ -13321,14 +14019,23 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     rerender();
                 },
                 onFixedChange: (holdingId, isFixed) => {
-                    Storage.set(storageKeys.fsmFixed(holdingId), isFixed);
+                    updateFsmStore(current => {
+                        const targetsByCode = { ...current.targetsByCode };
+                        if (isFixed) {
+                            delete targetsByCode[holdingId];
+                        }
+                        return {
+                            ...current,
+                            targetsByCode,
+                            fixedByCode: { ...current.fixedByCode, [holdingId]: isFixed }
+                        };
+                    });
                     const row = viewState.rows.find(item => (item.holdingId || item.code) === holdingId);
                     clearLegacyFsmAllocationKeys(row, holdingId, { target: isFixed, fixed: true });
                     if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                         SyncManager.scheduleSyncOnChange('fsm-fixed-update');
                     }
                     if (isFixed) {
-                        Storage.remove(storageKeys.fsmTarget(holdingId));
                         delete targetErrorsByHoldingId[holdingId];
                     }
                     rerender();
@@ -13511,7 +14218,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function getOcbcAllocationTargetPercent(viewKey, portfolioNo, subPortfolioId, bucketId, legacyProductType, legacyBucketId) {
-        const key = storageKeys.ocbcTarget(buildOcbcTargetScope(viewKey, portfolioNo, subPortfolioId, bucketId));
+        const ocbcStore = readOcbcStore();
+        const scope = buildOcbcTargetScope(viewKey, portfolioNo, subPortfolioId, bucketId);
+        if (Object.prototype.hasOwnProperty.call(ocbcStore.targetsByScope, scope)) {
+            return toOptionalFiniteNumber(ocbcStore.targetsByScope[scope]);
+        }
+        const key = storageKeys.ocbcTarget(scope);
         if (Storage.has(key)) {
             return toOptionalFiniteNumber(Storage.get(key, null));
         }
@@ -13520,7 +14232,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const normalizedLegacyProductType = utils.normalizeString(legacyProductType, '');
         if (!normalizedBucketId && normalizedLegacyProductType) {
             const legacyScopeBucketId = normalizedLegacyBucketId || utils.normalizeString(subPortfolioId, '');
-            const legacyKey = storageKeys.ocbcTarget(buildLegacyOcbcTargetScope(viewKey, normalizedLegacyProductType, legacyScopeBucketId));
+            const legacyScope = buildLegacyOcbcTargetScope(viewKey, normalizedLegacyProductType, legacyScopeBucketId);
+            if (Object.prototype.hasOwnProperty.call(ocbcStore.targetsByScope, legacyScope)) {
+                return toOptionalFiniteNumber(ocbcStore.targetsByScope[legacyScope]);
+            }
+            const legacyKey = storageKeys.ocbcTarget(legacyScope);
             if (Storage.has(legacyKey)) {
                 return toOptionalFiniteNumber(Storage.get(legacyKey, null));
             }
@@ -13592,46 +14308,57 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             data => data && typeof data === 'object' && !Array.isArray(data),
             'Error reading OCBC allocation buckets'
         ) || {};
-        const subPortfoliosByView = Storage.readJson(
+        const rawOcbcStore = Storage.readJson(
+            STORAGE_KEYS.ocbc,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error reading OCBC namespaced store'
+        );
+        const hasTopLevelOcbcStore = Boolean(rawOcbcStore);
+        const ocbcStore = readOcbcStore();
+        const legacySubPortfolios = Storage.readJson(
             STORAGE_KEYS.ocbcSubPortfolios,
             data => data && typeof data === 'object' && !Array.isArray(data),
             'Error reading OCBC sub-portfolios'
         ) || {};
-        const assignmentByCode = Storage.readJson(
+        const legacyAssignments = Storage.readJson(
             STORAGE_KEYS.ocbcAllocationAssignmentByCode,
             data => data && typeof data === 'object' && !Array.isArray(data),
             'Error reading OCBC allocation assignments'
         ) || {};
-        const orderByScope = normalizeOcbcOrderByScopeForUi(Storage.readJson(
+        const legacyOrderByScope = Storage.readJson(
             STORAGE_KEYS.ocbcAllocationOrderByScope,
             data => data && typeof data === 'object' && !Array.isArray(data),
             'Error reading OCBC allocation order'
-        ) || {});
+        ) || {};
+        const subPortfoliosByView = hasTopLevelOcbcStore
+            ? (ocbcStore.subPortfolios || {})
+            : (Object.keys(ocbcStore.subPortfolios || {}).length ? ocbcStore.subPortfolios : legacySubPortfolios);
+        const assignmentByCode = hasTopLevelOcbcStore
+            ? (ocbcStore.assignmentByCode || {})
+            : (Object.keys(ocbcStore.assignmentByCode || {}).length ? ocbcStore.assignmentByCode : legacyAssignments);
+        const orderByScope = normalizeOcbcOrderByScopeForUi(hasTopLevelOcbcStore
+            ? (ocbcStore.orderByScope || {})
+            : (Object.keys(ocbcStore.orderByScope || {}).length ? ocbcStore.orderByScope : legacyOrderByScope));
         return { bucketsByView, subPortfoliosByView, assignmentByCode, orderByScope };
     }
 
     function saveOcbcSubPortfoliosConfig(subPortfoliosByView, options = {}) {
-        Storage.writeJson(STORAGE_KEYS.ocbcSubPortfolios, subPortfoliosByView || {}, 'Error saving OCBC sub-portfolios');
+        updateOcbcStore(current => ({ ...current, subPortfolios: subPortfoliosByView || {} }), 'Error saving OCBC sub-portfolios');
         if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
             SyncManager.scheduleSyncOnChange('ocbc-sub-portfolios-update');
         }
     }
 
     function saveOcbcAllocationAssignmentsConfig(assignmentByCode, options = {}) {
-        Storage.writeJson(
-            STORAGE_KEYS.ocbcAllocationAssignmentByCode,
-            assignmentByCode || {},
-            'Error saving OCBC allocation assignments'
-        );
+        updateOcbcStore(current => ({ ...current, assignmentByCode: assignmentByCode || {} }), 'Error saving OCBC allocation assignments');
         if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
             SyncManager.scheduleSyncOnChange('ocbc-assignment-update');
         }
     }
 
     function saveOcbcAllocationOrderConfig(orderByScope, options = {}) {
-        Storage.writeJson(
-            STORAGE_KEYS.ocbcAllocationOrderByScope,
-            normalizeOcbcOrderByScopeForUi(orderByScope),
+        updateOcbcStore(
+            current => ({ ...current, orderByScope: normalizeOcbcOrderByScopeForUi(orderByScope) }),
             'Error saving OCBC allocation order'
         );
         if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
@@ -14051,43 +14778,50 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     const driftModel = targetPercent === null
                         ? { driftPercent: null, driftAmount: null }
                         : calculateAllocationDrift(subPortfolioValue, targetPercent, portfolioTotal);
-                    tr.appendChild(createElement('td', null, subPortfolio.name));
-                    tr.appendChild(createElement('td', null, formatMoney(subPortfolioValue)));
-                    tr.appendChild(createElement('td', null, formatPercent(currentPercent, { multiplier: 100, showSign: false })));
+                    tr.appendChild(createTableCell(subPortfolio.name));
+                    tr.appendChild(createTableCell(formatMoney(subPortfolioValue)));
+                    tr.appendChild(createTableCell(formatPercent(currentPercent, { multiplier: 100, showSign: false })));
 
                     const targetCell = createElement('td');
                     if (subPortfolio.id) {
-                        const targetInput = createElement('input', 'gpv-target-input');
-                        targetInput.type = 'number';
-                        targetInput.min = '0';
-                        targetInput.max = '100';
-                        targetInput.step = '0.01';
-                        targetInput.value = Number.isFinite(targetPercent) ? targetPercent.toFixed(2) : '';
-                        targetInput.setAttribute('aria-label', `Target percentage for portfolio ${portfolioNo} sub-portfolio ${subPortfolio.name}`);
-                        targetInput.onchange = () => {
+                        const targetInput = createPercentTargetInput(
+                            targetPercent,
+                            `Target percentage for portfolio ${portfolioNo} sub-portfolio ${subPortfolio.name}`,
+                            () => {
                             const parsed = toOptionalFiniteNumber(targetInput.value);
-                            const key = storageKeys.ocbcTarget(buildOcbcTargetScope(activeView, portfolioNo, subPortfolio.id, ''));
+                            const scope = buildOcbcTargetScope(activeView, portfolioNo, subPortfolio.id, '');
                             if (parsed === null) {
-                                Storage.remove(key);
+                                updateOcbcStore(current => {
+                                    const targetsByScope = { ...current.targetsByScope };
+                                    delete targetsByScope[scope];
+                                    return { ...current, targetsByScope };
+                                });
                                 if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                                     SyncManager.scheduleSyncOnChange('ocbc-target-clear');
                                 }
                             } else {
-                                Storage.set(key, Number(Math.min(100, Math.max(0, parsed)).toFixed(2)));
+                                updateOcbcStore(current => ({
+                                    ...current,
+                                    targetsByScope: {
+                                        ...current.targetsByScope,
+                                        [scope]: Number(Math.min(100, Math.max(0, parsed)).toFixed(2))
+                                    }
+                                }));
                                 if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                                     SyncManager.scheduleSyncOnChange('ocbc-target-update');
                                 }
                             }
                             rerender();
-                        };
+                            }
+                        );
                         targetCell.appendChild(targetInput);
                     } else {
                         targetCell.textContent = '-';
                     }
                     tr.appendChild(targetCell);
-                    tr.appendChild(createElement('td', getDriftSeverityClass(driftModel?.driftPercent), formatDriftDisplay(driftModel?.driftPercent, driftModel?.driftAmount)));
-                    tr.appendChild(createElement('td', null, String(subPortfolio.rows.length)));
-                    tr.appendChild(createElement('td', subPortfolioSummary?.profitClass, subPortfolioSummary?.profitDisplay || '-'));
+                    tr.appendChild(createTableCell(formatDriftDisplay(driftModel?.driftPercent, driftModel?.driftAmount), getDriftSeverityClass(driftModel?.driftPercent)));
+                    tr.appendChild(createTableCell(String(subPortfolio.rows.length)));
+                    tr.appendChild(createTableCell(subPortfolioSummary?.profitDisplay || '-', subPortfolioSummary?.profitClass));
                     subPortfolioBody.appendChild(tr);
                 });
                 section.appendChild(createElement(
@@ -14145,34 +14879,20 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
                         }, 0);
                         section.appendChild(createElement('p', 'gpv-sync-help gpv-ocbc-target-summary', `${subPortfolioName || subPortfolioId} instrument targets: ${buildAssignedCoverageText(configuredInstrumentTargets)}`));
-                        const status = createElement('span', 'gpv-balance-copy-status');
-                        status.setAttribute('role', 'status');
-                        status.setAttribute('aria-live', 'polite');
-                        status.setAttribute('aria-atomic', 'true');
-                        copyControls = createElement('div', 'gpv-balance-copy-controls gpv-balance-copy-controls--section');
-                        const copyButton = createElement('button', 'gpv-section-toggle gpv-balance-copy-button', 'Copy Values');
-                        copyButton.type = 'button';
-                        copyButton.setAttribute('aria-label', `Copy values for sub-portfolio ${subPortfolioName || subPortfolioId}`);
-                        copyButton.onclick = async () => {
-                            if (orderedRows.length === 0) {
-                                setBalanceCopyFeedback(status, 'No assigned instruments');
-                                return;
-                            }
-                            const valuesLine = orderedRows
+                        copyControls = buildValueCopyControls({
+                            variant: 'section',
+                            controlsClassName: 'gpv-balance-copy-controls--ocbc-values',
+                            buttonLabel: 'Copy Values',
+                            buttonAriaLabel: `Copy values for sub-portfolio ${subPortfolioName || subPortfolioId}`,
+                            emptyMessage: 'No assigned instruments',
+                            successMessage: () => `Copied ${orderedRows.length} values`,
+                            copyText: () => orderedRows
                                 .map(row => {
                                     const rawValue = row?.currentValueLcy;
                                     return rawValue === null || rawValue === undefined ? '' : String(rawValue);
                                 })
-                                .join('\t');
-                            try {
-                                await copyTextToClipboard(valuesLine);
-                                setBalanceCopyFeedback(status, `Copied ${orderedRows.length} values`);
-                            } catch (_error) {
-                                setBalanceCopyFeedback(status, 'Copy failed', 'error');
-                            }
-                        };
-                        copyControls.appendChild(copyButton);
-                        copyControls.appendChild(status);
+                                .join('\t')
+                        });
                     }
                     if (copyControls) {
                         section.appendChild(copyControls);
@@ -14221,30 +14941,37 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             ? getOcbcInstrumentTargetPercent(activeView, portfolioNo, effectiveSubPortfolioId, row)
                             : null;
                         if (effectiveSubPortfolioId) {
-                            const targetInput = createElement('input', 'gpv-target-input');
                             const inputSubPortfolioName = subPortfolioName || (persistedSubPortfolios.find(item => item.id === effectiveSubPortfolioId)?.name) || effectiveSubPortfolioId;
-                            targetInput.type = 'number';
-                            targetInput.min = '0';
-                            targetInput.max = '100';
-                            targetInput.step = '0.01';
-                            targetInput.value = Number.isFinite(targetPercent) ? targetPercent.toFixed(2) : '';
-                            targetInput.setAttribute('aria-label', `Target percentage for instrument ${row.displayTicker || row.code || row.name || '-'} in sub-portfolio ${inputSubPortfolioName}`);
-                            targetInput.onchange = () => {
+                            const targetInput = createPercentTargetInput(
+                                targetPercent,
+                                `Target percentage for instrument ${row.displayTicker || row.code || row.name || '-'} in sub-portfolio ${inputSubPortfolioName}`,
+                                () => {
                                 const parsed = toOptionalFiniteNumber(targetInput.value);
-                                const key = storageKeys.ocbcTarget(buildOcbcTargetScope(activeView, portfolioNo, effectiveSubPortfolioId, code));
+                                const scope = buildOcbcTargetScope(activeView, portfolioNo, effectiveSubPortfolioId, code);
                                 if (parsed === null) {
-                                    Storage.remove(key);
+                                    updateOcbcStore(current => {
+                                        const targetsByScope = { ...current.targetsByScope };
+                                        delete targetsByScope[scope];
+                                        return { ...current, targetsByScope };
+                                    });
                                     if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                                         SyncManager.scheduleSyncOnChange('ocbc-target-clear');
                                     }
                                 } else {
-                                    Storage.set(key, Number(Math.min(100, Math.max(0, parsed)).toFixed(2)));
+                                    updateOcbcStore(current => ({
+                                        ...current,
+                                        targetsByScope: {
+                                            ...current.targetsByScope,
+                                            [scope]: Number(Math.min(100, Math.max(0, parsed)).toFixed(2))
+                                        }
+                                    }));
                                     if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                                         SyncManager.scheduleSyncOnChange('ocbc-target-update');
                                     }
                                 }
                                 rerender();
-                            };
+                                }
+                            );
                             targetCell.appendChild(targetInput);
                         } else {
                             targetCell.textContent = '-';
@@ -14438,12 +15165,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         container.gpvCleanupCallbacks = cleanupCallbacks;
         overlay.gpvCleanupCallbacks = cleanupCallbacks;
 
-        const header = createElement('div', 'gpv-header');
-        const heading = createElement('h1', null, title || 'Portfolio Viewer');
-        const titleId = 'gpv-portfolio-title';
-        heading.id = titleId;
-
-        const buttonContainer = createElement('div', 'gpv-header-buttons');
         const closeBtn = createElement('button', 'gpv-close-btn', '✕');
         closeBtn.type = 'button';
 
@@ -14462,9 +15183,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
 
         closeBtn.onclick = closeOverlay;
-        buttonContainer.appendChild(closeBtn);
-        header.appendChild(heading);
-        header.appendChild(buttonContainer);
+        const { header, titleId } = buildOverlayHeader({
+            title: title || 'Portfolio Viewer',
+            closeButton: closeBtn
+        });
         container.appendChild(header);
 
         const contentDiv = createElement('div', 'gpv-content');
@@ -14602,11 +15324,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         container.gpvCleanupCallbacks = cleanupCallbacks;
         overlay.gpvCleanupCallbacks = cleanupCallbacks;
 
-        const header = createElement('div', 'gpv-header');
-        const title = createElement('h1', null, 'Portfolio Viewer');
-        const titleId = 'gpv-portfolio-title';
-        title.id = titleId;
-        
         // Add sync status indicator if sync is enabled
         const syncIndicatorContainer = createElement('div', 'gpv-sync-indicator-container');
         if (typeof createSyncIndicatorHTML === 'function') {
@@ -14620,9 +15337,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
         }
         
-        // Create button container for sync and close buttons
-        const buttonContainer = createElement('div', 'gpv-header-buttons');
-        
         // Add sync settings button
         const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
         syncBtn.title = 'Configure cross-device sync';
@@ -14634,6 +15348,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 alert('Sync settings are not available. Please ensure the sync module is loaded.');
             }
         };
+
+        const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary gpv-bucket-manage-btn', '🗂️ Buckets');
+        bucketManageBtn.type = 'button';
+        bucketManageBtn.title = 'Manage Endowus bucket assignments';
 
         let isOverlayExpanded = false;
         const expandBtn = createElement('button', 'gpv-expand-btn');
@@ -14679,14 +15397,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
 
         closeBtn.onclick = closeOverlay;
-        
-        buttonContainer.appendChild(syncBtn);
-        buttonContainer.appendChild(expandBtn);
-        buttonContainer.appendChild(closeBtn);
-        
-        header.appendChild(title);
-        header.appendChild(syncIndicatorContainer);
-        header.appendChild(buttonContainer);
+
+        const { header, titleId } = buildOverlayHeader({
+            title: 'Portfolio Viewer',
+            actionButtons: [bucketManageBtn, syncBtn, expandBtn],
+            closeButton: closeBtn,
+            centerNode: syncIndicatorContainer
+        });
         container.appendChild(header);
 
         const controls = createElement('div', 'gpv-controls');
@@ -14971,9 +15688,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             });
         }
 
-        const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary gpv-bucket-manage-btn', '🗂️ Buckets');
-        bucketManageBtn.type = 'button';
-        bucketManageBtn.title = 'Manage Endowus bucket assignments';
         bucketManageBtn.addEventListener('click', () => {
             const managerView = renderSyncOverlayView({
                 title: 'Bucket Manager',
@@ -14983,7 +15697,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             });
             setupBucketManagerListeners(managerView?.body);
         });
-        buttonContainer.insertBefore(bucketManageBtn, syncBtn);
 
         select.onchange = function() {
             renderView(select.value, { scrollToTop: true });

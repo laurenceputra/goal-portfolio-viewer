@@ -93,6 +93,56 @@
             }
         }
 
+        function getDemoFsmConfig() {
+            const equityId = 'ESG001|sub:ESG1';
+            const bondId = 'ESG002|sub:ESG2';
+            const growthId = 'ESG003|sub:ESG3';
+            const portfolios = [
+                { id: 'demo-fsm-core', name: 'Core Portfolio', archived: false },
+                { id: 'demo-fsm-growth', name: 'Growth Portfolio', archived: false }
+            ];
+            const assignmentByCode = {
+                [equityId]: 'demo-fsm-core',
+                [bondId]: 'demo-fsm-growth',
+                [growthId]: 'demo-fsm-core'
+            };
+            return {
+                equityId,
+                bondId,
+                growthId,
+                portfolios,
+                assignmentByCode
+            };
+        }
+
+        function seedFsmStoreBase() {
+            const { portfolios, assignmentByCode } = getDemoFsmConfig();
+            const existing = window.GM_getValue('fsm', null);
+            let existingStore = {};
+            if (typeof existing === 'string') {
+                try {
+                    const parsed = JSON.parse(existing);
+                    existingStore = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+                } catch (error) {
+                    existingStore = {};
+                }
+            } else if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+                existingStore = existing;
+            }
+            GM_setValue('fsm', JSON.stringify({
+                ...existingStore,
+                holdings: Array.isArray(existingStore.holdings) ? existingStore.holdings : [],
+                targetsByCode: existingStore.targetsByCode && typeof existingStore.targetsByCode === 'object' ? existingStore.targetsByCode : {},
+                fixedByCode: existingStore.fixedByCode && typeof existingStore.fixedByCode === 'object' ? existingStore.fixedByCode : {},
+                portfolios,
+                assignmentByCode
+            }));
+
+            // Keep legacy keys for compatibility with older userscript builds.
+            GM_setValue('fsm_portfolios', JSON.stringify(portfolios));
+            GM_setValue('fsm_assignment_by_code', JSON.stringify(assignmentByCode));
+        }
+
         function loadUserscript() {
             return new Promise((resolve, reject) => {
                 const script = document.createElement('script');
@@ -110,22 +160,25 @@
                 ? payload.data.flatMap(group => Array.isArray(group?.holdings) ? group.holdings : [])
                 : [];
             if (rows.length > 0) {
-                const equityId = 'ESG001|sub:ESG1';
-                const bondId = 'ESG002|sub:ESG2';
-                const growthId = 'ESG003|sub:ESG3';
+                const { equityId, bondId, growthId, portfolios, assignmentByCode } = getDemoFsmConfig();
+                GM_setValue('fsm', JSON.stringify({
+                    holdings: rows,
+                    targetsByCode: {
+                        [equityId]: 35.5
+                    },
+                    fixedByCode: {
+                        [bondId]: true
+                    },
+                    portfolios,
+                    assignmentByCode
+                }));
+
                 GM_setValue(`fsm_target_pct_${equityId}`, 35.5);
                 GM_setValue(`fsm_fixed_${bondId}`, true);
                 GM_setValue(`fsm_tag_${growthId}`, 'Core');
                 GM_setValue('fsm_tag_catalog', JSON.stringify(['Core', 'Satellite']));
-                GM_setValue('fsm_portfolios', JSON.stringify([
-                    { id: 'demo-fsm-core', name: 'Core Portfolio', archived: false },
-                    { id: 'demo-fsm-growth', name: 'Growth Portfolio', archived: false }
-                ]));
-                GM_setValue('fsm_assignment_by_code', JSON.stringify({
-                    [equityId]: 'demo-fsm-core',
-                    [bondId]: 'demo-fsm-growth',
-                    [growthId]: 'demo-fsm-core'
-                }));
+                GM_setValue('fsm_portfolios', JSON.stringify(portfolios));
+                GM_setValue('fsm_assignment_by_code', JSON.stringify(assignmentByCode));
             }
             return payload;
         }
@@ -160,6 +213,8 @@
             window.__GPV_E2E_READY__ = true;
             window.dispatchEvent(new Event('gpv:e2e-ready'));
         }
+
+        seedFsmStoreBase();
 
         loadUserscript()
             .then(bootstrapMockData)

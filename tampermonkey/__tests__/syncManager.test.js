@@ -328,7 +328,7 @@ describe('SyncManager', () => {
         SyncManager.applyConfigData(config);
 
         expect(storage.has(storageKeys.goalBucket('goal-1'))).toBe(false);
-        expect(storage.get(storageKeys.goalBucketCleared('goal-1'))).toBe(true);
+        expect(JSON.parse(storage.get('endowus')).clearedGoalBuckets['goal-1']).toBe(true);
     });
 
     test('collectConfigData emits v2 payload and excludes Endowus targets for fixed goals', () => {
@@ -351,7 +351,6 @@ describe('SyncManager', () => {
     test('applyConfigData skips Endowus targets when goal is fixed for v2 payload', () => {
         const { SyncManager, storageKeys } = loadModule();
         const targetKey = storageKeys.goalTarget('goal-1');
-        const fixedKey = storageKeys.goalFixed('goal-1');
 
         SyncManager.applyConfigData({
             version: 2,
@@ -374,7 +373,7 @@ describe('SyncManager', () => {
         });
 
         expect(storage.has(targetKey)).toBe(false);
-        expect(storage.get(fixedKey)).toBe(true);
+        expect(JSON.parse(storage.get('endowus')).goalFixed['goal-1']).toBe(true);
     });
 
     test('applyConfigData removes stale local keys absent from remote config', () => {
@@ -429,8 +428,8 @@ describe('SyncManager', () => {
         expect(storage.has(staleBucket)).toBe(false);
         expect(storage.has(staleFsmTarget)).toBe(false);
         expect(storage.has(staleFsmFixed)).toBe(false);
-        expect(storage.get(keptEndowusTarget)).toBe(35);
-        expect(storage.get(keptFsmTarget)).toBe(25);
+        expect(JSON.parse(storage.get('endowus')).goalTargets['kept-goal']).toBe(35);
+        expect(JSON.parse(storage.get('fsm')).targetsByCode.AAA).toBe(25);
     });
 
     test('enable persists remembered master key when remember-key is enabled', async () => {
@@ -576,7 +575,7 @@ describe('SyncManager', () => {
 
 
     test('applyConfigData migrates legacy v1 payload to Endowus keys', () => {
-        const { SyncManager, storageKeys } = loadModule();
+        const { SyncManager } = loadModule();
         SyncManager.applyConfigData({
             version: 1,
             goalTargets: { 'goal-2': 33 },
@@ -584,8 +583,78 @@ describe('SyncManager', () => {
             timestamp: Date.now()
         });
 
-        expect(storage.get(storageKeys.goalTarget('goal-2'))).toBe(33);
-        expect(storage.get(storageKeys.goalFixed('goal-3'))).toBe(true);
+        const endowus = JSON.parse(storage.get('endowus'));
+        expect(endowus.goalTargets).toEqual({ 'goal-2': 33 });
+        expect(endowus.goalFixed).toEqual({ 'goal-3': true });
+    });
+
+    test('collectConfigData migrates legacy platform keys and removes them', () => {
+        const { SyncManager } = loadModule();
+        storage.set('api_performance', JSON.stringify([{ goalId: 'goal-1' }]));
+        storage.set('goal_target_pct_goal-1', 25);
+        storage.set('goal_fixed_goal-2', true);
+        storage.set('fsm_portfolios', JSON.stringify([{ id: 'core', name: 'Core', archived: false }]));
+        storage.set('fsm_assignment_by_code', JSON.stringify({ AAA: 'core' }));
+        storage.set('fsm_target_pct_AAA', 20);
+        storage.set('api_fsm_holdings', JSON.stringify([{ code: 'AAA' }]));
+        storage.set('ocbc_sub_portfolios', JSON.stringify({ assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false }] } }));
+        storage.set('ocbc_allocation_assignment_by_code', JSON.stringify({ 'P-1:EQ1': 'core' }));
+        storage.set('ocbc_allocation_order_by_scope', JSON.stringify({ 'assets|P-1|core': ['P-1:EQ1'] }));
+        storage.set('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1', 50);
+        storage.set('api_ocbc_holdings', JSON.stringify({ assets: [{ code: 'P-1:EQ1' }], liabilities: [] }));
+        global.GM_listValues = () => Array.from(storage.keys());
+
+        const config = SyncManager.collectConfigData();
+
+        expect(config.platforms.endowus.goalTargets).toEqual({ 'goal-1': 25 });
+        expect(config.platforms.fsm.targetsByCode).toEqual({ AAA: 20 });
+        expect(config.platforms.ocbc.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 50 });
+        expect(storage.has('endowus')).toBe(true);
+        expect(storage.has('fsm')).toBe(true);
+        expect(storage.has('ocbc')).toBe(true);
+        expect(storage.has('api_performance')).toBe(false);
+        expect(storage.has('goal_target_pct_goal-1')).toBe(false);
+        expect(storage.has('fsm_portfolios')).toBe(false);
+        expect(storage.has('api_fsm_holdings')).toBe(false);
+        expect(storage.has('ocbc_sub_portfolios')).toBe(false);
+        expect(storage.has('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(false);
+    });
+
+    test('collectConfigData preserves existing top-level store over legacy values while cleaning legacy keys', () => {
+        const { SyncManager } = loadModule();
+        storage.set('endowus', JSON.stringify({
+            performance: null,
+            investible: null,
+            summary: null,
+            goalTargets: { 'goal-new': 77 },
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {}
+        }));
+        storage.set('goal_target_pct_goal-old', 10);
+        global.GM_listValues = () => Array.from(storage.keys());
+
+        const config = SyncManager.collectConfigData();
+
+        expect(config.platforms.endowus.goalTargets).toEqual({ 'goal-new': 77 });
+        expect(storage.has('goal_target_pct_goal-old')).toBe(false);
+    });
+
+    test('collectConfigData merges missing fields from legacy when top-level store is partial', () => {
+        const { SyncManager } = loadModule();
+        storage.set('endowus', JSON.stringify({ goalTargets: { 'goal-existing': 22 } }));
+        storage.set('goal_fixed_goal-legacy', true);
+        storage.set('goal_bucket_name_goal-legacy', 'Legacy Bucket');
+        global.GM_listValues = () => Array.from(storage.keys());
+
+        const config = SyncManager.collectConfigData();
+        const endowusStore = JSON.parse(storage.get('endowus'));
+
+        expect(config.platforms.endowus.goalTargets).toEqual({ 'goal-existing': 22 });
+        expect(config.platforms.endowus.goalFixed).toEqual({ 'goal-legacy': true });
+        expect(config.platforms.endowus.goalBuckets).toEqual({ 'goal-legacy': 'Legacy Bucket' });
+        expect(endowusStore.goalFixed).toEqual({ 'goal-legacy': true });
+        expect(storage.has('goal_fixed_goal-legacy')).toBe(false);
     });
 
     test('collectConfigData includes FSM namespaced sync keys', () => {
@@ -605,6 +674,7 @@ describe('SyncManager', () => {
         expect(config.platforms.fsm.fixedByCode).toEqual({ BBB: true });
         expect(config.platforms.fsm.portfolios).toEqual([{ id: 'core', name: 'Core', archived: false }]);
         expect(config.platforms.fsm.assignmentByCode).toEqual({ AAA: 'core', BBB: 'unassigned' });
+        expect(config.platforms.fsm.holdings).toBeUndefined();
     });
 
     test('applyConfigData stores FSM portfolio definitions and assignments', () => {
@@ -624,8 +694,105 @@ describe('SyncManager', () => {
             timestamp: Date.now()
         });
 
-        expect(JSON.parse(storage.get('fsm_portfolios'))).toEqual([{ id: 'income', name: 'Income', archived: false }]);
-        expect(JSON.parse(storage.get('fsm_assignment_by_code'))).toEqual({ AAPL: 'income', BOND: 'unassigned' });
+        const fsm = JSON.parse(storage.get('fsm'));
+        expect(fsm.portfolios).toEqual([{ id: 'income', name: 'Income', archived: false }]);
+        expect(fsm.assignmentByCode).toEqual({ AAPL: 'income', BOND: 'unassigned' });
+    });
+
+    test('applyConfigData throws when namespaced store write fails', () => {
+        const { SyncManager } = loadModule();
+        global.GM_setValue = jest.fn((key, value) => {
+            if (key === 'fsm') {
+                throw new Error('Write failed');
+            }
+            storage.set(key, value);
+        });
+
+        expect(() => SyncManager.applyConfigData({
+            version: 2,
+            platforms: {
+                endowus: { goalTargets: { 'goal-1': 20 }, goalFixed: {}, timestamp: Date.now() },
+                fsm: { targetsByCode: { AAA: 10 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
+                ocbc: { subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+            },
+            timestamp: Date.now()
+        })).toThrow('Failed to save FSM sync config data');
+    });
+
+    test('applyConfigData rolls back earlier namespaced writes when later write fails', () => {
+        const { SyncManager } = loadModule();
+        storage.set('endowus', JSON.stringify({
+            goalTargets: { legacy: 25 },
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {}
+        }));
+        storage.set('fsm', JSON.stringify({
+            targetsByCode: { LEGACY: 10 },
+            fixedByCode: {},
+            portfolios: [],
+            assignmentByCode: {}
+        }));
+
+        global.GM_setValue = jest.fn((key, value) => {
+            if (key === 'ocbc') {
+                throw new Error('Write failed');
+            }
+            storage.set(key, value);
+        });
+
+        expect(() => SyncManager.applyConfigData({
+            version: 2,
+            platforms: {
+                endowus: { goalTargets: { 'goal-1': 80 }, goalFixed: {}, timestamp: Date.now() },
+                fsm: { targetsByCode: { AAA: 33 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
+                ocbc: { subPortfolios: { assets: {} }, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+            },
+            timestamp: Date.now()
+        })).toThrow('Failed to save OCBC sync config data');
+
+        expect(JSON.parse(storage.get('endowus')).goalTargets).toEqual({ legacy: 25 });
+        expect(JSON.parse(storage.get('fsm')).targetsByCode).toEqual({ LEGACY: 10 });
+        expect(storage.has('ocbc')).toBe(false);
+    });
+
+    test('applyConfigData rollback restores legacy keys removed during pre-write store reads', () => {
+        const { SyncManager } = loadModule();
+        storage.set('endowus', JSON.stringify({
+            goalTargets: { keep: 25 },
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {}
+        }));
+        storage.set('fsm', JSON.stringify({
+            targetsByCode: {},
+            fixedByCode: {},
+            portfolios: [],
+            assignmentByCode: {}
+        }));
+        storage.set('goal_target_pct_legacy-goal', 42);
+        global.GM_listValues = () => Array.from(storage.keys());
+
+        global.GM_setValue = jest.fn((key, value) => {
+            if (key === 'ocbc') {
+                throw new Error('Write failed');
+            }
+            storage.set(key, value);
+        });
+
+        expect(() => SyncManager.applyConfigData({
+            version: 2,
+            platforms: {
+                endowus: { goalTargets: { 'goal-1': 80 }, goalFixed: {}, timestamp: Date.now() },
+                fsm: { targetsByCode: { AAA: 33 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
+                ocbc: { subPortfolios: { assets: {} }, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+            },
+            timestamp: Date.now()
+        })).toThrow('Failed to save OCBC sync config data');
+
+        expect(storage.get('goal_target_pct_legacy-goal')).toBe(42);
+        expect(JSON.parse(storage.get('endowus')).goalTargets).toEqual({ keep: 25 });
+        expect(storage.has('ocbc')).toBe(false);
     });
 
     test('collectConfigData includes OCBC config and excludes raw holdings', () => {
@@ -655,14 +822,50 @@ describe('SyncManager', () => {
         expect(config.platforms.ocbc.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 55 });
         expect(JSON.stringify(config)).not.toContain('api_ocbc_holdings');
         expect(JSON.stringify(config)).not.toContain('marketValueReferenceCcy');
+        expect(config.platforms.ocbc.holdings).toBeUndefined();
 
         storage.clear();
         global.GM_listValues = () => [];
         SyncManager.applyConfigData(config);
 
-        expect(JSON.parse(storage.get('ocbc_allocation_order_by_scope'))).toEqual({
+        expect(JSON.parse(storage.get('ocbc')).orderByScope).toEqual({
             'assets|P-1|core': ['P-1:EQ2', 'P-1:EQ1']
         });
+    });
+
+    test('collectConfigData excludes Endowus raw API payload fields', () => {
+        const { SyncManager } = loadModule();
+        storage.set('endowus', JSON.stringify({
+            performance: [{ goalId: 'goal-1' }],
+            investible: [{ goalId: 'goal-1' }],
+            summary: [{ goalId: 'goal-1' }],
+            goalTargets: { 'goal-1': 50 },
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {}
+        }));
+        global.GM_listValues = () => Array.from(storage.keys());
+
+        const config = SyncManager.collectConfigData();
+
+        expect(config.platforms.endowus.goalTargets).toEqual({ 'goal-1': 50 });
+        expect(config.platforms.endowus.performance).toBeUndefined();
+        expect(config.platforms.endowus.investible).toBeUndefined();
+        expect(config.platforms.endowus.summary).toBeUndefined();
+    });
+
+    test('collectConfigData does not run legacy cleanup repeatedly without legacy keys', () => {
+        const { SyncManager } = loadModule();
+        const deleteSpy = jest.spyOn(global, 'GM_deleteValue');
+        storage.set('endowus', JSON.stringify({ performance: null, investible: null, summary: null, goalTargets: {}, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} }));
+        storage.set('fsm', JSON.stringify({ holdings: [], targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} }));
+        storage.set('ocbc', JSON.stringify({ holdings: null, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {} }));
+        global.GM_listValues = () => ['endowus', 'fsm', 'ocbc'];
+
+        SyncManager.collectConfigData();
+        SyncManager.collectConfigData();
+
+        expect(deleteSpy).not.toHaveBeenCalled();
     });
 
     test('hashConfigData ignores OCBC timestamp-only differences', async () => {
@@ -701,10 +904,8 @@ describe('SyncManager', () => {
         expect(firstHash).toBe(secondHash);
     });
 
-    test('applyConfigData stores OCBC config and removes stale OCBC targets', () => {
+    test('applyConfigData stores OCBC config in namespaced store', () => {
         const { SyncManager } = loadModule();
-        storage.set('ocbc_target_pct_assets|P-1|old|P-1%3AOLD', 10);
-        global.GM_listValues = () => ['ocbc_target_pct_assets|P-1|old|P-1%3AOLD'];
 
         SyncManager.applyConfigData({
             version: 2,
@@ -721,10 +922,10 @@ describe('SyncManager', () => {
             timestamp: Date.now()
         });
 
-        expect(JSON.parse(storage.get('ocbc_sub_portfolios')).assets['P-1'][0].buckets).toBeUndefined();
-        expect(JSON.parse(storage.get('ocbc_allocation_assignment_by_code'))).toEqual({ 'P-1:EQ1': 'core' });
-        expect(storage.has('ocbc_target_pct_assets|P-1|old|P-1%3AOLD')).toBe(false);
-        expect(storage.get('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(60);
+        const ocbc = JSON.parse(storage.get('ocbc'));
+        expect(ocbc.subPortfolios.assets['P-1'][0].buckets).toBeUndefined();
+        expect(ocbc.assignmentByCode).toEqual({ 'P-1:EQ1': 'core' });
+        expect(ocbc.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 60 });
     });
 
     describe('multi-device reconciliation', () => {
@@ -817,7 +1018,7 @@ describe('SyncManager', () => {
 
         test('resolveConflict(remote) records attempt time separately from remote data timestamp', async () => {
             seedConfiguredState();
-            const { SyncManager, storageKeys } = loadModule();
+            const { SyncManager } = loadModule();
             unlockSync(SyncManager);
 
             const remoteTimestamp = 2_000_000_000_000;
@@ -851,7 +1052,7 @@ describe('SyncManager', () => {
             await expect(SyncManager.resolveConflict('remote', conflict)).resolves.toBeUndefined();
 
             expect(document.dispatchEvent).toHaveBeenCalled();
-            expect(storage.get(storageKeys.goalTarget('goal-1'))).toBe(50);
+            expect(JSON.parse(storage.get('endowus')).goalTargets['goal-1']).toBe(50);
             expect(storage.get('sync_last_sync')).toBe(now);
             expect(storage.get('sync_last_sync_metadata_version')).toBe(2);
             expect(storage.get('sync_last_data_timestamp')).toBe(remoteTimestamp);
@@ -1094,7 +1295,7 @@ describe('SyncManager', () => {
             const syncPostCalls = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth'));
             expect(syncPostCalls).toHaveLength(0);
             expect(storage.has(localTargetKey)).toBe(false);
-            expect(storage.get(storageKeys.goalTarget('remote-goal'))).toBe(45);
+            expect(JSON.parse(storage.get('endowus')).goalTargets['remote-goal']).toBe(45);
             expect(storage.get('sync_last_sync')).toBe(serverTimestamp + 1);
             expect(storage.get('sync_last_data_timestamp')).toBe(serverTimestamp);
             expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
@@ -1233,7 +1434,7 @@ describe('SyncManager', () => {
 
             const postCountAfterRemoteSync = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth')).length;
             expect(postCountAfterRemoteSync).toBe(postCountBeforeRemoteSync);
-            expect(storage.get(storageKeys.goalTarget('goal-1'))).toBe(50);
+            expect(JSON.parse(storage.get('endowus')).goalTargets['goal-1']).toBe(50);
             expect(storage.get('sync_last_sync')).toBe(attemptTimestamp);
             expect(storage.get('sync_last_data_timestamp')).toBe(serverTimestamp);
         });
@@ -1242,7 +1443,7 @@ describe('SyncManager', () => {
             seedConfiguredState();
             storage.set('sync_access_token_expiry', Date.now() - 1_000);
             global.GM_xmlhttpRequest = undefined;
-            const { SyncManager, SyncEncryption, storageKeys } = loadModule();
+            const { SyncManager, SyncEncryption } = loadModule();
             unlockSync(SyncManager);
 
             const serverUrl = 'https://sync.example.com';
@@ -1337,7 +1538,7 @@ describe('SyncManager', () => {
             expect(storage.get('sync_last_sync')).toBe(serverTimestamp + 1);
             expect(storage.get('sync_last_data_timestamp')).toBe(serverTimestamp);
             expect(storage.get('sync_last_hash')).toEqual(expect.any(String));
-            expect(storage.get(storageKeys.goalTarget('goal-2'))).toBe(40);
+            expect(JSON.parse(storage.get('endowus')).goalTargets['goal-2']).toBe(40);
         });
     });
 

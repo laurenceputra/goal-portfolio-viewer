@@ -743,6 +743,68 @@ async function captureFsmFlow(page, summary, outputDir) {
         }, filterSeed.beforeCount, { timeout: 5000 });
         const restoredRowCount = await restoredCount.jsonValue();
         recordAssertion(summary, 'fsm-filtered-holdings', 'filter-clears-rows', Number.isFinite(restoredRowCount) && restoredRowCount >= filterSeed.beforeCount, 'Clearing FSM filter restores holdings rows and projection controls.');
+
+        const impossibleToken = `zzz-no-match-${Date.now()}`;
+        await fsmFilterInput.fill(impossibleToken);
+        await page.waitForFunction(token => {
+            const normalizedToken = String(token || '').toLowerCase();
+            const filterInputs = Array.from(document.querySelectorAll('input.gpv-fsm-filter-input'));
+            const filterInput = filterInputs.find(input => {
+                const style = window.getComputedStyle(input);
+                return style.display !== 'none'
+                    && style.visibility !== 'hidden'
+                    && input.getClientRects().length > 0;
+            }) || filterInputs[0] || null;
+            const filterValue = filterInput instanceof HTMLInputElement
+                ? filterInput.value.toLowerCase()
+                : '';
+            const tableWrap = document.querySelector('.gpv-fsm-table-wrap');
+            const rows = tableWrap ? Array.from(tableWrap.querySelectorAll('tbody tr')) : [];
+            const emptyState = document.querySelector('.gpv-conflict-diff-empty');
+            const emptyStateText = (emptyState?.textContent || '').toLowerCase();
+            const hasNoMatchEmptyState = Boolean(emptyState)
+                && (emptyStateText.includes('no matching holdings') || emptyStateText.includes('no holdings'));
+            const hasNoRowsState = Boolean(tableWrap) && rows.length === 0;
+
+            return filterValue === normalizedToken && (hasNoMatchEmptyState || hasNoRowsState);
+        }, impossibleToken, { timeout: 5000 });
+        const noMatchState = await page.evaluate(() => {
+            const overlay = document.querySelector('.gpv-overlay');
+            const tableWrap = document.querySelector('.gpv-fsm-table-wrap');
+            const emptyState = document.querySelector('.gpv-conflict-diff-empty');
+            const rows = tableWrap ? Array.from(tableWrap.querySelectorAll('tbody tr')) : [];
+            const filterInputs = Array.from(document.querySelectorAll('input.gpv-fsm-filter-input'));
+            const filterInput = filterInputs.find(input => {
+                const style = window.getComputedStyle(input);
+                return style.display !== 'none'
+                    && style.visibility !== 'hidden'
+                    && input.getClientRects().length > 0;
+            }) || filterInputs[0] || null;
+            const filterValue = filterInput instanceof HTMLInputElement ? filterInput.value : '';
+            const text = ((emptyState && emptyState.textContent)
+                || (tableWrap && tableWrap.textContent)
+                || (overlay && overlay.textContent)
+                || '').toLowerCase();
+            return {
+                filterValue,
+                hasTableWrap: Boolean(tableWrap),
+                hasEmptyState: Boolean(emptyState),
+                noVisibleRows: Boolean(tableWrap) && rows.length === 0,
+                hasNoMatchCopy: text.includes('no matching holdings') || text.includes('no holdings')
+            };
+        });
+        recordAssertion(
+            summary,
+            'fsm-filtered-holdings',
+            'no-match-state',
+            noMatchState.filterValue === impossibleToken
+                && (
+                    noMatchState.noVisibleRows
+                    || (noMatchState.hasEmptyState && noMatchState.hasNoMatchCopy)
+                ),
+            'FSM holdings filter shows a no-match state for impossible tokens.'
+        );
+        await fsmFilterInput.fill('');
     }
 
     const bulkApplyButtons = page.locator('.gpv-fsm-bulk-apply-btn');
@@ -1235,6 +1297,24 @@ async function captureOcbcFlow(page, summary, outputDir) {
         return allocationTextGone || text.includes('Portfolio 6500142646-2');
     }, null, { timeout: 5000 });
 
+    const portfolioAfterAllocationEdits = await page.$eval('.gpv-overlay', root => {
+        const text = root.textContent || '';
+        return {
+            hasAssetsFund: text.includes('OCBC Global Equity Opportunities Fund'),
+            excludesLiability: !text.includes('OCBC Investment Credit Line'),
+            modeControlsHidden: !text.includes('New sub-portfolio')
+        };
+    });
+    recordAssertion(
+        summary,
+        ocbcFlowName,
+        'portfolio-mode-after-allocation-edits',
+        portfolioAfterAllocationEdits.hasAssetsFund
+            && portfolioAfterAllocationEdits.excludesLiability
+            && portfolioAfterAllocationEdits.modeControlsHidden,
+        'OCBC portfolio mode remains asset-focused after allocation edits and before liabilities switch.'
+    );
+
     const liabilitiesValue = await page.$eval('#gpv-ocbc-view-select', select => {
         if (!(select instanceof HTMLSelectElement)) {
             return 'liabilities';
@@ -1314,6 +1394,25 @@ async function captureEndowusExtendedFlow(page, summary, outputDir) {
         });
         recordAssertion(summary, 'endowus-performance-mode', 'performance-panels', performanceModeReady, 'Endowus performance mode renders return/performance panels.');
         await captureScreenshot(page, summary, outputDir, 'endowus-performance-mode');
+
+        const allocationModeButtons = page.locator('.gpv-mode-btn[data-mode="allocation"]:visible');
+        assertCondition(await allocationModeButtons.count() > 0, 'Expected Endowus allocation mode button after entering performance mode.');
+        await allocationModeButtons.first().click();
+        await page.waitForFunction(() => {
+            const content = document.querySelector('.gpv-content');
+            if (!content) {
+                return false;
+            }
+            return content.classList.contains('gpv-mode-allocation')
+                && !content.classList.contains('gpv-mode-performance');
+        }, null, { timeout: 5000 });
+        const allocationModeReady = await page.$eval('.gpv-overlay', root => {
+            const content = root.querySelector('.gpv-content');
+            return Boolean(content
+                && content.classList.contains('gpv-mode-allocation')
+                && !content.classList.contains('gpv-mode-performance'));
+        });
+        recordAssertion(summary, 'endowus-performance-mode', 'returns-to-allocation', allocationModeReady, 'Endowus mode toggle returns cleanly to allocation mode after performance mode.');
     }
 
     const expandButtons = page.locator('.gpv-header-buttons .gpv-expand-btn');

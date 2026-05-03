@@ -75,10 +75,10 @@ describe('API interception', () => {
         await window.fetch('https://app.sg.endowus.com/v1/goals/performance');
         await flushPromises();
 
-        expect(global.GM_setValue).toHaveBeenCalledWith(
-            'api_performance',
-            JSON.stringify(performanceData)
-        );
+        const endowusCalls = global.GM_setValue.mock.calls.filter(([key]) => key === 'endowus');
+        const endowusCall = endowusCalls[endowusCalls.length - 1];
+        expect(endowusCall).toBeDefined();
+        expect(JSON.parse(endowusCall[1]).performance).toEqual(performanceData);
     });
 
 
@@ -111,18 +111,18 @@ describe('API interception', () => {
         await window.fetch('https://secure.fundsupermart.com/fsmone/rest/holding/client/protected/find-holdings-with-pnl');
         await flushPromises();
 
-        expect(global.GM_setValue).toHaveBeenCalledWith(
-            'api_fsm_holdings',
-            JSON.stringify([
-                {
-                    code: 'AAA',
-                    productType: 'STOCK',
-                    currentValueLcy: 1200,
-                    profitValueLcy: 120,
-                    profitPercentLcy: 10
-                }
-            ])
-        );
+        const fsmCalls = global.GM_setValue.mock.calls.filter(([key]) => key === 'fsm');
+        const fsmCall = fsmCalls[fsmCalls.length - 1];
+        expect(fsmCall).toBeDefined();
+        expect(JSON.parse(fsmCall[1]).holdings).toEqual([
+            {
+                code: 'AAA',
+                productType: 'STOCK',
+                currentValueLcy: 1200,
+                profitValueLcy: 120,
+                profitPercentLcy: 10
+            }
+        ]);
     });
 
     test('fetch interception stores normalized OCBC assets and liabilities separately', async () => {
@@ -195,10 +195,11 @@ describe('API interception', () => {
         }
         await flushPromises();
 
-        const ocbcStorageCall = global.GM_setValue.mock.calls.find(([key]) => key === 'api_ocbc_holdings');
+        const ocbcCalls = global.GM_setValue.mock.calls.filter(([key]) => key === 'ocbc');
+        const ocbcStorageCall = ocbcCalls[ocbcCalls.length - 1];
         expect(ocbcStorageCall).toBeDefined();
 
-        const normalized = JSON.parse(ocbcStorageCall[1]);
+        const normalized = JSON.parse(ocbcStorageCall[1]).holdings;
         expect(normalized).toMatchObject({
             assets: [
                 {
@@ -269,10 +270,7 @@ describe('API interception', () => {
         );
         await flushPromises();
 
-        expect(global.GM_setValue).not.toHaveBeenCalledWith(
-            'api_ocbc_holdings',
-            expect.any(String)
-        );
+        expect(global.GM_setValue).not.toHaveBeenCalledWith('ocbc', expect.any(String));
     });
 
     test('fetch interception ignores non-matching endpoints', async () => {
@@ -336,10 +334,10 @@ describe('API interception', () => {
         xhr.send();
         await flushPromises();
 
-        expect(global.GM_setValue).toHaveBeenCalledWith(
-            'api_summary',
-            JSON.stringify(summaryData)
-        );
+        const endowusCalls = global.GM_setValue.mock.calls.filter(([key]) => key === 'endowus');
+        const endowusCall = endowusCalls[endowusCalls.length - 1];
+        expect(endowusCall).toBeDefined();
+        expect(JSON.parse(endowusCall[1]).summary).toEqual(summaryData);
     });
 
     test('XMLHttpRequest interception ignores non-2xx responses', async () => {
