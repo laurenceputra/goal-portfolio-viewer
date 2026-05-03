@@ -14886,21 +14886,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return table;
     }
 
-    function buildOcbcRowsByPortfolioAndProductType(rows) {
-        return (Array.isArray(rows) ? rows : []).reduce((acc, row) => {
-            const portfolioNo = utils.normalizeString(row?.portfolioNo, '-');
-            const productType = utils.normalizeString(row?.productType, '-');
-            if (!acc[portfolioNo]) {
-                acc[portfolioNo] = {};
-            }
-            if (!acc[portfolioNo][productType]) {
-                acc[portfolioNo][productType] = [];
-            }
-            acc[portfolioNo][productType].push(row);
-            return acc;
-        }, {});
-    }
-
     function buildOcbcSummary(rows) {
         const safeRows = Array.isArray(rows) ? rows : [];
         const summary = buildFsmScopedSummary(safeRows.map(row => ({
@@ -14943,26 +14928,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             ],
             metricsClassName: 'gpv-stats gpv-detail-stats gpv-ocbc-detail-stats'
         });
-    }
-
-    function buildOcbcProductTypeHeader(productType, summary) {
-        const typeHeader = createElement('div', 'gpv-type-header');
-        const typeTitle = createElement('h3', null, productType);
-        const typeSummary = createElement('div', 'gpv-type-summary');
-
-        appendLabeledValue(typeSummary, null, 'Value:', formatMoney(summary?.total || 0));
-        appendLabeledValue(typeSummary, null, 'Holdings:', String(summary?.holdingsCount || 0));
-        appendLabeledValue(
-            typeSummary,
-            null,
-            'Profit:',
-            summary?.profitDisplay || '-',
-            { valueClass: summary?.profitClass === 'positive' || summary?.profitClass === 'negative' ? summary.profitClass : null }
-        );
-
-        typeHeader.appendChild(typeTitle);
-        typeHeader.appendChild(typeSummary);
-        return typeHeader;
     }
 
     function encodeOcbcTargetScopeSegment(value, fallback) {
