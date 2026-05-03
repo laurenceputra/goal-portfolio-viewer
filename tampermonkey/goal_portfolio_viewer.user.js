@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.12
+// @version      2.14.13
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -55,6 +55,7 @@
         endowus: 'endowus',
         fsm: 'fsm',
         ocbc: 'ocbc',
+        sync: 'sync',
         performance: 'api_performance',
         investible: 'api_investible',
         summary: 'api_summary',
@@ -135,6 +136,11 @@
         rememberKey: 'sync_remember_key',
         rememberedMasterKey: 'sync_master_key'
     };
+    const SYNC_STORAGE_FIELDS_BY_KEY = Object.freeze(Object.entries(SYNC_STORAGE_KEYS).reduce((acc, [field, key]) => {
+        acc[key] = field;
+        return acc;
+    }, {}));
+    const ACTIVE_SYNC_STORAGE_KEY_SET = new Set(Object.values(SYNC_STORAGE_KEYS));
 
     const SYNC_DEFAULTS = {
         serverUrl: 'https://goal-portfolio-sync.laurenceputra.workers.dev',
@@ -2877,7 +2883,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
     const Storage = {
         missing: Object.freeze({ __gpvStorageMissing: true }),
-        get(key, fallback, context) {
+        getRaw(key, fallback, context) {
             try {
                 return GM_getValue(key, fallback);
             } catch (error) {
@@ -2886,10 +2892,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 return fallback;
             }
         },
-        has(key, context) {
-            return Storage.get(key, Storage.missing, context) !== Storage.missing;
-        },
-        set(key, value, context) {
+        setRaw(key, value, context) {
             try {
                 GM_setValue(key, value);
                 return true;
@@ -2899,7 +2902,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 return false;
             }
         },
-        remove(key, context) {
+        removeRaw(key, context) {
             try {
                 GM_deleteValue(key);
                 return true;
@@ -2909,8 +2912,72 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 return false;
             }
         },
+        get(key, fallback, context) {
+            const syncField = SYNC_STORAGE_FIELDS_BY_KEY[key];
+            if (syncField) {
+                const syncStore = Storage.readJson(
+                    STORAGE_KEYS.sync,
+                    data => data && typeof data === 'object' && !Array.isArray(data),
+                    context || 'Error reading sync store'
+                ) || {};
+                if (Object.prototype.hasOwnProperty.call(syncStore, syncField)) {
+                    return syncStore[syncField];
+                }
+                if (Storage.hasRaw(key)) {
+                    return Storage.getRaw(key, fallback, context);
+                }
+                return fallback;
+            }
+            return Storage.getRaw(key, fallback, context);
+        },
+        has(key, context) {
+            return Storage.get(key, Storage.missing, context) !== Storage.missing;
+        },
+        hasRaw(key, context) {
+            return Storage.getRaw(key, Storage.missing, context) !== Storage.missing;
+        },
+        set(key, value, context) {
+            const syncField = SYNC_STORAGE_FIELDS_BY_KEY[key];
+            if (syncField) {
+                const syncStore = Storage.readJson(
+                    STORAGE_KEYS.sync,
+                    data => data && typeof data === 'object' && !Array.isArray(data),
+                    context || 'Error reading sync store'
+                ) || {};
+                syncStore[syncField] = value;
+                const didWrite = Storage.writeJson(STORAGE_KEYS.sync, syncStore, context || 'Error writing sync store');
+                if (didWrite && Storage.hasRaw(key)) {
+                    Storage.removeRaw(key, context || `Error deleting legacy sync key: ${key}`);
+                }
+                return didWrite;
+            }
+            return Storage.setRaw(key, value, context);
+        },
+        remove(key, context) {
+            const syncField = SYNC_STORAGE_FIELDS_BY_KEY[key];
+            if (syncField) {
+                const syncStore = Storage.readJson(
+                    STORAGE_KEYS.sync,
+                    data => data && typeof data === 'object' && !Array.isArray(data),
+                    context || 'Error reading sync store'
+                ) || {};
+                if (!Object.prototype.hasOwnProperty.call(syncStore, syncField)) {
+                    if (Storage.hasRaw(key)) {
+                        return Storage.removeRaw(key, context || `Error deleting legacy sync key: ${key}`);
+                    }
+                    return true;
+                }
+                delete syncStore[syncField];
+                const didWrite = Storage.writeJson(STORAGE_KEYS.sync, syncStore, context || 'Error writing sync store');
+                if (didWrite && Storage.hasRaw(key)) {
+                    Storage.removeRaw(key, context || `Error deleting legacy sync key: ${key}`);
+                }
+                return didWrite;
+            }
+            return Storage.removeRaw(key, context);
+        },
         readJson(key, validateFn, context) {
-            const stored = Storage.get(key, null, context);
+            const stored = Storage.getRaw(key, null, context);
             if (!stored) {
                 return null;
             }
@@ -2923,7 +2990,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             return parsed;
         },
         writeJson(key, value, context) {
-            return Storage.set(key, JSON.stringify(value), context);
+            return Storage.setRaw(key, JSON.stringify(value), context);
         }
     };
 
@@ -3122,6 +3189,94 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         Storage.remove(STORAGE_KEYS.ocbcAllocationOrderByScope, 'Error deleting legacy OCBC order data');
         removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.ocbcTarget, 'Error deleting legacy OCBC target key');
     }
+
+    function normalizeSyncStore(data) {
+        return data && typeof data === 'object' && !Array.isArray(data) ? { ...data } : {};
+    }
+
+    function readSyncStore() {
+        return normalizeSyncStore(Storage.readJson(
+            STORAGE_KEYS.sync,
+            data => data && typeof data === 'object' && !Array.isArray(data),
+            'Error loading sync store'
+        ));
+    }
+
+    function writeSyncStore(store, context = 'Error saving sync store') {
+        return Storage.writeJson(STORAGE_KEYS.sync, normalizeSyncStore(store), context);
+    }
+
+    function cleanupLegacySyncKeys() {
+        ACTIVE_SYNC_STORAGE_KEY_SET.forEach(key => {
+            Storage.removeRaw(key, `Error deleting legacy sync key: ${key}`);
+        });
+    }
+
+    function migrateLegacySyncStore() {
+        const currentSyncStore = readSyncStore();
+        const mergedSyncStore = { ...currentSyncStore };
+        let didMergeLegacy = false;
+
+        Object.entries(SYNC_STORAGE_KEYS).forEach(([field, legacyKey]) => {
+            if (Object.prototype.hasOwnProperty.call(mergedSyncStore, field)) {
+                return;
+            }
+            if (!Storage.hasRaw(legacyKey)) {
+                return;
+            }
+            mergedSyncStore[field] = Storage.getRaw(legacyKey, null, `Error reading legacy sync key: ${legacyKey}`);
+            didMergeLegacy = true;
+        });
+
+        if (didMergeLegacy) {
+            const didWrite = writeSyncStore(mergedSyncStore, 'Error writing merged sync store');
+            if (didWrite) {
+                cleanupLegacySyncKeys();
+            }
+            return;
+        }
+
+        cleanupLegacySyncKeys();
+    }
+
+    function cleanupStaleNamespacedKeys() {
+        if (typeof GM_listValues !== 'function') {
+            return;
+        }
+
+        let allKeys;
+        try {
+            allKeys = GM_listValues();
+        } catch (error) {
+            console.warn('[Goal Portfolio Viewer] Unable to enumerate storage keys for stale cleanup:', error);
+            return;
+        }
+        const allowedGpvExactKeys = new Set([VIEW_STATE_KEYS.bucketMode]);
+        const allowedGpvPrefixes = [STORAGE_KEY_PREFIXES.performanceCache, STORAGE_KEY_PREFIXES.collapseState];
+
+        allKeys.forEach(key => {
+            if (typeof key !== 'string') {
+                return;
+            }
+
+            if (key.startsWith('gpv_')) {
+                const isAllowed = allowedGpvExactKeys.has(key)
+                    || allowedGpvPrefixes.some(prefix => key.startsWith(prefix));
+                if (!isAllowed) {
+                    Storage.removeRaw(key, `Error deleting stale GPV key: ${key}`);
+                }
+            }
+
+            // Unknown flat sync_* keys are intentionally treated as stale post-migration;
+            // active sync state now lives under the exact "sync" store key.
+            if (key.startsWith('sync_') && !ACTIVE_SYNC_STORAGE_KEY_SET.has(key)) {
+                Storage.removeRaw(key, `Error deleting stale sync key: ${key}`);
+            }
+        });
+    }
+
+    migrateLegacySyncStore();
+    cleanupStaleNamespacedKeys();
 
     const legacyCleanupSessionState = {
         endowus: false,

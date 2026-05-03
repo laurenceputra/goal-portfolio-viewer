@@ -4880,4 +4880,74 @@ describe('initialization and URL monitoring', () => {
         expect(document.activeElement).toBe(filterInput);
     });
 
+    test('startup cleanup removes unknown gpv and sync keys but preserves allowed and unrelated keys', () => {
+        storage.set('gpv_shell_compare_selection', 'stale');
+        storage.set('gpv_unknown_flag', 'stale');
+        storage.set('gpv_bucket_mode', 'allocation');
+        storage.set('gpv_performance_goal-1', JSON.stringify({ fetchedAt: Date.now(), response: {} }));
+        storage.set('gpv_collapse_bucket|goal|performance', true);
+        storage.set('sync_unknown_key', 'stale');
+        storage.set('sync_server_url', 'https://legacy.example.com');
+        storage.set('endowus', '{}');
+        storage.set('goal_target_pct_goal-1', 30);
+        global.GM_listValues = jest.fn(() => Array.from(storage.keys()));
+
+        require('../goal_portfolio_viewer.user.js');
+
+        expect(storage.has('gpv_shell_compare_selection')).toBe(false);
+        expect(storage.has('gpv_unknown_flag')).toBe(false);
+        expect(storage.has('sync_unknown_key')).toBe(false);
+        expect(storage.has('gpv_bucket_mode')).toBe(true);
+        expect(storage.has('gpv_performance_goal-1')).toBe(true);
+        expect(storage.has('gpv_collapse_bucket|goal|performance')).toBe(true);
+        expect(storage.has('endowus')).toBe(true);
+        expect(storage.has('goal_target_pct_goal-1')).toBe(true);
+    });
+
+    test('startup cleanup skips non-string GM_listValues entries and still removes stale string keys', () => {
+        storage.set('gpv_shell_compare_selection', 'stale');
+        storage.set('sync_unknown_key', 'stale');
+        global.GM_listValues = jest.fn(() => [null, 123, {}, 'gpv_shell_compare_selection', 'sync_unknown_key']);
+
+        expect(() => {
+            require('../goal_portfolio_viewer.user.js');
+        }).not.toThrow();
+
+        expect(storage.has('gpv_shell_compare_selection')).toBe(false);
+        expect(storage.has('sync_unknown_key')).toBe(false);
+    });
+
+    test('startup cleanup no-ops when GM_listValues is unavailable', () => {
+        storage.set('gpv_shell_compare_selection', 'stale');
+        delete global.GM_listValues;
+
+        expect(() => {
+            require('../goal_portfolio_viewer.user.js');
+        }).not.toThrow();
+
+        expect(storage.has('gpv_shell_compare_selection')).toBe(true);
+    });
+
+    test('startup does not throw when GM_listValues throws and stale keys are preserved', () => {
+        storage.set('gpv_shell_compare_selection', 'stale');
+        storage.set('sync_unknown_key', 'stale');
+        global.GM_listValues = jest.fn(() => {
+            throw new Error('enumeration failed');
+        });
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        expect(() => {
+            require('../goal_portfolio_viewer.user.js');
+        }).not.toThrow();
+
+        expect(storage.get('gpv_shell_compare_selection')).toBe('stale');
+        expect(storage.get('sync_unknown_key')).toBe('stale');
+        expect(warnSpy).toHaveBeenCalledWith(
+            '[Goal Portfolio Viewer] Unable to enumerate storage keys for stale cleanup:',
+            expect.any(Error)
+        );
+
+        warnSpy.mockRestore();
+    });
+
 });
