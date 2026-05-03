@@ -16461,9 +16461,16 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const detailToolbarControls = [select, allocationButton, performanceButton];
 
         const contentDiv = createElement('div', 'gpv-content');
+        const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
+        const backToOverviewBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
+        backToOverviewBtn.type = 'button';
+        detailToolbar.appendChild(backToOverviewBtn);
         container.appendChild(contentDiv);
 
         let currentBucketMode = getBucketViewModePreference();
+        let viewMode = 'summary';
+        let selectedBucket = 'SUMMARY';
+        let nextFocusTarget = null;
         function updateModeToggle(mode) {
             const normalized = normalizeBucketViewMode(mode);
             allocationButton.classList.toggle('is-active', normalized === BUCKET_VIEW_MODES.allocation);
@@ -16546,34 +16553,77 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
 
         function showSummaryView() {
-            select.value = 'SUMMARY';
-            renderView('SUMMARY', { scrollToTop: true });
+            viewMode = 'summary';
+            selectedBucket = 'SUMMARY';
+            nextFocusTarget = 'summary';
+            renderView({ scrollToTop: true });
         }
 
-        function renderView(value, { scrollToTop = false, useCacheOnly = false } = {}) {
+        function getSummaryFocusFallbackTarget() {
+            const firstBucketCard = contentDiv.querySelector('.gpv-bucket-card');
+            if (firstBucketCard && typeof firstBucketCard.focus === 'function') {
+                return firstBucketCard;
+            }
+            if (closeBtn && typeof closeBtn.focus === 'function' && !closeBtn.disabled) {
+                return closeBtn;
+            }
+            const headerFocusable = container.querySelector(
+                '.gpv-header button:not([disabled]), .gpv-header [href], .gpv-header [tabindex]:not([tabindex="-1"])'
+            );
+            if (headerFocusable && typeof headerFocusable.focus === 'function') {
+                return headerFocusable;
+            }
+            if (container && typeof container.focus === 'function') {
+                return container;
+            }
+            return null;
+        }
+
+        function focusAfterRender() {
+            if (nextFocusTarget === 'detail') {
+                if (select && typeof select.focus === 'function') {
+                    select.focus();
+                }
+            } else if (nextFocusTarget === 'summary') {
+                const summaryFocusTarget = getSummaryFocusFallbackTarget();
+                if (summaryFocusTarget) {
+                    summaryFocusTarget.focus();
+                }
+            }
+            nextFocusTarget = null;
+        }
+
+        function renderView({ scrollToTop = false, useCacheOnly = false } = {}) {
+            let selection = viewMode === 'detail' ? selectedBucket : 'SUMMARY';
+            const selectionExists = Array.from(select.options).some(option => option.value === selection);
+            if (!selectionExists) {
+                viewMode = 'summary';
+                selectedBucket = 'SUMMARY';
+                selection = 'SUMMARY';
+            }
+            select.value = selection;
             performanceRefreshToken += 1;
             const refreshToken = performanceRefreshToken;
             ViewPipeline.render({
                 contentDiv,
-                selection: value,
+                selection,
                 mergedInvestmentDataState,
                 projectedInvestmentsState: state.projectedInvestments,
                 cleanupCallbacks,
                 onBucketSelect,
-                onPerformanceDataLoaded: createPerformanceDataLoadedHandler(value, refreshToken),
+                onPerformanceDataLoaded: createPerformanceDataLoadedHandler(selection, refreshToken),
                 useCacheOnly
             });
-            const isBucketView = value !== 'SUMMARY';
+            const isBucketView = viewMode === 'detail';
             controls.hidden = !isBucketView;
             setElementsDisabled(detailToolbarControls, !isBucketView);
             modeToggle.classList.toggle('gpv-mode-toggle--hidden', !isBucketView);
+            detailToolbar.hidden = !isBucketView;
+            backToOverviewBtn.disabled = !isBucketView;
             if (isBucketView) {
-                const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
-                const backBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
-                backBtn.type = 'button';
-                backBtn.onclick = showSummaryView;
-                detailToolbar.appendChild(backBtn);
-                contentDiv.insertBefore(detailToolbar, contentDiv.firstChild);
+                if (detailToolbar.parentNode !== contentDiv) {
+                    contentDiv.insertBefore(detailToolbar, contentDiv.firstChild);
+                }
                 applyBucketMode(currentBucketMode);
             } else {
                 contentDiv.classList.remove('gpv-mode-allocation', 'gpv-mode-performance');
@@ -16581,20 +16631,25 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             if (scrollToTop) {
                 scrollOverlayContentToTop(contentDiv);
             }
-            if (value !== 'SUMMARY' && currentBucketMode === BUCKET_VIEW_MODES.performance) {
+            if (isBucketView && currentBucketMode === BUCKET_VIEW_MODES.performance) {
                 expandPerformancePanels(contentDiv);
             }
+            focusAfterRender();
         }
 
         function onBucketSelect(bucket) {
             if (!bucket || !mergedInvestmentDataState[bucket]) {
                 return;
             }
-            select.value = bucket;
-            renderView(bucket, { scrollToTop: true });
+            viewMode = 'detail';
+            selectedBucket = bucket;
+            nextFocusTarget = 'detail';
+            renderView({ scrollToTop: true });
         }
 
-        renderView('SUMMARY');
+        backToOverviewBtn.onclick = showSummaryView;
+
+        renderView();
 
         const unsubscribeOverlayUpdates = subscribeDataUpdates(() => {
             if (!overlay.isConnected) {
@@ -16606,9 +16661,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 return;
             }
             mergedInvestmentDataState = refreshedReadiness.mergedInvestmentDataState;
-            const selectedValue = select.value;
-            refreshBucketSelectOptions(selectedValue);
-            renderView(select.value);
+            if (viewMode === 'detail' && !mergedInvestmentDataState[selectedBucket]) {
+                viewMode = 'summary';
+                selectedBucket = 'SUMMARY';
+            }
+            refreshBucketSelectOptions(viewMode === 'detail' ? selectedBucket : 'SUMMARY');
+            renderView();
         });
         cleanupCallbacks.push(unsubscribeOverlayUpdates);
 
@@ -16729,7 +16787,18 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         });
 
         select.onchange = function() {
-            renderView(select.value, { scrollToTop: true });
+            const nextSelection = utils.normalizeString(select.value, 'SUMMARY');
+            if (nextSelection === 'SUMMARY') {
+                showSummaryView();
+                return;
+            }
+            if (!mergedInvestmentDataState[nextSelection]) {
+                showSummaryView();
+                return;
+            }
+            viewMode = 'detail';
+            selectedBucket = nextSelection;
+            renderView({ scrollToTop: true });
         };
 
         overlay.appendChild(container);
