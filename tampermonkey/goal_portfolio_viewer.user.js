@@ -7909,6 +7909,14 @@ let GoalTargetStore;
         return createElement('td', className, value);
     }
 
+    function createWorkspaceTableWrapper(additionalClassName = '') {
+        return createElement('div', `gpv-table-wrap ${additionalClassName}`.trim());
+    }
+
+    function createManagerRow(additionalClassName = '') {
+        return createElement('div', `gpv-manager-row ${additionalClassName}`.trim());
+    }
+
     function createPercentTargetInput(value, ariaLabel, onChange) {
         const input = createElement('input', 'gpv-target-input');
         input.type = 'number';
@@ -10472,12 +10480,13 @@ syncUi.update = function updateSyncUI() {
                 --gpv-radius-sm: 8px;
                 --gpv-radius-md: 12px;
                 --gpv-radius-lg: 20px;
-                --gpv-color-text: #1f2937;
-                --gpv-color-muted: #6b7280;
-                --gpv-color-border: #e5e7eb;
-                --gpv-color-primary: #667eea;
-                --gpv-color-primary-strong: #4f46e5;
-                --gpv-color-success: #059669;
+                --gpv-color-text: #0f172a;
+                --gpv-color-muted: #475569;
+                --gpv-color-border: #dbe3ee;
+                --gpv-color-primary: #2563eb;
+                --gpv-color-primary-strong: #1d4ed8;
+                --gpv-color-success: #0d9488;
+                --gpv-color-warning: #d97706;
                 --gpv-color-danger: #dc2626;
             }
 
@@ -10533,11 +10542,11 @@ syncUi.update = function updateSyncUI() {
                 right: 20px;
                 z-index: 999999;
                 padding: 12px 24px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
                 color: #fff;
                 border: none;
                 border-radius: 12px;
-                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+                box-shadow: 0 4px 15px rgba(37, 99, 235, 0.35);
                 cursor: pointer;
                 font-size: 15px;
                 font-weight: 600;
@@ -10548,7 +10557,7 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-trigger-btn:hover {
                 transform: translateY(-2px);
-                box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+                box-shadow: 0 6px 20px rgba(37, 99, 235, 0.5);
             }
             
             .gpv-trigger-btn:active {
@@ -10561,7 +10570,7 @@ syncUi.update = function updateSyncUI() {
                 left: 0;
                 width: 100vw;
                 height: 100vh;
-                background: rgba(0, 0, 0, 0.75);
+                background: rgba(15, 23, 42, 0.6);
                 backdrop-filter: blur(8px);
                 z-index: 1000000;
                 display: flex;
@@ -10576,10 +10585,10 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-container {
-                background: #ffffff;
+                background: #f8fafd;
                 border-radius: 20px;
                 padding: 0;
-                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+                box-shadow: 0 24px 64px rgba(15, 23, 42, 0.24);
                 position: relative;
                 max-height: 85vh;
                 max-width: 1200px;
@@ -10657,8 +10666,8 @@ syncUi.update = function updateSyncUI() {
                 justify-content: space-between;
                 align-items: center;
                 padding: 14px 20px;
-                border-bottom: 1px solid #e5e7eb;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                border-bottom: 1px solid #dbe3ee;
+                background: linear-gradient(180deg, #f8fbff 0%, #f2f7ff 100%);
                 border-radius: 20px 20px 0 0;
             }
             
@@ -10666,7 +10675,7 @@ syncUi.update = function updateSyncUI() {
                 margin: 0;
                 font-size: var(--gpv-font-size-title);
                 font-weight: 700;
-                color: #ffffff;
+                color: #0f172a;
                 font-family: inherit;
             }
             
@@ -10684,9 +10693,9 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-close-btn {
-                background: rgba(255, 255, 255, 0.2);
+                background: #ffffff;
                 border: none;
-                color: #ffffff;
+                color: #334155;
                 font-size: 24px;
                 width: 34px;
                 height: 34px;
@@ -10700,14 +10709,14 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-close-btn:hover {
-                background: rgba(255, 255, 255, 0.3);
+                background: #f1f5f9;
                 transform: rotate(90deg);
             }
             
             .gpv-sync-btn {
-                background: rgba(255, 255, 255, 0.2);
+                background: #ffffff;
                 border: none;
-                color: #ffffff;
+                color: #1e293b;
                 font-size: 14px;
                 padding: 8px 16px;
                 border-radius: 18px;
@@ -10721,7 +10730,7 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-sync-btn:hover {
-                background: rgba(255, 255, 255, 0.3);
+                background: #e2e8f0;
                 transform: translateY(-1px);
                 box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
             }
@@ -10731,9 +10740,9 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-expand-btn {
-                background: rgba(255, 255, 255, 0.2);
+                background: #ffffff;
                 border: none;
-                color: #ffffff;
+                color: #1e293b;
                 font-size: 14px;
                 padding: 8px 14px;
                 border-radius: 18px;
@@ -10747,7 +10756,7 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-expand-btn:hover {
-                background: rgba(255, 255, 255, 0.3);
+                background: #e2e8f0;
                 transform: translateY(-1px);
             }
 
@@ -10755,13 +10764,15 @@ syncUi.update = function updateSyncUI() {
                 transform: translateY(0);
             }
             
-            .gpv-controls {
+            .gpv-controls,
+            .gpv-control-bar {
                 padding: 10px 20px;
-                background: #f9fafb;
-                border-bottom: 1px solid #e5e7eb;
+                background: #f8fafc;
+                border-bottom: 1px solid #dbe3ee;
                 display: flex;
                 align-items: center;
                 gap: 10px;
+                flex-wrap: wrap;
             }
             
             .gpv-select-label {
@@ -10773,7 +10784,7 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-select {
                 padding: 10px 18px;
-                border: 2px solid #e5e7eb;
+                border: 1px solid #cbd5e1;
                 border-radius: 8px;
                 font-size: var(--gpv-font-size-body);
                 font-weight: 500;
@@ -10786,13 +10797,13 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-select:hover {
-                border-color: #667eea;
+                border-color: #2563eb;
             }
             
             .gpv-select:focus {
                 outline: none;
-                border-color: #667eea;
-                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+                border-color: #2563eb;
+                box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
             }
 
             .gpv-mode-toggle {
@@ -10813,9 +10824,9 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-mode-btn {
-                border: 1px solid #c7d2fe;
-                background: #eef2ff;
-                color: #3730a3;
+                border: 1px solid #bfdbfe;
+                background: #eff6ff;
+                color: #1e3a8a;
                 padding: 6px 12px;
                 border-radius: 999px;
                 font-size: 13px;
@@ -10825,13 +10836,62 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-mode-btn.is-active {
-                background: #4f46e5;
-                border-color: #4338ca;
+                background: #1d4ed8;
+                border-color: #1e40af;
                 color: #ffffff;
             }
 
+            .gpv-workspace-surface,
+            .gpv-fsm-manager,
+            .gpv-bucket-manager,
+            .gpv-planning-panel,
+            .gpv-readiness,
+            .gpv-fsm-overview-card {
+                background: #ffffff;
+                border: 1px solid #dbe3ee;
+                border-radius: 12px;
+                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+            }
+
+            .gpv-metric-grid,
+            .gpv-summary-row {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+                gap: 10px;
+                align-items: stretch;
+            }
+
+            .gpv-metric-card,
+            .gpv-summary-card {
+                background: #f8fafc;
+                border: 1px solid #dbe3ee;
+                border-radius: 10px;
+                padding: 10px 12px;
+                font-size: 13px;
+            }
+
+            .gpv-manager-row,
+            .gpv-fsm-manager-row {
+                display: flex;
+                gap: 10px;
+                margin-bottom: 14px;
+                align-items: center;
+                flex-wrap: wrap;
+            }
+
+            .gpv-table-wrap,
+            .gpv-fsm-table-wrap {
+                width: 100%;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                border: 1px solid #dbe3ee;
+                border-radius: 10px;
+                background: #ffffff;
+                margin-bottom: var(--gpv-space-4);
+            }
+
             .gpv-mode-btn:focus-visible {
-                outline: 2px solid rgba(79, 70, 229, 0.5);
+                outline: 2px solid rgba(37, 99, 235, 0.55);
                 outline-offset: 2px;
             }
             
@@ -11394,14 +11454,14 @@ syncUi.update = function updateSyncUI() {
                 width: 100%;
                 border-collapse: separate;
                 border-spacing: 0;
-                border: 1px solid #e5e7eb;
+                border: 1px solid #dbe3ee;
                 border-radius: 8px;
                 overflow: hidden;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             }
             
             .gpv-table thead tr {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                background: #eaf1fb;
             }
             
             .gpv-table th {
@@ -11409,7 +11469,7 @@ syncUi.update = function updateSyncUI() {
                 text-align: right;
                 font-weight: 700;
                 font-size: 12px;
-                color: #ffffff;
+                color: #334155;
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
                 white-space: nowrap;
@@ -11428,7 +11488,7 @@ syncUi.update = function updateSyncUI() {
                 text-align: right;
                 font-size: 14px;
                 color: #1f2937;
-                border-top: 1px solid #e5e7eb;
+                border-top: 1px solid #e2e8f0;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             }
             
@@ -11437,15 +11497,15 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-table tbody tr:hover {
-                background-color: #f3f4f6;
+                background-color: #f8fafc;
             }
 
             .gpv-table tbody tr.gpv-goal-row:hover + tr.gpv-goal-metrics-row {
-                background-color: #f3f4f6;
+                background-color: #f8fafc;
             }
 
             .gpv-table tbody tr.gpv-goal-metrics-row:hover {
-                background-color: #f3f4f6;
+                background-color: #f8fafc;
             }
 
             .gpv-mode-allocation .gpv-column-return,
@@ -11510,12 +11570,6 @@ syncUi.update = function updateSyncUI() {
                 color: #111827;
                 font-size: 14px;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            }
-
-            .gpv-fsm-manager-row {
-                gap: 10px;
-                margin-bottom: 14px;
-                align-items: center;
             }
 
             .gpv-fsm-manager-row label {
@@ -11635,7 +11689,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-target-input {
                 width: 70px;
                 padding: 4px 8px;
-                border: 2px solid #e5e7eb;
+                border: 1px solid #cbd5e1;
                 border-radius: 6px;
                 font-size: 13px;
                 font-weight: 600;
@@ -11647,12 +11701,12 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-target-input:focus {
                 outline: none;
-                border-color: #667eea;
-                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+                border-color: #2563eb;
+                box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
             }
             
             .gpv-target-input:hover {
-                border-color: #667eea;
+                border-color: #2563eb;
             }
             
             .gpv-target-input::placeholder {
@@ -12324,46 +12378,46 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-btn-primary {
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
                     color: white;
                     border-radius: var(--gpv-radius-lg);
                     padding: var(--gpv-space-3) var(--gpv-space-6);
-                    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+                    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
                     font-weight: 600;
                 }
 
                 .gpv-sync-btn-primary:hover:not(:disabled) {
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
                     color: #fff;
                     transform: translateY(-2px);
-                    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+                    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.35);
                 }
 
                 .gpv-sync-btn-secondary {
-                    background: rgba(255, 255, 255, 0.2);
-                    color: #667eea;
-                    border: 2px solid #667eea;
+                    background: #f8fafc;
+                    color: #1e40af;
+                    border: 1px solid #bfdbfe;
                     border-radius: var(--gpv-radius-lg);
                     padding: var(--gpv-space-3) var(--gpv-space-6);
                     font-weight: 600;
                 }
 
                 .gpv-sync-btn-secondary:hover:not(:disabled) {
-                    background: rgba(255, 255, 255, 0.3);
+                    background: #eff6ff;
                     transform: translateY(-2px);
-                    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+                    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.18);
                 }
 
                 .gpv-header-buttons .gpv-bucket-manage-btn {
-                    background: rgba(255, 255, 255, 0.18);
-                    color: #ffffff;
-                    border: 2px solid rgba(255, 255, 255, 0.7);
+                    background: #eff6ff;
+                    color: #1e40af;
+                    border: 1px solid #bfdbfe;
                 }
 
                 .gpv-header-buttons .gpv-bucket-manage-btn:hover:not(:disabled) {
-                    background: rgba(255, 255, 255, 0.28);
-                    color: #ffffff;
-                    border-color: #ffffff;
+                    background: #dbeafe;
+                    color: #1e3a8a;
+                    border-color: #93c5fd;
                 }
 
                 .gpv-fsm-bulk-apply-btn:hover:not(:disabled) {
@@ -12560,8 +12614,7 @@ syncUi.update = function updateSyncUI() {
                 .gpv-fsm-manager,
                 .gpv-fsm-toolbar,
                 .gpv-fsm-manager-row,
-                .gpv-fsm-portfolio-list-row,
-                .gpv-summary-row {
+                .gpv-fsm-portfolio-list-row {
                     display: flex;
                     gap: var(--gpv-space-2);
                     align-items: center;
@@ -12574,6 +12627,12 @@ syncUi.update = function updateSyncUI() {
                     display: flex;
                     flex-direction: column;
                     gap: var(--gpv-space-3);
+                }
+
+                .gpv-manager-panel,
+                .gpv-fsm-manager,
+                .gpv-bucket-manager {
+                    padding: 12px;
                 }
 
                 .gpv-fsm-manager,
@@ -12589,14 +12648,6 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-fsm-section[hidden] {
                     display: none;
-                }
-
-                .gpv-summary-card {
-                    background: #f8fafc;
-                    border: 1px solid #e5e7eb;
-                    border-radius: 8px;
-                    padding: 8px 10px;
-                    font-size: 13px;
                 }
 
                 .gpv-summary-row {
@@ -12682,14 +12733,9 @@ syncUi.update = function updateSyncUI() {
                     margin-bottom: var(--gpv-space-4);
                 }
 
-                .gpv-fsm-table-wrap,
-                .gpv-table-wrap {
-                    margin-bottom: var(--gpv-space-4);
-                }
-
                 .gpv-fsm-overview-card {
                     background: #ffffff;
-                    border: 2px solid #e5e7eb;
+                    border: 1px solid #dbe3ee;
                     border-radius: 12px;
                     padding: 16px;
                     cursor: pointer;
@@ -12697,8 +12743,8 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-fsm-overview-card:hover {
-                    border-color: #667eea;
-                    box-shadow: 0 6px 18px rgba(102, 126, 234, 0.12);
+                    border-color: #60a5fa;
+                    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.12);
                     transform: translateY(-1px);
                 }
 
@@ -12786,12 +12832,6 @@ syncUi.update = function updateSyncUI() {
                     color: #b91c1c;
                 }
 
-                .gpv-fsm-table-wrap {
-                    width: 100%;
-                    overflow-x: auto;
-                    -webkit-overflow-scrolling: touch;
-                }
-
                 .gpv-fsm-table-portfolio-select {
                     min-width: 0;
                 }
@@ -12811,7 +12851,18 @@ syncUi.update = function updateSyncUI() {
                     min-width: 1120px;
                 }
 
+                .gpv-table-wrap .gpv-table,
+                .gpv-fsm-table-wrap .gpv-table {
+                    min-width: 960px;
+                }
+
                 .gpv-fsm-table-wrap thead th {
+                    position: sticky;
+                    top: 0;
+                    z-index: 1;
+                }
+
+                .gpv-table-wrap thead th {
                     position: sticky;
                     top: 0;
                     z-index: 1;
@@ -13486,9 +13537,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         onCancelRename,
         onArchive
     }) {
-        const manager = createElement('div', 'gpv-fsm-manager');
+        const manager = createElement('div', 'gpv-fsm-manager gpv-manager-panel');
         manager.innerHTML = `
-            <div class="gpv-fsm-manager-row">
+            <div class="gpv-manager-row gpv-fsm-manager-row">
                 <label for="gpv-fsm-create-portfolio">New portfolio</label>
                 <input id="gpv-fsm-create-portfolio" class="gpv-target-input" maxlength="${FSM_MAX_PORTFOLIO_NAME_LENGTH}" placeholder="Portfolio name" />
                 <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-fsm-create-portfolio-btn">Create</button>
@@ -13496,7 +13547,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         `;
         const list = createElement('div', 'gpv-fsm-portfolio-list');
         activePortfolios.forEach(item => {
-            const row = createElement('div', 'gpv-fsm-portfolio-list-row');
+            const row = createElement('div', 'gpv-manager-row gpv-fsm-portfolio-list-row');
 
             if (editingPortfolioId === item.id) {
                 const renameInput = createElement('input', 'gpv-target-input');
@@ -13578,27 +13629,27 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const showFixed = options.showFixed !== false;
         const showTargetAssigned = options.showTargetAssigned !== false;
         const showUnassigned = options.showUnassigned !== false;
-        const summaryRow = createElement('div', 'gpv-summary-row');
+        const summaryRow = createElement('div', 'gpv-summary-row gpv-metric-grid');
         const driftClassName = summary?.driftClass
-            ? `gpv-summary-card ${summary.driftClass}`
-            : 'gpv-summary-card';
+            ? `gpv-summary-card gpv-metric-card ${summary.driftClass}`
+            : 'gpv-summary-card gpv-metric-card';
         const profitClassName = summary?.profitClass === 'positive' || summary?.profitClass === 'negative'
             ? ` ${summary.profitClass}`
             : '';
         const profitCardHtml = showProfit
-            ? `<div class="gpv-summary-card"><strong>Profit:</strong> <span class="gpv-summary-profit-value${escapeHtml(profitClassName)}">${escapeHtml(summary?.profitDisplay || '-')}</span></div>`
+            ? `<div class="gpv-summary-card gpv-metric-card"><strong>Profit:</strong> <span class="gpv-summary-profit-value${escapeHtml(profitClassName)}">${escapeHtml(summary?.profitDisplay || '-')}</span></div>`
             : '';
         const fixedCardHtml = showFixed
-            ? `<div class="gpv-summary-card"><strong>Fixed:</strong> ${escapeHtml(String(summary.fixedCount))}</div>`
+            ? `<div class="gpv-summary-card gpv-metric-card"><strong>Fixed:</strong> ${escapeHtml(String(summary.fixedCount))}</div>`
             : '';
         const driftCardHtml = showDrift
             ? `<div class="${escapeHtml(driftClassName)}"><strong>Drift:</strong> ${escapeHtml(summary.driftDisplay)}</div>`
             : '';
         summaryRow.innerHTML = `
-            <div class="gpv-summary-card"><strong>Total Value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
-            ${showTargetAssigned ? `<div class="gpv-summary-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>` : ''}
-            <div class="gpv-summary-card"><strong>Holdings:</strong> ${escapeHtml(String(summary.holdingsCount))}</div>
-            ${showUnassigned ? `<div class="gpv-summary-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>` : ''}
+            <div class="gpv-summary-card gpv-metric-card"><strong>Total Value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
+            ${showTargetAssigned ? `<div class="gpv-summary-card gpv-metric-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>` : ''}
+            <div class="gpv-summary-card gpv-metric-card"><strong>Holdings:</strong> ${escapeHtml(String(summary.holdingsCount))}</div>
+            ${showUnassigned ? `<div class="gpv-summary-card gpv-metric-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>` : ''}
             ${profitCardHtml}
             ${fixedCardHtml}
             ${driftCardHtml}
@@ -14000,7 +14051,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             selectCell.appendChild(select);
             tbody.appendChild(tr);
         });
-        const tableWrapper = createElement('div', 'gpv-fsm-table-wrap');
+        const tableWrapper = createWorkspaceTableWrapper('gpv-fsm-table-wrap');
         tableWrapper.appendChild(table);
         return tableWrapper;
     }
@@ -15048,7 +15099,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         });
         container.appendChild(header);
 
-        const controls = createElement('div', 'gpv-controls');
+        const controls = createElement('div', 'gpv-controls gpv-control-bar');
         const viewLabel = createElement('label', 'gpv-select-label', 'View:');
         const viewSelect = createElement('select', 'gpv-select');
         const viewSelectId = 'gpv-ocbc-view-select';
@@ -15127,7 +15178,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     }
                 });
 
-                const managerRow = createElement('div', 'gpv-fsm-manager-row');
+                const managerRow = createManagerRow('gpv-fsm-manager-row');
                 const createSubPortfolioId = `gpv-ocbc-sub-portfolio-create-${activeView}-${encodeURIComponent(portfolioNo)}`;
                 const createSubPortfolioLabel = createElement('label', null, 'New sub-portfolio');
                 createSubPortfolioLabel.setAttribute('for', createSubPortfolioId);
@@ -15258,7 +15309,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     'gpv-sync-help gpv-ocbc-target-summary',
                     `Sub-portfolio targets: ${buildAssignedCoverageText(configuredSubPortfolioTargets)}`
                 ));
-                section.appendChild(subPortfolioRows);
+                const subPortfolioTableWrap = createWorkspaceTableWrapper('gpv-ocbc-sub-portfolio-table-wrap');
+                subPortfolioTableWrap.appendChild(subPortfolioRows);
+                section.appendChild(subPortfolioTableWrap);
 
                 const displayRows = buildFsmDisplayRows(portfolioRows, portfolioTotal);
                 const instrumentRowsBySubPortfolio = [{ id: '', name: 'Unassigned', rows: [] }];
@@ -15493,7 +15546,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         tr.appendChild(reorderCell);
                         holdingsBody.appendChild(tr);
                     });
-                    section.appendChild(holdingsTable);
+                    const holdingsTableWrap = createWorkspaceTableWrapper('gpv-ocbc-holdings-table-wrap');
+                    holdingsTableWrap.appendChild(holdingsTable);
+                    section.appendChild(holdingsTableWrap);
                 };
 
                 instrumentRowsBySubPortfolio.forEach(subPortfolio => {
@@ -15835,7 +15890,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         });
         container.appendChild(header);
 
-        const controls = createElement('div', 'gpv-controls');
+        const controls = createElement('div', 'gpv-controls gpv-control-bar');
         const selectLabel = createElement('label', 'gpv-select-label', 'View:');
         const select = createElement('select', 'gpv-select');
         function refreshBucketSelectOptions(preferredValue) {
@@ -16038,7 +16093,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const goalRows = collectEndowusGoalRows();
             if (!goalRows.length) {
                 return `
-                    <div class="gpv-bucket-manager">
+                    <div class="gpv-bucket-manager gpv-manager-panel">
                         <h3 class="gpv-bucket-manager-title">Bucket Manager</h3>
                         <p class="gpv-bucket-manager-empty">No goals available to assign.</p>
                     </div>
@@ -16061,18 +16116,20 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 </tr>
             `).join('');
             return `
-                <div class="gpv-bucket-manager">
+                <div class="gpv-bucket-manager gpv-manager-panel">
                     <h3 class="gpv-bucket-manager-title">Bucket Manager</h3>
                     <p class="gpv-bucket-manager-copy">Manage Endowus bucket assignments directly. Existing goals are seeded from naming and can be adjusted here without renaming goals.</p>
-                    <table class="gpv-table gpv-bucket-manager-table">
-                        <thead>
-                            <tr>
-                                <th>Goal</th>
-                                <th>Bucket</th>
-                            </tr>
-                        </thead>
-                        <tbody>${rowsHtml}</tbody>
-                    </table>
+                    <div class="gpv-table-wrap">
+                        <table class="gpv-table gpv-bucket-manager-table">
+                            <thead>
+                                <tr>
+                                    <th>Goal</th>
+                                    <th>Bucket</th>
+                                </tr>
+                            </thead>
+                            <tbody>${rowsHtml}</tbody>
+                        </table>
+                    </div>
                 </div>
             `;
         }

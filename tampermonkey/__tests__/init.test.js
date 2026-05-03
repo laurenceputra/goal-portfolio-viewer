@@ -3,6 +3,23 @@ const { setupDom, teardownDom } = require('./helpers/domSetup');
 describe('initialization and URL monitoring', () => {
     let storage;
 
+    const nextTableFrom = start => {
+        let current = start?.nextElementSibling || null;
+        while (current) {
+            if (current.tagName === 'TABLE') {
+                return current;
+            }
+            const wrappedTable = typeof current.querySelector === 'function'
+                ? current.querySelector('table')
+                : null;
+            if (wrappedTable) {
+                return wrappedTable;
+            }
+            current = current.nextElementSibling;
+        }
+        return null;
+    };
+
     beforeEach(() => {
         jest.resetModules();
         setupDom();
@@ -1520,13 +1537,6 @@ describe('initialization and URL monitoring', () => {
 
         expect(overlay.textContent).toContain('Core instrument targets:');
         const coreHeaderRow = coreHeading.parentElement;
-        const nextTableFrom = start => {
-            let current = start?.nextElementSibling || null;
-            while (current && current.tagName !== 'TABLE') {
-                current = current.nextElementSibling;
-            }
-            return current;
-        };
         const coreTable = nextTableFrom(coreHeaderRow);
 
         const unassignedHeaderRow = unassignedHeading.parentElement;
@@ -1605,13 +1615,6 @@ describe('initialization and URL monitoring', () => {
         const assignedHeading = Array.from(overlay.querySelectorAll('h3'))
             .find(node => node.textContent.trim() === 'Instrument allocation · Core');
         const assignedHeaderRow = assignedHeading?.parentElement;
-        const nextTableFrom = start => {
-            let current = start?.nextElementSibling || null;
-            while (current && current.tagName !== 'TABLE') {
-                current = current.nextElementSibling;
-            }
-            return current;
-        };
         const assignedTable = nextTableFrom(assignedHeaderRow);
         const eq1Row = Array.from(assignedTable?.querySelectorAll('tbody tr') || [])
             .find(row => row.textContent.includes('EQ1'));
@@ -2683,13 +2686,6 @@ describe('initialization and URL monitoring', () => {
 
         const coreSectionRow = Array.from(overlay.querySelectorAll('.gpv-ocbc-instrument-header-row'))
             .find(row => row.textContent.includes('Instrument allocation · Core'));
-        const nextTableFrom = start => {
-            let current = start?.nextElementSibling || null;
-            while (current && current.tagName !== 'TABLE') {
-                current = current.nextElementSibling;
-            }
-            return current;
-        };
         const coreTable = nextTableFrom(coreSectionRow);
         const getCodes = () => Array.from(coreTable.querySelectorAll('tbody tr td:first-child')).map(cell => cell.textContent.trim());
         expect(getCodes()).toEqual(['EQ1', 'EQ2', 'EQ3']);
@@ -3076,10 +3072,7 @@ describe('initialization and URL monitoring', () => {
 
         const coreSectionRow = Array.from(overlay.querySelectorAll('.gpv-ocbc-instrument-header-row'))
             .find(row => row.textContent.includes('Instrument allocation · Core'));
-        let coreTable = coreSectionRow?.nextElementSibling;
-        while (coreTable && coreTable.tagName !== 'TABLE') {
-            coreTable = coreTable.nextElementSibling;
-        }
+        const coreTable = nextTableFrom(coreSectionRow);
         const orderedCodes = Array.from(coreTable.querySelectorAll('tbody tr td:first-child')).map(cell => cell.textContent.trim());
         expect(orderedCodes.slice(0, 2)).toEqual(['ISIN-POS-A', 'ISIN-POS-B']);
 

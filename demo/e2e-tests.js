@@ -1217,10 +1217,19 @@ async function captureOcbcFlow(page, summary, outputDir) {
             .find(node => (node.textContent || '').includes(`Instrument allocation · ${subPortfolioName}`));
         const findNextTable = start => {
             let current = start?.nextElementSibling || null;
-            while (current && current.tagName !== 'TABLE') {
+            while (current) {
+                if (current.tagName === 'TABLE') {
+                    return current;
+                }
+                const wrappedTable = typeof current.querySelector === 'function'
+                    ? current.querySelector('table')
+                    : null;
+                if (wrappedTable) {
+                    return wrappedTable;
+                }
                 current = current.nextElementSibling;
             }
-            return current;
+            return null;
         };
         const table = findNextTable(heading);
         const renderedValues = table
@@ -1282,6 +1291,14 @@ async function captureOcbcFlow(page, summary, outputDir) {
     });
     recordAssertion(summary, ocbcFlowName, 'subportfolio-manager-controls', hasSubPortfolioManager, 'OCBC sub-portfolio manager controls are visible in allocation mode.');
     assertCondition(hasSubPortfolioManager, 'Expected OCBC sub-portfolio manager controls in allocation mode.');
+
+    const managerDraftValue = 'Review candidate';
+    const managerInput = page.locator('input[id^="gpv-ocbc-sub-portfolio-create-"]:visible').first();
+    assertCondition((await managerInput.count()) > 0, 'Expected visible OCBC sub-portfolio create input before manager screenshot.');
+    await managerInput.fill(managerDraftValue);
+    const managerDraftApplied = await managerInput.inputValue();
+    recordAssertion(summary, ocbcFlowName, 'subportfolio-manager-draft-visible', managerDraftApplied === managerDraftValue, 'OCBC manager screenshot includes an in-progress sub-portfolio draft input state.');
+
     await captureScreenshot(page, summary, outputDir, 'ocbc-subportfolio-manager');
 
     await page.selectOption('#gpv-ocbc-mode-select', 'portfolio');
