@@ -77,6 +77,17 @@
         performanceCache: 'gpv_performance_',
         collapseState: 'gpv_collapse_'
     };
+    const LEGACY_ENDOWUS_EXACT_KEYS = [STORAGE_KEYS.performance, STORAGE_KEYS.investible, STORAGE_KEYS.summary];
+    const LEGACY_ENDOWUS_PREFIXES = [STORAGE_KEY_PREFIXES.goalTarget, STORAGE_KEY_PREFIXES.goalFixed, STORAGE_KEY_PREFIXES.goalBucket];
+    const LEGACY_FSM_EXACT_KEYS = [STORAGE_KEYS.fsmHoldings, STORAGE_KEYS.fsmPortfolios, STORAGE_KEYS.fsmAssignmentByCode];
+    const LEGACY_FSM_PREFIXES = [STORAGE_KEY_PREFIXES.fsmTarget, STORAGE_KEY_PREFIXES.fsmFixed];
+    const LEGACY_OCBC_EXACT_KEYS = [
+        STORAGE_KEYS.ocbcHoldings,
+        STORAGE_KEYS.ocbcSubPortfolios,
+        STORAGE_KEYS.ocbcAllocationAssignmentByCode,
+        STORAGE_KEYS.ocbcAllocationOrderByScope
+    ];
+    const LEGACY_OCBC_PREFIXES = [STORAGE_KEY_PREFIXES.ocbcTarget];
     const VIEW_STATE_KEYS = {
         bucketMode: 'gpv_bucket_mode'
     };
@@ -3074,6 +3085,71 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.ocbcTarget, 'Error deleting legacy OCBC target key');
     }
 
+    const legacyCleanupSessionState = {
+        endowus: false,
+        fsm: false,
+        ocbc: false
+    };
+
+    function hasAnyLegacyStoreKeys(exactKeys, prefixes) {
+        const allKeys = typeof GM_listValues === 'function' ? GM_listValues() : [];
+        const exact = new Set(Array.isArray(exactKeys) ? exactKeys : []);
+        const prefixList = Array.isArray(prefixes) ? prefixes : [];
+        return allKeys.some(key => {
+            if (exact.has(key)) {
+                return true;
+            }
+            return prefixList.some(prefix => key.startsWith(prefix));
+        });
+    }
+
+    function shouldCleanupLegacyEndowusKeysOnRead() {
+        if (legacyCleanupSessionState.endowus) {
+            return false;
+        }
+        const hasLegacyKeys = hasAnyLegacyStoreKeys(
+            [STORAGE_KEYS.performance, STORAGE_KEYS.investible, STORAGE_KEYS.summary],
+            [STORAGE_KEY_PREFIXES.goalTarget, STORAGE_KEY_PREFIXES.goalFixed, STORAGE_KEY_PREFIXES.goalBucket]
+        );
+        if (!hasLegacyKeys) {
+            legacyCleanupSessionState.endowus = true;
+        }
+        return hasLegacyKeys;
+    }
+
+    function shouldCleanupLegacyFsmKeysOnRead() {
+        if (legacyCleanupSessionState.fsm) {
+            return false;
+        }
+        const hasLegacyKeys = hasAnyLegacyStoreKeys(
+            [STORAGE_KEYS.fsmHoldings, STORAGE_KEYS.fsmPortfolios, STORAGE_KEYS.fsmAssignmentByCode],
+            [STORAGE_KEY_PREFIXES.fsmTarget, STORAGE_KEY_PREFIXES.fsmFixed]
+        );
+        if (!hasLegacyKeys) {
+            legacyCleanupSessionState.fsm = true;
+        }
+        return hasLegacyKeys;
+    }
+
+    function shouldCleanupLegacyOcbcKeysOnRead() {
+        if (legacyCleanupSessionState.ocbc) {
+            return false;
+        }
+        const hasLegacyKeys = hasAnyLegacyStoreKeys(
+            [
+                STORAGE_KEYS.ocbcHoldings,
+                STORAGE_KEYS.ocbcSubPortfolios,
+                STORAGE_KEYS.ocbcAllocationAssignmentByCode,
+                STORAGE_KEYS.ocbcAllocationOrderByScope
+            ],
+            [STORAGE_KEY_PREFIXES.ocbcTarget]
+        );
+        if (!hasLegacyKeys) {
+            legacyCleanupSessionState.ocbc = true;
+        }
+        return hasLegacyKeys;
+    }
+
     function collectLegacyEndowusConfigForStore() {
         const config = {
             goalTargets: {},
@@ -3298,16 +3374,21 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 const didWrite = writePlatformStore(STORAGE_KEYS.endowus, merged, 'Error writing merged Endowus store');
                 if (didWrite) {
                     cleanupLegacyEndowusKeys();
+                    legacyCleanupSessionState.endowus = true;
                 }
                 return merged;
             }
-            cleanupLegacyEndowusKeys();
+            if (shouldCleanupLegacyEndowusKeysOnRead()) {
+                cleanupLegacyEndowusKeys();
+                legacyCleanupSessionState.endowus = true;
+            }
             return normalized;
         }
         const migrated = collectLegacyEndowusStore();
         const didWrite = writePlatformStore(STORAGE_KEYS.endowus, migrated, 'Error writing migrated Endowus store');
         if (didWrite) {
             cleanupLegacyEndowusKeys();
+            legacyCleanupSessionState.endowus = true;
         }
         return migrated;
     }
@@ -3339,10 +3420,14 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                         ...Object.keys(legacy?.targetsByCode || {}),
                         ...Object.keys(legacy?.fixedByCode || {})
                     ]);
+                    legacyCleanupSessionState.fsm = true;
                 }
                 return merged;
             }
-            cleanupLegacyFsmKeys();
+            if (shouldCleanupLegacyFsmKeysOnRead()) {
+                cleanupLegacyFsmKeys();
+                legacyCleanupSessionState.fsm = true;
+            }
             return normalized;
         }
         const migrated = collectLegacyFsmStore();
@@ -3353,6 +3438,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 ...Object.keys(migrated?.targetsByCode || {}),
                 ...Object.keys(migrated?.fixedByCode || {})
             ]);
+            legacyCleanupSessionState.fsm = true;
         }
         return migrated;
     }
@@ -3372,16 +3458,21 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, merged, 'Error writing merged OCBC store');
                 if (didWrite) {
                     cleanupLegacyOcbcKeys();
+                    legacyCleanupSessionState.ocbc = true;
                 }
                 return merged;
             }
-            cleanupLegacyOcbcKeys();
+            if (shouldCleanupLegacyOcbcKeysOnRead()) {
+                cleanupLegacyOcbcKeys();
+                legacyCleanupSessionState.ocbc = true;
+            }
             return normalized;
         }
         const migrated = collectLegacyOcbcStore();
         const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, migrated, 'Error writing migrated OCBC store');
         if (didWrite) {
             cleanupLegacyOcbcKeys();
+            legacyCleanupSessionState.ocbc = true;
         }
         return migrated;
     }
@@ -4243,6 +4334,48 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             throw new Error('Invalid config data');
         }
 
+        const collectRelevantLegacyKeys = () => {
+            const exactKeys = [
+                ...LEGACY_ENDOWUS_EXACT_KEYS,
+                ...LEGACY_FSM_EXACT_KEYS,
+                ...LEGACY_OCBC_EXACT_KEYS
+            ];
+            const prefixes = [
+                ...LEGACY_ENDOWUS_PREFIXES,
+                ...LEGACY_FSM_PREFIXES,
+                ...LEGACY_OCBC_PREFIXES
+            ];
+            const relevant = new Set(exactKeys);
+            if (typeof GM_listValues === 'function') {
+                GM_listValues().forEach(key => {
+                    if (prefixes.some(prefix => key.startsWith(prefix))) {
+                        relevant.add(key);
+                    }
+                });
+            }
+            return Array.from(relevant);
+        };
+
+        const legacyKeysToSnapshot = collectRelevantLegacyKeys();
+        const legacySnapshotByKey = legacyKeysToSnapshot.reduce((acc, key) => {
+            acc[key] = Storage.has(key)
+                ? { exists: true, value: Storage.get(key, null, `Error reading legacy sync config snapshot for ${key}`) }
+                : { exists: false, value: null };
+            return acc;
+        }, {});
+
+        const rawSnapshotByKey = {
+            [STORAGE_KEYS.endowus]: Storage.has(STORAGE_KEYS.endowus)
+                ? { exists: true, value: Storage.get(STORAGE_KEYS.endowus, null, 'Error reading Endowus sync config snapshot') }
+                : { exists: false, value: null },
+            [STORAGE_KEYS.fsm]: Storage.has(STORAGE_KEYS.fsm)
+                ? { exists: true, value: Storage.get(STORAGE_KEYS.fsm, null, 'Error reading FSM sync config snapshot') }
+                : { exists: false, value: null },
+            [STORAGE_KEYS.ocbc]: Storage.has(STORAGE_KEYS.ocbc)
+                ? { exists: true, value: Storage.get(STORAGE_KEYS.ocbc, null, 'Error reading OCBC sync config snapshot') }
+                : { exists: false, value: null }
+        };
+
         const endowus = normalized.platforms.endowus || {};
         const endowusTargets = endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {};
         const endowusFixed = endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {};
@@ -4255,8 +4388,10 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             }
             return acc;
         }, {});
-        updateEndowusStore(current => ({
-            ...current,
+
+        const currentEndowusStore = readEndowusStore();
+        const updatedEndowusStore = normalizeEndowusStore({
+            ...currentEndowusStore,
             goalTargets: sanitizedEndowusTargets,
             goalFixed: Object.entries(endowusFixed).reduce((acc, [goalId, value]) => {
                 acc[goalId] = value === true;
@@ -4275,7 +4410,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 }
                 return acc;
             }, {})
-        }));
+        });
 
         const fsm = normalized.platforms.fsm || {};
         const fsmTargets = fsm.targetsByCode && typeof fsm.targetsByCode === 'object' ? fsm.targetsByCode : {};
@@ -4302,8 +4437,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 ? normalizedPortfolioId
                 : FSM_UNASSIGNED_PORTFOLIO_ID;
         });
-        updateFsmStore(current => ({
-            ...current,
+        const currentFsmStore = readFsmStore();
+        const updatedFsmStore = normalizeFsmStore({
+            ...currentFsmStore,
             targetsByCode: sanitizedFsmTargets,
             fixedByCode: Object.entries(fsmFixed).reduce((acc, [code, value]) => {
                 acc[code] = value === true;
@@ -4311,20 +4447,73 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             }, {}),
             portfolios: fsmPortfolios,
             assignmentByCode: sanitizedAssignments
-        }));
+        });
 
         const ocbc = normalized.platforms.ocbc || {};
         const ocbcSubPortfolios = normalizeOcbcSubPortfoliosConfig(ocbc.subPortfolios);
         const ocbcAssignmentByCode = normalizeOcbcAssignmentByCodeConfig(ocbc.assignmentByCode);
         const ocbcOrderByScope = normalizeOcbcOrderByScopeEntries(ocbc.orderByScope);
         const ocbcTargetsByScope = ocbc.targetsByScope && typeof ocbc.targetsByScope === 'object' ? ocbc.targetsByScope : {};
-        updateOcbcStore(current => ({
-            ...current,
+        const currentOcbcStore = readOcbcStore();
+        const updatedOcbcStore = normalizeOcbcStore({
+            ...currentOcbcStore,
             subPortfolios: ocbcSubPortfolios,
             assignmentByCode: ocbcAssignmentByCode,
             orderByScope: ocbcOrderByScope,
             targetsByScope: ocbcTargetsByScope
-        }));
+        });
+
+        const restoreNamespacedSnapshots = () => {
+            Object.entries(rawSnapshotByKey).forEach(([key, snapshot]) => {
+                if (snapshot.exists) {
+                    Storage.set(key, snapshot.value, `Error rolling back ${key} sync config data`);
+                    return;
+                }
+                Storage.remove(key, `Error rolling back ${key} sync config data`);
+            });
+
+            const currentRelevantLegacyKeys = new Set([
+                ...legacyKeysToSnapshot,
+                ...(typeof GM_listValues === 'function'
+                    ? GM_listValues().filter(key => (
+                        LEGACY_ENDOWUS_PREFIXES
+                            .concat(LEGACY_FSM_PREFIXES)
+                            .concat(LEGACY_OCBC_PREFIXES)
+                            .some(prefix => key.startsWith(prefix))
+                    ))
+                    : [])
+            ]);
+            currentRelevantLegacyKeys.forEach(key => {
+                const snapshot = legacySnapshotByKey[key] || { exists: false, value: null };
+                if (snapshot.exists) {
+                    Storage.set(key, snapshot.value, `Error rolling back legacy sync config data for ${key}`);
+                    return;
+                }
+                Storage.remove(key, `Error rolling back legacy sync config data for ${key}`);
+            });
+        };
+
+        const endowusResult = writePlatformStore(STORAGE_KEYS.endowus, updatedEndowusStore, 'Error saving Endowus store');
+        if (!endowusResult) {
+            restoreNamespacedSnapshots();
+            throw new Error('Failed to save Endowus sync config data');
+        }
+
+        const fsmResult = writePlatformStore(STORAGE_KEYS.fsm, updatedFsmStore, 'Error saving FSM store');
+        if (!fsmResult) {
+            restoreNamespacedSnapshots();
+            throw new Error('Failed to save FSM sync config data');
+        }
+
+        const ocbcResult = writePlatformStore(STORAGE_KEYS.ocbc, updatedOcbcStore, 'Error saving OCBC store');
+        if (!ocbcResult) {
+            restoreNamespacedSnapshots();
+            throw new Error('Failed to save OCBC sync config data');
+        }
+
+        cleanupLegacyEndowusKeys();
+        cleanupLegacyFsmKeys();
+        cleanupLegacyOcbcKeys();
 
         logDebug('[Goal Portfolio Viewer] Applied sync config data', {
             endowusTargets: Object.keys(endowusTargets).length,
@@ -6115,12 +6304,12 @@ let GoalTargetStore;
         if (!apiDataState) {
             return;
         }
-        const performance = Storage.readJson(
+        const rawEndowusStore = Storage.readJson(
             STORAGE_KEYS.endowus,
             data => data && typeof data === 'object' && !Array.isArray(data),
             'Error loading Endowus data'
         );
-        const endowusStore = performance ? normalizeEndowusStore(performance) : readEndowusStore();
+        const endowusStore = rawEndowusStore ? normalizeEndowusStore(rawEndowusStore) : readEndowusStore();
         if (Array.isArray(endowusStore.performance)) {
             apiDataState.performance = endowusStore.performance;
             appState.readiness.endowus.performanceLoaded = true;

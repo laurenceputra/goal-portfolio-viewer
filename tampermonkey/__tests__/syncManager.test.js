@@ -699,6 +699,102 @@ describe('SyncManager', () => {
         expect(fsm.assignmentByCode).toEqual({ AAPL: 'income', BOND: 'unassigned' });
     });
 
+    test('applyConfigData throws when namespaced store write fails', () => {
+        const { SyncManager } = loadModule();
+        global.GM_setValue = jest.fn((key, value) => {
+            if (key === 'fsm') {
+                throw new Error('Write failed');
+            }
+            storage.set(key, value);
+        });
+
+        expect(() => SyncManager.applyConfigData({
+            version: 2,
+            platforms: {
+                endowus: { goalTargets: { 'goal-1': 20 }, goalFixed: {}, timestamp: Date.now() },
+                fsm: { targetsByCode: { AAA: 10 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
+                ocbc: { subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+            },
+            timestamp: Date.now()
+        })).toThrow('Failed to save FSM sync config data');
+    });
+
+    test('applyConfigData rolls back earlier namespaced writes when later write fails', () => {
+        const { SyncManager } = loadModule();
+        storage.set('endowus', JSON.stringify({
+            goalTargets: { legacy: 25 },
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {}
+        }));
+        storage.set('fsm', JSON.stringify({
+            targetsByCode: { LEGACY: 10 },
+            fixedByCode: {},
+            portfolios: [],
+            assignmentByCode: {}
+        }));
+
+        global.GM_setValue = jest.fn((key, value) => {
+            if (key === 'ocbc') {
+                throw new Error('Write failed');
+            }
+            storage.set(key, value);
+        });
+
+        expect(() => SyncManager.applyConfigData({
+            version: 2,
+            platforms: {
+                endowus: { goalTargets: { 'goal-1': 80 }, goalFixed: {}, timestamp: Date.now() },
+                fsm: { targetsByCode: { AAA: 33 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
+                ocbc: { subPortfolios: { assets: {} }, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+            },
+            timestamp: Date.now()
+        })).toThrow('Failed to save OCBC sync config data');
+
+        expect(JSON.parse(storage.get('endowus')).goalTargets).toEqual({ legacy: 25 });
+        expect(JSON.parse(storage.get('fsm')).targetsByCode).toEqual({ LEGACY: 10 });
+        expect(storage.has('ocbc')).toBe(false);
+    });
+
+    test('applyConfigData rollback restores legacy keys removed during pre-write store reads', () => {
+        const { SyncManager } = loadModule();
+        storage.set('endowus', JSON.stringify({
+            goalTargets: { keep: 25 },
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {}
+        }));
+        storage.set('fsm', JSON.stringify({
+            targetsByCode: {},
+            fixedByCode: {},
+            portfolios: [],
+            assignmentByCode: {}
+        }));
+        storage.set('goal_target_pct_legacy-goal', 42);
+        global.GM_listValues = () => Array.from(storage.keys());
+
+        global.GM_setValue = jest.fn((key, value) => {
+            if (key === 'ocbc') {
+                throw new Error('Write failed');
+            }
+            storage.set(key, value);
+        });
+
+        expect(() => SyncManager.applyConfigData({
+            version: 2,
+            platforms: {
+                endowus: { goalTargets: { 'goal-1': 80 }, goalFixed: {}, timestamp: Date.now() },
+                fsm: { targetsByCode: { AAA: 33 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
+                ocbc: { subPortfolios: { assets: {} }, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+            },
+            timestamp: Date.now()
+        })).toThrow('Failed to save OCBC sync config data');
+
+        expect(storage.get('goal_target_pct_legacy-goal')).toBe(42);
+        expect(JSON.parse(storage.get('endowus')).goalTargets).toEqual({ keep: 25 });
+        expect(storage.has('ocbc')).toBe(false);
+    });
+
     test('collectConfigData includes OCBC config and excludes raw holdings', () => {
         const { SyncManager } = loadModule();
         storage.set('ocbc_sub_portfolios', JSON.stringify({ assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false, buckets: [{ id: 'legacy' }] }] } }));
@@ -756,6 +852,20 @@ describe('SyncManager', () => {
         expect(config.platforms.endowus.performance).toBeUndefined();
         expect(config.platforms.endowus.investible).toBeUndefined();
         expect(config.platforms.endowus.summary).toBeUndefined();
+    });
+
+    test('collectConfigData does not run legacy cleanup repeatedly without legacy keys', () => {
+        const { SyncManager } = loadModule();
+        const deleteSpy = jest.spyOn(global, 'GM_deleteValue');
+        storage.set('endowus', JSON.stringify({ performance: null, investible: null, summary: null, goalTargets: {}, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} }));
+        storage.set('fsm', JSON.stringify({ holdings: [], targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} }));
+        storage.set('ocbc', JSON.stringify({ holdings: null, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {} }));
+        global.GM_listValues = () => ['endowus', 'fsm', 'ocbc'];
+
+        SyncManager.collectConfigData();
+        SyncManager.collectConfigData();
+
+        expect(deleteSpy).not.toHaveBeenCalled();
     });
 
     test('hashConfigData ignores OCBC timestamp-only differences', async () => {
