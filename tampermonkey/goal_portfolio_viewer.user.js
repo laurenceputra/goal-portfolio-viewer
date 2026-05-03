@@ -11133,6 +11133,13 @@ syncUi.update = function updateSyncUI() {
                 letter-spacing: 0.03em;
             }
 
+            .gpv-planning-subtitle {
+                margin: 0 0 6px;
+                font-size: 13px;
+                font-weight: 700;
+                color: #1e3a8a;
+            }
+
             .gpv-planning-coverage,
             .gpv-planning-copy,
             .gpv-planning-empty {
@@ -11361,6 +11368,7 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-goal-type-stat .gpv-drift--green,
             .gpv-type-summary .gpv-drift--green,
+            .gpv-planning-panel .gpv-drift--green,
             .gpv-column-drift.gpv-drift--green,
             .gpv-summary-card.gpv-drift--green,
             .gpv-table .gpv-drift--green {
@@ -11370,6 +11378,7 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-goal-type-stat .gpv-drift--yellow,
             .gpv-type-summary .gpv-drift--yellow,
+            .gpv-planning-panel .gpv-drift--yellow,
             .gpv-column-drift.gpv-drift--yellow,
             .gpv-summary-card.gpv-drift--yellow,
             .gpv-table .gpv-drift--yellow {
@@ -11379,6 +11388,7 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-goal-type-stat .gpv-drift--red,
             .gpv-type-summary .gpv-drift--red,
+            .gpv-planning-panel .gpv-drift--red,
             .gpv-column-drift.gpv-drift--red,
             .gpv-summary-card.gpv-drift--red,
             .gpv-table .gpv-drift--red {
@@ -15355,17 +15365,16 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 ? formatDriftDisplay(planningLargestDriftPercent, planningLargestDriftAmount)
                 : '-';
 
-            planningPanel.appendChild(createMetricStrip([
-                { label: 'Current value', value: formatMoney(planningTotalValue) },
-                { label: 'Sub-portfolios', value: String(planningDistinctSubPortfolioIds.size) },
-                { label: 'Unassigned instruments', value: String(planningUnassignedInstruments) },
-                { label: 'Target coverage', value: planningCoverageText },
-                {
-                    label: 'Largest drift',
-                    value: planningDriftText,
-                    valueClass: getDriftSeverityClass(planningLargestDriftPercent)
-                }
-            ], 'gpv-stats gpv-detail-stats'));
+            const planningDetailList = createElement('ul', 'gpv-planning-list');
+            planningDetailList.appendChild(createElement('li', 'gpv-planning-item', `Current value: ${formatMoney(planningTotalValue)}`));
+            planningDetailList.appendChild(createElement('li', 'gpv-planning-item', `Sub-portfolios: ${planningDistinctSubPortfolioIds.size}`));
+            planningDetailList.appendChild(createElement('li', 'gpv-planning-item', `Unassigned instruments: ${planningUnassignedInstruments}`));
+            planningDetailList.appendChild(createElement('li', 'gpv-planning-item', `Target coverage: ${planningCoverageText}`));
+            const driftItem = createElement('li', 'gpv-planning-item');
+            driftItem.appendChild(document.createTextNode('Largest drift: '));
+            appendTextSpan(driftItem, getDriftSeverityClass(planningLargestDriftPercent), planningDriftText);
+            planningDetailList.appendChild(driftItem);
+            planningPanel.appendChild(planningDetailList);
 
             const planningStatusItems = [];
             if (planningUnassignedInstruments > 0) {
@@ -15379,7 +15388,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 planningStatusItems.push(`${planningMaterialDriftCount} sub-portfolio scope(s) show high drift`);
             }
             if (planningStatusItems.length > 0) {
-                planningPanel.appendChild(createElement('h3', 'gpv-detail-title', 'Needs attention'));
+                planningPanel.appendChild(createElement('h3', 'gpv-planning-subtitle', 'Needs attention'));
                 const statusList = createElement('ul', 'gpv-health-reasons');
                 planningStatusItems.forEach(item => {
                     statusList.appendChild(createElement('li', 'gpv-health-reason', item));
