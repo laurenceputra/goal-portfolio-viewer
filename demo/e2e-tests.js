@@ -1046,7 +1046,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
     await page.click('.gpv-trigger-btn');
     await page.waitForSelector('.gpv-overlay', { timeout: 5000 });
 
-    const overlayTextAssets = await page.$eval('.gpv-overlay', node => node.textContent || '');
+    const overlayTextOverview = await page.$eval('.gpv-overlay', node => node.textContent || '');
     const titleText = await page.$eval('.gpv-overlay', root => {
         const titleNode = root.querySelector('.gpv-title, .gpv-header h2, .gpv-header');
         return titleNode ? (titleNode.textContent || '') : '';
@@ -1054,11 +1054,30 @@ async function captureOcbcFlow(page, summary, outputDir) {
     const hasOcbcTitle = /Portfolio Viewer\s*\(OCBC\)/i.test(titleText);
     recordAssertion(summary, ocbcFlowName, 'title-contains-ocbc', hasOcbcTitle, 'Overlay title contains Portfolio Viewer (OCBC).');
 
-    const hasPortfolioLabelA = overlayTextAssets.includes('Portfolio 6500142646-2');
-    recordAssertion(summary, ocbcFlowName, 'assets-has-portfolio-1', hasPortfolioLabelA, 'Assets portfolio view contains Portfolio 6500142646-2.');
+    const hasPortfolioLabelA = overlayTextOverview.includes('Portfolio 6500142646-2');
+    recordAssertion(summary, ocbcFlowName, 'overview-has-portfolio-1', hasPortfolioLabelA, 'Overview contains Portfolio 6500142646-2 card.');
 
-    const hasPortfolioLabelB = overlayTextAssets.includes('Portfolio 6500142647-2');
-    recordAssertion(summary, ocbcFlowName, 'assets-has-portfolio-2', hasPortfolioLabelB, 'Assets portfolio view contains Portfolio 6500142647-2.');
+    const hasPortfolioLabelB = overlayTextOverview.includes('Portfolio 6500142647-2');
+    recordAssertion(summary, ocbcFlowName, 'overview-has-portfolio-2', hasPortfolioLabelB, 'Overview contains Portfolio 6500142647-2 card.');
+
+    const hasOverviewPrompt = overlayTextOverview.includes('Select a portfolio to open details, or view all cached holdings.');
+    recordAssertion(summary, ocbcFlowName, 'overview-has-guidance-copy', hasOverviewPrompt, 'Overview shows guidance copy for opening detailed holdings.');
+
+    const hasViewAllButton = await page.getByRole('button', { name: /view all cached holdings/i }).count();
+    recordAssertion(summary, ocbcFlowName, 'overview-has-view-all-button', hasViewAllButton > 0, 'Overview shows View all cached holdings action.');
+
+    await clickButtonByRole(page, /view all cached holdings/i);
+    await page.waitForFunction(() => {
+        const overlay = document.querySelector('.gpv-overlay');
+        if (!overlay) {
+            return false;
+        }
+        const text = overlay.textContent || '';
+        return text.includes('Identifier')
+            && text.includes('OCBC Global Equity Opportunities Fund');
+    }, null, { timeout: 5000 });
+
+    const overlayTextAssets = await page.$eval('.gpv-overlay', node => node.textContent || '');
 
     const hasIdentifierColumn = overlayTextAssets.includes('Identifier');
     recordAssertion(summary, ocbcFlowName, 'assets-has-identifier-column', hasIdentifierColumn, 'Assets portfolio view contains Identifier column.');

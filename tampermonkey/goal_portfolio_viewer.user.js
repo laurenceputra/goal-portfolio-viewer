@@ -3891,7 +3891,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 rawStored,
                 normalized,
                 legacy,
-                ['holdingsByPortfolio', 'holdings', 'subPortfolios', 'assignmentByCode', 'orderByScope', 'targetsByScope']
+                ['holdings', 'subPortfolios', 'assignmentByCode', 'orderByScope', 'targetsByScope']
             );
             if (didMerge) {
                 const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, merged, 'Error writing merged OCBC store');
