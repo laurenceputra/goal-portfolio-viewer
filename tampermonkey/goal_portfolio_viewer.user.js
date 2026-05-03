@@ -10602,7 +10602,6 @@ syncUi.update = function updateSyncUI() {
                 --gpv-color-primary: #2563eb;
                 --gpv-color-primary-strong: #1d4ed8;
                 --gpv-color-success: #0d9488;
-                --gpv-color-warning: #d97706;
                 --gpv-color-danger: #dc2626;
             }
 
@@ -10957,7 +10956,6 @@ syncUi.update = function updateSyncUI() {
                 color: #ffffff;
             }
 
-            .gpv-workspace-surface,
             .gpv-fsm-manager,
             .gpv-bucket-manager,
             .gpv-planning-panel,
