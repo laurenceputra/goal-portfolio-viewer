@@ -7880,6 +7880,77 @@ let GoalTargetStore;
         return item;
     }
 
+    function createMetricStrip(items, className = 'gpv-stats') {
+        const strip = createElement('div', className);
+        (Array.isArray(items) ? items : []).forEach(item => {
+            if (!item) {
+                return;
+            }
+            strip.appendChild(createStatItem(item.label, item.value, item.valueClass));
+        });
+        return strip;
+    }
+
+    function createWorkspaceSectionHeader({
+        className,
+        title,
+        titleLevel,
+        titleClassName,
+        badge,
+        metrics,
+        metricsClassName
+    }) {
+        const header = createElement('div', className);
+        const safeLevel = Number.isFinite(Number(titleLevel)) ? Math.min(6, Math.max(1, Number(titleLevel))) : 2;
+        const titleElement = createElement(`h${safeLevel}`, titleClassName, title);
+        header.appendChild(titleElement);
+
+        if (badge) {
+            if (badge.nodeType) {
+                header.appendChild(badge);
+            } else {
+                header.appendChild(createElement('span', badge.className, badge.text));
+            }
+        }
+
+        if (Array.isArray(metrics) && metrics.length > 0) {
+            header.appendChild(createMetricStrip(metrics, metricsClassName || 'gpv-stats'));
+        }
+
+        return header;
+    }
+
+    function createSelectControl({
+        id,
+        labelText,
+        ariaLabel,
+        options,
+        value,
+        labelClassName = 'gpv-select-label',
+        selectClassName = 'gpv-select'
+    }) {
+        const label = createElement('label', labelClassName, labelText);
+        const select = createElement('select', selectClassName);
+        if (id) {
+            select.id = id;
+            label.setAttribute('for', id);
+        }
+        if (ariaLabel) {
+            select.setAttribute('aria-label', ariaLabel);
+        }
+        (Array.isArray(options) ? options : []).forEach(optionItem => {
+            const option = createElement('option', null, optionItem?.label || '');
+            option.value = optionItem?.value === undefined || optionItem?.value === null
+                ? ''
+                : String(optionItem.value);
+            select.appendChild(option);
+        });
+        if (value !== undefined && value !== null) {
+            select.value = String(value);
+        }
+        return { label, select };
+    }
+
     function createKeyboardSelectableCard(element, { ariaLabel, onSelect }) {
         if (!element) {
             return element;
@@ -7917,6 +7988,74 @@ let GoalTargetStore;
         return createElement('div', `gpv-manager-row ${additionalClassName}`.trim());
     }
 
+    function createManagerPanel(additionalClassName = '') {
+        return createElement('div', `${additionalClassName} gpv-manager-panel`.trim());
+    }
+
+    function createManagerCreateRow({
+        rowClassName,
+        labelText,
+        inputId,
+        inputMaxLength,
+        inputPlaceholder,
+        buttonId,
+        buttonLabel = 'Create',
+        onCreate,
+        normalizeValue
+    }) {
+        const row = createManagerRow(rowClassName);
+        const label = createElement('label', null, labelText);
+        const input = createElement('input', 'gpv-target-input');
+        if (inputId) {
+            input.id = inputId;
+            label.setAttribute('for', inputId);
+        }
+        if (Number.isFinite(inputMaxLength)) {
+            input.maxLength = inputMaxLength;
+        }
+        if (inputPlaceholder) {
+            input.placeholder = inputPlaceholder;
+        }
+        const button = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', buttonLabel);
+        if (buttonId) {
+            button.id = buttonId;
+        }
+        button.type = 'button';
+        button.onclick = () => {
+            const normalizedValue = typeof normalizeValue === 'function'
+                ? normalizeValue(input.value)
+                : utils.normalizeString(input.value, '');
+            if (!normalizedValue) {
+                return;
+            }
+            let shouldClear = true;
+            if (typeof onCreate === 'function') {
+                shouldClear = onCreate(normalizedValue, { input, button }) !== false;
+            }
+            if (shouldClear) {
+                input.value = '';
+            }
+        };
+        row.appendChild(label);
+        row.appendChild(input);
+        row.appendChild(button);
+        return { row, input, button };
+    }
+
+    function createWorkspaceTable({ headers, className = 'gpv-table' }) {
+        const table = createElement('table', className);
+        const thead = createElement('thead');
+        const headerRow = createElement('tr');
+        (Array.isArray(headers) ? headers : []).forEach(text => {
+            headerRow.appendChild(createElement('th', null, text));
+        });
+        thead.appendChild(headerRow);
+        const tbody = createElement('tbody');
+        table.appendChild(thead);
+        table.appendChild(tbody);
+        return { table, tbody };
+    }
+
     function createPercentTargetInput(value, ariaLabel, onChange) {
         const input = createElement('input', 'gpv-target-input');
         input.type = 'number';
@@ -7933,40 +8072,23 @@ let GoalTargetStore;
         return input;
     }
 
-    function buildBucketStatsFragment({
-        endingBalanceDisplay,
-        returnDisplay,
-        returnClass,
-        growthDisplay,
-        returnLabel
-    }) {
-        const fragment = document.createDocumentFragment();
-        fragment.appendChild(createStatItem('Balance', endingBalanceDisplay));
-        fragment.appendChild(createStatItem(returnLabel, returnDisplay, returnClass));
-        fragment.appendChild(createStatItem('Growth', growthDisplay, returnClass));
-        return fragment;
-    }
-
     function buildBucketHeader(bucketViewModel) {
-        const bucketHeader = createElement('div', 'gpv-detail-header');
-        const bucketTitle = createElement('h2', 'gpv-detail-title', bucketViewModel.bucketName);
-        const healthBadge = createElement(
-            'span',
-            `gpv-health-badge ${bucketViewModel.health?.className || 'gpv-health--healthy'}`,
-            `${bucketViewModel.health?.label || 'Healthy'}`
-        );
-        const bucketStats = createElement('div', 'gpv-stats gpv-detail-stats');
-        bucketStats.appendChild(buildBucketStatsFragment({
-            endingBalanceDisplay: bucketViewModel.endingBalanceDisplay,
-            returnDisplay: bucketViewModel.returnDisplay,
-            returnClass: bucketViewModel.returnClass,
-            growthDisplay: bucketViewModel.growthDisplay,
-            returnLabel: 'Return'
-        }));
-        bucketHeader.appendChild(bucketTitle);
-        bucketHeader.appendChild(healthBadge);
-        bucketHeader.appendChild(bucketStats);
-        return bucketHeader;
+        return createWorkspaceSectionHeader({
+            className: 'gpv-detail-header',
+            title: bucketViewModel.bucketName,
+            titleLevel: 2,
+            titleClassName: 'gpv-detail-title',
+            badge: {
+                className: `gpv-health-badge ${bucketViewModel.health?.className || 'gpv-health--healthy'}`,
+                text: `${bucketViewModel.health?.label || 'Healthy'}`
+            },
+            metrics: [
+                { label: 'Balance', value: bucketViewModel.endingBalanceDisplay },
+                { label: 'Return', value: bucketViewModel.returnDisplay, valueClass: bucketViewModel.returnClass },
+                { label: 'Growth', value: bucketViewModel.growthDisplay, valueClass: bucketViewModel.returnClass }
+            ],
+            metricsClassName: 'gpv-stats gpv-detail-stats'
+        });
     }
 
     function appendPlanningDetails(panel, planning, {
@@ -8383,25 +8505,19 @@ let GoalTargetStore;
                 ariaLabel: `Open ${bucketModel.bucketName} bucket`
             });
 
-            const bucketHeader = createElement('div', 'gpv-bucket-header');
-            const bucketTitle = createElement('h2', 'gpv-bucket-title', bucketModel.bucketName);
             const healthBadge = createElement(
                 'span',
                 `gpv-health-badge ${bucketModel.health?.className || 'gpv-health--healthy'}`,
                 `${bucketModel.health?.label || 'Healthy'}`
             );
+            const bucketHeader = createElement('div', 'gpv-bucket-header');
             bucketHeader.appendChild(healthBadge);
-            const bucketStats = createElement('div', 'gpv-stats gpv-bucket-stats');
-            bucketStats.appendChild(buildBucketStatsFragment({
-                endingBalanceDisplay: bucketModel.endingBalanceDisplay,
-                returnDisplay: bucketModel.returnDisplay,
-                returnClass: bucketModel.returnClass,
-                growthDisplay: bucketModel.growthDisplay,
-                returnLabel: 'Return'
-            }));
-            
-            bucketHeader.appendChild(bucketTitle);
-            bucketHeader.appendChild(bucketStats);
+            bucketHeader.appendChild(createElement('h2', 'gpv-bucket-title', bucketModel.bucketName));
+            bucketHeader.appendChild(createMetricStrip([
+                { label: 'Balance', value: bucketModel.endingBalanceDisplay },
+                { label: 'Return', value: bucketModel.returnDisplay, valueClass: bucketModel.returnClass },
+                { label: 'Growth', value: bucketModel.growthDisplay, valueClass: bucketModel.returnClass }
+            ], 'gpv-stats gpv-bucket-stats'));
             bucketCard.appendChild(bucketHeader);
 
             if (Array.isArray(bucketModel.health?.reasons) && bucketModel.health.reasons.length > 0) {
@@ -13537,14 +13653,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         onCancelRename,
         onArchive
     }) {
-        const manager = createElement('div', 'gpv-fsm-manager gpv-manager-panel');
-        manager.innerHTML = `
-            <div class="gpv-manager-row gpv-fsm-manager-row">
-                <label for="gpv-fsm-create-portfolio">New portfolio</label>
-                <input id="gpv-fsm-create-portfolio" class="gpv-target-input" maxlength="${FSM_MAX_PORTFOLIO_NAME_LENGTH}" placeholder="Portfolio name" />
-                <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-fsm-create-portfolio-btn">Create</button>
-            </div>
-        `;
+        const manager = createManagerPanel('gpv-fsm-manager');
+        manager.appendChild(createManagerCreateRow({
+            rowClassName: 'gpv-fsm-manager-row',
+            labelText: 'New portfolio',
+            inputId: 'gpv-fsm-create-portfolio',
+            inputMaxLength: FSM_MAX_PORTFOLIO_NAME_LENGTH,
+            inputPlaceholder: 'Portfolio name',
+            buttonId: 'gpv-fsm-create-portfolio-btn',
+            onCreate: name => {
+                if (typeof onCreate === 'function') {
+                    onCreate(name);
+                }
+            },
+            normalizeValue: normalizePortfolioName
+        }).row);
         const list = createElement('div', 'gpv-fsm-portfolio-list');
         activePortfolios.forEach(item => {
             const row = createElement('div', 'gpv-manager-row gpv-fsm-portfolio-list-row');
@@ -13604,21 +13727,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             list.appendChild(row);
         });
         manager.appendChild(list);
-
-        const createBtn = manager.querySelector('#gpv-fsm-create-portfolio-btn');
-        const createInput = manager.querySelector('#gpv-fsm-create-portfolio');
-        if (createBtn && createInput) {
-            createBtn.onclick = () => {
-                const name = normalizePortfolioName(createInput.value);
-                if (!name) {
-                    return;
-                }
-                if (typeof onCreate === 'function') {
-                    onCreate(name);
-                }
-                createInput.value = '';
-            };
-        }
 
         return manager;
     }
@@ -14570,21 +14678,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         if (displayRows.length === 0) {
             return createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.');
         }
-        const table = createElement('table', 'gpv-table');
-        table.innerHTML = `
-            <thead>
-                <tr>
-                    <th>Identifier</th>
-                    <th>Name</th>
-                    <th>Type</th>
-                    <th>Value (SGD)</th>
-                    <th>Profit</th>
-                    <th>Current %</th>
-                </tr>
-            </thead>
-            <tbody></tbody>
-        `;
-        const tbody = table.querySelector('tbody');
+        const { table, tbody } = createWorkspaceTable({
+            headers: ['Identifier', 'Name', 'Type', 'Value (SGD)', 'Profit', 'Current %']
+        });
         displayRows.forEach(row => {
             const tr = createElement('tr');
             tr.innerHTML = `
@@ -14642,20 +14738,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function buildOcbcPortfolioHeader(portfolioNo, summary) {
-        const detailHeader = createElement('div', 'gpv-detail-header gpv-ocbc-portfolio-header');
-        const detailTitle = createElement('h2', 'gpv-detail-title', `Portfolio ${portfolioNo}`);
-        const detailStats = createElement('div', 'gpv-stats gpv-detail-stats gpv-ocbc-detail-stats');
         const profitClass = summary?.profitClass === 'positive' || summary?.profitClass === 'negative'
             ? summary.profitClass
             : null;
-
-        detailStats.appendChild(createStatItem('Total Value', formatMoney(summary?.total || 0)));
-        detailStats.appendChild(createStatItem('Holdings', String(summary?.holdingsCount || 0)));
-        detailStats.appendChild(createStatItem('Profit', summary?.profitDisplay || '-', profitClass));
-
-        detailHeader.appendChild(detailTitle);
-        detailHeader.appendChild(detailStats);
-        return detailHeader;
+        return createWorkspaceSectionHeader({
+            className: 'gpv-detail-header gpv-ocbc-portfolio-header',
+            title: `Portfolio ${portfolioNo}`,
+            titleLevel: 2,
+            titleClassName: 'gpv-detail-title',
+            metrics: [
+                { label: 'Total Value', value: formatMoney(summary?.total || 0) },
+                { label: 'Holdings', value: String(summary?.holdingsCount || 0) },
+                { label: 'Profit', value: summary?.profitDisplay || '-', valueClass: profitClass }
+            ],
+            metricsClassName: 'gpv-stats gpv-detail-stats gpv-ocbc-detail-stats'
+        });
     }
 
     function buildOcbcProductTypeHeader(productType, summary) {
@@ -15100,29 +15197,29 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         container.appendChild(header);
 
         const controls = createElement('div', 'gpv-controls gpv-control-bar');
-        const viewLabel = createElement('label', 'gpv-select-label', 'View:');
-        const viewSelect = createElement('select', 'gpv-select');
         const viewSelectId = 'gpv-ocbc-view-select';
-        viewSelect.id = viewSelectId;
-        viewLabel.setAttribute('for', viewSelectId);
-        viewSelect.setAttribute('aria-label', 'Select OCBC holdings view');
-        viewSelect.innerHTML = `
-            <option value="assets">Assets</option>
-            <option value="liabilities">Liabilities</option>
-        `;
+        const { label: viewLabel, select: viewSelect } = createSelectControl({
+            id: viewSelectId,
+            labelText: 'View:',
+            ariaLabel: 'Select OCBC holdings view',
+            options: [
+                { value: 'assets', label: 'Assets' },
+                { value: 'liabilities', label: 'Liabilities' }
+            ]
+        });
         controls.appendChild(viewLabel);
         controls.appendChild(viewSelect);
 
-        const modeLabel = createElement('label', 'gpv-select-label', 'Mode:');
-        const modeSelect = createElement('select', 'gpv-select');
         const modeSelectId = 'gpv-ocbc-mode-select';
-        modeSelect.id = modeSelectId;
-        modeLabel.setAttribute('for', modeSelectId);
-        modeSelect.setAttribute('aria-label', 'Select OCBC layout mode');
-        modeSelect.innerHTML = `
-            <option value="portfolio">Portfolio</option>
-            <option value="allocation">Allocation</option>
-        `;
+        const { label: modeLabel, select: modeSelect } = createSelectControl({
+            id: modeSelectId,
+            labelText: 'Mode:',
+            ariaLabel: 'Select OCBC layout mode',
+            options: [
+                { value: 'portfolio', label: 'Portfolio' },
+                { value: 'allocation', label: 'Allocation' }
+            ]
+        });
         controls.appendChild(modeLabel);
         controls.appendChild(modeSelect);
         container.appendChild(controls);
@@ -15178,54 +15275,42 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     }
                 });
 
-                const managerRow = createManagerRow('gpv-fsm-manager-row');
                 const createSubPortfolioId = `gpv-ocbc-sub-portfolio-create-${activeView}-${encodeURIComponent(portfolioNo)}`;
-                const createSubPortfolioLabel = createElement('label', null, 'New sub-portfolio');
-                createSubPortfolioLabel.setAttribute('for', createSubPortfolioId);
-                const createSubPortfolioInput = createElement('input', 'gpv-target-input');
-                createSubPortfolioInput.id = createSubPortfolioId;
-                createSubPortfolioInput.maxLength = 80;
-                createSubPortfolioInput.placeholder = 'Sub-portfolio name';
-                const createSubPortfolioBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', 'Create');
-                createSubPortfolioBtn.type = 'button';
-                createSubPortfolioBtn.onclick = () => {
-                    const name = utils.normalizeString(createSubPortfolioInput.value, '');
-                    if (!name) {
-                        return;
+                const { row: managerRow } = createManagerCreateRow({
+                    rowClassName: 'gpv-fsm-manager-row',
+                    labelText: 'New sub-portfolio',
+                    inputId: createSubPortfolioId,
+                    inputMaxLength: 80,
+                    inputPlaceholder: 'Sub-portfolio name',
+                    onCreate: name => {
+                        const normalizedId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                        const subPortfolioId = normalizedId || `sub-portfolio-${Date.now()}`;
+                        const viewStore = ensureOcbcViewSubPortfolioStore(subPortfoliosByView, activeView);
+                        const currentItems = Array.isArray(viewStore[portfolioNo]) ? viewStore[portfolioNo] : [];
+                        if (!currentItems.some(item => utils.normalizeString(item?.id, '') === subPortfolioId)) {
+                            currentItems.push({ id: subPortfolioId, name, archived: false });
+                            viewStore[portfolioNo] = currentItems;
+                            saveOcbcSubPortfoliosConfig(subPortfoliosByView);
+                            rerender();
+                            return true;
+                        }
+                        return false;
                     }
-                    const normalizedId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                    const subPortfolioId = normalizedId || `sub-portfolio-${Date.now()}`;
-                    const viewStore = ensureOcbcViewSubPortfolioStore(subPortfoliosByView, activeView);
-                    const currentItems = Array.isArray(viewStore[portfolioNo]) ? viewStore[portfolioNo] : [];
-                    if (!currentItems.some(item => utils.normalizeString(item?.id, '') === subPortfolioId)) {
-                        currentItems.push({ id: subPortfolioId, name, archived: false });
-                        viewStore[portfolioNo] = currentItems;
-                        saveOcbcSubPortfoliosConfig(subPortfoliosByView);
-                        rerender();
-                    }
-                };
-                managerRow.appendChild(createSubPortfolioLabel);
-                managerRow.appendChild(createSubPortfolioInput);
-                managerRow.appendChild(createSubPortfolioBtn);
+                });
                 section.appendChild(managerRow);
                 section.appendChild(createElement('h3', 'gpv-detail-title', `Sub-portfolio allocation within Portfolio ${portfolioNo}`));
 
-                const subPortfolioRows = createElement('table', 'gpv-table');
-                subPortfolioRows.innerHTML = `
-                    <thead>
-                        <tr>
-                            <th>Sub-portfolio</th>
-                            <th>Value (SGD)</th>
-                            <th>Current % of portfolio</th>
-                            <th>Target % of portfolio</th>
-                            <th>Drift</th>
-                            <th>Holdings</th>
-                            <th>Profit</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                `;
-                const subPortfolioBody = subPortfolioRows.querySelector('tbody');
+                const { table: subPortfolioRows, tbody: subPortfolioBody } = createWorkspaceTable({
+                    headers: [
+                        'Sub-portfolio',
+                        'Value (SGD)',
+                        'Current % of portfolio',
+                        'Target % of portfolio',
+                        'Drift',
+                        'Holdings',
+                        'Profit'
+                    ]
+                });
                 const subPortfolioRowsData = [{ id: '', name: 'Unassigned', rows: [] }];
                 persistedSubPortfolios.forEach(item => subPortfolioRowsData.push({ ...item, rows: [] }));
                 const configuredSubPortfolioTargets = subPortfolioRowsData.reduce((sum, subPortfolio) => {
@@ -15379,24 +15464,19 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     if (copyControls) {
                         section.appendChild(copyControls);
                     }
-                    const holdingsTable = createElement('table', 'gpv-table');
-                    holdingsTable.innerHTML = `
-                    <thead>
-                        <tr>
-                            <th>Identifier</th>
-                            <th>Name</th>
-                            <th>Product Type</th>
-                            <th>Value (SGD)</th>
-                            <th>Current % of sub-portfolio</th>
-                            <th>Target % of sub-portfolio</th>
-                            <th>Drift</th>
-                            <th>Sub-portfolio</th>
-                            <th>Reorder</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                `;
-                    const holdingsBody = holdingsTable.querySelector('tbody');
+                    const { table: holdingsTable, tbody: holdingsBody } = createWorkspaceTable({
+                        headers: [
+                            'Identifier',
+                            'Name',
+                            'Product Type',
+                            'Value (SGD)',
+                            'Current % of sub-portfolio',
+                            'Target % of sub-portfolio',
+                            'Drift',
+                            'Sub-portfolio',
+                            'Reorder'
+                        ]
+                    });
                     orderedRows.forEach((row, index) => {
                         const tr = createElement('tr');
                         tr.appendChild(createElement('td', null, row.displayTicker || row.code || '-'));
@@ -15891,8 +15971,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         container.appendChild(header);
 
         const controls = createElement('div', 'gpv-controls gpv-control-bar');
-        const selectLabel = createElement('label', 'gpv-select-label', 'View:');
-        const select = createElement('select', 'gpv-select');
+        const { label: selectLabel, select } = createSelectControl({
+            id: 'gpv-endowus-view-select',
+            labelText: 'View:',
+            labelClassName: 'gpv-select-label',
+            selectClassName: 'gpv-select',
+            options: []
+        });
         function refreshBucketSelectOptions(preferredValue) {
             const selectedValue = preferredValue || select.value || 'SUMMARY';
             select.innerHTML = '';
