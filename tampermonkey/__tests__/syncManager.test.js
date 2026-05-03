@@ -591,6 +591,9 @@ describe('SyncManager', () => {
     test('collectConfigData migrates legacy platform keys and removes them', () => {
         const { SyncManager } = loadModule();
         storage.set('api_performance', JSON.stringify([{ goalId: 'goal-1' }]));
+        storage.set('gpv_performance_goal-1', JSON.stringify({ fetchedAt: 1234, response: { goalId: 'goal-1' } }));
+        storage.set('gpv_bucket_mode', 'performance');
+        storage.set('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance', 'false');
         storage.set('goal_target_pct_goal-1', 25);
         storage.set('goal_fixed_goal-2', true);
         storage.set('fsm_portfolios', JSON.stringify([{ id: 'core', name: 'Core', archived: false }]));
@@ -618,6 +621,16 @@ describe('SyncManager', () => {
         expect(storage.has('api_fsm_holdings')).toBe(false);
         expect(storage.has('ocbc_sub_portfolios')).toBe(false);
         expect(storage.has('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(false);
+        expect(storage.has('gpv_performance_goal-1')).toBe(false);
+        expect(storage.has('gpv_bucket_mode')).toBe(false);
+        expect(storage.has('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance')).toBe(false);
+
+        const endowusStore = JSON.parse(storage.get('endowus'));
+        expect(endowusStore.performanceCache?.['goal-1']).toEqual({ fetchedAt: 1234, response: { goalId: 'goal-1' } });
+        expect(endowusStore.uiPreferences).toEqual(expect.objectContaining({
+            bucketMode: 'performance'
+        }));
+        expect(endowusStore.uiPreferences.collapseState?.['gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance']).toBe(false);
     });
 
     test('collectConfigData preserves existing top-level store over legacy values while cleaning legacy keys', () => {
@@ -852,6 +865,49 @@ describe('SyncManager', () => {
         expect(config.platforms.endowus.performance).toBeUndefined();
         expect(config.platforms.endowus.investible).toBeUndefined();
         expect(config.platforms.endowus.summary).toBeUndefined();
+    });
+
+    test('applyConfigData preserves Endowus local-only fields', () => {
+        const { SyncManager } = loadModule();
+        storage.set('endowus', JSON.stringify({
+            goalTargets: { legacy: 10 },
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'goal-1': { fetchedAt: 1_234, response: { goalId: 'goal-1' } }
+            },
+            uiPreferences: {
+                bucketMode: 'performance',
+                collapseState: {
+                    'gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance': false
+                }
+            }
+        }));
+
+        SyncManager.applyConfigData({
+            version: 2,
+            platforms: {
+                endowus: {
+                    goalTargets: { 'goal-new': 55 },
+                    goalFixed: {},
+                    goalBuckets: {},
+                    clearedGoalBuckets: {},
+                    timestamp: Date.now()
+                },
+                fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
+                ocbc: { subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+            },
+            timestamp: Date.now()
+        });
+
+        const endowusStore = JSON.parse(storage.get('endowus'));
+        expect(endowusStore.goalTargets).toEqual({ 'goal-new': 55 });
+        expect(endowusStore.performanceCache?.['goal-1']).toEqual({ fetchedAt: 1_234, response: { goalId: 'goal-1' } });
+        expect(endowusStore.uiPreferences).toEqual(expect.objectContaining({
+            bucketMode: 'performance'
+        }));
+        expect(endowusStore.uiPreferences.collapseState?.['gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance']).toBe(false);
     });
 
     test('collectConfigData does not run legacy cleanup repeatedly without legacy keys', () => {

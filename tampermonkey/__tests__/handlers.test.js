@@ -547,20 +547,39 @@ describe('handlers and cache', () => {
         Date.now = () => 8 * 24 * 60 * 60 * 1000;
         const stale = readPerformanceCache('goal-x');
         expect(stale).toBeNull();
-        expect(storage.has('gpv_performance_goal-x')).toBe(false);
+        const staleEndowus = JSON.parse(storage.get('endowus'));
+        expect(staleEndowus.performanceCache?.['goal-x']).toBeUndefined();
     });
 
     test('performance cache removes invalid payloads', () => {
         const { readPerformanceCache } = exportsModule;
         if (!readPerformanceCache) return;
 
-        storage.set('gpv_performance_bad-json', '{invalid');
+        storage.set('endowus', JSON.stringify({
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'bad-json': '{invalid'
+            },
+            uiPreferences: { bucketMode: 'allocation', collapseState: {} }
+        }));
         expect(readPerformanceCache('bad-json')).toBeNull();
-        expect(storage.has('gpv_performance_bad-json')).toBe(false);
+        expect(JSON.parse(storage.get('endowus')).performanceCache?.['bad-json']).toBeUndefined();
 
-        storage.set('gpv_performance_bad-shape', JSON.stringify({ fetchedAt: 'nope', response: 'bad' }));
+        storage.set('endowus', JSON.stringify({
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'bad-shape': { fetchedAt: 'nope', response: 'bad' }
+            },
+            uiPreferences: { bucketMode: 'allocation', collapseState: {} }
+        }));
         expect(readPerformanceCache('bad-shape')).toBeNull();
-        expect(storage.has('gpv_performance_bad-shape')).toBe(false);
+        expect(JSON.parse(storage.get('endowus')).performanceCache?.['bad-shape']).toBeUndefined();
     });
 
     test('readPerformanceCache allows stale cache when ignoreFreshness=true', () => {
@@ -583,13 +602,23 @@ describe('handlers and cache', () => {
         const { clearPerformanceCache } = exportsModule;
         if (!clearPerformanceCache) return;
 
-        storage.set('gpv_performance_goal-a', JSON.stringify({ fetchedAt: 1, response: {} }));
-        storage.set('gpv_performance_goal-b', JSON.stringify({ fetchedAt: 1, response: {} }));
+        storage.set('endowus', JSON.stringify({
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'goal-a': { fetchedAt: 1, response: {} },
+                'goal-b': { fetchedAt: 1, response: {} }
+            },
+            uiPreferences: { bucketMode: 'allocation', collapseState: {} }
+        }));
 
         clearPerformanceCache(['goal-a', 'goal-b']);
 
-        expect(storage.has('gpv_performance_goal-a')).toBe(false);
-        expect(storage.has('gpv_performance_goal-b')).toBe(false);
+        const endowus = JSON.parse(storage.get('endowus'));
+        expect(endowus.performanceCache?.['goal-a']).toBeUndefined();
+        expect(endowus.performanceCache?.['goal-b']).toBeUndefined();
     });
 
     test('ensurePerformanceData returns null when fetch fails', async () => {
