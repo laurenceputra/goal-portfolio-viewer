@@ -3,6 +3,38 @@ const { setupDom, teardownDom } = require('./helpers/domSetup');
 describe('initialization and URL monitoring', () => {
     let storage;
 
+    const nextTableFrom = start => {
+        let current = start?.nextElementSibling || null;
+        while (current) {
+            if (current.tagName === 'TABLE') {
+                return current;
+            }
+            const wrappedTable = typeof current.querySelector === 'function'
+                ? current.querySelector('table')
+                : null;
+            if (wrappedTable) {
+                return wrappedTable;
+            }
+            current = current.nextElementSibling;
+        }
+        return null;
+    };
+
+    const openOcbcOverviewPortfolio = (label = 'Portfolio P-1') => {
+        let overlay = document.querySelector('#gpv-overlay');
+        expect(overlay).toBeTruthy();
+        const portfolioCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'))
+            .find(card => {
+                const title = card.querySelector('.gpv-fsm-overview-card-title');
+                return (title?.textContent || '').trim() === label;
+            });
+        expect(portfolioCard).toBeTruthy();
+        portfolioCard.click();
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay).toBeTruthy();
+        return overlay;
+    };
+
     beforeEach(() => {
         jest.resetModules();
         setupDom();
@@ -14,6 +46,7 @@ describe('initialization and URL monitoring', () => {
         ));
         global.GM_deleteValue = jest.fn(key => storage.delete(key));
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
 
         const responseFactory = body => ({
             clone: () => responseFactory(body),
@@ -45,10 +78,17 @@ describe('initialization and URL monitoring', () => {
     });
 
     afterEach(() => {
+        const modulePath = require.resolve('../goal_portfolio_viewer.user.js');
+        const cachedModule = require.cache[modulePath];
+        if (cachedModule?.exports?.SyncManager?.stopAutoSync) {
+            cachedModule.exports.SyncManager.stopAutoSync();
+        }
         if (window.__gpvUrlMonitorCleanup) {
             window.__gpvUrlMonitorCleanup();
         }
+        jest.clearAllTimers();
         jest.useRealTimers();
+        jest.restoreAllMocks();
         teardownDom();
         delete global.alert;
         delete global.history;
@@ -353,7 +393,6 @@ describe('initialization and URL monitoring', () => {
         global.GM_setValue('api_performance', JSON.stringify(performanceData));
         global.GM_setValue('api_investible', JSON.stringify(investibleData));
         global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -387,14 +426,13 @@ describe('initialization and URL monitoring', () => {
         global.GM_setValue('api_performance', JSON.stringify(performanceData));
         global.GM_setValue('api_investible', JSON.stringify(investibleData));
         global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Buckets'));
+        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage assignments'));
         expect(bucketManageBtn).toBeTruthy();
         expect(bucketManageBtn.className).toContain('gpv-bucket-manage-btn');
         bucketManageBtn.click();
@@ -437,6 +475,197 @@ describe('initialization and URL monitoring', () => {
         expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBe('Retirement');
     });
 
+    test('opening Endowus readiness with incomplete datasets does not seed derived bucket assignments', () => {
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Fetching Endowus portfolio data');
+        expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBeUndefined();
+    });
+
+    test('Endowus bucket config signature changes when legacy cleared key changes', () => {
+        const performanceData = [{ goalId: 'goal1' }];
+        const investibleData = [{ goalId: 'goal1' }];
+        const summaryData = [{ goalId: 'goal1' }];
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        const clearedKey = exportsModule.storageKeys.goalBucketCleared('goal1');
+
+        const before = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
+        global.GM_setValue(clearedKey, true);
+        const after = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
+
+        expect(after).not.toBe(before);
+    });
+
+    test('Endowus bucket config signature changes when legacy goal bucket key changes', () => {
+        const performanceData = [{ goalId: 'goal1' }];
+        const investibleData = [{ goalId: 'goal1' }];
+        const summaryData = [{ goalId: 'goal1' }];
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        const bucketKey = exportsModule.storageKeys.goalBucket('goal1');
+
+        const before = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
+        global.GM_setValue(bucketKey, 'Legacy Override');
+        const after = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
+
+        expect(after).not.toBe(before);
+    });
+
+    test('Endowus readiness cache is invalidated by legacy goal bucket assignment changes', () => {
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Vacation Fund',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Vacation Fund',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        global.GM_setValue(exportsModule.storageKeys.goalBucket('goal1'), 'Legacy Bucket A');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Legacy Bucket A');
+
+        global.GM_setValue(exportsModule.storageKeys.goalBucket('goal1'), 'Legacy Bucket B');
+        exportsModule.showOverlay();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Legacy Bucket B');
+    });
+
+    test('Endowus readiness cache is invalidated by legacy cleared flag changes', () => {
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement Fund',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement Fund',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        global.GM_setValue(exportsModule.storageKeys.goalBucket('goal1'), 'Legacy Bucket A');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Legacy Bucket A');
+
+        global.GM_setValue(exportsModule.storageKeys.goalBucketCleared('goal1'), true);
+        exportsModule.showOverlay();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).not.toContain('Legacy Bucket A');
+        expect(overlay.textContent).toContain('Retirement');
+    });
+
+    test('store-backed cleared goal bucket hides seeded bucket and falls back to derived bucket on overlay rerender', () => {
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement Fund',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement Fund',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        global.GM_setValue('endowus', JSON.stringify({
+            performance: performanceData,
+            investible: investibleData,
+            summary: summaryData,
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: { goal1: 'Primary Store Bucket' },
+            clearedGoalBuckets: {}
+        }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Primary Store Bucket');
+
+        global.GM_setValue('endowus', JSON.stringify({
+            performance: performanceData,
+            investible: investibleData,
+            summary: summaryData,
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: { goal1: 'Primary Store Bucket' },
+            clearedGoalBuckets: { goal1: true }
+        }));
+        exportsModule.showOverlay();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).not.toContain('Primary Store Bucket');
+        expect(overlay.textContent).toContain('Retirement');
+    });
+
     test('bucket manager blur preserves seeded legacy bucket assignment', () => {
         const performanceData = [{
             goalId: 'goal1',
@@ -464,7 +693,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Buckets'));
+        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage assignments'));
         bucketManageBtn.click();
 
         overlay = document.querySelector('#gpv-overlay');
@@ -505,7 +734,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Buckets'));
+        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage assignments'));
         bucketManageBtn.click();
 
         overlay = document.querySelector('#gpv-overlay');
@@ -520,7 +749,7 @@ describe('initialization and URL monitoring', () => {
 
         exportsModule.showOverlay();
         overlay = document.querySelector('#gpv-overlay');
-        const reopenedBucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Buckets'));
+        const reopenedBucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage assignments'));
         reopenedBucketManageBtn.click();
         overlay = document.querySelector('#gpv-overlay');
         const reopenedInput = overlay.querySelector('.gpv-bucket-manager-input');
@@ -788,6 +1017,68 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Suggested buys: Retirement - Bond Sleeve SGD\u00A0720.00');
     });
 
+    test('Endowus summary hides controls and bucket detail shows controls with back navigation', () => {
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        global.alert = jest.fn();
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        let controlBar = overlay.querySelector('.gpv-control-bar');
+        let viewSelect = overlay.querySelector('#gpv-endowus-view-select');
+        let allocationButton = overlay.querySelector('.gpv-mode-btn[data-mode="allocation"]');
+        let performanceButton = overlay.querySelector('.gpv-mode-btn[data-mode="performance"]');
+        expect(controlBar.hidden).toBe(true);
+        expect(viewSelect.disabled).toBe(true);
+        expect(viewSelect.getAttribute('tabindex')).toBe('-1');
+        expect(allocationButton.disabled).toBe(true);
+        expect(performanceButton.disabled).toBe(true);
+
+        const bucketCard = overlay.querySelector('.gpv-bucket-card');
+        expect(bucketCard).toBeTruthy();
+        bucketCard.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(controlBar.hidden).toBe(false);
+        expect(viewSelect.disabled).toBe(false);
+        expect(viewSelect.hasAttribute('tabindex')).toBe(false);
+        expect(allocationButton.disabled).toBe(false);
+        expect(performanceButton.disabled).toBe(false);
+        expect(overlay.textContent).toContain('Back to overview');
+
+        const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
+        backBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Summary View');
+        expect(controlBar.hidden).toBe(true);
+        expect(viewSelect.value).toBe('SUMMARY');
+        expect(viewSelect.disabled).toBe(true);
+        expect(allocationButton.disabled).toBe(true);
+        expect(performanceButton.disabled).toBe(true);
+    });
+
     test('performance mode auto-expands all collapsed performance panels', () => {
         const performanceData = [
             {
@@ -823,7 +1114,13 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: goal.investmentGoalType
         }));
 
-        global.fetch.mockImplementation(() => new Promise(() => {}));
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        global.fetch.mockImplementation(() => Promise.resolve(responseFactory([])));
         global.GM_setValue('api_performance', JSON.stringify(performanceData));
         global.GM_setValue('api_investible', JSON.stringify(investibleData));
         global.GM_setValue('api_summary', JSON.stringify(summaryData));
@@ -1183,7 +1480,7 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('OCBC portfolio holdings data');
     });
 
-    test('showOverlay renders OCBC overlay with separate assets and liabilities views', () => {
+    test('showOverlay renders OCBC overview first and supports portfolio detail/liabilities switch', () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -1262,29 +1559,15 @@ describe('initialization and URL monitoring', () => {
         const overlay = document.querySelector('#gpv-overlay');
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Portfolio Viewer (OCBC)');
-        expect(overlay.textContent).toContain('Portfolio P-1');
-        expect(overlay.textContent).toContain('Equity');
-        expect(overlay.textContent).toContain('Bond');
-        expect(overlay.querySelectorAll('.gpv-summary-row')).toHaveLength(0);
-        expect(overlay.querySelectorAll('.gpv-detail-header')).toHaveLength(1);
-        expect(overlay.querySelectorAll('.gpv-detail-title')).toHaveLength(1);
-        expect(overlay.querySelectorAll('.gpv-detail-title')[0].textContent).toBe('Portfolio P-1');
-        expect(overlay.querySelectorAll('.gpv-type-section')).toHaveLength(2);
-        expect(overlay.querySelectorAll('.gpv-type-header')).toHaveLength(2);
-        expect(Array.from(overlay.querySelectorAll('.gpv-type-header h3')).map(node => node.textContent.trim())).toEqual(['Equity', 'Bond']);
-        expect(overlay.textContent).toContain('Identifier');
-        expect(overlay.textContent).toContain('SG00AAA111');
-        expect(Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim())).not.toContain('Ticker');
-        expect(overlay.textContent).toContain('OCBC Asset');
-        expect(overlay.textContent).toContain('+3.70% (+SGD 50.00) · partial (1 missing)');
-        expect(overlay.textContent).toContain('partial (1 missing)');
-        expect(overlay.textContent).not.toContain('OCBC Liability');
-        const firstIdentifierCell = overlay.querySelector('table tbody tr td');
-        expect(firstIdentifierCell.textContent.trim()).toBe('SG00AAA111');
-        expect(firstIdentifierCell.textContent.trim()).not.toBe('P-1');
+        expect(overlay.textContent).toContain('Overview');
+        const overviewCards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'));
+        expect(overviewCards.length).toBe(1);
+        expect(overviewCards[0].textContent).toContain('Portfolio P-1');
+        expect(overlay.textContent).toContain('View all cached holdings');
 
         const viewSelect = overlay.querySelector('#gpv-ocbc-view-select');
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        const controlBar = overlay.querySelector('.gpv-control-bar');
         const viewLabel = Array.from(overlay.querySelectorAll('label')).find(label => label.textContent.includes('View:'));
         const modeLabel = Array.from(overlay.querySelectorAll('label')).find(label => label.textContent.includes('Mode:'));
         expect(viewLabel).toBeTruthy();
@@ -1293,15 +1576,43 @@ describe('initialization and URL monitoring', () => {
         expect(modeSelect.id).toBe('gpv-ocbc-mode-select');
         expect(viewLabel.getAttribute('for')).toBe('gpv-ocbc-view-select');
         expect(modeLabel.getAttribute('for')).toBe('gpv-ocbc-mode-select');
+        expect(controlBar.hidden).toBe(true);
+        expect(viewSelect.disabled).toBe(true);
+        expect(modeSelect.disabled).toBe(true);
+        expect(viewSelect.getAttribute('tabindex')).toBe('-1');
+        expect(modeSelect.getAttribute('tabindex')).toBe('-1');
+
+        overviewCards[0].click();
+        expect(overlay.textContent).toContain('Back to overview');
+        expect(overlay.textContent).toContain('Portfolio P-1');
+        expect(overlay.textContent).toContain('OCBC Asset');
+        expect(overlay.textContent).toContain('SG00AAA111');
+        expect(overlay.textContent).not.toContain('OCBC Liability');
+        expect(controlBar.hidden).toBe(false);
+        expect(viewSelect.disabled).toBe(false);
+        expect(modeSelect.disabled).toBe(false);
+        expect(viewSelect.hasAttribute('tabindex')).toBe(false);
+        expect(modeSelect.hasAttribute('tabindex')).toBe(false);
+
         viewSelect.value = 'liabilities';
         viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         expect(overlay.textContent).toContain('OCBC Liability');
         expect(overlay.textContent).toContain('-SGD');
         expect(overlay.textContent).not.toContain('OCBC Asset');
+
+        const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
+        backBtn.click();
+
+        expect(controlBar.hidden).toBe(true);
+        expect(viewSelect.disabled).toBe(true);
+        expect(modeSelect.disabled).toBe(true);
+        expect(viewSelect.getAttribute('tabindex')).toBe('-1');
+        expect(modeSelect.getAttribute('tabindex')).toBe('-1');
+        expect(overlay.textContent).toContain('Overview');
     });
 
-    test('OCBC allocation mode groups by portfolio first and keeps product type on rows', () => {
+    test('OCBC allocation mode only renders the selected portfolio', () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -1349,17 +1660,250 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
+
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         expect(overlay.textContent).toContain('Portfolio P-1');
-        expect(overlay.textContent).toContain('Portfolio P-2');
+        expect(overlay.textContent).not.toContain('Portfolio P-2');
         expect(overlay.textContent).toContain('Global Equity');
         expect(overlay.textContent).toContain('Bond');
         const headers = Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim());
         expect(headers).toContain('Product Type');
+
+        const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
+        backBtn.click();
+
+        expect(overlay.textContent).toContain('Overview');
+        expect(overlay.textContent).toContain('View all cached holdings');
+        expect(modeSelect.value).toBe('portfolio');
+    });
+
+    test('OCBC overview shows cached portfolios, card drill-down, and view all cached holdings', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('ocbc', JSON.stringify({
+            holdingsByPortfolio: {
+                'P-1': {
+                    assets: [{ code: 'P-1:A1', portfolioNo: 'P-1', displayTicker: 'A1', name: 'Asset 1', productType: 'Equity', currentValueLcy: 100 }],
+                    liabilities: [{ code: 'P-1:L1', portfolioNo: 'P-1', displayTicker: 'L1', name: 'Liability 1', productType: 'Liability', currentValueLcy: -10 }],
+                    lastSeenAt: 1700000000000
+                },
+                'P-2': {
+                    assets: [{ code: 'P-2:A2', portfolioNo: 'P-2', displayTicker: 'A2', name: 'Asset 2', productType: 'Bond', currentValueLcy: 200 }],
+                    liabilities: [],
+                    lastSeenAt: 1700000001000
+                }
+            }
+        }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const cards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'));
+        expect(cards.length).toBe(2);
+
+        const p1Card = cards.find(card => card.textContent.includes('Portfolio P-1'));
+        p1Card.click();
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Asset 1');
+        expect(overlay.textContent).not.toContain('Asset 2');
+
+        const viewSelect = overlay.querySelector('#gpv-ocbc-view-select');
+        viewSelect.value = 'liabilities';
+        viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Liability 1');
+
+        viewSelect.value = 'assets';
+        viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        overlay = document.querySelector('#gpv-overlay');
+
+        const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
+        backBtn.click();
+        overlay = document.querySelector('#gpv-overlay');
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all cached holdings'));
+        viewAllBtn.click();
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Asset 1');
+        expect(overlay.textContent).toContain('Asset 2');
+
+        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        const allocationOption = modeSelect.querySelector('option[value="allocation"]');
+        expect(modeSelect.value).toBe('portfolio');
+        expect(allocationOption.disabled).toBe(true);
+        expect(allocationOption.title).toContain('Allocation is unavailable for all cached holdings');
+        expect(modeSelect.getAttribute('aria-label')).toContain('allocation unavailable for all cached holdings');
+
+        viewSelect.value = 'liabilities';
+        viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Liability 1');
+        expect(allocationOption.disabled).toBe(true);
+        expect(modeSelect.getAttribute('aria-label')).toContain('allocation unavailable for all cached holdings');
+
+        viewSelect.value = 'assets';
+        viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Asset 1');
+        expect(allocationOption.disabled).toBe(true);
+        expect(modeSelect.getAttribute('aria-label')).toContain('allocation unavailable for all cached holdings');
+
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        overlay = document.querySelector('#gpv-overlay');
+        expect(modeSelect.value).toBe('portfolio');
+        expect(overlay.textContent).toContain('Portfolio P-1');
+        expect(overlay.textContent).toContain('Portfolio P-2');
+        expect(overlay.textContent).not.toContain('Planning');
+
+        const backToOverviewBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
+        backToOverviewBtn.click();
+        overlay = document.querySelector('#gpv-overlay');
+
+        const portfolioCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'))
+            .find(card => card.textContent.includes('Portfolio P-1'));
+        portfolioCard.click();
+        overlay = document.querySelector('#gpv-overlay');
+
+        const detailModeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        const detailAllocationOption = detailModeSelect.querySelector('option[value="allocation"]');
+        expect(detailAllocationOption.disabled).toBe(false);
+        expect(detailAllocationOption.getAttribute('title')).toBeNull();
+        detailModeSelect.value = 'allocation';
+        detailModeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        expect(detailModeSelect.value).toBe('allocation');
+        expect(overlay.textContent).toContain('Planning');
+    });
+
+    test('Endowus bucket back round-trip keeps controls coherent and reapplies performance mode on re-entry', () => {
+        const performanceData = [
+            {
+                goalId: 'goal1',
+                totalInvestmentValue: { amount: 1000 },
+                totalCumulativeReturn: { amount: 100 },
+                simpleRateOfReturnPercent: 0.1
+            },
+            {
+                goalId: 'goal2',
+                totalInvestmentValue: { amount: 800 },
+                totalCumulativeReturn: { amount: 40 },
+                simpleRateOfReturnPercent: 0.05
+            }
+        ];
+        const investibleData = [
+            {
+                goalId: 'goal1',
+                goalName: 'Retirement - Core Portfolio',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 1000 } }
+            },
+            {
+                goalId: 'goal2',
+                goalName: 'Retirement - Satellite Sleeve',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 800 } }
+            }
+        ];
+        const summaryData = investibleData.map(goal => ({
+            goalId: goal.goalId,
+            goalName: goal.goalName,
+            investmentGoalType: goal.investmentGoalType
+        }));
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        global.alert = jest.fn();
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        let controlBar = overlay.querySelector('.gpv-control-bar');
+        let viewSelect = overlay.querySelector('#gpv-endowus-view-select');
+        let allocationButton = overlay.querySelector('.gpv-mode-btn[data-mode="allocation"]');
+        let performanceButton = overlay.querySelector('.gpv-mode-btn[data-mode="performance"]');
+        expect(controlBar.hidden).toBe(true);
+        expect(viewSelect.disabled).toBe(true);
+        expect(allocationButton.disabled).toBe(true);
+        expect(performanceButton.disabled).toBe(true);
+
+        const bucketCard = overlay.querySelector('.gpv-bucket-card');
+        bucketCard.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        controlBar = overlay.querySelector('.gpv-control-bar');
+        viewSelect = overlay.querySelector('#gpv-endowus-view-select');
+        allocationButton = overlay.querySelector('.gpv-mode-btn[data-mode="allocation"]');
+        performanceButton = overlay.querySelector('.gpv-mode-btn[data-mode="performance"]');
+        expect(controlBar.hidden).toBe(false);
+        expect(viewSelect.disabled).toBe(false);
+        performanceButton.click();
+        expect(performanceButton.getAttribute('aria-pressed')).toBe('true');
+        expect(allocationButton.getAttribute('aria-pressed')).toBe('false');
+
+        const backToOverviewButton = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
+        expect(backToOverviewButton).toBeTruthy();
+        backToOverviewButton.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        controlBar = overlay.querySelector('.gpv-control-bar');
+        viewSelect = overlay.querySelector('#gpv-endowus-view-select');
+        allocationButton = overlay.querySelector('.gpv-mode-btn[data-mode="allocation"]');
+        performanceButton = overlay.querySelector('.gpv-mode-btn[data-mode="performance"]');
+        expect(controlBar.hidden).toBe(true);
+        expect(viewSelect.disabled).toBe(true);
+        expect(viewSelect.value).toBe('SUMMARY');
+
+        overlay.querySelector('.gpv-bucket-card').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        controlBar = overlay.querySelector('.gpv-control-bar');
+        viewSelect = overlay.querySelector('#gpv-endowus-view-select');
+        allocationButton = overlay.querySelector('.gpv-mode-btn[data-mode="allocation"]');
+        performanceButton = overlay.querySelector('.gpv-mode-btn[data-mode="performance"]');
+        expect(controlBar.hidden).toBe(false);
+        expect(viewSelect.disabled).toBe(false);
+        expect(performanceButton.getAttribute('aria-pressed')).toBe('true');
+        expect(allocationButton.getAttribute('aria-pressed')).toBe('false');
     });
 
     test('OCBC allocation mode shows renamed columns and target assignment indicators', () => {
@@ -1426,12 +1970,21 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const allocationText = overlay.textContent;
+        expect(allocationText).toContain('Planning');
+        expect(allocationText).toContain('Assign instruments to sub-portfolios, set target percentages, and spot drift before rebalancing.');
+        expect(allocationText).toContain('Scope: Assets');
+        expect(allocationText).toContain('Current value');
+        expect(allocationText).toContain('Sub-portfolios');
+        expect(allocationText).toContain('Unassigned instruments');
+        expect(allocationText).toContain('Target coverage');
+        expect(allocationText).toContain('Needs attention');
+        expect(allocationText).toContain('1 instrument unassigned to a sub-portfolio');
         expect(allocationText).toContain('Sub-portfolio allocation within Portfolio P-1');
         expect(allocationText).toContain('Instrument allocation · Core');
         expect(allocationText).toContain('Sub-portfolio targets: 110.00% assigned, 10.00% overallocated');
@@ -1508,7 +2061,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -1520,13 +2073,6 @@ describe('initialization and URL monitoring', () => {
 
         expect(overlay.textContent).toContain('Core instrument targets:');
         const coreHeaderRow = coreHeading.parentElement;
-        const nextTableFrom = start => {
-            let current = start?.nextElementSibling || null;
-            while (current && current.tagName !== 'TABLE') {
-                current = current.nextElementSibling;
-            }
-            return current;
-        };
         const coreTable = nextTableFrom(coreHeaderRow);
 
         const unassignedHeaderRow = unassignedHeading.parentElement;
@@ -1597,7 +2143,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -1605,13 +2151,6 @@ describe('initialization and URL monitoring', () => {
         const assignedHeading = Array.from(overlay.querySelectorAll('h3'))
             .find(node => node.textContent.trim() === 'Instrument allocation · Core');
         const assignedHeaderRow = assignedHeading?.parentElement;
-        const nextTableFrom = start => {
-            let current = start?.nextElementSibling || null;
-            while (current && current.tagName !== 'TABLE') {
-                current = current.nextElementSibling;
-            }
-            return current;
-        };
         const assignedTable = nextTableFrom(assignedHeaderRow);
         const eq1Row = Array.from(assignedTable?.querySelectorAll('tbody tr') || [])
             .find(row => row.textContent.includes('EQ1'));
@@ -1672,7 +2211,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -1753,7 +2292,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -1840,25 +2379,40 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        let overlay = openOcbcOverviewPortfolio('Portfolio P|1');
+        let modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const portfolioPipeInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P|1 sub-portfolio Core Pipe Portfolio"]');
-        const subPipeInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P sub-portfolio Core Pipe Sub"]');
         expect(portfolioPipeInput).toBeTruthy();
-        expect(subPipeInput).toBeTruthy();
-
         portfolioPipeInput.value = '60';
         portfolioPipeInput.dispatchEvent(new window.Event('change', { bubbles: true }));
-        subPipeInput.value = '40';
-        subPipeInput.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const ocbcTargets = JSON.parse(storage.get('ocbc')).targetsByScope;
+        let ocbcTargets = JSON.parse(storage.get('ocbc')).targetsByScope;
         expect(ocbcTargets['assets|P%7C1|core|']).toBe(60);
-        expect(ocbcTargets['assets|P|1%7Ccore|']).toBe(40);
-        expect(ocbcTargets['assets|P%7C1|core|']).not.toBe(ocbcTargets['assets|P|1%7Ccore|']);
+
+        const backToOverviewBtn = Array.from(overlay.querySelectorAll('button'))
+            .find(btn => (btn.textContent || '').includes('Back to overview'));
+        expect(backToOverviewBtn).toBeTruthy();
+        backToOverviewBtn.click();
+
+        overlay = openOcbcOverviewPortfolio('Portfolio P');
+        modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const portfolioPlainInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P sub-portfolio Core Pipe Sub"]');
+        expect(portfolioPlainInput).toBeTruthy();
+        portfolioPlainInput.value = '35';
+        portfolioPlainInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        ocbcTargets = JSON.parse(storage.get('ocbc')).targetsByScope;
+        expect(ocbcTargets['assets|P%7C1|core|']).toBe(60);
+        expect(ocbcTargets['assets|P|1%7Ccore|']).toBe(35);
+        expect(Object.prototype.hasOwnProperty.call(ocbcTargets, 'assets|P%7C1|core|')).toBe(true);
+        expect(Object.prototype.hasOwnProperty.call(ocbcTargets, 'assets|P|1%7Ccore|')).toBe(true);
+        expect('assets|P%7C1|core|').not.toBe('assets|P|1%7Ccore|');
     });
 
     test('OCBC allocation mode reads separator-safe legacy target fallback keys', () => {
@@ -1916,7 +2470,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -1994,7 +2548,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2095,7 +2649,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2178,7 +2732,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2259,7 +2813,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2325,7 +2879,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2395,7 +2949,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2473,7 +3027,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2503,7 +3057,7 @@ describe('initialization and URL monitoring', () => {
         expect(status?.getAttribute('role')).toBe('status');
         expect(status?.getAttribute('aria-live')).toBe('polite');
         expect(status?.getAttribute('aria-atomic')).toBe('true');
-        expect(copyButton.textContent).toContain('Copy Values');
+        expect(copyButton.textContent).toContain('Copy values');
         copyButton.dispatchEvent(new window.Event('click', { bubbles: true }));
         await new Promise(resolve => setTimeout(resolve, 0));
         expect(overlay.textContent).toContain('Copied 2 values');
@@ -2520,7 +3074,7 @@ describe('initialization and URL monitoring', () => {
         expect(copiedText).not.toContain('\n');
     });
 
-    test('OCBC Copy Values keeps row order and emits blank TSV fields for missing current values', async () => {
+    test('OCBC Copy values keeps row order and emits blank TSV fields for missing current values', async () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -2593,7 +3147,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2676,20 +3230,13 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const coreSectionRow = Array.from(overlay.querySelectorAll('.gpv-ocbc-instrument-header-row'))
             .find(row => row.textContent.includes('Instrument allocation · Core'));
-        const nextTableFrom = start => {
-            let current = start?.nextElementSibling || null;
-            while (current && current.tagName !== 'TABLE') {
-                current = current.nextElementSibling;
-            }
-            return current;
-        };
         const coreTable = nextTableFrom(coreSectionRow);
         const getCodes = () => Array.from(coreTable.querySelectorAll('tbody tr td:first-child')).map(cell => cell.textContent.trim());
         expect(getCodes()).toEqual(['EQ1', 'EQ2', 'EQ3']);
@@ -2778,7 +3325,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2858,7 +3405,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2965,7 +3512,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio('Portfolio P-LEGACY');
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3061,7 +3608,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio('Portfolio P-POS');
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3076,10 +3623,7 @@ describe('initialization and URL monitoring', () => {
 
         const coreSectionRow = Array.from(overlay.querySelectorAll('.gpv-ocbc-instrument-header-row'))
             .find(row => row.textContent.includes('Instrument allocation · Core'));
-        let coreTable = coreSectionRow?.nextElementSibling;
-        while (coreTable && coreTable.tagName !== 'TABLE') {
-            coreTable = coreTable.nextElementSibling;
-        }
+        const coreTable = nextTableFrom(coreSectionRow);
         const orderedCodes = Array.from(coreTable.querySelectorAll('tbody tr td:first-child')).map(cell => cell.textContent.trim());
         expect(orderedCodes.slice(0, 2)).toEqual(['ISIN-POS-A', 'ISIN-POS-B']);
 
@@ -3151,7 +3695,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio('Portfolio P-STABLE');
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3212,7 +3756,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        let overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio('Portfolio P-LIFECYCLE');
         let modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3248,7 +3792,7 @@ describe('initialization and URL monitoring', () => {
         overlay.remove();
         exportsModule.showOverlay();
 
-        overlay = document.querySelector('#gpv-overlay');
+        overlay = openOcbcOverviewPortfolio('Portfolio P-LIFECYCLE');
         modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3293,6 +3837,7 @@ describe('initialization and URL monitoring', () => {
             status: 200
         });
 
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
         await window.fetch('/v1/goals/performance?demo=1').then(response => response.clone().json().catch(() => null));
         global.fetch.mockResolvedValueOnce(responseFactory(perfPayload));
         await window.fetch('/v1/goals/performance');
@@ -3334,15 +3879,25 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).not.toContain('Retirement');
         expect(overlay.querySelector('.gpv-select').value).toBe('SUMMARY');
 
-        global.fetch.mockResolvedValueOnce(responseFactory({ stale: true }));
-        await window.fetch('/v1/goals/performance');
+        try {
+            global.fetch.mockResolvedValueOnce(responseFactory({ stale: true }));
+            await window.fetch('/v1/goals/performance');
 
-        await new Promise(resolve => setTimeout(resolve, 0));
+            await new Promise(resolve => setTimeout(resolve, 0));
 
-        overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).toContain('Summary View');
-        expect(overlay.textContent).not.toContain('Fetching Endowus portfolio data');
-        expect(document.body.textContent).toContain('Latest Endowus refresh failed validation. Showing last synced portfolio data.');
+            overlay = document.querySelector('#gpv-overlay');
+            expect(overlay.textContent).toContain('Summary View');
+            expect(overlay.textContent).not.toContain('Fetching Endowus portfolio data');
+            expect(document.body.textContent).toContain('Latest Endowus refresh failed validation. Showing last synced portfolio data.');
+            expect(warnSpy).toHaveBeenCalledWith(
+                '[Goal Portfolio Viewer] Ignoring performance payload: Expected array payload for performance'
+            );
+            expect(warnSpy.mock.calls.filter(([message]) => (
+                message === '[Goal Portfolio Viewer] Ignoring performance payload: Expected array payload for performance'
+            )).length).toBeGreaterThanOrEqual(2);
+        } finally {
+            warnSpy.mockRestore();
+        }
     });
 
     test('showOverlay opens Endowus view when intercepted datasets are empty arrays', () => {
@@ -3726,7 +4281,9 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings')).click();
+        const viewAllHoldingsButton = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        expect(viewAllHoldingsButton).toBeTruthy();
+        viewAllHoldingsButton.click();
 
         overlay = document.querySelector('#gpv-overlay');
         let targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
@@ -3789,7 +4346,9 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings')).click();
+        const viewAllHoldingsButton = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        expect(viewAllHoldingsButton).toBeTruthy();
+        viewAllHoldingsButton.click();
 
         overlay = document.querySelector('#gpv-overlay');
         const targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
@@ -3841,7 +4400,9 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings')).click();
+        const viewAllHoldingsButton = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        expect(viewAllHoldingsButton).toBeTruthy();
+        viewAllHoldingsButton.click();
 
         overlay = document.querySelector('#gpv-overlay');
         let fixedCheckbox = overlay.querySelector('input[aria-label^="Fixed allocation"]');
@@ -4020,7 +4581,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));

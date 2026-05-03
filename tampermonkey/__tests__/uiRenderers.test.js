@@ -201,7 +201,7 @@ describe('UI renderers', () => {
             await Promise.resolve();
 
             expect(writeText).toHaveBeenCalledWith('1.1000\t2.5000');
-            expect(status.textContent).toBe('Copied 2 balances');
+            expect(status.textContent).toBe('Copied 2 values');
             expect(status.getAttribute('role')).toBe('status');
             expect(status.getAttribute('aria-live')).toBe('polite');
         } finally {

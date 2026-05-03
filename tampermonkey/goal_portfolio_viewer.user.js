@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.13
+// @version      2.14.14
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -1043,6 +1043,73 @@
         flattenSectionRows('assets', groups);
         flattenSectionRows('liabilities', groups);
         return { assets, liabilities };
+    }
+
+    function groupOcbcHoldingsByPortfolio(holdings) {
+        const source = holdings && typeof holdings === 'object' ? holdings : { assets: [], liabilities: [] };
+        const grouped = {};
+        function appendRows(section, rows) {
+            (Array.isArray(rows) ? rows : []).forEach(row => {
+                const portfolioNo = utils.normalizeString(row?.portfolioNo, '-');
+                if (!grouped[portfolioNo]) {
+                    grouped[portfolioNo] = { assets: [], liabilities: [], lastSeenAt: null };
+                }
+                grouped[portfolioNo][section].push(row);
+            });
+        }
+        appendRows('assets', source.assets);
+        appendRows('liabilities', source.liabilities);
+        return grouped;
+    }
+
+    function flattenOcbcHoldingsByPortfolio(holdingsByPortfolio) {
+        const source = holdingsByPortfolio && typeof holdingsByPortfolio === 'object' && !Array.isArray(holdingsByPortfolio)
+            ? holdingsByPortfolio
+            : {};
+        const assets = [];
+        const liabilities = [];
+        Object.values(source).forEach(entry => {
+            if (!entry || typeof entry !== 'object') {
+                return;
+            }
+            if (Array.isArray(entry.assets)) {
+                assets.push(...entry.assets);
+            }
+            if (Array.isArray(entry.liabilities)) {
+                liabilities.push(...entry.liabilities);
+            }
+        });
+        return { assets, liabilities };
+    }
+
+    function normalizeOcbcHoldingsByPortfolioForStore(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const normalized = {};
+        Object.entries(source).forEach(([rawPortfolioNo, entry]) => {
+            const portfolioNo = utils.normalizeString(rawPortfolioNo, '-');
+            if (!entry || typeof entry !== 'object') {
+                return;
+            }
+            normalized[portfolioNo] = {
+                assets: Array.isArray(entry.assets) ? entry.assets : [],
+                liabilities: Array.isArray(entry.liabilities) ? entry.liabilities : [],
+                lastSeenAt: typeof entry.lastSeenAt === 'number' && entry.lastSeenAt > 0 ? entry.lastSeenAt : null
+            };
+        });
+        return normalized;
+    }
+
+    function mergeOcbcHoldingsByPortfolio(currentByPortfolio, nextByPortfolio, now = Date.now()) {
+        const merged = normalizeOcbcHoldingsByPortfolioForStore(currentByPortfolio);
+        const normalizedNext = normalizeOcbcHoldingsByPortfolioForStore(nextByPortfolio);
+        Object.entries(normalizedNext).forEach(([portfolioNo, entry]) => {
+            merged[portfolioNo] = {
+                assets: Array.isArray(entry.assets) ? entry.assets : [],
+                liabilities: Array.isArray(entry.liabilities) ? entry.liabilities : [],
+                lastSeenAt: typeof entry.lastSeenAt === 'number' && entry.lastSeenAt > 0 ? entry.lastSeenAt : now
+            };
+        });
+        return merged;
     }
 
     function getOcbcAssignmentLookupCandidates(row) {
@@ -2845,7 +2912,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             },
             {
                 key: 'endingBalanceAmount',
-                label: 'Ending Balance',
+                label: 'Current value',
                 value: formatMoney(metrics?.endingBalanceAmount)
             }
         ];
@@ -3129,8 +3196,11 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
     function normalizeOcbcStore(data) {
         const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const holdingsByPortfolio = normalizeOcbcHoldingsByPortfolioForStore(source.holdingsByPortfolio);
+        const normalizedHoldings = source.holdings && typeof source.holdings === 'object' ? source.holdings : null;
         return {
-            holdings: source.holdings && typeof source.holdings === 'object' ? source.holdings : null,
+            holdingsByPortfolio,
+            holdings: normalizedHoldings || (Object.keys(holdingsByPortfolio).length ? flattenOcbcHoldingsByPortfolio(holdingsByPortfolio) : null),
             subPortfolios: normalizeOcbcSubPortfoliosForStore(source.subPortfolios),
             assignmentByCode: normalizeOcbcAssignmentByCodeForStore(source.assignmentByCode),
             orderByScope: normalizeOcbcOrderByScopeForStore(source.orderByScope),
@@ -6311,7 +6381,17 @@ let GoalTargetStore;
                 holdingsLoaded: false
             },
             ocbc: {
-                holdingsLoaded: false
+                holdingsLoaded: false,
+                latestPortfolioNos: []
+            }
+        },
+        derived: {
+            endowusMergedInvestmentDataCache: {
+                performanceRef: null,
+                investibleRef: null,
+                summaryRef: null,
+                bucketConfigSignature: null,
+                mergedInvestmentDataState: null
             }
         }
     };
@@ -6383,12 +6463,34 @@ let GoalTargetStore;
         },
         ocbcHoldings: data => {
             const normalized = normalizeOcbcHoldingsPayload(data);
-            state.apiData.ocbcHoldings = normalized;
+            const nextByPortfolio = groupOcbcHoldingsByPortfolio(normalized);
+            const now = Date.now();
+            Object.keys(nextByPortfolio).forEach(portfolioNo => {
+                nextByPortfolio[portfolioNo].lastSeenAt = now;
+            });
+            const latestPortfolioNos = Array.isArray(state.readiness.ocbc.latestPortfolioNos)
+                ? state.readiness.ocbc.latestPortfolioNos
+                : [];
+            state.readiness.ocbc.latestPortfolioNos = Array.from(new Set([
+                ...latestPortfolioNos,
+                ...Object.keys(nextByPortfolio)
+            ]));
+
+            const updateResult = updateOcbcStore(current => {
+                const mergedByPortfolio = mergeOcbcHoldingsByPortfolio(current?.holdingsByPortfolio, nextByPortfolio, now);
+                const mergedHoldings = flattenOcbcHoldingsByPortfolio(mergedByPortfolio);
+                return {
+                    ...current,
+                    holdingsByPortfolio: mergedByPortfolio,
+                    holdings: mergedHoldings
+                };
+            }, 'Error saving OCBC holdings data');
+            const flattened = updateResult?.value?.holdings || { assets: [], liabilities: [] };
+            state.apiData.ocbcHoldings = flattened;
             state.readiness.ocbc.holdingsLoaded = true;
-            updateOcbcStore(current => ({ ...current, holdings: normalized }), 'Error saving OCBC holdings data');
             logDebug('[Goal Portfolio Viewer] Intercepted OCBC holdings data', {
-                assets: normalized.assets.length,
-                liabilities: normalized.liabilities.length
+                assets: flattened.assets.length,
+                liabilities: flattened.liabilities.length
             });
             notifyDataUpdates();
         }
@@ -6732,8 +6834,11 @@ let GoalTargetStore;
             logDebug('[Goal Portfolio Viewer] Loaded FSM holdings data from storage');
         }
         const ocbcStore = readOcbcStore();
-        if (ocbcStore.holdings && Array.isArray(ocbcStore.holdings.assets) && Array.isArray(ocbcStore.holdings.liabilities)) {
-            apiDataState.ocbcHoldings = ocbcStore.holdings;
+        const flattenedOcbcHoldings = Object.keys(ocbcStore.holdingsByPortfolio || {}).length
+            ? flattenOcbcHoldingsByPortfolio(ocbcStore.holdingsByPortfolio)
+            : ocbcStore.holdings;
+        if (flattenedOcbcHoldings && Array.isArray(flattenedOcbcHoldings.assets) && Array.isArray(flattenedOcbcHoldings.liabilities)) {
+            apiDataState.ocbcHoldings = flattenedOcbcHoldings;
             appState.readiness.ocbc.holdingsLoaded = true;
             logDebug('[Goal Portfolio Viewer] Loaded OCBC holdings data from storage');
         }
@@ -7880,6 +7985,77 @@ let GoalTargetStore;
         return item;
     }
 
+    function createMetricStrip(items, className = 'gpv-stats') {
+        const strip = createElement('div', className);
+        (Array.isArray(items) ? items : []).forEach(item => {
+            if (!item) {
+                return;
+            }
+            strip.appendChild(createStatItem(item.label, item.value, item.valueClass));
+        });
+        return strip;
+    }
+
+    function createWorkspaceSectionHeader({
+        className,
+        title,
+        titleLevel,
+        titleClassName,
+        badge,
+        metrics,
+        metricsClassName
+    }) {
+        const header = createElement('div', className);
+        const safeLevel = Number.isFinite(Number(titleLevel)) ? Math.min(6, Math.max(1, Number(titleLevel))) : 2;
+        const titleElement = createElement(`h${safeLevel}`, titleClassName, title);
+        header.appendChild(titleElement);
+
+        if (badge) {
+            if (badge.nodeType) {
+                header.appendChild(badge);
+            } else {
+                header.appendChild(createElement('span', badge.className, badge.text));
+            }
+        }
+
+        if (Array.isArray(metrics) && metrics.length > 0) {
+            header.appendChild(createMetricStrip(metrics, metricsClassName || 'gpv-stats'));
+        }
+
+        return header;
+    }
+
+    function createSelectControl({
+        id,
+        labelText,
+        ariaLabel,
+        options,
+        value,
+        labelClassName = 'gpv-select-label',
+        selectClassName = 'gpv-select'
+    }) {
+        const label = createElement('label', labelClassName, labelText);
+        const select = createElement('select', selectClassName);
+        if (id) {
+            select.id = id;
+            label.setAttribute('for', id);
+        }
+        if (ariaLabel) {
+            select.setAttribute('aria-label', ariaLabel);
+        }
+        (Array.isArray(options) ? options : []).forEach(optionItem => {
+            const option = createElement('option', null, optionItem?.label || '');
+            option.value = optionItem?.value === undefined || optionItem?.value === null
+                ? ''
+                : String(optionItem.value);
+            select.appendChild(option);
+        });
+        if (value !== undefined && value !== null) {
+            select.value = String(value);
+        }
+        return { label, select };
+    }
+
     function createKeyboardSelectableCard(element, { ariaLabel, onSelect }) {
         if (!element) {
             return element;
@@ -7909,6 +8085,70 @@ let GoalTargetStore;
         return createElement('td', className, value);
     }
 
+    function createManagerCreateRow({
+        rowClassName,
+        labelText,
+        inputId,
+        inputMaxLength,
+        inputPlaceholder,
+        buttonId,
+        buttonLabel = 'Create',
+        onCreate,
+        normalizeValue
+    }) {
+        const row = createElement('div', `gpv-manager-row ${rowClassName || ''}`.trim());
+        const label = createElement('label', null, labelText);
+        const input = createElement('input', 'gpv-target-input');
+        if (inputId) {
+            input.id = inputId;
+            label.setAttribute('for', inputId);
+        }
+        if (Number.isFinite(inputMaxLength)) {
+            input.maxLength = inputMaxLength;
+        }
+        if (inputPlaceholder) {
+            input.placeholder = inputPlaceholder;
+        }
+        const button = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', buttonLabel);
+        if (buttonId) {
+            button.id = buttonId;
+        }
+        button.type = 'button';
+        button.onclick = () => {
+            const normalizedValue = typeof normalizeValue === 'function'
+                ? normalizeValue(input.value)
+                : utils.normalizeString(input.value, '');
+            if (!normalizedValue) {
+                return;
+            }
+            let shouldClear = true;
+            if (typeof onCreate === 'function') {
+                shouldClear = onCreate(normalizedValue, { input, button }) !== false;
+            }
+            if (shouldClear) {
+                input.value = '';
+            }
+        };
+        row.appendChild(label);
+        row.appendChild(input);
+        row.appendChild(button);
+        return { row, input, button };
+    }
+
+    function createWorkspaceTable({ headers, className = 'gpv-table' }) {
+        const table = createElement('table', className);
+        const thead = createElement('thead');
+        const headerRow = createElement('tr');
+        (Array.isArray(headers) ? headers : []).forEach(text => {
+            headerRow.appendChild(createElement('th', null, text));
+        });
+        thead.appendChild(headerRow);
+        const tbody = createElement('tbody');
+        table.appendChild(thead);
+        table.appendChild(tbody);
+        return { table, tbody };
+    }
+
     function createPercentTargetInput(value, ariaLabel, onChange) {
         const input = createElement('input', 'gpv-target-input');
         input.type = 'number';
@@ -7925,40 +8165,23 @@ let GoalTargetStore;
         return input;
     }
 
-    function buildBucketStatsFragment({
-        endingBalanceDisplay,
-        returnDisplay,
-        returnClass,
-        growthDisplay,
-        returnLabel
-    }) {
-        const fragment = document.createDocumentFragment();
-        fragment.appendChild(createStatItem('Balance', endingBalanceDisplay));
-        fragment.appendChild(createStatItem(returnLabel, returnDisplay, returnClass));
-        fragment.appendChild(createStatItem('Growth', growthDisplay, returnClass));
-        return fragment;
-    }
-
     function buildBucketHeader(bucketViewModel) {
-        const bucketHeader = createElement('div', 'gpv-detail-header');
-        const bucketTitle = createElement('h2', 'gpv-detail-title', bucketViewModel.bucketName);
-        const healthBadge = createElement(
-            'span',
-            `gpv-health-badge ${bucketViewModel.health?.className || 'gpv-health--healthy'}`,
-            `${bucketViewModel.health?.label || 'Healthy'}`
-        );
-        const bucketStats = createElement('div', 'gpv-stats gpv-detail-stats');
-        bucketStats.appendChild(buildBucketStatsFragment({
-            endingBalanceDisplay: bucketViewModel.endingBalanceDisplay,
-            returnDisplay: bucketViewModel.returnDisplay,
-            returnClass: bucketViewModel.returnClass,
-            growthDisplay: bucketViewModel.growthDisplay,
-            returnLabel: 'Return'
-        }));
-        bucketHeader.appendChild(bucketTitle);
-        bucketHeader.appendChild(healthBadge);
-        bucketHeader.appendChild(bucketStats);
-        return bucketHeader;
+        return createWorkspaceSectionHeader({
+            className: 'gpv-detail-header',
+            title: bucketViewModel.bucketName,
+            titleLevel: 2,
+            titleClassName: 'gpv-detail-title',
+            badge: {
+                className: `gpv-health-badge ${bucketViewModel.health?.className || 'gpv-health--healthy'}`,
+                text: `${bucketViewModel.health?.label || 'Healthy'}`
+            },
+            metrics: [
+                { label: 'Current value', value: bucketViewModel.endingBalanceDisplay },
+                { label: 'Return', value: bucketViewModel.returnDisplay, valueClass: bucketViewModel.returnClass },
+                { label: 'Growth', value: bucketViewModel.growthDisplay, valueClass: bucketViewModel.returnClass }
+            ],
+            metricsClassName: 'gpv-stats gpv-detail-stats'
+        });
     }
 
     function appendPlanningDetails(panel, planning, {
@@ -8189,7 +8412,7 @@ let GoalTargetStore;
         const headerRow = createElement('tr');
 
         headerRow.appendChild(createElement('th', 'gpv-goal-name-header', 'Goal Name'));
-        headerRow.appendChild(createElement('th', null, 'Balance'));
+        headerRow.appendChild(createElement('th', null, 'Current value'));
         headerRow.appendChild(createElement('th', null, '% of Goal Type'));
         headerRow.appendChild(createElement('th', 'gpv-fixed-header gpv-column-fixed', 'Fixed'));
 
@@ -8375,25 +8598,19 @@ let GoalTargetStore;
                 ariaLabel: `Open ${bucketModel.bucketName} bucket`
             });
 
-            const bucketHeader = createElement('div', 'gpv-bucket-header');
-            const bucketTitle = createElement('h2', 'gpv-bucket-title', bucketModel.bucketName);
             const healthBadge = createElement(
                 'span',
                 `gpv-health-badge ${bucketModel.health?.className || 'gpv-health--healthy'}`,
                 `${bucketModel.health?.label || 'Healthy'}`
             );
+            const bucketHeader = createElement('div', 'gpv-bucket-header');
             bucketHeader.appendChild(healthBadge);
-            const bucketStats = createElement('div', 'gpv-stats gpv-bucket-stats');
-            bucketStats.appendChild(buildBucketStatsFragment({
-                endingBalanceDisplay: bucketModel.endingBalanceDisplay,
-                returnDisplay: bucketModel.returnDisplay,
-                returnClass: bucketModel.returnClass,
-                growthDisplay: bucketModel.growthDisplay,
-                returnLabel: 'Return'
-            }));
-            
-            bucketHeader.appendChild(bucketTitle);
-            bucketHeader.appendChild(bucketStats);
+            bucketHeader.appendChild(createElement('h2', 'gpv-bucket-title', bucketModel.bucketName));
+            bucketHeader.appendChild(createMetricStrip([
+                { label: 'Current value', value: bucketModel.endingBalanceDisplay },
+                { label: 'Return', value: bucketModel.returnDisplay, valueClass: bucketModel.returnClass },
+                { label: 'Growth', value: bucketModel.growthDisplay, valueClass: bucketModel.returnClass }
+            ], 'gpv-stats gpv-bucket-stats'));
             bucketCard.appendChild(bucketHeader);
 
             if (Array.isArray(bucketModel.health?.reasons) && bucketModel.health.reasons.length > 0) {
@@ -8410,7 +8627,7 @@ let GoalTargetStore;
                 appendLabeledValue(
                     typeRow,
                     'gpv-goal-type-stat',
-                    'Balance:',
+                    'Current value:',
                     goalTypeModel.endingBalanceDisplay
                 );
                 appendLabeledValue(
@@ -8570,11 +8787,11 @@ let GoalTargetStore;
 
     function buildBalanceCopyControls(goalTypeModel) {
         return buildValueCopyControls({
-            buttonLabel: 'Copy balances row',
+            buttonLabel: 'Copy values',
             emptyMessage: 'No goals to copy',
             successMessage: () => {
                 const matchingGoals = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
-                return `Copied ${matchingGoals.length} balances`;
+                return `Copied ${matchingGoals.length} values`;
             },
             copyText: () => {
                 const matchingGoals = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
@@ -8611,7 +8828,7 @@ let GoalTargetStore;
             const typeHeader = createElement('div', 'gpv-type-header');
             const typeTitle = createElement('h3', null, goalTypeModel.displayName);
             const typeSummary = createElement('div', 'gpv-type-summary');
-            appendLabeledValue(typeSummary, null, 'Balance:', goalTypeModel.endingBalanceDisplay);
+            appendLabeledValue(typeSummary, null, 'Current value:', goalTypeModel.endingBalanceDisplay);
             appendLabeledValue(typeSummary, null, 'Return:', goalTypeModel.returnDisplay);
             appendLabeledValue(typeSummary, null, 'Growth:', typeGrowth);
             appendLabeledValue(
@@ -9090,17 +9307,26 @@ let GoalTargetStore;
         document.body.appendChild(notification);
         
         // Fade in
-        setTimeout(() => {
+        const fadeInTimer = setTimeout(() => {
             notification.classList.add('gpv-notification-show');
         }, 10);
+        if (fadeInTimer && typeof fadeInTimer.unref === 'function') {
+            fadeInTimer.unref();
+        }
         
         // Fade out and remove
-        setTimeout(() => {
+        const fadeOutTimer = setTimeout(() => {
             notification.classList.remove('gpv-notification-show');
-            setTimeout(() => {
+            const removeTimer = setTimeout(() => {
                 notification.remove();
             }, 300);
+            if (removeTimer && typeof removeTimer.unref === 'function') {
+                removeTimer.unref();
+            }
         }, 3000);
+        if (fadeOutTimer && typeof fadeOutTimer.unref === 'function') {
+            fadeOutTimer.unref();
+        }
     }
 
     let syncToastTimer = null;
@@ -9143,6 +9369,9 @@ let GoalTargetStore;
         syncToastTimer = setTimeout(() => {
             clearSyncMessage();
         }, 10000);
+        if (syncToastTimer && typeof syncToastTimer.unref === 'function') {
+            syncToastTimer.unref();
+        }
     }
 
     function clearSyncMessage() {
@@ -9262,9 +9491,15 @@ function scrollOverlayContentToTop(sourceNode = null) {
                 requestAnimationFrame(enforceTop);
             });
         } else {
-            setTimeout(enforceTop, 32);
+            const fallbackEnforceTimer = setTimeout(enforceTop, 32);
+            if (fallbackEnforceTimer && typeof fallbackEnforceTimer.unref === 'function') {
+                fallbackEnforceTimer.unref();
+            }
         }
         content.gpvEnforceTopTimer = setTimeout(enforceTop, 220);
+        if (content.gpvEnforceTopTimer && typeof content.gpvEnforceTopTimer.unref === 'function') {
+            content.gpvEnforceTopTimer.unref();
+        }
         return;
     }
     content.scrollTop = 0;
@@ -9282,7 +9517,10 @@ function rerenderSyncSettingsPanel({ message, type = 'success', delay = 300 } = 
         scrollOverlayContentToTop();
     };
     if (delay > 0) {
-        setTimeout(refresh, delay);
+        const refreshTimer = setTimeout(refresh, delay);
+        if (refreshTimer && typeof refreshTimer.unref === 'function') {
+            refreshTimer.unref();
+        }
     } else {
         refresh();
     }
@@ -10051,9 +10289,13 @@ function showSyncSettings(options = {}) {
         ocbc: {
             backLabel: '← Back to Portfolio Viewer (OCBC)',
             onBack: () => {
-                const holdings = getOcbcReadinessState().ocbcHoldings;
+                const readinessState = getOcbcReadinessState();
+                const holdings = readinessState.ocbcHoldings;
                 if (holdings) {
-                    renderOcbcOverlay(holdings);
+                    renderOcbcOverlay(holdings, {
+                        holdingsByPortfolio: readinessState.holdingsByPortfolio,
+                        latestPortfolioNos: readinessState.latestPortfolioNos
+                    });
                     return;
                 }
                 if (typeof showOverlay === 'function') {
@@ -10472,12 +10714,12 @@ syncUi.update = function updateSyncUI() {
                 --gpv-radius-sm: 8px;
                 --gpv-radius-md: 12px;
                 --gpv-radius-lg: 20px;
-                --gpv-color-text: #1f2937;
-                --gpv-color-muted: #6b7280;
-                --gpv-color-border: #e5e7eb;
-                --gpv-color-primary: #667eea;
-                --gpv-color-primary-strong: #4f46e5;
-                --gpv-color-success: #059669;
+                --gpv-color-text: #0f172a;
+                --gpv-color-muted: #475569;
+                --gpv-color-border: #dbe3ee;
+                --gpv-color-primary: #2563eb;
+                --gpv-color-primary-strong: #1d4ed8;
+                --gpv-color-success: #0d9488;
                 --gpv-color-danger: #dc2626;
             }
 
@@ -10533,11 +10775,11 @@ syncUi.update = function updateSyncUI() {
                 right: 20px;
                 z-index: 999999;
                 padding: 12px 24px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
                 color: #fff;
                 border: none;
                 border-radius: 12px;
-                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+                box-shadow: 0 4px 15px rgba(37, 99, 235, 0.35);
                 cursor: pointer;
                 font-size: 15px;
                 font-weight: 600;
@@ -10548,7 +10790,7 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-trigger-btn:hover {
                 transform: translateY(-2px);
-                box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+                box-shadow: 0 6px 20px rgba(37, 99, 235, 0.5);
             }
             
             .gpv-trigger-btn:active {
@@ -10561,7 +10803,7 @@ syncUi.update = function updateSyncUI() {
                 left: 0;
                 width: 100vw;
                 height: 100vh;
-                background: rgba(0, 0, 0, 0.75);
+                background: rgba(15, 23, 42, 0.6);
                 backdrop-filter: blur(8px);
                 z-index: 1000000;
                 display: flex;
@@ -10576,15 +10818,15 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-container {
-                background: #ffffff;
-                border-radius: 20px;
+                background: #f8fafd;
+                border-radius: 16px;
                 padding: 0;
-                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+                box-shadow: 0 18px 44px rgba(15, 23, 42, 0.2);
                 position: relative;
-                max-height: 85vh;
-                max-width: 1200px;
-                width: 90vw;
-                min-width: 800px;
+                max-height: 82vh;
+                max-width: 1040px;
+                width: 86vw;
+                min-width: 720px;
                 display: flex;
                 flex-direction: column;
                 animation: gpv-slideUp 0.3s ease;
@@ -10656,17 +10898,17 @@ syncUi.update = function updateSyncUI() {
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                padding: 14px 20px;
-                border-bottom: 1px solid #e5e7eb;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                border-radius: 20px 20px 0 0;
+                padding: 12px 16px;
+                border-bottom: 1px solid #dbe3ee;
+                background: linear-gradient(180deg, #f8fbff 0%, #f2f7ff 100%);
+                border-radius: 16px 16px 0 0;
             }
             
             .gpv-header h1 {
                 margin: 0;
                 font-size: var(--gpv-font-size-title);
                 font-weight: 700;
-                color: #ffffff;
+                color: #0f172a;
                 font-family: inherit;
             }
             
@@ -10684,9 +10926,9 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-close-btn {
-                background: rgba(255, 255, 255, 0.2);
+                background: #ffffff;
                 border: none;
-                color: #ffffff;
+                color: #334155;
                 font-size: 24px;
                 width: 34px;
                 height: 34px;
@@ -10700,16 +10942,16 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-close-btn:hover {
-                background: rgba(255, 255, 255, 0.3);
+                background: #f1f5f9;
                 transform: rotate(90deg);
             }
             
             .gpv-sync-btn {
-                background: rgba(255, 255, 255, 0.2);
+                background: #ffffff;
                 border: none;
-                color: #ffffff;
+                color: #1e293b;
                 font-size: 14px;
-                padding: 8px 16px;
+                padding: 7px 12px;
                 border-radius: 18px;
                 cursor: pointer;
                 display: flex;
@@ -10721,7 +10963,7 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-sync-btn:hover {
-                background: rgba(255, 255, 255, 0.3);
+                background: #e2e8f0;
                 transform: translateY(-1px);
                 box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
             }
@@ -10731,11 +10973,11 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-expand-btn {
-                background: rgba(255, 255, 255, 0.2);
+                background: #ffffff;
                 border: none;
-                color: #ffffff;
+                color: #1e293b;
                 font-size: 14px;
-                padding: 8px 14px;
+                padding: 7px 12px;
                 border-radius: 18px;
                 cursor: pointer;
                 display: flex;
@@ -10747,7 +10989,7 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-expand-btn:hover {
-                background: rgba(255, 255, 255, 0.3);
+                background: #e2e8f0;
                 transform: translateY(-1px);
             }
 
@@ -10755,13 +10997,15 @@ syncUi.update = function updateSyncUI() {
                 transform: translateY(0);
             }
             
-            .gpv-controls {
-                padding: 10px 20px;
-                background: #f9fafb;
-                border-bottom: 1px solid #e5e7eb;
+            .gpv-controls,
+            .gpv-control-bar {
+                padding: 8px 16px;
+                background: #f8fafc;
+                border-bottom: 1px solid #dbe3ee;
                 display: flex;
                 align-items: center;
                 gap: 10px;
+                flex-wrap: wrap;
             }
             
             .gpv-select-label {
@@ -10772,8 +11016,8 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-select {
-                padding: 10px 18px;
-                border: 2px solid #e5e7eb;
+                padding: 8px 14px;
+                border: 1px solid #cbd5e1;
                 border-radius: 8px;
                 font-size: var(--gpv-font-size-body);
                 font-weight: 500;
@@ -10782,17 +11026,17 @@ syncUi.update = function updateSyncUI() {
                 cursor: pointer;
                 transition: all 0.2s ease;
                 font-family: inherit;
-                min-width: 220px;
+                min-width: 180px;
             }
             
             .gpv-select:hover {
-                border-color: #667eea;
+                border-color: #2563eb;
             }
             
             .gpv-select:focus {
                 outline: none;
-                border-color: #667eea;
-                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+                border-color: #2563eb;
+                box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
             }
 
             .gpv-mode-toggle {
@@ -10813,9 +11057,9 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-mode-btn {
-                border: 1px solid #c7d2fe;
-                background: #eef2ff;
-                color: #3730a3;
+                border: 1px solid #bfdbfe;
+                background: #eff6ff;
+                color: #1e3a8a;
                 padding: 6px 12px;
                 border-radius: 999px;
                 font-size: 13px;
@@ -10825,19 +11069,67 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-mode-btn.is-active {
-                background: #4f46e5;
-                border-color: #4338ca;
+                background: #1d4ed8;
+                border-color: #1e40af;
                 color: #ffffff;
             }
 
+            .gpv-fsm-manager,
+            .gpv-bucket-manager,
+            .gpv-planning-panel,
+            .gpv-readiness,
+            .gpv-fsm-overview-card {
+                background: #ffffff;
+                border: 1px solid #dbe3ee;
+                border-radius: 12px;
+                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+            }
+
+            .gpv-metric-grid,
+            .gpv-summary-row {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+                gap: 10px;
+                align-items: stretch;
+            }
+
+            .gpv-metric-card,
+            .gpv-summary-card {
+                background: #f8fafc;
+                border: 1px solid #dbe3ee;
+                border-radius: 10px;
+                padding: 10px 12px;
+                font-size: 13px;
+            }
+
+            .gpv-manager-row,
+            .gpv-fsm-manager-row {
+                display: flex;
+                gap: 10px;
+                margin-bottom: 14px;
+                align-items: center;
+                flex-wrap: wrap;
+            }
+
+            .gpv-table-wrap,
+            .gpv-fsm-table-wrap {
+                width: 100%;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                border: 1px solid #dbe3ee;
+                border-radius: 10px;
+                background: #ffffff;
+                margin-bottom: var(--gpv-space-4);
+            }
+
             .gpv-mode-btn:focus-visible {
-                outline: 2px solid rgba(79, 70, 229, 0.5);
+                outline: 2px solid rgba(37, 99, 235, 0.55);
                 outline-offset: 2px;
             }
             
             .gpv-content {
                 overflow-y: auto;
-                padding: 14px 20px;
+                padding: 12px 16px;
                 flex: 1;
             }
             
@@ -10969,6 +11261,13 @@ syncUi.update = function updateSyncUI() {
                 color: #1e3a8a;
                 text-transform: uppercase;
                 letter-spacing: 0.03em;
+            }
+
+            .gpv-planning-subtitle {
+                margin: 0 0 6px;
+                font-size: 13px;
+                font-weight: 700;
+                color: #1e3a8a;
             }
 
             .gpv-planning-coverage,
@@ -11199,6 +11498,7 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-goal-type-stat .gpv-drift--green,
             .gpv-type-summary .gpv-drift--green,
+            .gpv-planning-panel .gpv-drift--green,
             .gpv-column-drift.gpv-drift--green,
             .gpv-summary-card.gpv-drift--green,
             .gpv-table .gpv-drift--green {
@@ -11208,6 +11508,7 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-goal-type-stat .gpv-drift--yellow,
             .gpv-type-summary .gpv-drift--yellow,
+            .gpv-planning-panel .gpv-drift--yellow,
             .gpv-column-drift.gpv-drift--yellow,
             .gpv-summary-card.gpv-drift--yellow,
             .gpv-table .gpv-drift--yellow {
@@ -11217,6 +11518,7 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-goal-type-stat .gpv-drift--red,
             .gpv-type-summary .gpv-drift--red,
+            .gpv-planning-panel .gpv-drift--red,
             .gpv-column-drift.gpv-drift--red,
             .gpv-summary-card.gpv-drift--red,
             .gpv-table .gpv-drift--red {
@@ -11394,14 +11696,14 @@ syncUi.update = function updateSyncUI() {
                 width: 100%;
                 border-collapse: separate;
                 border-spacing: 0;
-                border: 1px solid #e5e7eb;
+                border: 1px solid #dbe3ee;
                 border-radius: 8px;
                 overflow: hidden;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             }
             
             .gpv-table thead tr {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                background: #eaf1fb;
             }
             
             .gpv-table th {
@@ -11409,7 +11711,7 @@ syncUi.update = function updateSyncUI() {
                 text-align: right;
                 font-weight: 700;
                 font-size: 12px;
-                color: #ffffff;
+                color: #334155;
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
                 white-space: nowrap;
@@ -11428,7 +11730,7 @@ syncUi.update = function updateSyncUI() {
                 text-align: right;
                 font-size: 14px;
                 color: #1f2937;
-                border-top: 1px solid #e5e7eb;
+                border-top: 1px solid #e2e8f0;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             }
             
@@ -11437,15 +11739,15 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-table tbody tr:hover {
-                background-color: #f3f4f6;
+                background-color: #f8fafc;
             }
 
             .gpv-table tbody tr.gpv-goal-row:hover + tr.gpv-goal-metrics-row {
-                background-color: #f3f4f6;
+                background-color: #f8fafc;
             }
 
             .gpv-table tbody tr.gpv-goal-metrics-row:hover {
-                background-color: #f3f4f6;
+                background-color: #f8fafc;
             }
 
             .gpv-mode-allocation .gpv-column-return,
@@ -11510,12 +11812,6 @@ syncUi.update = function updateSyncUI() {
                 color: #111827;
                 font-size: 14px;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            }
-
-            .gpv-fsm-manager-row {
-                gap: 10px;
-                margin-bottom: 14px;
-                align-items: center;
             }
 
             .gpv-fsm-manager-row label {
@@ -11635,7 +11931,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-target-input {
                 width: 70px;
                 padding: 4px 8px;
-                border: 2px solid #e5e7eb;
+                border: 1px solid #cbd5e1;
                 border-radius: 6px;
                 font-size: 13px;
                 font-weight: 600;
@@ -11647,12 +11943,12 @@ syncUi.update = function updateSyncUI() {
             
             .gpv-target-input:focus {
                 outline: none;
-                border-color: #667eea;
-                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+                border-color: #2563eb;
+                box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
             }
             
             .gpv-target-input:hover {
-                border-color: #667eea;
+                border-color: #2563eb;
             }
             
             .gpv-target-input::placeholder {
@@ -12324,46 +12620,46 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-btn-primary {
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
                     color: white;
                     border-radius: var(--gpv-radius-lg);
                     padding: var(--gpv-space-3) var(--gpv-space-6);
-                    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+                    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
                     font-weight: 600;
                 }
 
                 .gpv-sync-btn-primary:hover:not(:disabled) {
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
                     color: #fff;
                     transform: translateY(-2px);
-                    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+                    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.35);
                 }
 
                 .gpv-sync-btn-secondary {
-                    background: rgba(255, 255, 255, 0.2);
-                    color: #667eea;
-                    border: 2px solid #667eea;
+                    background: #f8fafc;
+                    color: #1e40af;
+                    border: 1px solid #bfdbfe;
                     border-radius: var(--gpv-radius-lg);
                     padding: var(--gpv-space-3) var(--gpv-space-6);
                     font-weight: 600;
                 }
 
                 .gpv-sync-btn-secondary:hover:not(:disabled) {
-                    background: rgba(255, 255, 255, 0.3);
+                    background: #eff6ff;
                     transform: translateY(-2px);
-                    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+                    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.18);
                 }
 
                 .gpv-header-buttons .gpv-bucket-manage-btn {
-                    background: rgba(255, 255, 255, 0.18);
-                    color: #ffffff;
-                    border: 2px solid rgba(255, 255, 255, 0.7);
+                    background: #eff6ff;
+                    color: #1e40af;
+                    border: 1px solid #bfdbfe;
                 }
 
                 .gpv-header-buttons .gpv-bucket-manage-btn:hover:not(:disabled) {
-                    background: rgba(255, 255, 255, 0.28);
-                    color: #ffffff;
-                    border-color: #ffffff;
+                    background: #dbeafe;
+                    color: #1e3a8a;
+                    border-color: #93c5fd;
                 }
 
                 .gpv-fsm-bulk-apply-btn:hover:not(:disabled) {
@@ -12560,8 +12856,7 @@ syncUi.update = function updateSyncUI() {
                 .gpv-fsm-manager,
                 .gpv-fsm-toolbar,
                 .gpv-fsm-manager-row,
-                .gpv-fsm-portfolio-list-row,
-                .gpv-summary-row {
+                .gpv-fsm-portfolio-list-row {
                     display: flex;
                     gap: var(--gpv-space-2);
                     align-items: center;
@@ -12574,6 +12869,12 @@ syncUi.update = function updateSyncUI() {
                     display: flex;
                     flex-direction: column;
                     gap: var(--gpv-space-3);
+                }
+
+                .gpv-manager-panel,
+                .gpv-fsm-manager,
+                .gpv-bucket-manager {
+                    padding: 12px;
                 }
 
                 .gpv-fsm-manager,
@@ -12589,14 +12890,6 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-fsm-section[hidden] {
                     display: none;
-                }
-
-                .gpv-summary-card {
-                    background: #f8fafc;
-                    border: 1px solid #e5e7eb;
-                    border-radius: 8px;
-                    padding: 8px 10px;
-                    font-size: 13px;
                 }
 
                 .gpv-summary-row {
@@ -12682,14 +12975,9 @@ syncUi.update = function updateSyncUI() {
                     margin-bottom: var(--gpv-space-4);
                 }
 
-                .gpv-fsm-table-wrap,
-                .gpv-table-wrap {
-                    margin-bottom: var(--gpv-space-4);
-                }
-
                 .gpv-fsm-overview-card {
                     background: #ffffff;
-                    border: 2px solid #e5e7eb;
+                    border: 1px solid #dbe3ee;
                     border-radius: 12px;
                     padding: 16px;
                     cursor: pointer;
@@ -12697,8 +12985,8 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-fsm-overview-card:hover {
-                    border-color: #667eea;
-                    box-shadow: 0 6px 18px rgba(102, 126, 234, 0.12);
+                    border-color: #60a5fa;
+                    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.12);
                     transform: translateY(-1px);
                 }
 
@@ -12786,12 +13074,6 @@ syncUi.update = function updateSyncUI() {
                     color: #b91c1c;
                 }
 
-                .gpv-fsm-table-wrap {
-                    width: 100%;
-                    overflow-x: auto;
-                    -webkit-overflow-scrolling: touch;
-                }
-
                 .gpv-fsm-table-portfolio-select {
                     min-width: 0;
                 }
@@ -12811,7 +13093,18 @@ syncUi.update = function updateSyncUI() {
                     min-width: 1120px;
                 }
 
+                .gpv-table-wrap .gpv-table,
+                .gpv-fsm-table-wrap .gpv-table {
+                    min-width: 960px;
+                }
+
                 .gpv-fsm-table-wrap thead th {
+                    position: sticky;
+                    top: 0;
+                    z-index: 1;
+                }
+
+                .gpv-table-wrap thead th {
                     position: sticky;
                     top: 0;
                     z-index: 1;
@@ -13040,6 +13333,21 @@ syncUi.update = function updateSyncUI() {
         render: renderPortfolioView
     };
 
+    function getEndowusBucketConfigSignature(performanceData, investibleData, summaryData) {
+        const store = readEndowusStore();
+        const clearedGoalBuckets = store?.clearedGoalBuckets && typeof store.clearedGoalBuckets === 'object' ? store.clearedGoalBuckets : {};
+        const goalIds = Array.from(collectGoalIdSetFromApiData(performanceData, investibleData, summaryData)).sort();
+        const goalBucketEntries = goalIds
+            .map(goalId => [goalId, utils.normalizeString(GoalTargetStore.getBucket(goalId), '')]);
+        const clearedGoalBucketEntries = goalIds
+            .map(goalId => ({
+                goalId,
+                storeCleared: clearedGoalBuckets[goalId] === true,
+                legacyCleared: Storage.get(storageKeys.goalBucketCleared(goalId), false) === true
+            }));
+        return JSON.stringify({ goalBucketEntries, clearedGoalBucketEntries });
+    }
+
     function getEndowusReadinessState() {
         const hasPerformance = state.readiness.endowus.performanceLoaded === true
             && Array.isArray(state.apiData.performance);
@@ -13047,6 +13355,36 @@ syncUi.update = function updateSyncUI() {
             && Array.isArray(state.apiData.investible);
         const hasSummary = state.readiness.endowus.summaryLoaded === true
             && Array.isArray(state.apiData.summary);
+        if (!hasPerformance || !hasInvestible || !hasSummary) {
+            return {
+                hasPerformance,
+                hasInvestible,
+                hasSummary,
+                ready: false,
+                mergedInvestmentDataState: null
+            };
+        }
+        const bucketConfigSignatureBeforeSeed = getEndowusBucketConfigSignature(
+            state.apiData.performance,
+            state.apiData.investible,
+            state.apiData.summary
+        );
+        const mergedCache = state.derived.endowusMergedInvestmentDataCache || {};
+        if (
+            mergedCache.performanceRef === state.apiData.performance
+            && mergedCache.investibleRef === state.apiData.investible
+            && mergedCache.summaryRef === state.apiData.summary
+            && mergedCache.bucketConfigSignature === bucketConfigSignatureBeforeSeed
+            && mergedCache.mergedInvestmentDataState
+        ) {
+            return {
+                hasPerformance,
+                hasInvestible,
+                hasSummary,
+                ready: true,
+                mergedInvestmentDataState: mergedCache.mergedInvestmentDataState
+            };
+        }
         const goalBucketById = buildGoalBucketAssignmentMap({
             performanceData: state.apiData.performance,
             investibleData: state.apiData.investible,
@@ -13054,19 +13392,29 @@ syncUi.update = function updateSyncUI() {
             getAssignedBucket: GoalTargetStore.getBucket,
             seedAssignedBucket: GoalTargetStore.setBucket
         });
-        const mergedInvestmentDataState = hasPerformance && hasInvestible && hasSummary
-            ? buildMergedInvestmentData(
-                state.apiData.performance,
-                state.apiData.investible,
-                state.apiData.summary,
-                goalBucketById
-            )
-            : null;
+        const bucketConfigSignatureAfterSeed = getEndowusBucketConfigSignature(
+            state.apiData.performance,
+            state.apiData.investible,
+            state.apiData.summary
+        );
+        const mergedInvestmentDataState = buildMergedInvestmentData(
+            state.apiData.performance,
+            state.apiData.investible,
+            state.apiData.summary,
+            goalBucketById
+        );
+        state.derived.endowusMergedInvestmentDataCache = {
+            performanceRef: state.apiData.performance,
+            investibleRef: state.apiData.investible,
+            summaryRef: state.apiData.summary,
+            bucketConfigSignature: bucketConfigSignatureAfterSeed,
+            mergedInvestmentDataState
+        };
         return {
             hasPerformance,
             hasInvestible,
             hasSummary,
-            ready: Boolean(mergedInvestmentDataState),
+            ready: true,
             mergedInvestmentDataState
         };
     }
@@ -13083,8 +13431,11 @@ syncUi.update = function updateSyncUI() {
         const ocbcHoldings = state.apiData.ocbcHoldings && typeof state.apiData.ocbcHoldings === 'object'
             ? state.apiData.ocbcHoldings
             : { assets: [], liabilities: [] };
+        const ocbcStore = readOcbcStore();
         return {
             ready: state.readiness.ocbc.holdingsLoaded === true,
+            holdingsByPortfolio: normalizeOcbcHoldingsByPortfolioForStore(ocbcStore.holdingsByPortfolio),
+            latestPortfolioNos: Array.isArray(state.readiness.ocbc.latestPortfolioNos) ? state.readiness.ocbc.latestPortfolioNos : [],
             ocbcHoldings: {
                 assets: Array.isArray(ocbcHoldings.assets) ? ocbcHoldings.assets : [],
                 liabilities: Array.isArray(ocbcHoldings.liabilities) ? ocbcHoldings.liabilities : []
@@ -13486,17 +13837,24 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         onCancelRename,
         onArchive
     }) {
-        const manager = createElement('div', 'gpv-fsm-manager');
-        manager.innerHTML = `
-            <div class="gpv-fsm-manager-row">
-                <label for="gpv-fsm-create-portfolio">New portfolio</label>
-                <input id="gpv-fsm-create-portfolio" class="gpv-target-input" maxlength="${FSM_MAX_PORTFOLIO_NAME_LENGTH}" placeholder="Portfolio name" />
-                <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-fsm-create-portfolio-btn">Create</button>
-            </div>
-        `;
+        const manager = createElement('div', 'gpv-fsm-manager gpv-manager-panel');
+        manager.appendChild(createManagerCreateRow({
+            rowClassName: 'gpv-fsm-manager-row',
+            labelText: 'New portfolio',
+            inputId: 'gpv-fsm-create-portfolio',
+            inputMaxLength: FSM_MAX_PORTFOLIO_NAME_LENGTH,
+            inputPlaceholder: 'Portfolio name',
+            buttonId: 'gpv-fsm-create-portfolio-btn',
+            onCreate: name => {
+                if (typeof onCreate === 'function') {
+                    onCreate(name);
+                }
+            },
+            normalizeValue: normalizePortfolioName
+        }).row);
         const list = createElement('div', 'gpv-fsm-portfolio-list');
         activePortfolios.forEach(item => {
-            const row = createElement('div', 'gpv-fsm-portfolio-list-row');
+            const row = createElement('div', 'gpv-manager-row gpv-fsm-portfolio-list-row');
 
             if (editingPortfolioId === item.id) {
                 const renameInput = createElement('input', 'gpv-target-input');
@@ -13554,21 +13912,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         });
         manager.appendChild(list);
 
-        const createBtn = manager.querySelector('#gpv-fsm-create-portfolio-btn');
-        const createInput = manager.querySelector('#gpv-fsm-create-portfolio');
-        if (createBtn && createInput) {
-            createBtn.onclick = () => {
-                const name = normalizePortfolioName(createInput.value);
-                if (!name) {
-                    return;
-                }
-                if (typeof onCreate === 'function') {
-                    onCreate(name);
-                }
-                createInput.value = '';
-            };
-        }
-
         return manager;
     }
 
@@ -13578,27 +13921,27 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const showFixed = options.showFixed !== false;
         const showTargetAssigned = options.showTargetAssigned !== false;
         const showUnassigned = options.showUnassigned !== false;
-        const summaryRow = createElement('div', 'gpv-summary-row');
+        const summaryRow = createElement('div', 'gpv-summary-row gpv-metric-grid');
         const driftClassName = summary?.driftClass
-            ? `gpv-summary-card ${summary.driftClass}`
-            : 'gpv-summary-card';
+            ? `gpv-summary-card gpv-metric-card ${summary.driftClass}`
+            : 'gpv-summary-card gpv-metric-card';
         const profitClassName = summary?.profitClass === 'positive' || summary?.profitClass === 'negative'
             ? ` ${summary.profitClass}`
             : '';
         const profitCardHtml = showProfit
-            ? `<div class="gpv-summary-card"><strong>Profit:</strong> <span class="gpv-summary-profit-value${escapeHtml(profitClassName)}">${escapeHtml(summary?.profitDisplay || '-')}</span></div>`
+            ? `<div class="gpv-summary-card gpv-metric-card"><strong>Profit:</strong> <span class="gpv-summary-profit-value${escapeHtml(profitClassName)}">${escapeHtml(summary?.profitDisplay || '-')}</span></div>`
             : '';
         const fixedCardHtml = showFixed
-            ? `<div class="gpv-summary-card"><strong>Fixed:</strong> ${escapeHtml(String(summary.fixedCount))}</div>`
+            ? `<div class="gpv-summary-card gpv-metric-card"><strong>Fixed:</strong> ${escapeHtml(String(summary.fixedCount))}</div>`
             : '';
         const driftCardHtml = showDrift
             ? `<div class="${escapeHtml(driftClassName)}"><strong>Drift:</strong> ${escapeHtml(summary.driftDisplay)}</div>`
             : '';
         summaryRow.innerHTML = `
-            <div class="gpv-summary-card"><strong>Total Value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
-            ${showTargetAssigned ? `<div class="gpv-summary-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>` : ''}
-            <div class="gpv-summary-card"><strong>Holdings:</strong> ${escapeHtml(String(summary.holdingsCount))}</div>
-            ${showUnassigned ? `<div class="gpv-summary-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>` : ''}
+            <div class="gpv-summary-card gpv-metric-card"><strong>Current value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
+            ${showTargetAssigned ? `<div class="gpv-summary-card gpv-metric-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>` : ''}
+            <div class="gpv-summary-card gpv-metric-card"><strong>Holdings:</strong> ${escapeHtml(String(summary.holdingsCount))}</div>
+            ${showUnassigned ? `<div class="gpv-summary-card gpv-metric-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>` : ''}
             ${profitCardHtml}
             ${fixedCardHtml}
             ${driftCardHtml}
@@ -14000,7 +14343,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             selectCell.appendChild(select);
             tbody.appendChild(tr);
         });
-        const tableWrapper = createElement('div', 'gpv-fsm-table-wrap');
+        const tableWrapper = createElement('div', 'gpv-table-wrap gpv-fsm-table-wrap');
         tableWrapper.appendChild(table);
         return tableWrapper;
     }
@@ -14519,21 +14862,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         if (displayRows.length === 0) {
             return createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.');
         }
-        const table = createElement('table', 'gpv-table');
-        table.innerHTML = `
-            <thead>
-                <tr>
-                    <th>Identifier</th>
-                    <th>Name</th>
-                    <th>Type</th>
-                    <th>Value (SGD)</th>
-                    <th>Profit</th>
-                    <th>Current %</th>
-                </tr>
-            </thead>
-            <tbody></tbody>
-        `;
-        const tbody = table.querySelector('tbody');
+        const { table, tbody } = createWorkspaceTable({
+            headers: ['Identifier', 'Name', 'Type', 'Value (SGD)', 'Profit', 'Current %']
+        });
         displayRows.forEach(row => {
             const tr = createElement('tr');
             tr.innerHTML = `
@@ -14591,20 +14922,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function buildOcbcPortfolioHeader(portfolioNo, summary) {
-        const detailHeader = createElement('div', 'gpv-detail-header gpv-ocbc-portfolio-header');
-        const detailTitle = createElement('h2', 'gpv-detail-title', `Portfolio ${portfolioNo}`);
-        const detailStats = createElement('div', 'gpv-stats gpv-detail-stats gpv-ocbc-detail-stats');
         const profitClass = summary?.profitClass === 'positive' || summary?.profitClass === 'negative'
             ? summary.profitClass
             : null;
-
-        detailStats.appendChild(createStatItem('Total Value', formatMoney(summary?.total || 0)));
-        detailStats.appendChild(createStatItem('Holdings', String(summary?.holdingsCount || 0)));
-        detailStats.appendChild(createStatItem('Profit', summary?.profitDisplay || '-', profitClass));
-
-        detailHeader.appendChild(detailTitle);
-        detailHeader.appendChild(detailStats);
-        return detailHeader;
+        return createWorkspaceSectionHeader({
+            className: 'gpv-detail-header gpv-ocbc-portfolio-header',
+            title: `Portfolio ${portfolioNo}`,
+            titleLevel: 2,
+            titleClassName: 'gpv-detail-title',
+            metrics: [
+                { label: 'Current value', value: formatMoney(summary?.total || 0) },
+                { label: 'Holdings', value: String(summary?.holdingsCount || 0) },
+                { label: 'Profit', value: summary?.profitDisplay || '-', valueClass: profitClass }
+            ],
+            metricsClassName: 'gpv-stats gpv-detail-stats gpv-ocbc-detail-stats'
+        });
     }
 
     function buildOcbcProductTypeHeader(productType, summary) {
@@ -15032,7 +15364,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return Array.from(mergedMap.values());
     }
 
-    function renderOcbcOverlay(ocbcHoldings) {
+    function renderOcbcOverlay(ocbcHoldings, options = {}) {
         const overlay = createElement('div', 'gpv-overlay');
         overlay.id = 'gpv-overlay';
         const container = createElement('div', 'gpv-container gpv-container--expanded');
@@ -15048,43 +15380,49 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         });
         container.appendChild(header);
 
-        const controls = createElement('div', 'gpv-controls');
-        const viewLabel = createElement('label', 'gpv-select-label', 'View:');
-        const viewSelect = createElement('select', 'gpv-select');
+        const controls = createElement('div', 'gpv-controls gpv-control-bar');
         const viewSelectId = 'gpv-ocbc-view-select';
-        viewSelect.id = viewSelectId;
-        viewLabel.setAttribute('for', viewSelectId);
-        viewSelect.setAttribute('aria-label', 'Select OCBC holdings view');
-        viewSelect.innerHTML = `
-            <option value="assets">Assets</option>
-            <option value="liabilities">Liabilities</option>
-        `;
+        const { label: viewLabel, select: viewSelect } = createSelectControl({
+            id: viewSelectId,
+            labelText: 'View:',
+            ariaLabel: 'Select OCBC holdings view',
+            options: [
+                { value: 'assets', label: 'Assets' },
+                { value: 'liabilities', label: 'Liabilities' }
+            ]
+        });
         controls.appendChild(viewLabel);
         controls.appendChild(viewSelect);
 
-        const modeLabel = createElement('label', 'gpv-select-label', 'Mode:');
-        const modeSelect = createElement('select', 'gpv-select');
         const modeSelectId = 'gpv-ocbc-mode-select';
-        modeSelect.id = modeSelectId;
-        modeLabel.setAttribute('for', modeSelectId);
-        modeSelect.setAttribute('aria-label', 'Select OCBC layout mode');
-        modeSelect.innerHTML = `
-            <option value="portfolio">Portfolio</option>
-            <option value="allocation">Allocation</option>
-        `;
+        const { label: modeLabel, select: modeSelect } = createSelectControl({
+            id: modeSelectId,
+            labelText: 'Mode:',
+            ariaLabel: 'Select OCBC layout mode',
+            options: [
+                { value: 'portfolio', label: 'Portfolio' },
+                { value: 'allocation', label: 'Allocation' }
+            ]
+        });
         controls.appendChild(modeLabel);
         controls.appendChild(modeSelect);
         container.appendChild(controls);
+        const detailToolbarControls = [viewSelect, modeSelect];
 
         const contentDiv = createElement('div', 'gpv-content');
         container.appendChild(contentDiv);
         overlay.appendChild(container);
+        const allocationModeOption = Array.from(modeSelect.options).find(option => option.value === 'allocation') || null;
 
         const safeHoldings = ocbcHoldings && typeof ocbcHoldings === 'object'
             ? ocbcHoldings
             : { assets: [], liabilities: [] };
         const assets = Array.isArray(safeHoldings.assets) ? safeHoldings.assets : [];
         const liabilities = Array.isArray(safeHoldings.liabilities) ? safeHoldings.liabilities : [];
+        const holdingsByPortfolio = normalizeOcbcHoldingsByPortfolioForStore(options.holdingsByPortfolio);
+        const latestPortfolioNos = new Set(Array.isArray(options.latestPortfolioNos) ? options.latestPortfolioNos : []);
+        let viewMode = 'overview';
+        let selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
 
         const allocationConfig = loadOcbcAllocationConfig();
         const bucketsByView = allocationConfig.bucketsByView;
@@ -15101,6 +15439,158 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 return;
             }
 
+            const planningPanel = createElement('section', 'gpv-planning-panel');
+            planningPanel.appendChild(createElement('h2', 'gpv-planning-title', 'Planning'));
+            planningPanel.appendChild(createElement(
+                'p',
+                'gpv-planning-copy',
+                'Assign instruments to sub-portfolios, set target percentages, and spot drift before rebalancing.'
+            ));
+            planningPanel.appendChild(createElement('p', 'gpv-planning-copy', `Scope: ${activeView === 'liabilities' ? 'Liabilities' : 'Assets'}`));
+
+            const planningTotalValue = portfolioNos.reduce((sum, portfolioNo) => (
+                sum + toFiniteNumber(buildOcbcSummary(groupedByPortfolio[portfolioNo] || []).total, 0)
+            ), 0);
+            const planningDistinctSubPortfolioIds = new Set();
+            let planningUnassignedInstruments = 0;
+            let planningCoverageConfiguredCount = 0;
+            let planningCoverageCompleteCount = 0;
+            let planningMaterialDriftCount = 0;
+            let planningLargestDriftPercent = null;
+            let planningLargestDriftAmount = null;
+
+            portfolioNos.forEach(portfolioNo => {
+                const portfolioRows = groupedByPortfolio[portfolioNo] || [];
+                const portfolioSummary = buildOcbcSummary(portfolioRows);
+                const portfolioTotal = toFiniteNumber(portfolioSummary.total, 0);
+                const scopedSubPortfolios = getActiveOcbcSubPortfolios(subPortfoliosByView, activeView, portfolioNo);
+                const legacySubPortfolios = buildLegacyOcbcSubPortfolios(activeView, bucketsByView);
+                const persistedSubPortfolios = mergeOcbcSubPortfolios(scopedSubPortfolios, legacySubPortfolios);
+                const assignmentReferencedProductTypeById = new Map();
+                portfolioRows.forEach(row => {
+                    const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
+                    const assignmentId = utils.normalizeString(assignment?.subPortfolioId, '');
+                    if (!assignmentId || assignmentReferencedProductTypeById.has(assignmentId)) {
+                        return;
+                    }
+                    assignmentReferencedProductTypeById.set(assignmentId, utils.normalizeString(row?.productType, ''));
+                });
+                const assignmentReferencedIds = Array.from(new Set(portfolioRows
+                    .map(row => resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios).subPortfolioId)
+                    .filter(Boolean)));
+                assignmentReferencedIds.forEach(id => {
+                    const referencedProductType = assignmentReferencedProductTypeById.get(id) || '';
+                    const ambiguousLegacyMatches = persistedSubPortfolios.filter(item => (
+                        utils.normalizeString(item?.legacyBucketId, '') === id
+                        && utils.normalizeString(item?.legacyProductType, '') === referencedProductType
+                    ));
+                    if (ambiguousLegacyMatches.length > 1) {
+                        return;
+                    }
+                    if (!persistedSubPortfolios.some(item => item.id === id)) {
+                        persistedSubPortfolios.push({ id, name: id, archived: false });
+                    }
+                });
+
+                persistedSubPortfolios.forEach(subPortfolio => {
+                    if (subPortfolio?.id) {
+                        planningDistinctSubPortfolioIds.add(subPortfolio.id);
+                    }
+                });
+
+                const subPortfolioRowsData = [{ id: '', rows: [] }];
+                persistedSubPortfolios.forEach(item => subPortfolioRowsData.push({ ...item, rows: [] }));
+                portfolioRows.forEach(row => {
+                    const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
+                    const matchedSubPortfolio = subPortfolioRowsData.find(item => item.id === assignment.subPortfolioId);
+                    (matchedSubPortfolio || subPortfolioRowsData[0]).rows.push(row);
+                });
+
+                planningUnassignedInstruments += subPortfolioRowsData[0].rows.length;
+
+                const configuredSubPortfolioTargets = subPortfolioRowsData.reduce((sum, subPortfolio) => {
+                    if (!subPortfolio.id) {
+                        return sum;
+                    }
+                    const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId);
+                    return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
+                }, 0);
+                const hasCoverageIntent = hasConfiguredAllocationIntent({
+                    targetValues: subPortfolioRowsData
+                        .filter(item => item.id)
+                        .map(item => getOcbcAllocationTargetPercent(activeView, portfolioNo, item.id, '', item.legacyProductType, item.legacyBucketId)),
+                    fixedCount: 0
+                });
+                if (hasCoverageIntent) {
+                    planningCoverageConfiguredCount += 1;
+                    if (!buildTargetCoverageLabel(configuredSubPortfolioTargets)) {
+                        planningCoverageCompleteCount += 1;
+                    }
+                }
+
+                subPortfolioRowsData.forEach(subPortfolio => {
+                    if (!subPortfolio.id) {
+                        return;
+                    }
+                    const subPortfolioSummary = buildOcbcSummary(subPortfolio.rows);
+                    const subPortfolioValue = toFiniteNumber(subPortfolioSummary.total, 0);
+                    const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId);
+                    if (!Number.isFinite(targetPercent) || portfolioTotal <= 0) {
+                        return;
+                    }
+                    const driftModel = calculateAllocationDrift(subPortfolioValue, targetPercent, portfolioTotal);
+                    if (!Number.isFinite(driftModel?.driftPercent)) {
+                        return;
+                    }
+                    if (Math.abs(driftModel.driftPercent) > MATERIAL_DRIFT_RATIO) {
+                        planningMaterialDriftCount += 1;
+                    }
+                    if (planningLargestDriftPercent === null || Math.abs(driftModel.driftPercent) > Math.abs(planningLargestDriftPercent)) {
+                        planningLargestDriftPercent = driftModel.driftPercent;
+                        planningLargestDriftAmount = driftModel.driftAmount;
+                    }
+                });
+            });
+
+            const planningCoverageText = planningCoverageConfiguredCount > 0
+                ? `${planningCoverageCompleteCount}/${planningCoverageConfiguredCount} portfolios at 100%`
+                : 'No target coverage set';
+            const planningDriftText = Number.isFinite(planningLargestDriftPercent)
+                ? formatDriftDisplay(planningLargestDriftPercent, planningLargestDriftAmount)
+                : '-';
+
+            const planningDetailList = createElement('ul', 'gpv-planning-list');
+            planningDetailList.appendChild(createElement('li', 'gpv-planning-item', `Current value: ${formatMoney(planningTotalValue)}`));
+            planningDetailList.appendChild(createElement('li', 'gpv-planning-item', `Sub-portfolios: ${planningDistinctSubPortfolioIds.size}`));
+            planningDetailList.appendChild(createElement('li', 'gpv-planning-item', `Unassigned instruments: ${planningUnassignedInstruments}`));
+            planningDetailList.appendChild(createElement('li', 'gpv-planning-item', `Target coverage: ${planningCoverageText}`));
+            const driftItem = createElement('li', 'gpv-planning-item');
+            driftItem.appendChild(document.createTextNode('Largest drift: '));
+            appendTextSpan(driftItem, getDriftSeverityClass(planningLargestDriftPercent), planningDriftText);
+            planningDetailList.appendChild(driftItem);
+            planningPanel.appendChild(planningDetailList);
+
+            const planningStatusItems = [];
+            if (planningUnassignedInstruments > 0) {
+                const suffix = planningUnassignedInstruments === 1 ? '' : 's';
+                planningStatusItems.push(`${planningUnassignedInstruments} instrument${suffix} unassigned to a sub-portfolio`);
+            }
+            if (planningCoverageConfiguredCount > 0 && planningCoverageCompleteCount < planningCoverageConfiguredCount) {
+                planningStatusItems.push(`Target coverage incomplete in ${planningCoverageConfiguredCount - planningCoverageCompleteCount} portfolio scope(s)`);
+            }
+            if (planningMaterialDriftCount > 0) {
+                planningStatusItems.push(`${planningMaterialDriftCount} sub-portfolio scope(s) show high drift`);
+            }
+            if (planningStatusItems.length > 0) {
+                planningPanel.appendChild(createElement('h3', 'gpv-planning-subtitle', 'Needs attention'));
+                const statusList = createElement('ul', 'gpv-health-reasons');
+                planningStatusItems.forEach(item => {
+                    statusList.appendChild(createElement('li', 'gpv-health-reason', item));
+                });
+                planningPanel.appendChild(statusList);
+            }
+            contentDiv.appendChild(planningPanel);
+
             portfolioNos.forEach(portfolioNo => {
                 const portfolioRows = groupedByPortfolio[portfolioNo] || [];
                 const portfolioSummary = buildOcbcSummary(portfolioRows);
@@ -15111,13 +15601,23 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 const scopedSubPortfolios = getActiveOcbcSubPortfolios(subPortfoliosByView, activeView, portfolioNo);
                 const legacySubPortfolios = buildLegacyOcbcSubPortfolios(activeView, bucketsByView);
                 const persistedSubPortfolios = mergeOcbcSubPortfolios(scopedSubPortfolios, legacySubPortfolios);
+                const assignmentReferencedProductTypeById = new Map();
+                portfolioRows.forEach(row => {
+                    const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
+                    const assignmentId = utils.normalizeString(assignment?.subPortfolioId, '');
+                    if (!assignmentId || assignmentReferencedProductTypeById.has(assignmentId)) {
+                        return;
+                    }
+                    assignmentReferencedProductTypeById.set(assignmentId, utils.normalizeString(row?.productType, ''));
+                });
                 const assignmentReferencedIds = Array.from(new Set(portfolioRows
                     .map(row => resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios).subPortfolioId)
                     .filter(Boolean)));
                 assignmentReferencedIds.forEach(id => {
+                    const referencedProductType = assignmentReferencedProductTypeById.get(id) || '';
                     const ambiguousLegacyMatches = persistedSubPortfolios.filter(item => (
                         utils.normalizeString(item?.legacyBucketId, '') === id
-                        && utils.normalizeString(item?.legacyProductType, '')
+                        && utils.normalizeString(item?.legacyProductType, '') === referencedProductType
                     ));
                     if (ambiguousLegacyMatches.length > 1) {
                         return;
@@ -15127,54 +15627,42 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     }
                 });
 
-                const managerRow = createElement('div', 'gpv-fsm-manager-row');
                 const createSubPortfolioId = `gpv-ocbc-sub-portfolio-create-${activeView}-${encodeURIComponent(portfolioNo)}`;
-                const createSubPortfolioLabel = createElement('label', null, 'New sub-portfolio');
-                createSubPortfolioLabel.setAttribute('for', createSubPortfolioId);
-                const createSubPortfolioInput = createElement('input', 'gpv-target-input');
-                createSubPortfolioInput.id = createSubPortfolioId;
-                createSubPortfolioInput.maxLength = 80;
-                createSubPortfolioInput.placeholder = 'Sub-portfolio name';
-                const createSubPortfolioBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-primary', 'Create');
-                createSubPortfolioBtn.type = 'button';
-                createSubPortfolioBtn.onclick = () => {
-                    const name = utils.normalizeString(createSubPortfolioInput.value, '');
-                    if (!name) {
-                        return;
+                const { row: managerRow } = createManagerCreateRow({
+                    rowClassName: 'gpv-fsm-manager-row',
+                    labelText: 'New sub-portfolio',
+                    inputId: createSubPortfolioId,
+                    inputMaxLength: 80,
+                    inputPlaceholder: 'Sub-portfolio name',
+                    onCreate: name => {
+                        const normalizedId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                        const subPortfolioId = normalizedId || `sub-portfolio-${Date.now()}`;
+                        const viewStore = ensureOcbcViewSubPortfolioStore(subPortfoliosByView, activeView);
+                        const currentItems = Array.isArray(viewStore[portfolioNo]) ? viewStore[portfolioNo] : [];
+                        if (!currentItems.some(item => utils.normalizeString(item?.id, '') === subPortfolioId)) {
+                            currentItems.push({ id: subPortfolioId, name, archived: false });
+                            viewStore[portfolioNo] = currentItems;
+                            saveOcbcSubPortfoliosConfig(subPortfoliosByView);
+                            rerender();
+                            return true;
+                        }
+                        return false;
                     }
-                    const normalizedId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                    const subPortfolioId = normalizedId || `sub-portfolio-${Date.now()}`;
-                    const viewStore = ensureOcbcViewSubPortfolioStore(subPortfoliosByView, activeView);
-                    const currentItems = Array.isArray(viewStore[portfolioNo]) ? viewStore[portfolioNo] : [];
-                    if (!currentItems.some(item => utils.normalizeString(item?.id, '') === subPortfolioId)) {
-                        currentItems.push({ id: subPortfolioId, name, archived: false });
-                        viewStore[portfolioNo] = currentItems;
-                        saveOcbcSubPortfoliosConfig(subPortfoliosByView);
-                        rerender();
-                    }
-                };
-                managerRow.appendChild(createSubPortfolioLabel);
-                managerRow.appendChild(createSubPortfolioInput);
-                managerRow.appendChild(createSubPortfolioBtn);
+                });
                 section.appendChild(managerRow);
                 section.appendChild(createElement('h3', 'gpv-detail-title', `Sub-portfolio allocation within Portfolio ${portfolioNo}`));
 
-                const subPortfolioRows = createElement('table', 'gpv-table');
-                subPortfolioRows.innerHTML = `
-                    <thead>
-                        <tr>
-                            <th>Sub-portfolio</th>
-                            <th>Value (SGD)</th>
-                            <th>Current % of portfolio</th>
-                            <th>Target % of portfolio</th>
-                            <th>Drift</th>
-                            <th>Holdings</th>
-                            <th>Profit</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                `;
-                const subPortfolioBody = subPortfolioRows.querySelector('tbody');
+                const { table: subPortfolioRows, tbody: subPortfolioBody } = createWorkspaceTable({
+                    headers: [
+                        'Sub-portfolio',
+                        'Value (SGD)',
+                        'Current % of portfolio',
+                        'Target % of portfolio',
+                        'Drift',
+                        'Holdings',
+                        'Profit'
+                    ]
+                });
                 const subPortfolioRowsData = [{ id: '', name: 'Unassigned', rows: [] }];
                 persistedSubPortfolios.forEach(item => subPortfolioRowsData.push({ ...item, rows: [] }));
                 const configuredSubPortfolioTargets = subPortfolioRowsData.reduce((sum, subPortfolio) => {
@@ -15258,7 +15746,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     'gpv-sync-help gpv-ocbc-target-summary',
                     `Sub-portfolio targets: ${buildAssignedCoverageText(configuredSubPortfolioTargets)}`
                 ));
-                section.appendChild(subPortfolioRows);
+                const subPortfolioTableWrap = createElement('div', 'gpv-table-wrap gpv-ocbc-sub-portfolio-table-wrap');
+                subPortfolioTableWrap.appendChild(subPortfolioRows);
+                section.appendChild(subPortfolioTableWrap);
 
                 const displayRows = buildFsmDisplayRows(portfolioRows, portfolioTotal);
                 const instrumentRowsBySubPortfolio = [{ id: '', name: 'Unassigned', rows: [] }];
@@ -15311,7 +15801,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         copyControls = buildValueCopyControls({
                             variant: 'section',
                             controlsClassName: 'gpv-balance-copy-controls--ocbc-values',
-                            buttonLabel: 'Copy Values',
+                            buttonLabel: 'Copy values',
                             buttonAriaLabel: `Copy values for sub-portfolio ${subPortfolioName || subPortfolioId}`,
                             emptyMessage: 'No assigned instruments',
                             successMessage: () => `Copied ${orderedRows.length} values`,
@@ -15326,24 +15816,19 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     if (copyControls) {
                         section.appendChild(copyControls);
                     }
-                    const holdingsTable = createElement('table', 'gpv-table');
-                    holdingsTable.innerHTML = `
-                    <thead>
-                        <tr>
-                            <th>Identifier</th>
-                            <th>Name</th>
-                            <th>Product Type</th>
-                            <th>Value (SGD)</th>
-                            <th>Current % of sub-portfolio</th>
-                            <th>Target % of sub-portfolio</th>
-                            <th>Drift</th>
-                            <th>Sub-portfolio</th>
-                            <th>Reorder</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                `;
-                    const holdingsBody = holdingsTable.querySelector('tbody');
+                    const { table: holdingsTable, tbody: holdingsBody } = createWorkspaceTable({
+                        headers: [
+                            'Identifier',
+                            'Name',
+                            'Product Type',
+                            'Value (SGD)',
+                            'Current % of sub-portfolio',
+                            'Target % of sub-portfolio',
+                            'Drift',
+                            'Sub-portfolio',
+                            'Reorder'
+                        ]
+                    });
                     orderedRows.forEach((row, index) => {
                         const tr = createElement('tr');
                         tr.appendChild(createElement('td', null, row.displayTicker || row.code || '-'));
@@ -15493,7 +15978,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         tr.appendChild(reorderCell);
                         holdingsBody.appendChild(tr);
                     });
-                    section.appendChild(holdingsTable);
+                    const holdingsTableWrap = createElement('div', 'gpv-table-wrap gpv-ocbc-holdings-table-wrap');
+                    holdingsTableWrap.appendChild(holdingsTable);
+                    section.appendChild(holdingsTableWrap);
                 };
 
                 instrumentRowsBySubPortfolio.forEach(subPortfolio => {
@@ -15523,13 +16010,129 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
         }
 
+        function renderOverview(activeView) {
+            const rows = activeView === 'liabilities' ? liabilities : assets;
+            const grouped = buildOcbcAllocationRowsByPortfolio(rows);
+            const portfolioNos = Object.keys(grouped).sort((left, right) => left.localeCompare(right, 'en', { sensitivity: 'base' }));
+            if (!portfolioNos.length) {
+                contentDiv.appendChild(createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.'));
+                return;
+            }
+
+            const overview = createElement('div', 'gpv-fsm-overview');
+            const header = createElement('div', 'gpv-fsm-overview-header');
+            const copy = createElement('div', 'gpv-fsm-overview-copy');
+            copy.appendChild(createElement('h2', null, 'Overview'));
+            copy.appendChild(createElement('p', null, 'Select a portfolio to open details, or view all cached holdings.'));
+            header.appendChild(copy);
+            const viewAllBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'View all cached holdings');
+            viewAllBtn.type = 'button';
+            viewAllBtn.onclick = () => {
+                selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
+                viewMode = 'detail';
+                rerender();
+            };
+            header.appendChild(viewAllBtn);
+            overview.appendChild(header);
+
+            const grid = createElement('div', 'gpv-fsm-overview-grid');
+            portfolioNos.forEach(portfolioNo => {
+                const portfolioRows = grouped[portfolioNo] || [];
+                const summary = buildOcbcSummary(portfolioRows);
+                const card = createElement('button', 'gpv-fsm-overview-card');
+                card.type = 'button';
+                const meta = holdingsByPortfolio[portfolioNo] || {};
+                const statusText = latestPortfolioNos.has(portfolioNo)
+                    ? 'Current session'
+                    : (meta.lastSeenAt ? `Cached · ${new Date(meta.lastSeenAt).toLocaleString()}` : 'Cached');
+                createKeyboardSelectableCard(card, {
+                    ariaLabel: `Open portfolio ${portfolioNo}`,
+                    onSelect: () => {
+                        selectedPortfolioNo = portfolioNo;
+                        viewMode = 'detail';
+                        rerender();
+                    }
+                });
+                card.innerHTML = `
+                    <div class="gpv-fsm-overview-card-header">
+                        <div>
+                            <h2 class="gpv-fsm-overview-card-title">${escapeHtml(`Portfolio ${portfolioNo}`)}</h2>
+                            <p class="gpv-fsm-overview-card-subtitle">${escapeHtml(`${portfolioRows.length} holding${portfolioRows.length === 1 ? '' : 's'}`)}</p>
+                        </div>
+                        <span class="gpv-fsm-overview-card-tag">${escapeHtml(activeView === 'liabilities' ? 'Liabilities' : 'Assets')}</span>
+                    </div>
+                    <div class="gpv-fsm-overview-stats">
+                        <div class="gpv-fsm-overview-stat">
+                            <span class="gpv-fsm-overview-stat-label">Total value</span>
+                            <span class="gpv-fsm-overview-stat-value">${escapeHtml(formatMoney(summary.total))}</span>
+                        </div>
+                        <div class="gpv-fsm-overview-stat">
+                            <span class="gpv-fsm-overview-stat-label">Profit</span>
+                            <span class="gpv-fsm-overview-stat-value ${escapeHtml(summary.profitClass || '')}">${escapeHtml(summary.profitDisplay || '-')}</span>
+                        </div>
+                        <div class="gpv-fsm-overview-stat">
+                            <span class="gpv-fsm-overview-stat-label">Status</span>
+                            <span class="gpv-fsm-overview-stat-value">${escapeHtml(statusText)}</span>
+                        </div>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+            overview.appendChild(grid);
+            contentDiv.appendChild(overview);
+        }
+
         function rerender() {
             const activeView = viewSelect.value === 'liabilities' ? 'liabilities' : 'assets';
-            const rows = activeView === 'liabilities' ? liabilities : assets;
+            let rows = activeView === 'liabilities' ? liabilities : assets;
             const mode = modeSelect.value === 'allocation' ? 'allocation' : 'portfolio';
             contentDiv.innerHTML = '';
 
-            if (mode === 'allocation') {
+            if (viewMode === 'overview') {
+                controls.hidden = true;
+                setElementsDisabled(detailToolbarControls, true);
+                renderOverview(activeView);
+                return;
+            }
+
+            controls.hidden = false;
+            setElementsDisabled(detailToolbarControls, false);
+
+            const isAllPortfolioDetail = selectedPortfolioNo === FSM_ALL_PORTFOLIO_ID;
+            if (allocationModeOption) {
+                allocationModeOption.disabled = isAllPortfolioDetail;
+                if (isAllPortfolioDetail) {
+                    allocationModeOption.title = 'Allocation is unavailable for all cached holdings. Select a single portfolio to enable allocation mode.';
+                } else {
+                    allocationModeOption.removeAttribute('title');
+                }
+            }
+            if (isAllPortfolioDetail) {
+                modeSelect.setAttribute('aria-label', 'Select OCBC layout mode (allocation unavailable for all cached holdings)');
+            } else {
+                modeSelect.setAttribute('aria-label', 'Select OCBC layout mode');
+            }
+
+            if (selectedPortfolioNo !== FSM_ALL_PORTFOLIO_ID) {
+                rows = rows.filter(row => utils.normalizeString(row?.portfolioNo, '-') === selectedPortfolioNo);
+            }
+
+            if (mode === 'allocation' && selectedPortfolioNo === FSM_ALL_PORTFOLIO_ID) {
+                modeSelect.value = 'portfolio';
+            }
+
+            const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
+            const backBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
+            backBtn.type = 'button';
+            backBtn.onclick = () => {
+                viewMode = 'overview';
+                modeSelect.value = 'portfolio';
+                rerender();
+            };
+            detailToolbar.appendChild(backBtn);
+            contentDiv.appendChild(detailToolbar);
+
+            if (modeSelect.value === 'allocation') {
                 renderAllocationMode(activeView, rows);
                 return;
             }
@@ -15719,7 +16322,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 });
                 return;
             }
-            renderOcbcOverlay(readinessState.ocbcHoldings);
+            renderOcbcOverlay(readinessState.ocbcHoldings, {
+                holdingsByPortfolio: readinessState.holdingsByPortfolio,
+                latestPortfolioNos: readinessState.latestPortfolioNos
+            });
             return;
         }
 
@@ -15778,9 +16384,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
         };
 
-        const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary gpv-bucket-manage-btn', '🗂️ Buckets');
+        const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary gpv-bucket-manage-btn', '🗂️ Manage assignments');
         bucketManageBtn.type = 'button';
-        bucketManageBtn.title = 'Manage Endowus bucket assignments';
+        bucketManageBtn.title = 'Manage assignments';
 
         let isOverlayExpanded = false;
         const expandBtn = createElement('button', 'gpv-expand-btn');
@@ -15835,9 +16441,14 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         });
         container.appendChild(header);
 
-        const controls = createElement('div', 'gpv-controls');
-        const selectLabel = createElement('label', 'gpv-select-label', 'View:');
-        const select = createElement('select', 'gpv-select');
+        const controls = createElement('div', 'gpv-controls gpv-control-bar');
+        const { label: selectLabel, select } = createSelectControl({
+            id: 'gpv-endowus-view-select',
+            labelText: 'View:',
+            labelClassName: 'gpv-select-label',
+            selectClassName: 'gpv-select',
+            options: []
+        });
         function refreshBucketSelectOptions(preferredValue) {
             const selectedValue = preferredValue || select.value || 'SUMMARY';
             select.innerHTML = '';
@@ -15873,6 +16484,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         controls.appendChild(modeToggle);
         container.appendChild(controls);
+        const detailToolbarControls = [select, allocationButton, performanceButton];
 
         const contentDiv = createElement('div', 'gpv-content');
         container.appendChild(contentDiv);
@@ -15959,6 +16571,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             };
         }
 
+        function showSummaryView() {
+            select.value = 'SUMMARY';
+            renderView('SUMMARY', { scrollToTop: true });
+        }
+
         function renderView(value, { scrollToTop = false, useCacheOnly = false } = {}) {
             performanceRefreshToken += 1;
             const refreshToken = performanceRefreshToken;
@@ -15973,8 +16590,16 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 useCacheOnly
             });
             const isBucketView = value !== 'SUMMARY';
+            controls.hidden = !isBucketView;
+            setElementsDisabled(detailToolbarControls, !isBucketView);
             modeToggle.classList.toggle('gpv-mode-toggle--hidden', !isBucketView);
             if (isBucketView) {
+                const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
+                const backBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
+                backBtn.type = 'button';
+                backBtn.onclick = showSummaryView;
+                detailToolbar.appendChild(backBtn);
+                contentDiv.insertBefore(detailToolbar, contentDiv.firstChild);
                 applyBucketMode(currentBucketMode);
             } else {
                 contentDiv.classList.remove('gpv-mode-allocation', 'gpv-mode-performance');
@@ -16038,8 +16663,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const goalRows = collectEndowusGoalRows();
             if (!goalRows.length) {
                 return `
-                    <div class="gpv-bucket-manager">
-                        <h3 class="gpv-bucket-manager-title">Bucket Manager</h3>
+                    <div class="gpv-bucket-manager gpv-manager-panel">
+                        <h3 class="gpv-bucket-manager-title">Manage assignments</h3>
                         <p class="gpv-bucket-manager-empty">No goals available to assign.</p>
                     </div>
                 `;
@@ -16054,25 +16679,27 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             data-goal-id="${escapeHtml(row.goalId)}"
                             data-goal-name="${escapeHtml(row.goalName)}"
                             value="${escapeHtml(row.currentBucket)}"
-                            placeholder="Uncategorized"
+                            placeholder="Unassigned"
                             aria-label="Bucket name for ${escapeHtml(row.goalName)}"
                         />
                     </td>
                 </tr>
             `).join('');
             return `
-                <div class="gpv-bucket-manager">
-                    <h3 class="gpv-bucket-manager-title">Bucket Manager</h3>
-                    <p class="gpv-bucket-manager-copy">Manage Endowus bucket assignments directly. Existing goals are seeded from naming and can be adjusted here without renaming goals.</p>
-                    <table class="gpv-table gpv-bucket-manager-table">
-                        <thead>
-                            <tr>
-                                <th>Goal</th>
-                                <th>Bucket</th>
-                            </tr>
-                        </thead>
-                        <tbody>${rowsHtml}</tbody>
-                    </table>
+                <div class="gpv-bucket-manager gpv-manager-panel">
+                    <h3 class="gpv-bucket-manager-title">Manage assignments</h3>
+                    <p class="gpv-bucket-manager-copy">Assign goals to buckets directly. Existing goals are seeded from naming and can be adjusted here without renaming goals.</p>
+                    <div class="gpv-table-wrap">
+                        <table class="gpv-table gpv-bucket-manager-table">
+                            <thead>
+                                <tr>
+                                    <th>Goal</th>
+                                    <th>Bucket</th>
+                                </tr>
+                            </thead>
+                            <tbody>${rowsHtml}</tbody>
+                        </table>
+                    </div>
                 </div>
             `;
         }
@@ -16119,7 +16746,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         bucketManageBtn.addEventListener('click', () => {
             const managerView = renderSyncOverlayView({
-                title: 'Bucket Manager',
+                title: 'Manage assignments',
                 bodyHtml: renderBucketManagerPanelHtml(),
                 onBack: () => showOverlay(),
                 backLabel: '← Back to Portfolio Viewer'
@@ -16346,6 +16973,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             showOverlay,
             startUrlMonitoring,
             init,
+            getEndowusBucketConfigSignature,
             buildBalanceCopyControls,
             isEndowusAuthContext,
             listCookieByQuery,
@@ -16425,6 +17053,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             createLineChartSvg: chartHelpers?.createLineChartSvg,
             buildPerformanceWindowGrid: chartHelpers?.buildPerformanceWindowGrid,
             buildMergedInvestmentData,
+            getEndowusBucketConfigSignature: testingHooks?.getEndowusBucketConfigSignature,
             getPerformanceCacheKey,
             isCacheFresh,
             isCacheRefreshAllowed,
