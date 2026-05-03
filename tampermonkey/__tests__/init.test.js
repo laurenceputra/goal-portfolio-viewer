@@ -1566,21 +1566,14 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('View all cached holdings');
 
         const viewSelect = overlay.querySelector('#gpv-ocbc-view-select');
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         const controlBar = overlay.querySelector('.gpv-control-bar');
         const viewLabel = Array.from(overlay.querySelectorAll('label')).find(label => label.textContent.includes('View:'));
-        const modeLabel = Array.from(overlay.querySelectorAll('label')).find(label => label.textContent.includes('Mode:'));
         expect(viewLabel).toBeTruthy();
-        expect(modeLabel).toBeTruthy();
         expect(viewSelect.id).toBe('gpv-ocbc-view-select');
-        expect(modeSelect.id).toBe('gpv-ocbc-mode-select');
         expect(viewLabel.getAttribute('for')).toBe('gpv-ocbc-view-select');
-        expect(modeLabel.getAttribute('for')).toBe('gpv-ocbc-mode-select');
         expect(controlBar.hidden).toBe(true);
         expect(viewSelect.disabled).toBe(true);
-        expect(modeSelect.disabled).toBe(true);
         expect(viewSelect.getAttribute('tabindex')).toBe('-1');
-        expect(modeSelect.getAttribute('tabindex')).toBe('-1');
 
         overviewCards[0].click();
         expect(overlay.textContent).toContain('Back to overview');
@@ -1588,11 +1581,10 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('OCBC Asset');
         expect(overlay.textContent).toContain('SG00AAA111');
         expect(overlay.textContent).not.toContain('OCBC Liability');
+        expect(overlay.textContent).toContain('Planning');
         expect(controlBar.hidden).toBe(false);
         expect(viewSelect.disabled).toBe(false);
-        expect(modeSelect.disabled).toBe(false);
         expect(viewSelect.hasAttribute('tabindex')).toBe(false);
-        expect(modeSelect.hasAttribute('tabindex')).toBe(false);
 
         viewSelect.value = 'liabilities';
         viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -1606,13 +1598,11 @@ describe('initialization and URL monitoring', () => {
 
         expect(controlBar.hidden).toBe(true);
         expect(viewSelect.disabled).toBe(true);
-        expect(modeSelect.disabled).toBe(true);
         expect(viewSelect.getAttribute('tabindex')).toBe('-1');
-        expect(modeSelect.getAttribute('tabindex')).toBe('-1');
         expect(overlay.textContent).toContain('Overview');
     });
 
-    test('OCBC allocation mode only renders the selected portfolio', () => {
+    test('OCBC selected detail renders merged simple table and planning without cross-portfolio bleed', () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -1662,23 +1652,27 @@ describe('initialization and URL monitoring', () => {
 
         let overlay = openOcbcOverviewPortfolio();
 
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-
+        expect(overlay.textContent).toContain('Back to overview');
         expect(overlay.textContent).toContain('Portfolio P-1');
         expect(overlay.textContent).not.toContain('Portfolio P-2');
-        expect(overlay.textContent).toContain('Global Equity');
-        expect(overlay.textContent).toContain('Bond');
+        expect(overlay.textContent).toContain('Planning');
+        expect(overlay.textContent).toContain('Assign instruments to sub-portfolios, set target percentages, and spot drift before rebalancing.');
+        expect(overlay.textContent).toContain('Sub-portfolio allocation within Portfolio P-1');
+        expect(overlay.textContent).toContain('Asset 1');
+        expect(overlay.textContent).toContain('Bond 1');
+        expect(overlay.textContent).not.toContain('Asset 2');
+        expect(overlay.querySelector('.gpv-type-section')).toBeNull();
         const headers = Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim());
         expect(headers).toContain('Product Type');
+        expect(overlay.textContent).toContain('Global Equity');
+        expect(overlay.textContent).toContain('Bond');
+        expect(Array.from(overlay.querySelectorAll('h3')).some(node => /product\s*type/i.test(node.textContent || ''))).toBe(false);
 
         const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
         backBtn.click();
 
         expect(overlay.textContent).toContain('Overview');
         expect(overlay.textContent).toContain('View all cached holdings');
-        expect(modeSelect.value).toBe('portfolio');
     });
 
     test('OCBC overview shows cached portfolios, card drill-down, and view all cached holdings', () => {
@@ -1738,6 +1732,13 @@ describe('initialization and URL monitoring', () => {
         let overlay = document.querySelector('#gpv-overlay');
         const cards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'));
         expect(cards.length).toBe(2);
+        const controlBar = overlay.querySelector('.gpv-control-bar');
+        const overviewViewSelect = overlay.querySelector('#gpv-ocbc-view-select');
+        expect(controlBar.hidden).toBe(true);
+        expect(overviewViewSelect.disabled).toBe(true);
+        expect(overviewViewSelect.getAttribute('tabindex')).toBe('-1');
+        expect(overlay.querySelector('#gpv-ocbc-mode-select')).toBeNull();
+        expect(Array.from(overlay.querySelectorAll('label')).some(label => label.textContent.includes('Mode:'))).toBe(false);
 
         const p1Card = cards.find(card => card.textContent.includes('Portfolio P-1'));
         p1Card.click();
@@ -1763,32 +1764,23 @@ describe('initialization and URL monitoring', () => {
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Asset 1');
         expect(overlay.textContent).toContain('Asset 2');
+        expect(controlBar.hidden).toBe(true);
+        expect(overviewViewSelect.disabled).toBe(true);
+        expect(overviewViewSelect.getAttribute('tabindex')).toBe('-1');
+        expect(overlay.querySelector('#gpv-ocbc-mode-select')).toBeNull();
+        expect(Array.from(overlay.querySelectorAll('label')).some(label => label.textContent.includes('Mode:'))).toBe(false);
 
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        const allocationOption = modeSelect.querySelector('option[value="allocation"]');
-        expect(modeSelect.value).toBe('portfolio');
-        expect(allocationOption.disabled).toBe(true);
-        expect(allocationOption.title).toContain('Allocation is unavailable for all cached holdings');
-        expect(modeSelect.getAttribute('aria-label')).toContain('allocation unavailable for all cached holdings');
+        expect(overlay.textContent).not.toContain('Planning');
 
         viewSelect.value = 'liabilities';
         viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Liability 1');
-        expect(allocationOption.disabled).toBe(true);
-        expect(modeSelect.getAttribute('aria-label')).toContain('allocation unavailable for all cached holdings');
 
         viewSelect.value = 'assets';
         viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Asset 1');
-        expect(allocationOption.disabled).toBe(true);
-        expect(modeSelect.getAttribute('aria-label')).toContain('allocation unavailable for all cached holdings');
-
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-        overlay = document.querySelector('#gpv-overlay');
-        expect(modeSelect.value).toBe('portfolio');
         expect(overlay.textContent).toContain('Portfolio P-1');
         expect(overlay.textContent).toContain('Portfolio P-2');
         expect(overlay.textContent).not.toContain('Planning');
@@ -1802,13 +1794,6 @@ describe('initialization and URL monitoring', () => {
         portfolioCard.click();
         overlay = document.querySelector('#gpv-overlay');
 
-        const detailModeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        const detailAllocationOption = detailModeSelect.querySelector('option[value="allocation"]');
-        expect(detailAllocationOption.disabled).toBe(false);
-        expect(detailAllocationOption.getAttribute('title')).toBeNull();
-        detailModeSelect.value = 'allocation';
-        detailModeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-        expect(detailModeSelect.value).toBe('allocation');
         expect(overlay.textContent).toContain('Planning');
     });
 
@@ -1971,9 +1956,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const allocationText = overlay.textContent;
         expect(allocationText).toContain('Planning');
@@ -2062,9 +2044,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const coreHeading = Array.from(overlay.querySelectorAll('h3')).find(node => node.textContent.trim() === 'Instrument allocation · Core');
         const unassignedHeading = Array.from(overlay.querySelectorAll('h3')).find(node => node.textContent.trim() === 'Unassigned instruments');
@@ -2144,9 +2123,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const assignedHeading = Array.from(overlay.querySelectorAll('h3'))
             .find(node => node.textContent.trim() === 'Instrument allocation · Core');
@@ -2212,9 +2188,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const subPortfolioInput = overlay.querySelector('input[placeholder="Sub-portfolio name"]');
         subPortfolioInput.value = 'Core';
@@ -2293,9 +2266,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         expect(overlay.textContent).toContain('Core Equity');
         expect(overlay.textContent).not.toContain('Core Equity buckets');
@@ -2380,10 +2350,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio('Portfolio P|1');
-        let modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-
         const portfolioPipeInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P|1 sub-portfolio Core Pipe Portfolio"]');
         expect(portfolioPipeInput).toBeTruthy();
         portfolioPipeInput.value = '60';
@@ -2398,10 +2364,6 @@ describe('initialization and URL monitoring', () => {
         backToOverviewBtn.click();
 
         overlay = openOcbcOverviewPortfolio('Portfolio P');
-        modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-
         const portfolioPlainInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P sub-portfolio Core Pipe Sub"]');
         expect(portfolioPlainInput).toBeTruthy();
         portfolioPlainInput.value = '35';
@@ -2471,9 +2433,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core Equity"]');
         expect(targetInput).toBeTruthy();
@@ -2549,9 +2508,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const equitySubPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for EQ1');
@@ -2650,9 +2606,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Scoped Core"]');
         expect(targetInput).toBeTruthy();
@@ -2733,9 +2686,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const equitySubPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for EQ1');
@@ -2814,9 +2764,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const bondSubPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for BD1');
@@ -2880,9 +2827,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         expect(overlay.textContent).not.toContain('Core buckets');
         expect(Array.from(overlay.querySelectorAll('label')).some(label => label.textContent.trim() === 'New nested bucket')).toBe(false);
@@ -2950,9 +2894,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const targetInput = overlay.querySelector('input[aria-label="Target percentage for instrument EQ1 in sub-portfolio Core"]');
         expect(targetInput).toBeTruthy();
@@ -3028,9 +2969,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const targetInput = overlay.querySelector('input[aria-label="Target percentage for instrument EQ1 in sub-portfolio Core"]');
         targetInput.value = '60';
@@ -3148,9 +3086,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const copyButton = overlay.querySelector('button[aria-label="Copy values for sub-portfolio Core"]');
         copyButton.dispatchEvent(new window.Event('click', { bubbles: true }));
@@ -3231,9 +3166,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const coreSectionRow = Array.from(overlay.querySelectorAll('.gpv-ocbc-instrument-header-row'))
             .find(row => row.textContent.includes('Instrument allocation · Core'));
@@ -3326,9 +3258,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const eq2Select = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for EQ2');
@@ -3406,9 +3335,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const eq2Select = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for EQ2');
@@ -3513,9 +3439,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio('Portfolio P-LEGACY');
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const legacySelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for ISIN-LEGACY-1');
@@ -3524,11 +3447,6 @@ describe('initialization and URL monitoring', () => {
         const savedAssignments = JSON.parse(storage.get('ocbc')).assignmentByCode;
         expect(savedAssignments['P-LEGACY:ISIN-LEGACY-1']).toBe('core');
         expect(savedAssignments[stableCode]).toBe('core');
-
-        modeSelect.value = 'portfolio';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const ocbcWrites = global.GM_setValue.mock.calls
             .filter(([key]) => key === 'ocbc');
@@ -3609,9 +3527,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio('Portfolio P-POS');
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const assignmentSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for ISIN-POS-A');
@@ -3696,9 +3611,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio('Portfolio P-STABLE');
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const stableSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for ISIN-A');
@@ -3757,10 +3669,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio('Portfolio P-LIFECYCLE');
-        let modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-
         const firstSessionSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for ISIN-LIFE-A');
         expect(firstSessionSelect.value).toBe('core');
@@ -3793,10 +3701,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         overlay = openOcbcOverviewPortfolio('Portfolio P-LIFECYCLE');
-        modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-
         const secondSessionSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for ISIN-LIFE-A');
         expect(secondSessionSelect.value).toBe('satellite');
@@ -4582,9 +4486,6 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = openOcbcOverviewPortfolio();
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
-        modeSelect.value = 'allocation';
-        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const subPortfolioInput = overlay.querySelector('input[placeholder="Sub-portfolio name"]');
         subPortfolioInput.value = 'Core';

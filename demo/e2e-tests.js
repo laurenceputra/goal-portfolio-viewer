@@ -1174,11 +1174,8 @@ async function captureOcbcFlow(page, summary, outputDir) {
             const rect = node.getBoundingClientRect();
             return rect.width > 0 && rect.height > 0;
         }).length;
-        const allocationOption = overlay.querySelector('#gpv-ocbc-mode-select option[value="allocation"]');
-        const allocationDisabled = allocationOption instanceof HTMLOptionElement && allocationOption.disabled;
         return hasBackToOverview
             && visibleOverviewCards === 0
-            && allocationDisabled
             && text.includes('Identifier')
             && text.includes('OCBC Global Equity Opportunities Fund');
     }, null, { timeout: 5000 });
@@ -1209,13 +1206,6 @@ async function captureOcbcFlow(page, summary, outputDir) {
     });
     recordAssertion(summary, ocbcFlowName, 'view-label-associated', isViewLabelAssociated, 'View label is associated with gpv-ocbc-view-select.');
 
-    const isModeLabelAssociated = await page.$eval('.gpv-overlay', root => {
-        const labels = Array.from(root.querySelectorAll('label'));
-        const target = labels.find(label => (label.textContent || '').trim() === 'Mode:');
-        return Boolean(target && target.getAttribute('for') === 'gpv-ocbc-mode-select');
-    });
-    recordAssertion(summary, ocbcFlowName, 'mode-label-associated', isModeLabelAssociated, 'Mode label is associated with gpv-ocbc-mode-select.');
-
     await clickButtonByRole(page, /back to overview/i);
     await page.waitForFunction(() => {
         const overlay = document.querySelector('.gpv-overlay');
@@ -1245,7 +1235,6 @@ async function captureOcbcFlow(page, summary, outputDir) {
             && !text.includes('Portfolio 6500142647-2');
     }, null, { timeout: 5000 });
 
-    await page.selectOption('#gpv-ocbc-mode-select', 'allocation');
     await page.waitForFunction(() => {
         const overlay = document.querySelector('.gpv-overlay');
         if (!overlay) {
@@ -1555,25 +1544,12 @@ async function captureOcbcFlow(page, summary, outputDir) {
 
     await captureScreenshot(page, summary, outputDir, 'ocbc-subportfolio-manager');
 
-    await page.selectOption('#gpv-ocbc-mode-select', 'portfolio');
-    await page.waitForFunction(() => {
-        const overlay = document.querySelector('.gpv-overlay');
-        if (!overlay) {
-            return false;
-        }
-        const text = overlay.textContent || '';
-        const allocationTextGone = !text.includes('New sub-portfolio')
-            && !text.includes('Target Assigned:')
-            && !text.includes('Unassigned');
-        return allocationTextGone || text.includes('Portfolio 6500142646-2');
-    }, null, { timeout: 5000 });
-
     const portfolioAfterAllocationEdits = await page.$eval('.gpv-overlay', root => {
         const text = root.textContent || '';
         return {
             hasAssetsFund: text.includes('OCBC Global Equity Opportunities Fund'),
             excludesLiability: !text.includes('OCBC Investment Credit Line'),
-            modeControlsHidden: !text.includes('New sub-portfolio')
+            modeControlsVisible: text.includes('New sub-portfolio')
         };
     });
     recordAssertion(
@@ -1582,8 +1558,8 @@ async function captureOcbcFlow(page, summary, outputDir) {
         'portfolio-mode-after-allocation-edits',
         portfolioAfterAllocationEdits.hasAssetsFund
             && portfolioAfterAllocationEdits.excludesLiability
-            && portfolioAfterAllocationEdits.modeControlsHidden,
-        'OCBC portfolio mode remains asset-focused after allocation edits and before liabilities switch.'
+            && portfolioAfterAllocationEdits.modeControlsVisible,
+        'OCBC selected portfolio detail remains asset-focused after allocation edits and before liabilities switch.'
     );
 
     await clickButtonByRole(page, /back to overview/i);
@@ -1621,11 +1597,8 @@ async function captureOcbcFlow(page, summary, outputDir) {
             const rect = node.getBoundingClientRect();
             return rect.width > 0 && rect.height > 0;
         }).length;
-        const allocationOption = overlay.querySelector('#gpv-ocbc-mode-select option[value="allocation"]');
-        const allocationDisabled = allocationOption instanceof HTMLOptionElement && allocationOption.disabled;
         return hasBackToOverview
             && visibleOverviewCards === 0
-            && allocationDisabled
             && text.includes('Identifier')
             && text.includes('OCBC Global Equity Opportunities Fund');
     }, null, { timeout: 5000 });

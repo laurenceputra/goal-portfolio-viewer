@@ -15394,26 +15394,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         controls.appendChild(viewLabel);
         controls.appendChild(viewSelect);
 
-        const modeSelectId = 'gpv-ocbc-mode-select';
-        const { label: modeLabel, select: modeSelect } = createSelectControl({
-            id: modeSelectId,
-            labelText: 'Mode:',
-            ariaLabel: 'Select OCBC layout mode',
-            options: [
-                { value: 'portfolio', label: 'Portfolio' },
-                { value: 'allocation', label: 'Allocation' }
-            ]
-        });
-        controls.appendChild(modeLabel);
-        controls.appendChild(modeSelect);
         container.appendChild(controls);
-        const detailToolbarControls = [viewSelect, modeSelect];
+        const detailToolbarControls = [viewSelect];
 
         const contentDiv = createElement('div', 'gpv-content');
         container.appendChild(contentDiv);
         overlay.appendChild(container);
-        const allocationModeOption = Array.from(modeSelect.options).find(option => option.value === 'allocation') || null;
-
         const safeHoldings = ocbcHoldings && typeof ocbcHoldings === 'object'
             ? ocbcHoldings
             : { assets: [], liabilities: [] };
@@ -16085,7 +16071,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         function rerender() {
             const activeView = viewSelect.value === 'liabilities' ? 'liabilities' : 'assets';
             let rows = activeView === 'liabilities' ? liabilities : assets;
-            const mode = modeSelect.value === 'allocation' ? 'allocation' : 'portfolio';
             contentDiv.innerHTML = '';
 
             if (viewMode === 'overview') {
@@ -16095,30 +16080,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 return;
             }
 
-            controls.hidden = false;
-            setElementsDisabled(detailToolbarControls, false);
-
             const isAllPortfolioDetail = selectedPortfolioNo === FSM_ALL_PORTFOLIO_ID;
-            if (allocationModeOption) {
-                allocationModeOption.disabled = isAllPortfolioDetail;
-                if (isAllPortfolioDetail) {
-                    allocationModeOption.title = 'Allocation is unavailable for all cached holdings. Select a single portfolio to enable allocation mode.';
-                } else {
-                    allocationModeOption.removeAttribute('title');
-                }
-            }
-            if (isAllPortfolioDetail) {
-                modeSelect.setAttribute('aria-label', 'Select OCBC layout mode (allocation unavailable for all cached holdings)');
-            } else {
-                modeSelect.setAttribute('aria-label', 'Select OCBC layout mode');
-            }
+            const showDetailControls = !isAllPortfolioDetail;
+            controls.hidden = !showDetailControls;
+            setElementsDisabled(detailToolbarControls, !showDetailControls);
 
             if (selectedPortfolioNo !== FSM_ALL_PORTFOLIO_ID) {
                 rows = rows.filter(row => utils.normalizeString(row?.portfolioNo, '-') === selectedPortfolioNo);
-            }
-
-            if (mode === 'allocation' && selectedPortfolioNo === FSM_ALL_PORTFOLIO_ID) {
-                modeSelect.value = 'portfolio';
             }
 
             const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
@@ -16126,42 +16094,42 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             backBtn.type = 'button';
             backBtn.onclick = () => {
                 viewMode = 'overview';
-                modeSelect.value = 'portfolio';
+                selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
                 rerender();
             };
             detailToolbar.appendChild(backBtn);
             contentDiv.appendChild(detailToolbar);
 
-            if (modeSelect.value === 'allocation') {
-                renderAllocationMode(activeView, rows);
-                return;
-            }
-
-            const grouped = buildOcbcRowsByPortfolioAndProductType(rows);
+            const grouped = buildOcbcAllocationRowsByPortfolio(rows);
             const portfolioNos = Object.keys(grouped);
             if (portfolioNos.length === 0) {
                 contentDiv.appendChild(createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.'));
                 return;
             }
+
+            if (isAllPortfolioDetail) {
+                portfolioNos.forEach(portfolioNo => {
+                    const portfolioSection = createElement('section', 'gpv-bucket-detail-section');
+                    const portfolioRows = grouped[portfolioNo] || [];
+                    const portfolioSummary = buildOcbcSummary(portfolioRows);
+                    portfolioSection.appendChild(buildOcbcPortfolioHeader(portfolioNo, portfolioSummary));
+                    portfolioSection.appendChild(buildOcbcSimpleTable(portfolioRows, portfolioSummary.total));
+                    contentDiv.appendChild(portfolioSection);
+                });
+                return;
+            }
+
             portfolioNos.forEach(portfolioNo => {
                 const portfolioSection = createElement('section', 'gpv-bucket-detail-section');
-                const portfolioRows = Object.values(grouped[portfolioNo]).flat();
+                const portfolioRows = grouped[portfolioNo] || [];
                 const portfolioSummary = buildOcbcSummary(portfolioRows);
                 portfolioSection.appendChild(buildOcbcPortfolioHeader(portfolioNo, portfolioSummary));
-
-                Object.keys(grouped[portfolioNo]).forEach(productType => {
-                    const productSection = createElement('section', 'gpv-type-section');
-                    const productRows = grouped[portfolioNo][productType] || [];
-                    const productSummary = buildOcbcSummary(productRows);
-                    productSection.appendChild(buildOcbcProductTypeHeader(productType, productSummary));
-                    productSection.appendChild(buildOcbcSimpleTable(productRows, productSummary.total));
-                    portfolioSection.appendChild(productSection);
-                });
+                portfolioSection.appendChild(buildOcbcSimpleTable(portfolioRows, portfolioSummary.total));
                 contentDiv.appendChild(portfolioSection);
             });
+            renderAllocationMode(activeView, rows);
         }
         viewSelect.onchange = rerender;
-        modeSelect.onchange = rerender;
         rerender();
 
         overlay.onclick = event => {
