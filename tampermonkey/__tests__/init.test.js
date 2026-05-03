@@ -20,6 +20,21 @@ describe('initialization and URL monitoring', () => {
         return null;
     };
 
+    const openOcbcOverviewPortfolio = (label = 'Portfolio P-1') => {
+        let overlay = document.querySelector('#gpv-overlay');
+        expect(overlay).toBeTruthy();
+        const portfolioCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'))
+            .find(card => {
+                const title = card.querySelector('.gpv-fsm-overview-card-title');
+                return (title?.textContent || '').trim() === label;
+            });
+        expect(portfolioCard).toBeTruthy();
+        portfolioCard.click();
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay).toBeTruthy();
+        return overlay;
+    };
+
     beforeEach(() => {
         jest.resetModules();
         setupDom();
@@ -1645,9 +1660,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
-        const p1Card = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).find(card => card.textContent.includes('Portfolio P-1'));
-        p1Card.click();
+        let overlay = openOcbcOverviewPortfolio();
 
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
@@ -1957,7 +1970,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2048,7 +2061,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2130,7 +2143,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2198,7 +2211,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2279,7 +2292,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2366,25 +2379,40 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
-        const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        let overlay = openOcbcOverviewPortfolio('Portfolio P|1');
+        let modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const portfolioPipeInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P|1 sub-portfolio Core Pipe Portfolio"]');
-        const subPipeInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P sub-portfolio Core Pipe Sub"]');
         expect(portfolioPipeInput).toBeTruthy();
-        expect(subPipeInput).toBeTruthy();
-
         portfolioPipeInput.value = '60';
         portfolioPipeInput.dispatchEvent(new window.Event('change', { bubbles: true }));
-        subPipeInput.value = '40';
-        subPipeInput.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const ocbcTargets = JSON.parse(storage.get('ocbc')).targetsByScope;
+        let ocbcTargets = JSON.parse(storage.get('ocbc')).targetsByScope;
         expect(ocbcTargets['assets|P%7C1|core|']).toBe(60);
-        expect(ocbcTargets['assets|P|1%7Ccore|']).toBe(40);
-        expect(ocbcTargets['assets|P%7C1|core|']).not.toBe(ocbcTargets['assets|P|1%7Ccore|']);
+
+        const backToOverviewBtn = Array.from(overlay.querySelectorAll('button'))
+            .find(btn => (btn.textContent || '').includes('Back to overview'));
+        expect(backToOverviewBtn).toBeTruthy();
+        backToOverviewBtn.click();
+
+        overlay = openOcbcOverviewPortfolio('Portfolio P');
+        modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        modeSelect.value = 'allocation';
+        modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const portfolioPlainInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P sub-portfolio Core Pipe Sub"]');
+        expect(portfolioPlainInput).toBeTruthy();
+        portfolioPlainInput.value = '35';
+        portfolioPlainInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        ocbcTargets = JSON.parse(storage.get('ocbc')).targetsByScope;
+        expect(ocbcTargets['assets|P%7C1|core|']).toBe(60);
+        expect(ocbcTargets['assets|P|1%7Ccore|']).toBe(35);
+        expect(Object.prototype.hasOwnProperty.call(ocbcTargets, 'assets|P%7C1|core|')).toBe(true);
+        expect(Object.prototype.hasOwnProperty.call(ocbcTargets, 'assets|P|1%7Ccore|')).toBe(true);
+        expect('assets|P%7C1|core|').not.toBe('assets|P|1%7Ccore|');
     });
 
     test('OCBC allocation mode reads separator-safe legacy target fallback keys', () => {
@@ -2442,7 +2470,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2520,7 +2548,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2621,7 +2649,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2704,7 +2732,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2785,7 +2813,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2851,7 +2879,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2921,7 +2949,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -2999,7 +3027,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3119,7 +3147,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3202,7 +3230,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3297,7 +3325,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3377,7 +3405,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3484,7 +3512,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio('Portfolio P-LEGACY');
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3580,7 +3608,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio('Portfolio P-POS');
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3667,7 +3695,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio('Portfolio P-STABLE');
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3728,7 +3756,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        let overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio('Portfolio P-LIFECYCLE');
         let modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -3764,7 +3792,7 @@ describe('initialization and URL monitoring', () => {
         overlay.remove();
         exportsModule.showOverlay();
 
-        overlay = document.querySelector('#gpv-overlay');
+        overlay = openOcbcOverviewPortfolio('Portfolio P-LIFECYCLE');
         modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -4553,7 +4581,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.init();
         exportsModule.showOverlay();
 
-        const overlay = document.querySelector('#gpv-overlay');
+        let overlay = openOcbcOverviewPortfolio();
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
