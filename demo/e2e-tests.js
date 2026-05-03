@@ -253,13 +253,85 @@ module.exports = {
 };
 
 async function openBucket(page, bucketName) {
-    await page.selectOption('select.gpv-select', bucketName);
+    if (typeof bucketName !== 'string' || bucketName.trim().length === 0) {
+        throw new Error(`bucketName must be a non-empty string. Received: ${String(bucketName)}`);
+    }
+
+    const requestedBucketName = bucketName.trim();
+    const normalizedBucketName = requestedBucketName.toLowerCase();
+    const bucketSelect = page.locator('select.gpv-select').first();
+    const visibleSummaryCards = page.locator('.gpv-bucket-card:visible');
+    const interactionMode = await page.waitForFunction(() => {
+        const select = document.querySelector('select.gpv-select');
+        const visibleCards = Array.from(document.querySelectorAll('.gpv-bucket-card')).filter(card => {
+            if (!(card instanceof HTMLElement)) {
+                return false;
+            }
+            const rect = card.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        });
+
+        if (visibleCards.length > 0) {
+            return 'card';
+        }
+
+        if (select instanceof HTMLSelectElement && !select.disabled) {
+            return 'select';
+        }
+
+        return null;
+    }, null, { timeout: 7000 });
+    const shouldUseSummaryCard = await interactionMode.jsonValue() === 'card';
+
+    if (shouldUseSummaryCard) {
+        const visibleSummaryCardCount = await visibleSummaryCards.count();
+        const cardMatchData = await visibleSummaryCards.evaluateAll((cards, expectedBucketName) => {
+            const normalize = value => String(value || '').trim().toLowerCase();
+            const expected = normalize(expectedBucketName);
+            return cards.map((card, index) => {
+                const titleElement = card.querySelector('.gpv-bucket-title');
+                const rawTitle = String(titleElement ? titleElement.textContent : '').trim();
+                const title = normalize(rawTitle);
+                return {
+                    index,
+                    rawTitle,
+                    title,
+                    exact: title === expected,
+                    contains: title.includes(expected)
+                };
+            });
+        }, normalizedBucketName);
+
+        const exactMatches = cardMatchData.filter(item => item.exact);
+        const containsMatches = cardMatchData.filter(item => item.contains);
+
+        if (exactMatches.length === 1) {
+            await visibleSummaryCards.nth(exactMatches[0].index).click();
+        } else if (exactMatches.length === 0 && containsMatches.length === 1) {
+            await visibleSummaryCards.nth(containsMatches[0].index).click();
+        } else {
+            const candidateTitles = cardMatchData
+                .map(item => item.rawTitle || item.title)
+                .filter(Boolean);
+            const errorContext = `bucketName="${requestedBucketName}", visibleCardCount=${visibleSummaryCardCount}, exactMatchCount=${exactMatches.length}, containsMatchCount=${containsMatches.length}, candidateTitles=${JSON.stringify(candidateTitles)}`;
+            if (exactMatches.length > 1) {
+                throw new Error(`Ambiguous summary card exact match (${errorContext}).`);
+            }
+            if (containsMatches.length !== 1) {
+                throw new Error(`Unable to resolve summary card match (${errorContext}).`);
+            }
+        }
+    } else {
+        await bucketSelect.selectOption(requestedBucketName);
+    }
+
     await page.waitForFunction(
-        name => {
+        expectedName => {
+            const normalize = value => String(value || '').trim().toLowerCase();
             const title = document.querySelector('.gpv-detail-title');
-            return title && title.textContent && title.textContent.includes(name);
+            return normalize(title && title.textContent) === normalize(expectedName);
         },
-        bucketName,
+        requestedBucketName,
         { timeout: 5000 }
     );
     await waitForBucketViewStability(page);
