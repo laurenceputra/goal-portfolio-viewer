@@ -7980,18 +7980,6 @@ let GoalTargetStore;
         return createElement('td', className, value);
     }
 
-    function createWorkspaceTableWrapper(additionalClassName = '') {
-        return createElement('div', `gpv-table-wrap ${additionalClassName}`.trim());
-    }
-
-    function createManagerRow(additionalClassName = '') {
-        return createElement('div', `gpv-manager-row ${additionalClassName}`.trim());
-    }
-
-    function createManagerPanel(additionalClassName = '') {
-        return createElement('div', `${additionalClassName} gpv-manager-panel`.trim());
-    }
-
     function createManagerCreateRow({
         rowClassName,
         labelText,
@@ -8003,7 +7991,7 @@ let GoalTargetStore;
         onCreate,
         normalizeValue
     }) {
-        const row = createManagerRow(rowClassName);
+        const row = createElement('div', `gpv-manager-row ${rowClassName || ''}`.trim());
         const label = createElement('label', null, labelText);
         const input = createElement('input', 'gpv-target-input');
         if (inputId) {
@@ -13651,7 +13639,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         onCancelRename,
         onArchive
     }) {
-        const manager = createManagerPanel('gpv-fsm-manager');
+        const manager = createElement('div', 'gpv-fsm-manager gpv-manager-panel');
         manager.appendChild(createManagerCreateRow({
             rowClassName: 'gpv-fsm-manager-row',
             labelText: 'New portfolio',
@@ -14157,7 +14145,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             selectCell.appendChild(select);
             tbody.appendChild(tr);
         });
-        const tableWrapper = createWorkspaceTableWrapper('gpv-fsm-table-wrap');
+        const tableWrapper = createElement('div', 'gpv-table-wrap gpv-fsm-table-wrap');
         tableWrapper.appendChild(table);
         return tableWrapper;
     }
@@ -15392,7 +15380,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     'gpv-sync-help gpv-ocbc-target-summary',
                     `Sub-portfolio targets: ${buildAssignedCoverageText(configuredSubPortfolioTargets)}`
                 ));
-                const subPortfolioTableWrap = createWorkspaceTableWrapper('gpv-ocbc-sub-portfolio-table-wrap');
+                const subPortfolioTableWrap = createElement('div', 'gpv-table-wrap gpv-ocbc-sub-portfolio-table-wrap');
                 subPortfolioTableWrap.appendChild(subPortfolioRows);
                 section.appendChild(subPortfolioTableWrap);
 
@@ -15624,7 +15612,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         tr.appendChild(reorderCell);
                         holdingsBody.appendChild(tr);
                     });
-                    const holdingsTableWrap = createWorkspaceTableWrapper('gpv-ocbc-holdings-table-wrap');
+                    const holdingsTableWrap = createElement('div', 'gpv-table-wrap gpv-ocbc-holdings-table-wrap');
                     holdingsTableWrap.appendChild(holdingsTable);
                     section.appendChild(holdingsTableWrap);
                 };
