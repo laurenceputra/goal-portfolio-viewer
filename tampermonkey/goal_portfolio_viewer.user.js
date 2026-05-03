@@ -15343,6 +15343,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         controls.appendChild(modeLabel);
         controls.appendChild(modeSelect);
         container.appendChild(controls);
+        const detailToolbarControls = [viewSelect, modeSelect];
 
         const contentDiv = createElement('div', 'gpv-content');
         container.appendChild(contentDiv);
@@ -16028,9 +16029,14 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
 
             if (viewMode === 'overview') {
+                controls.hidden = true;
+                setElementsDisabled(detailToolbarControls, true);
                 renderOverview(activeView);
                 return;
             }
+
+            controls.hidden = false;
+            setElementsDisabled(detailToolbarControls, false);
 
             if (selectedPortfolioNo !== FSM_ALL_PORTFOLIO_ID) {
                 rows = rows.filter(row => utils.normalizeString(row?.portfolioNo, '-') === selectedPortfolioNo);

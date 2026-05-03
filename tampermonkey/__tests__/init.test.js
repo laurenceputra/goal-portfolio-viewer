@@ -1300,6 +1300,7 @@ describe('initialization and URL monitoring', () => {
 
         const viewSelect = overlay.querySelector('#gpv-ocbc-view-select');
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        const controlBar = overlay.querySelector('.gpv-control-bar');
         const viewLabel = Array.from(overlay.querySelectorAll('label')).find(label => label.textContent.includes('View:'));
         const modeLabel = Array.from(overlay.querySelectorAll('label')).find(label => label.textContent.includes('Mode:'));
         expect(viewLabel).toBeTruthy();
@@ -1308,6 +1309,11 @@ describe('initialization and URL monitoring', () => {
         expect(modeSelect.id).toBe('gpv-ocbc-mode-select');
         expect(viewLabel.getAttribute('for')).toBe('gpv-ocbc-view-select');
         expect(modeLabel.getAttribute('for')).toBe('gpv-ocbc-mode-select');
+        expect(controlBar.hidden).toBe(true);
+        expect(viewSelect.disabled).toBe(true);
+        expect(modeSelect.disabled).toBe(true);
+        expect(viewSelect.getAttribute('tabindex')).toBe('-1');
+        expect(modeSelect.getAttribute('tabindex')).toBe('-1');
 
         overviewCards[0].click();
         expect(overlay.textContent).toContain('Back to overview');
@@ -1315,6 +1321,11 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('OCBC Asset');
         expect(overlay.textContent).toContain('SG00AAA111');
         expect(overlay.textContent).not.toContain('OCBC Liability');
+        expect(controlBar.hidden).toBe(false);
+        expect(viewSelect.disabled).toBe(false);
+        expect(modeSelect.disabled).toBe(false);
+        expect(viewSelect.hasAttribute('tabindex')).toBe(false);
+        expect(modeSelect.hasAttribute('tabindex')).toBe(false);
 
         viewSelect.value = 'liabilities';
         viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
