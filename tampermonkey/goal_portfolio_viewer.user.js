@@ -14100,16 +14100,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return panel;
     }
 
-    function createFsmDetailToolbar({ onBack, onScopeChange, onFilterChange }) {
+    function createFsmDetailToolbar({ onScopeChange, onFilterChange }) {
         const toolbar = createElement('div', 'gpv-fsm-toolbar gpv-fsm-filter-toolbar');
-        const backBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to portfolios');
-        backBtn.type = 'button';
-        backBtn.onclick = () => {
-            if (typeof onBack === 'function') {
-                onBack();
-            }
-        };
-        toolbar.appendChild(backBtn);
 
         const scopeSelect = createElement('select', 'gpv-select');
         scopeSelect.setAttribute('aria-label', 'Select portfolio scope');
@@ -14413,15 +14405,25 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         contentDiv.appendChild(toolbarSection);
         contentDiv.appendChild(bodySection);
 
+        const handleBackToOverview = () => {
+            viewMode = 'overview';
+            filterTerm = '';
+            selectedScope = FSM_ALL_PORTFOLIO_ID;
+            selectedHoldingIds = new Set();
+            nextFocusTarget = 'overview';
+            rerender();
+        };
+
+        const headerButtons = header.querySelector('.gpv-header-buttons');
+        const headerBackBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to portfolios');
+        headerBackBtn.type = 'button';
+        headerBackBtn.onclick = handleBackToOverview;
+        headerBackBtn.hidden = true;
+        if (headerButtons) {
+            headerButtons.prepend(headerBackBtn);
+        }
+
         const detailToolbar = createFsmDetailToolbar({
-            onBack: () => {
-                viewMode = 'overview';
-                filterTerm = '';
-                selectedScope = FSM_ALL_PORTFOLIO_ID;
-                selectedHoldingIds = new Set();
-                nextFocusTarget = 'overview';
-                rerender();
-            },
             onScopeChange: value => {
                 selectedScope = value;
                 selectedHoldingIds = new Set();
@@ -14619,6 +14621,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             bodySection.innerHTML = '';
 
             if (viewMode === 'overview') {
+                headerBackBtn.hidden = true;
+                headerBackBtn.disabled = true;
                 toolbarSection.hidden = true;
                 setElementsDisabled(detailToolbarControls, true);
                 summarySection.appendChild(buildFsmSummaryRow(viewState.overviewModel.allSummary, {
@@ -14649,6 +14653,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 return;
             }
 
+            headerBackBtn.hidden = false;
+            headerBackBtn.disabled = false;
             toolbarSection.hidden = false;
             setElementsDisabled(detailToolbarControls, false);
             summarySection.appendChild(buildFsmSummaryRow(viewState.summary, {

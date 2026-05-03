@@ -5175,7 +5175,7 @@ describe('initialization and URL monitoring', () => {
         expect(updatedOverlay.textContent).not.toContain('AAPL');
     });
 
-    test('FSM detail view can return to portfolio overview', () => {
+    test('FSM detail view can return to portfolio overview and reset detail controls', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
@@ -5209,7 +5209,8 @@ describe('initialization and URL monitoring', () => {
         global.XMLHttpRequest = FakeXHR;
 
         storage.set('api_fsm_holdings', JSON.stringify([
-            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 },
+            { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'BOND', currentValueLcy: 800 }
         ]));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -5222,12 +5223,43 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.querySelector('table')).toBeTruthy();
-        const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to portfolios'));
+        const topBarButtons = overlay.querySelector('.gpv-header-buttons');
+        const backButtons = Array.from(topBarButtons.querySelectorAll('button')).filter(btn => btn.textContent.includes('Back to portfolios'));
+        expect(backButtons.filter(btn => !btn.hidden)).toHaveLength(1);
+        const backBtn = backButtons[0];
+        expect(backBtn.hidden).toBe(false);
+
+        const detailFilterInput = overlay.querySelector('input.gpv-fsm-filter-input');
+        detailFilterInput.value = 'BO';
+        detailFilterInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+        const rowCheckbox = overlay.querySelector('table tbody tr td[data-col="select"] input[type="checkbox"]');
+        rowCheckbox.checked = true;
+        rowCheckbox.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        const applyBulkBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Apply to'));
+        expect(applyBulkBtn.textContent).toContain('Apply to 1 selected holding');
+
+        expect(overlay.querySelector('.gpv-fsm-filter-toolbar button')).toBeNull();
         backBtn.click();
 
         overlay = document.querySelector('#gpv-overlay');
+        const overviewTopBarButtons = overlay.querySelector('.gpv-header-buttons');
+        const overviewBackButtons = Array.from(overviewTopBarButtons.querySelectorAll('button')).filter(btn => btn.textContent.includes('Back to portfolios'));
+        expect(overviewBackButtons.filter(btn => !btn.hidden)).toHaveLength(0);
+        const overviewBackBtn = overviewBackButtons[0];
+        expect(overviewBackBtn.hidden).toBe(true);
         expect(overlay.querySelector('.gpv-fsm-overview-grid')).toBeTruthy();
         expect(overlay.querySelector('table')).toBeNull();
+
+        const reopenViewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        reopenViewAllBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const resetFilterInput = overlay.querySelector('input.gpv-fsm-filter-input');
+        expect(resetFilterInput.value).toBe('');
+        const resetApplyBulkBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Apply to'));
+        expect(resetApplyBulkBtn.textContent).toContain('Apply to 0 selected holdings');
     });
 
     test('FSM overview keeps hidden detail toolbar out of tab order and restores visible focus', () => {
@@ -5280,7 +5312,8 @@ describe('initialization and URL monitoring', () => {
         expect(filterInput.disabled).toBe(false);
         filterInput.focus();
 
-        const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to portfolios'));
+        const topBarButtons = overlay.querySelector('.gpv-header-buttons');
+        const backBtn = Array.from(topBarButtons.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to portfolios'));
         backBtn.click();
 
         overlay = document.querySelector('#gpv-overlay');
