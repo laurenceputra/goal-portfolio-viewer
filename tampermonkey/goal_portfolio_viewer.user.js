@@ -16023,11 +16023,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const mode = modeSelect.value === 'allocation' ? 'allocation' : 'portfolio';
             contentDiv.innerHTML = '';
 
-            if (viewMode === 'overview' && mode === 'allocation') {
-                viewMode = 'detail';
-                selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
-            }
-
             if (viewMode === 'overview') {
                 controls.hidden = true;
                 setElementsDisabled(detailToolbarControls, true);
@@ -16042,6 +16037,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 rows = rows.filter(row => utils.normalizeString(row?.portfolioNo, '-') === selectedPortfolioNo);
             }
 
+            if (mode === 'allocation' && selectedPortfolioNo === FSM_ALL_PORTFOLIO_ID) {
+                modeSelect.value = 'portfolio';
+            }
+
             const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
             const backBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
             backBtn.type = 'button';
@@ -16053,7 +16052,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             detailToolbar.appendChild(backBtn);
             contentDiv.appendChild(detailToolbar);
 
-            if (mode === 'allocation') {
+            if (modeSelect.value === 'allocation') {
                 renderAllocationMode(activeView, rows);
                 return;
             }
