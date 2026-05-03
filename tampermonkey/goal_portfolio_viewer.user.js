@@ -15235,6 +15235,159 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 return;
             }
 
+            const planningPanel = createElement('section', 'gpv-planning-panel');
+            planningPanel.appendChild(createElement('h2', 'gpv-planning-title', 'Planning'));
+            planningPanel.appendChild(createElement(
+                'p',
+                'gpv-planning-copy',
+                'Assign instruments to sub-portfolios, set target percentages, and spot drift before rebalancing.'
+            ));
+            planningPanel.appendChild(createElement('p', 'gpv-planning-copy', `Scope: ${activeView === 'liabilities' ? 'Liabilities' : 'Assets'}`));
+
+            const planningTotalValue = portfolioNos.reduce((sum, portfolioNo) => (
+                sum + toFiniteNumber(buildOcbcSummary(groupedByPortfolio[portfolioNo] || []).total, 0)
+            ), 0);
+            const planningDistinctSubPortfolioIds = new Set();
+            let planningUnassignedInstruments = 0;
+            let planningCoverageConfiguredCount = 0;
+            let planningCoverageCompleteCount = 0;
+            let planningMaterialDriftCount = 0;
+            let planningLargestDriftPercent = null;
+            let planningLargestDriftAmount = null;
+
+            portfolioNos.forEach(portfolioNo => {
+                const portfolioRows = groupedByPortfolio[portfolioNo] || [];
+                const portfolioSummary = buildOcbcSummary(portfolioRows);
+                const portfolioTotal = toFiniteNumber(portfolioSummary.total, 0);
+                const scopedSubPortfolios = getActiveOcbcSubPortfolios(subPortfoliosByView, activeView, portfolioNo);
+                const legacySubPortfolios = buildLegacyOcbcSubPortfolios(activeView, bucketsByView);
+                const persistedSubPortfolios = mergeOcbcSubPortfolios(scopedSubPortfolios, legacySubPortfolios);
+                const assignmentReferencedProductTypeById = new Map();
+                portfolioRows.forEach(row => {
+                    const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
+                    const assignmentId = utils.normalizeString(assignment?.subPortfolioId, '');
+                    if (!assignmentId || assignmentReferencedProductTypeById.has(assignmentId)) {
+                        return;
+                    }
+                    assignmentReferencedProductTypeById.set(assignmentId, utils.normalizeString(row?.productType, ''));
+                });
+                const assignmentReferencedIds = Array.from(new Set(portfolioRows
+                    .map(row => resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios).subPortfolioId)
+                    .filter(Boolean)));
+                assignmentReferencedIds.forEach(id => {
+                    const referencedProductType = assignmentReferencedProductTypeById.get(id) || '';
+                    const ambiguousLegacyMatches = persistedSubPortfolios.filter(item => (
+                        utils.normalizeString(item?.legacyBucketId, '') === id
+                        && utils.normalizeString(item?.legacyProductType, '') === referencedProductType
+                    ));
+                    if (ambiguousLegacyMatches.length > 1) {
+                        return;
+                    }
+                    if (!persistedSubPortfolios.some(item => item.id === id)) {
+                        persistedSubPortfolios.push({ id, name: id, archived: false });
+                    }
+                });
+
+                persistedSubPortfolios.forEach(subPortfolio => {
+                    if (subPortfolio?.id) {
+                        planningDistinctSubPortfolioIds.add(subPortfolio.id);
+                    }
+                });
+
+                const subPortfolioRowsData = [{ id: '', rows: [] }];
+                persistedSubPortfolios.forEach(item => subPortfolioRowsData.push({ ...item, rows: [] }));
+                portfolioRows.forEach(row => {
+                    const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
+                    const matchedSubPortfolio = subPortfolioRowsData.find(item => item.id === assignment.subPortfolioId);
+                    (matchedSubPortfolio || subPortfolioRowsData[0]).rows.push(row);
+                });
+
+                planningUnassignedInstruments += subPortfolioRowsData[0].rows.length;
+
+                const configuredSubPortfolioTargets = subPortfolioRowsData.reduce((sum, subPortfolio) => {
+                    if (!subPortfolio.id) {
+                        return sum;
+                    }
+                    const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId);
+                    return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
+                }, 0);
+                const hasCoverageIntent = hasConfiguredAllocationIntent({
+                    targetValues: subPortfolioRowsData
+                        .filter(item => item.id)
+                        .map(item => getOcbcAllocationTargetPercent(activeView, portfolioNo, item.id, '', item.legacyProductType, item.legacyBucketId)),
+                    fixedCount: 0
+                });
+                if (hasCoverageIntent) {
+                    planningCoverageConfiguredCount += 1;
+                    if (!buildTargetCoverageLabel(configuredSubPortfolioTargets)) {
+                        planningCoverageCompleteCount += 1;
+                    }
+                }
+
+                subPortfolioRowsData.forEach(subPortfolio => {
+                    if (!subPortfolio.id) {
+                        return;
+                    }
+                    const subPortfolioSummary = buildOcbcSummary(subPortfolio.rows);
+                    const subPortfolioValue = toFiniteNumber(subPortfolioSummary.total, 0);
+                    const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId);
+                    if (!Number.isFinite(targetPercent) || portfolioTotal <= 0) {
+                        return;
+                    }
+                    const driftModel = calculateAllocationDrift(subPortfolioValue, targetPercent, portfolioTotal);
+                    if (!Number.isFinite(driftModel?.driftPercent)) {
+                        return;
+                    }
+                    if (Math.abs(driftModel.driftPercent) > MATERIAL_DRIFT_RATIO) {
+                        planningMaterialDriftCount += 1;
+                    }
+                    if (planningLargestDriftPercent === null || Math.abs(driftModel.driftPercent) > Math.abs(planningLargestDriftPercent)) {
+                        planningLargestDriftPercent = driftModel.driftPercent;
+                        planningLargestDriftAmount = driftModel.driftAmount;
+                    }
+                });
+            });
+
+            const planningCoverageText = planningCoverageConfiguredCount > 0
+                ? `${planningCoverageCompleteCount}/${planningCoverageConfiguredCount} portfolios at 100%`
+                : 'No target coverage set';
+            const planningDriftText = Number.isFinite(planningLargestDriftPercent)
+                ? formatDriftDisplay(planningLargestDriftPercent, planningLargestDriftAmount)
+                : '-';
+
+            planningPanel.appendChild(createMetricStrip([
+                { label: 'Current value', value: formatMoney(planningTotalValue) },
+                { label: 'Sub-portfolios', value: String(planningDistinctSubPortfolioIds.size) },
+                { label: 'Unassigned instruments', value: String(planningUnassignedInstruments) },
+                { label: 'Target coverage', value: planningCoverageText },
+                {
+                    label: 'Largest drift',
+                    value: planningDriftText,
+                    valueClass: getDriftSeverityClass(planningLargestDriftPercent)
+                }
+            ], 'gpv-stats gpv-detail-stats'));
+
+            const planningStatusItems = [];
+            if (planningUnassignedInstruments > 0) {
+                const suffix = planningUnassignedInstruments === 1 ? '' : 's';
+                planningStatusItems.push(`${planningUnassignedInstruments} instrument${suffix} unassigned to a sub-portfolio`);
+            }
+            if (planningCoverageConfiguredCount > 0 && planningCoverageCompleteCount < planningCoverageConfiguredCount) {
+                planningStatusItems.push(`Target coverage incomplete in ${planningCoverageConfiguredCount - planningCoverageCompleteCount} portfolio scope(s)`);
+            }
+            if (planningMaterialDriftCount > 0) {
+                planningStatusItems.push(`${planningMaterialDriftCount} sub-portfolio scope(s) show high drift`);
+            }
+            if (planningStatusItems.length > 0) {
+                planningPanel.appendChild(createElement('h3', 'gpv-detail-title', 'Needs attention'));
+                const statusList = createElement('ul', 'gpv-health-reasons');
+                planningStatusItems.forEach(item => {
+                    statusList.appendChild(createElement('li', 'gpv-health-reason', item));
+                });
+                planningPanel.appendChild(statusList);
+            }
+            contentDiv.appendChild(planningPanel);
+
             portfolioNos.forEach(portfolioNo => {
                 const portfolioRows = groupedByPortfolio[portfolioNo] || [];
                 const portfolioSummary = buildOcbcSummary(portfolioRows);
@@ -15245,13 +15398,23 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 const scopedSubPortfolios = getActiveOcbcSubPortfolios(subPortfoliosByView, activeView, portfolioNo);
                 const legacySubPortfolios = buildLegacyOcbcSubPortfolios(activeView, bucketsByView);
                 const persistedSubPortfolios = mergeOcbcSubPortfolios(scopedSubPortfolios, legacySubPortfolios);
+                const assignmentReferencedProductTypeById = new Map();
+                portfolioRows.forEach(row => {
+                    const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
+                    const assignmentId = utils.normalizeString(assignment?.subPortfolioId, '');
+                    if (!assignmentId || assignmentReferencedProductTypeById.has(assignmentId)) {
+                        return;
+                    }
+                    assignmentReferencedProductTypeById.set(assignmentId, utils.normalizeString(row?.productType, ''));
+                });
                 const assignmentReferencedIds = Array.from(new Set(portfolioRows
                     .map(row => resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios).subPortfolioId)
                     .filter(Boolean)));
                 assignmentReferencedIds.forEach(id => {
+                    const referencedProductType = assignmentReferencedProductTypeById.get(id) || '';
                     const ambiguousLegacyMatches = persistedSubPortfolios.filter(item => (
                         utils.normalizeString(item?.legacyBucketId, '') === id
-                        && utils.normalizeString(item?.legacyProductType, '')
+                        && utils.normalizeString(item?.legacyProductType, '') === referencedProductType
                     ));
                     if (ambiguousLegacyMatches.length > 1) {
                         return;

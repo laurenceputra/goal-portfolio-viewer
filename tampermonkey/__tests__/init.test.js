@@ -1449,6 +1449,15 @@ describe('initialization and URL monitoring', () => {
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         const allocationText = overlay.textContent;
+        expect(allocationText).toContain('Planning');
+        expect(allocationText).toContain('Assign instruments to sub-portfolios, set target percentages, and spot drift before rebalancing.');
+        expect(allocationText).toContain('Scope: Assets');
+        expect(allocationText).toContain('Current value');
+        expect(allocationText).toContain('Sub-portfolios');
+        expect(allocationText).toContain('Unassigned instruments');
+        expect(allocationText).toContain('Target coverage');
+        expect(allocationText).toContain('Needs attention');
+        expect(allocationText).toContain('1 instrument unassigned to a sub-portfolio');
         expect(allocationText).toContain('Sub-portfolio allocation within Portfolio P-1');
         expect(allocationText).toContain('Instrument allocation · Core');
         expect(allocationText).toContain('Sub-portfolio targets: 110.00% assigned, 10.00% overallocated');

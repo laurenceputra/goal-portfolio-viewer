@@ -1012,6 +1012,11 @@ async function captureOcbcFlow(page, summary, outputDir) {
         && overlayTextAllocation.includes('Unassigned');
     recordAssertion(summary, ocbcFlowName, 'allocation-has-sub-portfolio-ui', hasAllocationUi, 'Allocation mode shows sub-portfolio controls and summary.');
 
+    const hasPlanningPanel = overlayTextAllocation.includes('Planning')
+        && overlayTextAllocation.includes('Assign instruments to sub-portfolios, set target percentages, and spot drift before rebalancing.')
+        && overlayTextAllocation.includes('Scope: Assets');
+    recordAssertion(summary, ocbcFlowName, 'allocation-has-planning-panel', hasPlanningPanel, 'Allocation mode includes OCBC planning framing with scope helper copy.');
+
     const hasPortfolioFirstAllocation = overlayTextAllocation.includes('Portfolio 6500142646-2')
         && overlayTextAllocation.includes('Portfolio 6500142647-2')
         && overlayTextAllocation.includes('Unassigned')
