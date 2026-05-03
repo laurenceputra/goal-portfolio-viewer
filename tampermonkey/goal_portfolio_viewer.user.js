@@ -9298,17 +9298,26 @@ let GoalTargetStore;
         document.body.appendChild(notification);
         
         // Fade in
-        setTimeout(() => {
+        const fadeInTimer = setTimeout(() => {
             notification.classList.add('gpv-notification-show');
         }, 10);
+        if (fadeInTimer && typeof fadeInTimer.unref === 'function') {
+            fadeInTimer.unref();
+        }
         
         // Fade out and remove
-        setTimeout(() => {
+        const fadeOutTimer = setTimeout(() => {
             notification.classList.remove('gpv-notification-show');
-            setTimeout(() => {
+            const removeTimer = setTimeout(() => {
                 notification.remove();
             }, 300);
+            if (removeTimer && typeof removeTimer.unref === 'function') {
+                removeTimer.unref();
+            }
         }, 3000);
+        if (fadeOutTimer && typeof fadeOutTimer.unref === 'function') {
+            fadeOutTimer.unref();
+        }
     }
 
     let syncToastTimer = null;
@@ -9351,6 +9360,9 @@ let GoalTargetStore;
         syncToastTimer = setTimeout(() => {
             clearSyncMessage();
         }, 10000);
+        if (syncToastTimer && typeof syncToastTimer.unref === 'function') {
+            syncToastTimer.unref();
+        }
     }
 
     function clearSyncMessage() {
@@ -9470,9 +9482,15 @@ function scrollOverlayContentToTop(sourceNode = null) {
                 requestAnimationFrame(enforceTop);
             });
         } else {
-            setTimeout(enforceTop, 32);
+            const fallbackEnforceTimer = setTimeout(enforceTop, 32);
+            if (fallbackEnforceTimer && typeof fallbackEnforceTimer.unref === 'function') {
+                fallbackEnforceTimer.unref();
+            }
         }
         content.gpvEnforceTopTimer = setTimeout(enforceTop, 220);
+        if (content.gpvEnforceTopTimer && typeof content.gpvEnforceTopTimer.unref === 'function') {
+            content.gpvEnforceTopTimer.unref();
+        }
         return;
     }
     content.scrollTop = 0;
@@ -9490,7 +9508,10 @@ function rerenderSyncSettingsPanel({ message, type = 'success', delay = 300 } = 
         scrollOverlayContentToTop();
     };
     if (delay > 0) {
-        setTimeout(refresh, delay);
+        const refreshTimer = setTimeout(refresh, delay);
+        if (refreshTimer && typeof refreshTimer.unref === 'function') {
+            refreshTimer.unref();
+        }
     } else {
         refresh();
     }

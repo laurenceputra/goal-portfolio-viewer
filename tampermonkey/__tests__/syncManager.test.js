@@ -114,10 +114,14 @@ describe('SyncManager', () => {
         if (exportsModule?.SyncManager?.stopAutoSync) {
             exportsModule.SyncManager.stopAutoSync();
         }
+        if (window.__gpvUrlMonitorCleanup) {
+            window.__gpvUrlMonitorCleanup();
+        }
+        jest.clearAllTimers();
         jest.useRealTimers();
+        jest.restoreAllMocks();
         teardownDom();
         Date.now = originalDateNow;
-        jest.useRealTimers();
     });
 
     function loadModule() {
@@ -642,25 +646,29 @@ describe('SyncManager', () => {
             onload({ status: 200, responseText: '{}', responseHeaders: '' });
         });
 
-        await expect(SyncManager.performSync({ direction: 'download' })).rejects.toThrow('Account locked');
-        expect(SyncManager.getStatus().lastErrorMeta).toEqual(expect.objectContaining({
-            category: 'auth'
-        }));
+        try {
+            await expect(SyncManager.performSync({ direction: 'download' })).rejects.toThrow('Account locked');
+            expect(consoleErrorSpy).toHaveBeenCalledWith('[Goal Portfolio Viewer] Sync failed:', expect.any(Error));
+            expect(SyncManager.getStatus().lastErrorMeta).toEqual(expect.objectContaining({
+                category: 'auth'
+            }));
 
-        await SyncManager.enable({
-            serverUrl: 'https://sync.example.com',
-            userId: 'user@example.com',
-            password: 'password123'
-        });
+            await SyncManager.enable({
+                serverUrl: 'https://sync.example.com',
+                userId: 'user@example.com',
+                password: 'password123'
+            });
 
-        expect(SyncManager.getStatus()).toEqual(expect.objectContaining({
-            lastError: 'Account locked',
-            hasSessionKey: true
-        }));
-        expect(SyncManager.getStatus().lastErrorMeta).toEqual(expect.objectContaining({
-            category: 'auth'
-        }));
-        consoleErrorSpy.mockRestore();
+            expect(SyncManager.getStatus()).toEqual(expect.objectContaining({
+                lastError: 'Account locked',
+                hasSessionKey: true
+            }));
+            expect(SyncManager.getStatus().lastErrorMeta).toEqual(expect.objectContaining({
+                category: 'auth'
+            }));
+        } finally {
+            consoleErrorSpy.mockRestore();
+        }
     });
 
     test('sync server URLs require HTTPS except localhost development URLs', async () => {
@@ -838,6 +846,7 @@ describe('SyncManager', () => {
 
     test('applyConfigData throws when namespaced store write fails', () => {
         const { SyncManager } = loadModule();
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         global.GM_setValue = jest.fn((key, value) => {
             if (key === 'fsm') {
                 throw new Error('Write failed');
@@ -845,19 +854,25 @@ describe('SyncManager', () => {
             storage.set(key, value);
         });
 
-        expect(() => SyncManager.applyConfigData({
-            version: 2,
-            platforms: {
-                endowus: { goalTargets: { 'goal-1': 20 }, goalFixed: {}, timestamp: Date.now() },
-                fsm: { targetsByCode: { AAA: 10 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
-                ocbc: { subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
-            },
-            timestamp: Date.now()
-        })).toThrow('Failed to save FSM sync config data');
+        try {
+            expect(() => SyncManager.applyConfigData({
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: { 'goal-1': 20 }, goalFixed: {}, timestamp: Date.now() },
+                    fsm: { targetsByCode: { AAA: 10 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
+                    ocbc: { subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+                },
+                timestamp: Date.now()
+            })).toThrow('Failed to save FSM sync config data');
+            expect(errorSpy).toHaveBeenCalledWith('[Goal Portfolio Viewer] Error saving FSM store:', expect.any(Error));
+        } finally {
+            errorSpy.mockRestore();
+        }
     });
 
     test('applyConfigData rolls back earlier namespaced writes when later write fails', () => {
         const { SyncManager } = loadModule();
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         storage.set('endowus', JSON.stringify({
             goalTargets: { legacy: 25 },
             goalFixed: {},
@@ -878,23 +893,29 @@ describe('SyncManager', () => {
             storage.set(key, value);
         });
 
-        expect(() => SyncManager.applyConfigData({
-            version: 2,
-            platforms: {
-                endowus: { goalTargets: { 'goal-1': 80 }, goalFixed: {}, timestamp: Date.now() },
-                fsm: { targetsByCode: { AAA: 33 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
-                ocbc: { subPortfolios: { assets: {} }, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
-            },
-            timestamp: Date.now()
-        })).toThrow('Failed to save OCBC sync config data');
+        try {
+            expect(() => SyncManager.applyConfigData({
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: { 'goal-1': 80 }, goalFixed: {}, timestamp: Date.now() },
+                    fsm: { targetsByCode: { AAA: 33 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
+                    ocbc: { subPortfolios: { assets: {} }, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+                },
+                timestamp: Date.now()
+            })).toThrow('Failed to save OCBC sync config data');
+            expect(errorSpy).toHaveBeenCalledWith('[Goal Portfolio Viewer] Error saving OCBC store:', expect.any(Error));
 
-        expect(JSON.parse(storage.get('endowus')).goalTargets).toEqual({ legacy: 25 });
-        expect(JSON.parse(storage.get('fsm')).targetsByCode).toEqual({ LEGACY: 10 });
-        expect(storage.has('ocbc')).toBe(false);
+            expect(JSON.parse(storage.get('endowus')).goalTargets).toEqual({ legacy: 25 });
+            expect(JSON.parse(storage.get('fsm')).targetsByCode).toEqual({ LEGACY: 10 });
+            expect(storage.has('ocbc')).toBe(false);
+        } finally {
+            errorSpy.mockRestore();
+        }
     });
 
     test('applyConfigData rollback restores legacy keys removed during pre-write store reads', () => {
         const { SyncManager } = loadModule();
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         storage.set('endowus', JSON.stringify({
             goalTargets: { keep: 25 },
             goalFixed: {},
@@ -921,22 +942,27 @@ describe('SyncManager', () => {
             storage.set(key, value);
         });
 
-        expect(() => SyncManager.applyConfigData({
-            version: 2,
-            platforms: {
-                endowus: { goalTargets: { 'goal-1': 80 }, goalFixed: {}, timestamp: Date.now() },
-                fsm: { targetsByCode: { AAA: 33 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
-                ocbc: { subPortfolios: { assets: {} }, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
-            },
-            timestamp: Date.now()
-        })).toThrow('Failed to save OCBC sync config data');
+        try {
+            expect(() => SyncManager.applyConfigData({
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: { 'goal-1': 80 }, goalFixed: {}, timestamp: Date.now() },
+                    fsm: { targetsByCode: { AAA: 33 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
+                    ocbc: { subPortfolios: { assets: {} }, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+                },
+                timestamp: Date.now()
+            })).toThrow('Failed to save OCBC sync config data');
+            expect(errorSpy).toHaveBeenCalledWith('[Goal Portfolio Viewer] Error saving OCBC store:', expect.any(Error));
 
-        expect(storage.get('goal_target_pct_legacy-goal')).toBe(42);
-        expect(storage.get('gpv_bucket_mode')).toBe('target');
-        expect(storage.get('gpv_performance_goal-rollback')).toBe(rollbackPerformancePayload);
-        expect(storage.get('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance')).toBe('true');
-        expect(JSON.parse(storage.get('endowus')).goalTargets).toEqual({ keep: 25 });
-        expect(storage.has('ocbc')).toBe(false);
+            expect(storage.get('goal_target_pct_legacy-goal')).toBe(42);
+            expect(storage.get('gpv_bucket_mode')).toBe('target');
+            expect(storage.get('gpv_performance_goal-rollback')).toBe(rollbackPerformancePayload);
+            expect(storage.get('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance')).toBe('true');
+            expect(JSON.parse(storage.get('endowus')).goalTargets).toEqual({ keep: 25 });
+            expect(storage.has('ocbc')).toBe(false);
+        } finally {
+            errorSpy.mockRestore();
+        }
     });
 
     test('collectConfigData includes OCBC config and excludes raw holdings', () => {

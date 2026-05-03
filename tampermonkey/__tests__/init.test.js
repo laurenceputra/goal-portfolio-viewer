@@ -62,10 +62,17 @@ describe('initialization and URL monitoring', () => {
     });
 
     afterEach(() => {
+        const modulePath = require.resolve('../goal_portfolio_viewer.user.js');
+        const cachedModule = require.cache[modulePath];
+        if (cachedModule?.exports?.SyncManager?.stopAutoSync) {
+            cachedModule.exports.SyncManager.stopAutoSync();
+        }
         if (window.__gpvUrlMonitorCleanup) {
             window.__gpvUrlMonitorCleanup();
         }
+        jest.clearAllTimers();
         jest.useRealTimers();
+        jest.restoreAllMocks();
         teardownDom();
         delete global.alert;
         delete global.history;
@@ -840,7 +847,13 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: goal.investmentGoalType
         }));
 
-        global.fetch.mockImplementation(() => new Promise(() => {}));
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        global.fetch.mockImplementation(() => Promise.resolve(responseFactory([])));
         global.GM_setValue('api_performance', JSON.stringify(performanceData));
         global.GM_setValue('api_investible', JSON.stringify(investibleData));
         global.GM_setValue('api_summary', JSON.stringify(summaryData));
@@ -3372,6 +3385,7 @@ describe('initialization and URL monitoring', () => {
             status: 200
         });
 
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
         await window.fetch('/v1/goals/performance?demo=1').then(response => response.clone().json().catch(() => null));
         global.fetch.mockResolvedValueOnce(responseFactory(perfPayload));
         await window.fetch('/v1/goals/performance');
@@ -3413,15 +3427,25 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).not.toContain('Retirement');
         expect(overlay.querySelector('.gpv-select').value).toBe('SUMMARY');
 
-        global.fetch.mockResolvedValueOnce(responseFactory({ stale: true }));
-        await window.fetch('/v1/goals/performance');
+        try {
+            global.fetch.mockResolvedValueOnce(responseFactory({ stale: true }));
+            await window.fetch('/v1/goals/performance');
 
-        await new Promise(resolve => setTimeout(resolve, 0));
+            await new Promise(resolve => setTimeout(resolve, 0));
 
-        overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).toContain('Summary View');
-        expect(overlay.textContent).not.toContain('Fetching Endowus portfolio data');
-        expect(document.body.textContent).toContain('Latest Endowus refresh failed validation. Showing last synced portfolio data.');
+            overlay = document.querySelector('#gpv-overlay');
+            expect(overlay.textContent).toContain('Summary View');
+            expect(overlay.textContent).not.toContain('Fetching Endowus portfolio data');
+            expect(document.body.textContent).toContain('Latest Endowus refresh failed validation. Showing last synced portfolio data.');
+            expect(warnSpy).toHaveBeenCalledWith(
+                '[Goal Portfolio Viewer] Ignoring performance payload: Expected array payload for performance'
+            );
+            expect(warnSpy.mock.calls.filter(([message]) => (
+                message === '[Goal Portfolio Viewer] Ignoring performance payload: Expected array payload for performance'
+            )).length).toBeGreaterThanOrEqual(2);
+        } finally {
+            warnSpy.mockRestore();
+        }
     });
 
     test('showOverlay opens Endowus view when intercepted datasets are empty arrays', () => {
