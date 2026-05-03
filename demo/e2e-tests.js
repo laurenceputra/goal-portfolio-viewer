@@ -1132,11 +1132,29 @@ async function captureOcbcFlow(page, summary, outputDir) {
     const hasPortfolioLabelB = overlayTextOverview.includes('Portfolio 6500142647-2');
     recordAssertion(summary, ocbcFlowName, 'overview-has-portfolio-2', hasPortfolioLabelB, 'Overview contains Portfolio 6500142647-2 card.');
 
-    const hasOverviewPrompt = overlayTextOverview.includes('Select a portfolio to open details, or view all cached holdings.');
-    recordAssertion(summary, ocbcFlowName, 'overview-has-guidance-copy', hasOverviewPrompt, 'Overview shows guidance copy for opening detailed holdings.');
-
-    const hasViewAllButton = await page.getByRole('button', { name: /view all cached holdings/i }).count();
-    recordAssertion(summary, ocbcFlowName, 'overview-has-view-all-button', hasViewAllButton > 0, 'Overview shows View all cached holdings action.');
+    const overviewStructure = await page.evaluate(() => {
+        const visibleOverviewCardCount = Array.from(document.querySelectorAll('.gpv-fsm-overview-card')).filter(node => {
+            if (!(node instanceof HTMLElement)) {
+                return false;
+            }
+            const rect = node.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        }).length;
+        const hasVisibleViewAllButton = Array.from(document.querySelectorAll('button')).some(button => {
+            if (!(button instanceof HTMLElement)) {
+                return false;
+            }
+            const rect = button.getBoundingClientRect();
+            const text = (button.textContent || '').trim();
+            return rect.width > 0 && rect.height > 0 && /view all cached holdings/i.test(text);
+        });
+        return {
+            visibleOverviewCardCount,
+            hasVisibleViewAllButton
+        };
+    });
+    recordAssertion(summary, ocbcFlowName, 'overview-has-cards', overviewStructure.visibleOverviewCardCount > 0, 'Overview has visible portfolio cards.');
+    recordAssertion(summary, ocbcFlowName, 'overview-has-view-all-button', overviewStructure.hasVisibleViewAllButton, 'Overview shows View all cached holdings action.');
 
     await clickButtonByRole(page, /view all cached holdings/i);
     await page.waitForFunction(() => {
@@ -1145,7 +1163,23 @@ async function captureOcbcFlow(page, summary, outputDir) {
             return false;
         }
         const text = overlay.textContent || '';
-        return text.includes('Identifier')
+        const hasBackToOverview = Array.from(overlay.querySelectorAll('button')).some(button => {
+            const label = (button.textContent || '').trim();
+            return /back to overview/i.test(label);
+        });
+        const visibleOverviewCards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).filter(node => {
+            if (!(node instanceof HTMLElement)) {
+                return false;
+            }
+            const rect = node.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        }).length;
+        const allocationOption = overlay.querySelector('#gpv-ocbc-mode-select option[value="allocation"]');
+        const allocationDisabled = allocationOption instanceof HTMLOptionElement && allocationOption.disabled;
+        return hasBackToOverview
+            && visibleOverviewCards === 0
+            && allocationDisabled
+            && text.includes('Identifier')
             && text.includes('OCBC Global Equity Opportunities Fund');
     }, null, { timeout: 5000 });
 
@@ -1189,8 +1223,14 @@ async function captureOcbcFlow(page, summary, outputDir) {
             return false;
         }
         const text = overlay.textContent || '';
-        return text.includes('Select a portfolio to open details, or view all cached holdings.')
-            && text.includes('Portfolio 6500142646-2');
+        const visibleOverviewCards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).filter(node => {
+            if (!(node instanceof HTMLElement)) {
+                return false;
+            }
+            const rect = node.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        }).length;
+        return visibleOverviewCards > 0 && text.includes('Portfolio 6500142646-2');
     }, null, { timeout: 5000 });
 
     await clickButtonByRole(page, /open portfolio 6500142646-2/i);
@@ -1545,6 +1585,50 @@ async function captureOcbcFlow(page, summary, outputDir) {
             && portfolioAfterAllocationEdits.modeControlsHidden,
         'OCBC portfolio mode remains asset-focused after allocation edits and before liabilities switch.'
     );
+
+    await clickButtonByRole(page, /back to overview/i);
+    await page.waitForFunction(() => {
+        const overlay = document.querySelector('.gpv-overlay');
+        if (!overlay) {
+            return false;
+        }
+        const text = overlay.textContent || '';
+        const visibleOverviewCards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).filter(node => {
+            if (!(node instanceof HTMLElement)) {
+                return false;
+            }
+            const rect = node.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        }).length;
+        return visibleOverviewCards > 0 && text.includes('Portfolio 6500142646-2');
+    }, null, { timeout: 5000 });
+
+    await clickButtonByRole(page, /view all cached holdings/i);
+    await page.waitForFunction(() => {
+        const overlay = document.querySelector('.gpv-overlay');
+        if (!overlay) {
+            return false;
+        }
+        const text = overlay.textContent || '';
+        const hasBackToOverview = Array.from(overlay.querySelectorAll('button')).some(button => {
+            const label = (button.textContent || '').trim();
+            return /back to overview/i.test(label);
+        });
+        const visibleOverviewCards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).filter(node => {
+            if (!(node instanceof HTMLElement)) {
+                return false;
+            }
+            const rect = node.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        }).length;
+        const allocationOption = overlay.querySelector('#gpv-ocbc-mode-select option[value="allocation"]');
+        const allocationDisabled = allocationOption instanceof HTMLOptionElement && allocationOption.disabled;
+        return hasBackToOverview
+            && visibleOverviewCards === 0
+            && allocationDisabled
+            && text.includes('Identifier')
+            && text.includes('OCBC Global Equity Opportunities Fund');
+    }, null, { timeout: 5000 });
 
     const liabilitiesValue = await page.$eval('#gpv-ocbc-view-select', select => {
         if (!(select instanceof HTMLSelectElement)) {
