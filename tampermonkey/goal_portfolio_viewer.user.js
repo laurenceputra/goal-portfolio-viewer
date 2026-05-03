@@ -4579,11 +4579,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const collectRelevantLegacyKeys = () => {
             const exactKeys = [
                 ...LEGACY_ENDOWUS_EXACT_KEYS,
+                ...LEGACY_ENDOWUS_LOCAL_EXACT_KEYS,
                 ...LEGACY_FSM_EXACT_KEYS,
                 ...LEGACY_OCBC_EXACT_KEYS
             ];
             const prefixes = [
                 ...LEGACY_ENDOWUS_PREFIXES,
+                ...LEGACY_ENDOWUS_LOCAL_PREFIXES,
                 ...LEGACY_FSM_PREFIXES,
                 ...LEGACY_OCBC_PREFIXES
             ];
@@ -4719,6 +4721,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 ...(typeof GM_listValues === 'function'
                     ? GM_listValues().filter(key => (
                         LEGACY_ENDOWUS_PREFIXES
+                            .concat(LEGACY_ENDOWUS_LOCAL_PREFIXES)
                             .concat(LEGACY_FSM_PREFIXES)
                             .concat(LEGACY_OCBC_PREFIXES)
                             .some(prefix => key.startsWith(prefix))

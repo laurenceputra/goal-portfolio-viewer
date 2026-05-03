@@ -788,6 +788,10 @@ describe('SyncManager', () => {
             assignmentByCode: {}
         }));
         storage.set('goal_target_pct_legacy-goal', 42);
+        const rollbackPerformancePayload = JSON.stringify({ fetchedAt: Date.now(), response: { goalId: 'goal-rollback' } });
+        storage.set('gpv_bucket_mode', 'target');
+        storage.set('gpv_performance_goal-rollback', rollbackPerformancePayload);
+        storage.set('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance', 'true');
         global.GM_listValues = () => Array.from(storage.keys());
 
         global.GM_setValue = jest.fn((key, value) => {
@@ -808,6 +812,9 @@ describe('SyncManager', () => {
         })).toThrow('Failed to save OCBC sync config data');
 
         expect(storage.get('goal_target_pct_legacy-goal')).toBe(42);
+        expect(storage.get('gpv_bucket_mode')).toBe('target');
+        expect(storage.get('gpv_performance_goal-rollback')).toBe(rollbackPerformancePayload);
+        expect(storage.get('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance')).toBe('true');
         expect(JSON.parse(storage.get('endowus')).goalTargets).toEqual({ keep: 25 });
         expect(storage.has('ocbc')).toBe(false);
     });
