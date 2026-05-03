@@ -1045,6 +1045,73 @@
         return { assets, liabilities };
     }
 
+    function groupOcbcHoldingsByPortfolio(holdings) {
+        const source = holdings && typeof holdings === 'object' ? holdings : { assets: [], liabilities: [] };
+        const grouped = {};
+        function appendRows(section, rows) {
+            (Array.isArray(rows) ? rows : []).forEach(row => {
+                const portfolioNo = utils.normalizeString(row?.portfolioNo, '-');
+                if (!grouped[portfolioNo]) {
+                    grouped[portfolioNo] = { assets: [], liabilities: [], lastSeenAt: null };
+                }
+                grouped[portfolioNo][section].push(row);
+            });
+        }
+        appendRows('assets', source.assets);
+        appendRows('liabilities', source.liabilities);
+        return grouped;
+    }
+
+    function flattenOcbcHoldingsByPortfolio(holdingsByPortfolio) {
+        const source = holdingsByPortfolio && typeof holdingsByPortfolio === 'object' && !Array.isArray(holdingsByPortfolio)
+            ? holdingsByPortfolio
+            : {};
+        const assets = [];
+        const liabilities = [];
+        Object.values(source).forEach(entry => {
+            if (!entry || typeof entry !== 'object') {
+                return;
+            }
+            if (Array.isArray(entry.assets)) {
+                assets.push(...entry.assets);
+            }
+            if (Array.isArray(entry.liabilities)) {
+                liabilities.push(...entry.liabilities);
+            }
+        });
+        return { assets, liabilities };
+    }
+
+    function normalizeOcbcHoldingsByPortfolioForStore(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const normalized = {};
+        Object.entries(source).forEach(([rawPortfolioNo, entry]) => {
+            const portfolioNo = utils.normalizeString(rawPortfolioNo, '-');
+            if (!entry || typeof entry !== 'object') {
+                return;
+            }
+            normalized[portfolioNo] = {
+                assets: Array.isArray(entry.assets) ? entry.assets : [],
+                liabilities: Array.isArray(entry.liabilities) ? entry.liabilities : [],
+                lastSeenAt: typeof entry.lastSeenAt === 'number' && entry.lastSeenAt > 0 ? entry.lastSeenAt : null
+            };
+        });
+        return normalized;
+    }
+
+    function mergeOcbcHoldingsByPortfolio(currentByPortfolio, nextByPortfolio, now = Date.now()) {
+        const merged = normalizeOcbcHoldingsByPortfolioForStore(currentByPortfolio);
+        const normalizedNext = normalizeOcbcHoldingsByPortfolioForStore(nextByPortfolio);
+        Object.entries(normalizedNext).forEach(([portfolioNo, entry]) => {
+            merged[portfolioNo] = {
+                assets: Array.isArray(entry.assets) ? entry.assets : [],
+                liabilities: Array.isArray(entry.liabilities) ? entry.liabilities : [],
+                lastSeenAt: typeof entry.lastSeenAt === 'number' && entry.lastSeenAt > 0 ? entry.lastSeenAt : now
+            };
+        });
+        return merged;
+    }
+
     function getOcbcAssignmentLookupCandidates(row) {
         const candidates = [];
         const primaryCode = utils.normalizeString(row?.code, '');
@@ -3129,8 +3196,11 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
     function normalizeOcbcStore(data) {
         const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const holdingsByPortfolio = normalizeOcbcHoldingsByPortfolioForStore(source.holdingsByPortfolio);
+        const normalizedHoldings = source.holdings && typeof source.holdings === 'object' ? source.holdings : null;
         return {
-            holdings: source.holdings && typeof source.holdings === 'object' ? source.holdings : null,
+            holdingsByPortfolio,
+            holdings: normalizedHoldings || (Object.keys(holdingsByPortfolio).length ? flattenOcbcHoldingsByPortfolio(holdingsByPortfolio) : null),
             subPortfolios: normalizeOcbcSubPortfoliosForStore(source.subPortfolios),
             assignmentByCode: normalizeOcbcAssignmentByCodeForStore(source.assignmentByCode),
             orderByScope: normalizeOcbcOrderByScopeForStore(source.orderByScope),
@@ -3821,7 +3891,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 rawStored,
                 normalized,
                 legacy,
-                ['holdings', 'subPortfolios', 'assignmentByCode', 'orderByScope', 'targetsByScope']
+                ['holdingsByPortfolio', 'holdings', 'subPortfolios', 'assignmentByCode', 'orderByScope', 'targetsByScope']
             );
             if (didMerge) {
                 const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, merged, 'Error writing merged OCBC store');
@@ -6311,7 +6381,8 @@ let GoalTargetStore;
                 holdingsLoaded: false
             },
             ocbc: {
-                holdingsLoaded: false
+                holdingsLoaded: false,
+                latestPortfolioNos: []
             }
         }
     };
@@ -6383,12 +6454,34 @@ let GoalTargetStore;
         },
         ocbcHoldings: data => {
             const normalized = normalizeOcbcHoldingsPayload(data);
-            state.apiData.ocbcHoldings = normalized;
+            const nextByPortfolio = groupOcbcHoldingsByPortfolio(normalized);
+            const now = Date.now();
+            Object.keys(nextByPortfolio).forEach(portfolioNo => {
+                nextByPortfolio[portfolioNo].lastSeenAt = now;
+            });
+            const latestPortfolioNos = Array.isArray(state.readiness.ocbc.latestPortfolioNos)
+                ? state.readiness.ocbc.latestPortfolioNos
+                : [];
+            state.readiness.ocbc.latestPortfolioNos = Array.from(new Set([
+                ...latestPortfolioNos,
+                ...Object.keys(nextByPortfolio)
+            ]));
+
+            const updateResult = updateOcbcStore(current => {
+                const mergedByPortfolio = mergeOcbcHoldingsByPortfolio(current?.holdingsByPortfolio, nextByPortfolio, now);
+                const mergedHoldings = flattenOcbcHoldingsByPortfolio(mergedByPortfolio);
+                return {
+                    ...current,
+                    holdingsByPortfolio: mergedByPortfolio,
+                    holdings: mergedHoldings
+                };
+            }, 'Error saving OCBC holdings data');
+            const flattened = updateResult?.value?.holdings || { assets: [], liabilities: [] };
+            state.apiData.ocbcHoldings = flattened;
             state.readiness.ocbc.holdingsLoaded = true;
-            updateOcbcStore(current => ({ ...current, holdings: normalized }), 'Error saving OCBC holdings data');
             logDebug('[Goal Portfolio Viewer] Intercepted OCBC holdings data', {
-                assets: normalized.assets.length,
-                liabilities: normalized.liabilities.length
+                assets: flattened.assets.length,
+                liabilities: flattened.liabilities.length
             });
             notifyDataUpdates();
         }
@@ -6732,8 +6825,11 @@ let GoalTargetStore;
             logDebug('[Goal Portfolio Viewer] Loaded FSM holdings data from storage');
         }
         const ocbcStore = readOcbcStore();
-        if (ocbcStore.holdings && Array.isArray(ocbcStore.holdings.assets) && Array.isArray(ocbcStore.holdings.liabilities)) {
-            apiDataState.ocbcHoldings = ocbcStore.holdings;
+        const flattenedOcbcHoldings = Object.keys(ocbcStore.holdingsByPortfolio || {}).length
+            ? flattenOcbcHoldingsByPortfolio(ocbcStore.holdingsByPortfolio)
+            : ocbcStore.holdings;
+        if (flattenedOcbcHoldings && Array.isArray(flattenedOcbcHoldings.assets) && Array.isArray(flattenedOcbcHoldings.liabilities)) {
+            apiDataState.ocbcHoldings = flattenedOcbcHoldings;
             appState.readiness.ocbc.holdingsLoaded = true;
             logDebug('[Goal Portfolio Viewer] Loaded OCBC holdings data from storage');
         }
@@ -10163,9 +10259,13 @@ function showSyncSettings(options = {}) {
         ocbc: {
             backLabel: '← Back to Portfolio Viewer (OCBC)',
             onBack: () => {
-                const holdings = getOcbcReadinessState().ocbcHoldings;
+                const readinessState = getOcbcReadinessState();
+                const holdings = readinessState.ocbcHoldings;
                 if (holdings) {
-                    renderOcbcOverlay(holdings);
+                    renderOcbcOverlay(holdings, {
+                        holdingsByPortfolio: readinessState.holdingsByPortfolio,
+                        latestPortfolioNos: readinessState.latestPortfolioNos
+                    });
                     return;
                 }
                 if (typeof showOverlay === 'function') {
@@ -13246,8 +13346,11 @@ syncUi.update = function updateSyncUI() {
         const ocbcHoldings = state.apiData.ocbcHoldings && typeof state.apiData.ocbcHoldings === 'object'
             ? state.apiData.ocbcHoldings
             : { assets: [], liabilities: [] };
+        const ocbcStore = readOcbcStore();
         return {
             ready: state.readiness.ocbc.holdingsLoaded === true,
+            holdingsByPortfolio: normalizeOcbcHoldingsByPortfolioForStore(ocbcStore.holdingsByPortfolio),
+            latestPortfolioNos: Array.isArray(state.readiness.ocbc.latestPortfolioNos) ? state.readiness.ocbc.latestPortfolioNos : [],
             ocbcHoldings: {
                 assets: Array.isArray(ocbcHoldings.assets) ? ocbcHoldings.assets : [],
                 liabilities: Array.isArray(ocbcHoldings.liabilities) ? ocbcHoldings.liabilities : []
@@ -15176,7 +15279,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return Array.from(mergedMap.values());
     }
 
-    function renderOcbcOverlay(ocbcHoldings) {
+    function renderOcbcOverlay(ocbcHoldings, options = {}) {
         const overlay = createElement('div', 'gpv-overlay');
         overlay.id = 'gpv-overlay';
         const container = createElement('div', 'gpv-container gpv-container--expanded');
@@ -15229,6 +15332,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             : { assets: [], liabilities: [] };
         const assets = Array.isArray(safeHoldings.assets) ? safeHoldings.assets : [];
         const liabilities = Array.isArray(safeHoldings.liabilities) ? safeHoldings.liabilities : [];
+        const holdingsByPortfolio = normalizeOcbcHoldingsByPortfolioForStore(options.holdingsByPortfolio);
+        const latestPortfolioNos = new Set(Array.isArray(options.latestPortfolioNos) ? options.latestPortfolioNos : []);
+        let viewMode = 'overview';
+        let selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
 
         const allocationConfig = loadOcbcAllocationConfig();
         const bucketsByView = allocationConfig.bucketsByView;
@@ -15816,11 +15923,107 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
         }
 
+        function renderOverview(activeView) {
+            const rows = activeView === 'liabilities' ? liabilities : assets;
+            const grouped = buildOcbcAllocationRowsByPortfolio(rows);
+            const portfolioNos = Object.keys(grouped).sort((left, right) => left.localeCompare(right, 'en', { sensitivity: 'base' }));
+            if (!portfolioNos.length) {
+                contentDiv.appendChild(createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.'));
+                return;
+            }
+
+            const overview = createElement('div', 'gpv-fsm-overview');
+            const header = createElement('div', 'gpv-fsm-overview-header');
+            const copy = createElement('div', 'gpv-fsm-overview-copy');
+            copy.appendChild(createElement('h2', null, 'Overview'));
+            copy.appendChild(createElement('p', null, 'Select a portfolio to open details, or view all cached holdings.'));
+            header.appendChild(copy);
+            const viewAllBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'View all cached holdings');
+            viewAllBtn.type = 'button';
+            viewAllBtn.onclick = () => {
+                selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
+                viewMode = 'detail';
+                rerender();
+            };
+            header.appendChild(viewAllBtn);
+            overview.appendChild(header);
+
+            const grid = createElement('div', 'gpv-fsm-overview-grid');
+            portfolioNos.forEach(portfolioNo => {
+                const portfolioRows = grouped[portfolioNo] || [];
+                const summary = buildOcbcSummary(portfolioRows);
+                const card = createElement('button', 'gpv-fsm-overview-card');
+                card.type = 'button';
+                const meta = holdingsByPortfolio[portfolioNo] || {};
+                const statusText = latestPortfolioNos.has(portfolioNo)
+                    ? 'Current session'
+                    : (meta.lastSeenAt ? `Cached · ${new Date(meta.lastSeenAt).toLocaleString()}` : 'Cached');
+                createKeyboardSelectableCard(card, {
+                    ariaLabel: `Open portfolio ${portfolioNo}`,
+                    onSelect: () => {
+                        selectedPortfolioNo = portfolioNo;
+                        viewMode = 'detail';
+                        rerender();
+                    }
+                });
+                card.innerHTML = `
+                    <div class="gpv-fsm-overview-card-header">
+                        <div>
+                            <h2 class="gpv-fsm-overview-card-title">${escapeHtml(`Portfolio ${portfolioNo}`)}</h2>
+                            <p class="gpv-fsm-overview-card-subtitle">${escapeHtml(`${portfolioRows.length} holding${portfolioRows.length === 1 ? '' : 's'}`)}</p>
+                        </div>
+                        <span class="gpv-fsm-overview-card-tag">${escapeHtml(activeView === 'liabilities' ? 'Liabilities' : 'Assets')}</span>
+                    </div>
+                    <div class="gpv-fsm-overview-stats">
+                        <div class="gpv-fsm-overview-stat">
+                            <span class="gpv-fsm-overview-stat-label">Total value</span>
+                            <span class="gpv-fsm-overview-stat-value">${escapeHtml(formatMoney(summary.total))}</span>
+                        </div>
+                        <div class="gpv-fsm-overview-stat">
+                            <span class="gpv-fsm-overview-stat-label">Profit</span>
+                            <span class="gpv-fsm-overview-stat-value ${escapeHtml(summary.profitClass || '')}">${escapeHtml(summary.profitDisplay || '-')}</span>
+                        </div>
+                        <div class="gpv-fsm-overview-stat">
+                            <span class="gpv-fsm-overview-stat-label">Status</span>
+                            <span class="gpv-fsm-overview-stat-value">${escapeHtml(statusText)}</span>
+                        </div>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+            overview.appendChild(grid);
+            contentDiv.appendChild(overview);
+        }
+
         function rerender() {
             const activeView = viewSelect.value === 'liabilities' ? 'liabilities' : 'assets';
-            const rows = activeView === 'liabilities' ? liabilities : assets;
+            let rows = activeView === 'liabilities' ? liabilities : assets;
             const mode = modeSelect.value === 'allocation' ? 'allocation' : 'portfolio';
             contentDiv.innerHTML = '';
+
+            if (viewMode === 'overview' && mode === 'allocation') {
+                viewMode = 'detail';
+                selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
+            }
+
+            if (viewMode === 'overview') {
+                renderOverview(activeView);
+                return;
+            }
+
+            if (selectedPortfolioNo !== FSM_ALL_PORTFOLIO_ID) {
+                rows = rows.filter(row => utils.normalizeString(row?.portfolioNo, '-') === selectedPortfolioNo);
+            }
+
+            const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
+            const backBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
+            backBtn.type = 'button';
+            backBtn.onclick = () => {
+                viewMode = 'overview';
+                rerender();
+            };
+            detailToolbar.appendChild(backBtn);
+            contentDiv.appendChild(detailToolbar);
 
             if (mode === 'allocation') {
                 renderAllocationMode(activeView, rows);
@@ -16012,7 +16215,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 });
                 return;
             }
-            renderOcbcOverlay(readinessState.ocbcHoldings);
+            renderOcbcOverlay(readinessState.ocbcHoldings, {
+                holdingsByPortfolio: readinessState.holdingsByPortfolio,
+                latestPortfolioNos: readinessState.latestPortfolioNos
+            });
             return;
         }
 

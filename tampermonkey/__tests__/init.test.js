@@ -1200,7 +1200,7 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('OCBC portfolio holdings data');
     });
 
-    test('showOverlay renders OCBC overlay with separate assets and liabilities views', () => {
+    test('showOverlay renders OCBC overview first and supports portfolio detail/liabilities switch', () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -1279,26 +1279,11 @@ describe('initialization and URL monitoring', () => {
         const overlay = document.querySelector('#gpv-overlay');
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Portfolio Viewer (OCBC)');
-        expect(overlay.textContent).toContain('Portfolio P-1');
-        expect(overlay.textContent).toContain('Equity');
-        expect(overlay.textContent).toContain('Bond');
-        expect(overlay.querySelectorAll('.gpv-summary-row')).toHaveLength(0);
-        expect(overlay.querySelectorAll('.gpv-detail-header')).toHaveLength(1);
-        expect(overlay.querySelectorAll('.gpv-detail-title')).toHaveLength(1);
-        expect(overlay.querySelectorAll('.gpv-detail-title')[0].textContent).toBe('Portfolio P-1');
-        expect(overlay.querySelectorAll('.gpv-type-section')).toHaveLength(2);
-        expect(overlay.querySelectorAll('.gpv-type-header')).toHaveLength(2);
-        expect(Array.from(overlay.querySelectorAll('.gpv-type-header h3')).map(node => node.textContent.trim())).toEqual(['Equity', 'Bond']);
-        expect(overlay.textContent).toContain('Identifier');
-        expect(overlay.textContent).toContain('SG00AAA111');
-        expect(Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim())).not.toContain('Ticker');
-        expect(overlay.textContent).toContain('OCBC Asset');
-        expect(overlay.textContent).toContain('+3.70% (+SGD 50.00) · partial (1 missing)');
-        expect(overlay.textContent).toContain('partial (1 missing)');
-        expect(overlay.textContent).not.toContain('OCBC Liability');
-        const firstIdentifierCell = overlay.querySelector('table tbody tr td');
-        expect(firstIdentifierCell.textContent.trim()).toBe('SG00AAA111');
-        expect(firstIdentifierCell.textContent.trim()).not.toBe('P-1');
+        expect(overlay.textContent).toContain('Overview');
+        const overviewCards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'));
+        expect(overviewCards.length).toBe(1);
+        expect(overviewCards[0].textContent).toContain('Portfolio P-1');
+        expect(overlay.textContent).toContain('View all cached holdings');
 
         const viewSelect = overlay.querySelector('#gpv-ocbc-view-select');
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
@@ -1310,6 +1295,14 @@ describe('initialization and URL monitoring', () => {
         expect(modeSelect.id).toBe('gpv-ocbc-mode-select');
         expect(viewLabel.getAttribute('for')).toBe('gpv-ocbc-view-select');
         expect(modeLabel.getAttribute('for')).toBe('gpv-ocbc-mode-select');
+
+        overviewCards[0].click();
+        expect(overlay.textContent).toContain('Back to overview');
+        expect(overlay.textContent).toContain('Portfolio P-1');
+        expect(overlay.textContent).toContain('OCBC Asset');
+        expect(overlay.textContent).toContain('SG00AAA111');
+        expect(overlay.textContent).not.toContain('OCBC Liability');
+
         viewSelect.value = 'liabilities';
         viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
@@ -1377,6 +1370,90 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Bond');
         const headers = Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim());
         expect(headers).toContain('Product Type');
+    });
+
+    test('OCBC overview shows cached portfolios, card drill-down, and view all cached holdings', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('ocbc', JSON.stringify({
+            holdingsByPortfolio: {
+                'P-1': {
+                    assets: [{ code: 'P-1:A1', portfolioNo: 'P-1', displayTicker: 'A1', name: 'Asset 1', productType: 'Equity', currentValueLcy: 100 }],
+                    liabilities: [{ code: 'P-1:L1', portfolioNo: 'P-1', displayTicker: 'L1', name: 'Liability 1', productType: 'Liability', currentValueLcy: -10 }],
+                    lastSeenAt: 1700000000000
+                },
+                'P-2': {
+                    assets: [{ code: 'P-2:A2', portfolioNo: 'P-2', displayTicker: 'A2', name: 'Asset 2', productType: 'Bond', currentValueLcy: 200 }],
+                    liabilities: [],
+                    lastSeenAt: 1700000001000
+                }
+            }
+        }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const cards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'));
+        expect(cards.length).toBe(2);
+
+        const p1Card = cards.find(card => card.textContent.includes('Portfolio P-1'));
+        p1Card.click();
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Asset 1');
+        expect(overlay.textContent).not.toContain('Asset 2');
+
+        const viewSelect = overlay.querySelector('#gpv-ocbc-view-select');
+        viewSelect.value = 'liabilities';
+        viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Liability 1');
+
+        viewSelect.value = 'assets';
+        viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        overlay = document.querySelector('#gpv-overlay');
+
+        const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
+        backBtn.click();
+        overlay = document.querySelector('#gpv-overlay');
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all cached holdings'));
+        viewAllBtn.click();
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Asset 1');
+        expect(overlay.textContent).toContain('Asset 2');
     });
 
     test('OCBC allocation mode shows renamed columns and target assignment indicators', () => {

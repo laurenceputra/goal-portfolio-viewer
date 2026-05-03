@@ -26,6 +26,7 @@ describe('API interception', () => {
         baseFetchMock = jest.fn(() => Promise.resolve(responseFactory({})));
         global.fetch = baseFetchMock;
         window.fetch = baseFetchMock;
+        global.history = window.history;
 
         class FakeXHR {
             constructor() {
@@ -243,6 +244,158 @@ describe('API interception', () => {
             'P-001:P-001#1'
         ]));
         expect(normalized.liabilities[0].legacyCodeAliases).not.toContain('P-001:liab-1');
+    });
+
+    test('fetch interception merges current OCBC portfolio cache without deleting others', async () => {
+        storage.set('ocbc', JSON.stringify({
+            holdingsByPortfolio: {
+                'P-OLD': {
+                    assets: [
+                        { code: 'P-OLD:EQ1', portfolioNo: 'P-OLD', displayTicker: 'EQ1', name: 'Old Asset', productType: 'Equity', currentValueLcy: 100 }
+                    ],
+                    liabilities: [],
+                    lastSeenAt: 1700000000000
+                }
+            },
+            holdings: {
+                assets: [
+                    { code: 'P-OLD:EQ1', portfolioNo: 'P-OLD', displayTicker: 'EQ1', name: 'Old Asset', productType: 'Equity', currentValueLcy: 100 }
+                ],
+                liabilities: []
+            }
+        }));
+
+        const holdingsPayload = {
+            data: [
+                {
+                    portfolioNo: 'P-NEW',
+                    assets: [
+                        {
+                            assetClassDesc: 'Equities',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Global Equity',
+                                    holdings: [
+                                        {
+                                            positionId: 'new-1',
+                                            fundName: 'New Asset',
+                                            marketValueReferenceCcy: { source: '200', parsedValue: 200 }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: []
+                }
+            ]
+        };
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        baseFetchMock.mockResolvedValueOnce(responseFactory(holdingsPayload));
+
+        await window.fetch(
+            'https://internet.ocbc.com/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry',
+            { method: 'POST' }
+        );
+        await flushPromises();
+
+        const savedOcbc = JSON.parse(storage.get('ocbc'));
+        expect(savedOcbc.holdingsByPortfolio['P-OLD']).toBeTruthy();
+        expect(savedOcbc.holdingsByPortfolio['P-NEW']).toBeTruthy();
+        expect(savedOcbc.holdings.assets.map(item => item.portfolioNo)).toEqual(expect.arrayContaining(['P-OLD', 'P-NEW']));
+    });
+
+    test('fetch interception preserves disjoint OCBC portfolios across consecutive updates', async () => {
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        const payloadOne = {
+            data: [
+                {
+                    portfolioNo: 'P-A',
+                    assets: [
+                        {
+                            assetClassDesc: 'Equities',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Global Equity',
+                                    holdings: [
+                                        {
+                                            positionId: 'a-1',
+                                            fundName: 'Asset A1',
+                                            marketValueReferenceCcy: { source: '100', parsedValue: 100 }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: []
+                }
+            ]
+        };
+        const payloadTwo = {
+            data: [
+                {
+                    portfolioNo: 'P-B',
+                    assets: [
+                        {
+                            assetClassDesc: 'Equities',
+                            subAssets: [
+                                {
+                                    subAssetClassDesc: 'Global Equity',
+                                    holdings: [
+                                        {
+                                            positionId: 'b-1',
+                                            fundName: 'Asset B1',
+                                            marketValueReferenceCcy: { source: '200', parsedValue: 200 }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                    liabilities: []
+                }
+            ]
+        };
+
+        baseFetchMock.mockResolvedValueOnce(responseFactory(payloadOne));
+        await window.fetch(
+            'https://internet.ocbc.com/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry',
+            { method: 'POST' }
+        );
+        await flushPromises();
+
+        baseFetchMock.mockResolvedValueOnce(responseFactory(payloadTwo));
+        await window.fetch(
+            'https://internet.ocbc.com/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry',
+            { method: 'POST' }
+        );
+        await flushPromises();
+
+        const savedOcbc = JSON.parse(storage.get('ocbc'));
+        expect(savedOcbc.holdingsByPortfolio['P-A']).toBeTruthy();
+        expect(savedOcbc.holdingsByPortfolio['P-B']).toBeTruthy();
+        const flattenedPortfolioNos = savedOcbc.holdings.assets.map(item => item.portfolioNo);
+        expect(flattenedPortfolioNos).toEqual(expect.arrayContaining(['P-A', 'P-B']));
+
+        const combinedByPortfolioAssets = [
+            ...(savedOcbc.holdingsByPortfolio['P-A']?.assets || []),
+            ...(savedOcbc.holdingsByPortfolio['P-B']?.assets || [])
+        ];
+        expect(savedOcbc.holdings.assets).toHaveLength(combinedByPortfolioAssets.length);
+        expect(savedOcbc.holdings.assets.map(item => item.code)).toEqual(
+            expect.arrayContaining(combinedByPortfolioAssets.map(item => item.code))
+        );
     });
 
     test('fetch interception ignores OCBC holdings endpoint when method is GET', async () => {
