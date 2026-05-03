@@ -309,6 +309,52 @@ async function waitForBucketViewStability(page, { timeout = 7000, idleMs = 250 }
     }, idleMs);
 }
 
+async function waitForPerformancePanelsChartReadiness(page, { timeout = 7000 } = {}) {
+    await page.waitForFunction(() => {
+        const panels = Array.from(document.querySelectorAll('.gpv-performance-panel'));
+        if (panels.length === 0) {
+            return false;
+        }
+        const visibleExpandedPanels = panels.filter(panel => {
+            if (!(panel instanceof HTMLElement)) {
+                return false;
+            }
+            if (panel.classList.contains('gpv-collapsible--collapsed')) {
+                return false;
+            }
+            const rect = panel.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        });
+        if (visibleExpandedPanels.length === 0) {
+            return false;
+        }
+
+        return visibleExpandedPanels.every(panel => {
+            const wrappers = Array.from(panel.querySelectorAll('.gpv-performance-chart-wrapper'));
+            if (wrappers.length === 0) {
+                const panelText = (panel.textContent || '').trim();
+                return /performance data unavailable|no performance data|empty state/i.test(panelText);
+            }
+
+            return wrappers.every(wrapper => {
+                const hasChart = wrapper.querySelector('svg.gpv-performance-chart, .gpv-performance-chart') !== null;
+                if (hasChart) {
+                    return true;
+                }
+                const terminalNode = wrapper.querySelector('.gpv-performance-chart-empty, .gpv-performance-loading');
+                if (!terminalNode) {
+                    return false;
+                }
+                const terminalText = (terminalNode.textContent || '').trim();
+                if (/^Loading performance data/i.test(terminalText)) {
+                    return false;
+                }
+                return /unavailable|insufficient|no performance data|empty/i.test(terminalText);
+            });
+        });
+    }, null, { timeout });
+}
+
 async function clickButtonByRole(page, name, { timeout = 5000, retries = 1 } = {}) {
     let attempt = 0;
     while (attempt <= retries) {
@@ -1412,6 +1458,7 @@ async function captureEndowusExtendedFlow(page, summary, outputDir) {
             return hasPanels && /return|performance/i.test(text);
         });
         recordAssertion(summary, 'endowus-performance-mode', 'performance-panels', performanceModeReady, 'Endowus performance mode renders return/performance panels.');
+        await waitForPerformancePanelsChartReadiness(page);
         await captureScreenshot(page, summary, outputDir, 'endowus-performance-mode');
 
         const allocationModeButtons = page.locator('.gpv-mode-btn[data-mode="allocation"]:visible');
