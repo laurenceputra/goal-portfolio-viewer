@@ -411,7 +411,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Buckets'));
+        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage assignments'));
         expect(bucketManageBtn).toBeTruthy();
         expect(bucketManageBtn.className).toContain('gpv-bucket-manage-btn');
         bucketManageBtn.click();
@@ -481,7 +481,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Buckets'));
+        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage assignments'));
         bucketManageBtn.click();
 
         overlay = document.querySelector('#gpv-overlay');
@@ -522,7 +522,7 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Buckets'));
+        const bucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage assignments'));
         bucketManageBtn.click();
 
         overlay = document.querySelector('#gpv-overlay');
@@ -537,7 +537,7 @@ describe('initialization and URL monitoring', () => {
 
         exportsModule.showOverlay();
         overlay = document.querySelector('#gpv-overlay');
-        const reopenedBucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Buckets'));
+        const reopenedBucketManageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage assignments'));
         reopenedBucketManageBtn.click();
         overlay = document.querySelector('#gpv-overlay');
         const reopenedInput = overlay.querySelector('.gpv-bucket-manager-input');
@@ -2506,7 +2506,7 @@ describe('initialization and URL monitoring', () => {
         expect(status?.getAttribute('role')).toBe('status');
         expect(status?.getAttribute('aria-live')).toBe('polite');
         expect(status?.getAttribute('aria-atomic')).toBe('true');
-        expect(copyButton.textContent).toContain('Copy Values');
+        expect(copyButton.textContent).toContain('Copy values');
         copyButton.dispatchEvent(new window.Event('click', { bubbles: true }));
         await new Promise(resolve => setTimeout(resolve, 0));
         expect(overlay.textContent).toContain('Copied 2 values');
@@ -2523,7 +2523,7 @@ describe('initialization and URL monitoring', () => {
         expect(copiedText).not.toContain('\n');
     });
 
-    test('OCBC Copy Values keeps row order and emits blank TSV fields for missing current values', async () => {
+    test('OCBC Copy values keeps row order and emits blank TSV fields for missing current values', async () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'

@@ -1274,10 +1274,10 @@ async function captureOcbcFlow(page, summary, outputDir) {
         return /Sub-portfolio targets:\s*[\d.]+% assigned,\s*[\d.]+% remaining/i.test(text);
     });
     recordAssertion(summary, ocbcFlowName, 'allocation-target-indicator-updates', finalIndicator, 'Allocation target indicator updates after editing target %.');
-    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-button-visible', clipboardCheck.isVisible, 'Copy Values button is visible in allocation mode.');
-    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-single-row-numeric-tsv', clipboardCheck.hasNumericSingleRowTsv, 'Copy Values output is a single-row numeric-or-empty TSV payload.');
-    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-matches-rendered-row-order', clipboardCheck.matchesRenderedRowOrder, 'Copy Values output follows visible instrument row order for the matching sub-portfolio.');
-    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-no-legacy-columns', clipboardCheck.hasNoLegacyColumns, 'Copy Values output excludes legacy headers, labels, percentages, and SGD fields.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-button-visible', clipboardCheck.isVisible, 'Copy values button is visible in allocation mode.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-single-row-numeric-tsv', clipboardCheck.hasNumericSingleRowTsv, 'Copy values output is a single-row numeric-or-empty TSV payload.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-matches-rendered-row-order', clipboardCheck.matchesRenderedRowOrder, 'Copy values output follows visible instrument row order for the matching sub-portfolio.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-no-legacy-columns', clipboardCheck.hasNoLegacyColumns, 'Copy values output excludes legacy headers, labels, percentages, and SGD fields.');
     await captureScreenshot(page, summary, outputDir, 'ocbc-allocation');
 
     const hasSubPortfolioManager = await page.$eval('.gpv-overlay', root => {
@@ -1376,7 +1376,7 @@ async function captureEndowusExtendedFlow(page, summary, outputDir) {
             const hasInput = root.querySelector('.gpv-bucket-manager-input') !== null;
             const hasTable = root.querySelector('.gpv-bucket-manager-table') !== null;
             const text = root.textContent || '';
-            return hasInput && hasTable && text.includes('Bucket Manager');
+            return hasInput && hasTable && text.includes('Manage assignments');
         });
         recordAssertion(summary, 'endowus-bucket-manager', 'bucket-manager-controls', bucketManagerReady, 'Endowus bucket manager controls render.');
         await captureScreenshot(page, summary, outputDir, 'endowus-bucket-manager');

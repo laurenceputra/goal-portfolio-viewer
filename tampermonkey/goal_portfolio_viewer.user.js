@@ -2845,7 +2845,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             },
             {
                 key: 'endingBalanceAmount',
-                label: 'Ending Balance',
+                label: 'Current value',
                 value: formatMoney(metrics?.endingBalanceAmount)
             }
         ];
@@ -8071,7 +8071,7 @@ let GoalTargetStore;
                 text: `${bucketViewModel.health?.label || 'Healthy'}`
             },
             metrics: [
-                { label: 'Balance', value: bucketViewModel.endingBalanceDisplay },
+                { label: 'Current value', value: bucketViewModel.endingBalanceDisplay },
                 { label: 'Return', value: bucketViewModel.returnDisplay, valueClass: bucketViewModel.returnClass },
                 { label: 'Growth', value: bucketViewModel.growthDisplay, valueClass: bucketViewModel.returnClass }
             ],
@@ -8307,7 +8307,7 @@ let GoalTargetStore;
         const headerRow = createElement('tr');
 
         headerRow.appendChild(createElement('th', 'gpv-goal-name-header', 'Goal Name'));
-        headerRow.appendChild(createElement('th', null, 'Balance'));
+        headerRow.appendChild(createElement('th', null, 'Current value'));
         headerRow.appendChild(createElement('th', null, '% of Goal Type'));
         headerRow.appendChild(createElement('th', 'gpv-fixed-header gpv-column-fixed', 'Fixed'));
 
@@ -8502,7 +8502,7 @@ let GoalTargetStore;
             bucketHeader.appendChild(healthBadge);
             bucketHeader.appendChild(createElement('h2', 'gpv-bucket-title', bucketModel.bucketName));
             bucketHeader.appendChild(createMetricStrip([
-                { label: 'Balance', value: bucketModel.endingBalanceDisplay },
+                { label: 'Current value', value: bucketModel.endingBalanceDisplay },
                 { label: 'Return', value: bucketModel.returnDisplay, valueClass: bucketModel.returnClass },
                 { label: 'Growth', value: bucketModel.growthDisplay, valueClass: bucketModel.returnClass }
             ], 'gpv-stats gpv-bucket-stats'));
@@ -8522,7 +8522,7 @@ let GoalTargetStore;
                 appendLabeledValue(
                     typeRow,
                     'gpv-goal-type-stat',
-                    'Balance:',
+                    'Current value:',
                     goalTypeModel.endingBalanceDisplay
                 );
                 appendLabeledValue(
@@ -8682,11 +8682,11 @@ let GoalTargetStore;
 
     function buildBalanceCopyControls(goalTypeModel) {
         return buildValueCopyControls({
-            buttonLabel: 'Copy balances row',
+            buttonLabel: 'Copy values',
             emptyMessage: 'No goals to copy',
             successMessage: () => {
                 const matchingGoals = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
-                return `Copied ${matchingGoals.length} balances`;
+                return `Copied ${matchingGoals.length} values`;
             },
             copyText: () => {
                 const matchingGoals = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
@@ -8723,7 +8723,7 @@ let GoalTargetStore;
             const typeHeader = createElement('div', 'gpv-type-header');
             const typeTitle = createElement('h3', null, goalTypeModel.displayName);
             const typeSummary = createElement('div', 'gpv-type-summary');
-            appendLabeledValue(typeSummary, null, 'Balance:', goalTypeModel.endingBalanceDisplay);
+            appendLabeledValue(typeSummary, null, 'Current value:', goalTypeModel.endingBalanceDisplay);
             appendLabeledValue(typeSummary, null, 'Return:', goalTypeModel.returnDisplay);
             appendLabeledValue(typeSummary, null, 'Growth:', typeGrowth);
             appendLabeledValue(
@@ -13740,7 +13740,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             ? `<div class="${escapeHtml(driftClassName)}"><strong>Drift:</strong> ${escapeHtml(summary.driftDisplay)}</div>`
             : '';
         summaryRow.innerHTML = `
-            <div class="gpv-summary-card gpv-metric-card"><strong>Total Value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
+            <div class="gpv-summary-card gpv-metric-card"><strong>Current value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
             ${showTargetAssigned ? `<div class="gpv-summary-card gpv-metric-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>` : ''}
             <div class="gpv-summary-card gpv-metric-card"><strong>Holdings:</strong> ${escapeHtml(String(summary.holdingsCount))}</div>
             ${showUnassigned ? `<div class="gpv-summary-card gpv-metric-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>` : ''}
@@ -14733,7 +14733,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             titleLevel: 2,
             titleClassName: 'gpv-detail-title',
             metrics: [
-                { label: 'Total Value', value: formatMoney(summary?.total || 0) },
+                { label: 'Current value', value: formatMoney(summary?.total || 0) },
                 { label: 'Holdings', value: String(summary?.holdingsCount || 0) },
                 { label: 'Profit', value: summary?.profitDisplay || '-', valueClass: profitClass }
             ],
@@ -15435,7 +15435,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         copyControls = buildValueCopyControls({
                             variant: 'section',
                             controlsClassName: 'gpv-balance-copy-controls--ocbc-values',
-                            buttonLabel: 'Copy Values',
+                            buttonLabel: 'Copy values',
                             buttonAriaLabel: `Copy values for sub-portfolio ${subPortfolioName || subPortfolioId}`,
                             emptyMessage: 'No assigned instruments',
                             successMessage: () => `Copied ${orderedRows.length} values`,
@@ -15899,9 +15899,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
         };
 
-        const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary gpv-bucket-manage-btn', '🗂️ Buckets');
+        const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary gpv-bucket-manage-btn', '🗂️ Manage assignments');
         bucketManageBtn.type = 'button';
-        bucketManageBtn.title = 'Manage Endowus bucket assignments';
+        bucketManageBtn.title = 'Manage assignments';
 
         let isOverlayExpanded = false;
         const expandBtn = createElement('button', 'gpv-expand-btn');
@@ -16165,7 +16165,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             if (!goalRows.length) {
                 return `
                     <div class="gpv-bucket-manager gpv-manager-panel">
-                        <h3 class="gpv-bucket-manager-title">Bucket Manager</h3>
+                        <h3 class="gpv-bucket-manager-title">Manage assignments</h3>
                         <p class="gpv-bucket-manager-empty">No goals available to assign.</p>
                     </div>
                 `;
@@ -16180,7 +16180,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             data-goal-id="${escapeHtml(row.goalId)}"
                             data-goal-name="${escapeHtml(row.goalName)}"
                             value="${escapeHtml(row.currentBucket)}"
-                            placeholder="Uncategorized"
+                            placeholder="Unassigned"
                             aria-label="Bucket name for ${escapeHtml(row.goalName)}"
                         />
                     </td>
@@ -16188,8 +16188,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             `).join('');
             return `
                 <div class="gpv-bucket-manager gpv-manager-panel">
-                    <h3 class="gpv-bucket-manager-title">Bucket Manager</h3>
-                    <p class="gpv-bucket-manager-copy">Manage Endowus bucket assignments directly. Existing goals are seeded from naming and can be adjusted here without renaming goals.</p>
+                    <h3 class="gpv-bucket-manager-title">Manage assignments</h3>
+                    <p class="gpv-bucket-manager-copy">Assign goals to buckets directly. Existing goals are seeded from naming and can be adjusted here without renaming goals.</p>
                     <div class="gpv-table-wrap">
                         <table class="gpv-table gpv-bucket-manager-table">
                             <thead>
@@ -16247,7 +16247,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         bucketManageBtn.addEventListener('click', () => {
             const managerView = renderSyncOverlayView({
-                title: 'Bucket Manager',
+                title: 'Manage assignments',
                 bodyHtml: renderBucketManagerPanelHtml(),
                 onBack: () => showOverlay(),
                 backLabel: '← Back to Portfolio Viewer'

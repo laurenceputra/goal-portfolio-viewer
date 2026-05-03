@@ -129,7 +129,7 @@ The script will automatically group all goals starting with the same bucket name
 ### Data Displayed
 
 For each bucket/goal, you'll see:
-- **Ending Balance**: Your current balance for the goal/bucket
+- **Current value**: Your current holdings amount for the goal/bucket
 - **Cumulative Return**: Total profit or loss
 - **Growth %**: Percentage return on investment (cumulative return ÷ total invested)
 - **Goal Breakdown**: Individual goals with their specific metrics
