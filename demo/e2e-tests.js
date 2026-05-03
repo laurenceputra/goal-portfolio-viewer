@@ -309,24 +309,75 @@ async function waitForBucketViewStability(page, { timeout = 7000, idleMs = 250 }
     }, idleMs);
 }
 
-async function waitForPerformancePanelsChartReadiness(page, { timeout = 7000 } = {}) {
-    await page.waitForFunction(() => {
+async function waitForPerformancePanelsChartReadiness(page, {
+    timeout = 7000,
+    requireRenderedChart = false,
+    requireRenderedChartWhenVisible = false
+} = {}) {
+    await page.waitForFunction(({ requireChart, requireChartWhenVisible }) => {
         const panels = Array.from(document.querySelectorAll('.gpv-performance-panel'));
         if (panels.length === 0) {
-            return false;
+            return requireChartWhenVisible && !requireChart;
         }
-        const visibleExpandedPanels = panels.filter(panel => {
-            if (!(panel instanceof HTMLElement)) {
+        const isVisibleElement = element => {
+            if (!(element instanceof HTMLElement)) {
                 return false;
             }
+            const rect = element.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        };
+        const visibleExpandedPanels = panels.filter(panel => {
             if (panel.classList.contains('gpv-collapsible--collapsed')) {
                 return false;
             }
-            const rect = panel.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
+            return isVisibleElement(panel);
         });
         if (visibleExpandedPanels.length === 0) {
-            return false;
+            return requireChartWhenVisible && !requireChart;
+        }
+
+        const panelVisibleWrappers = panel => Array.from(panel.querySelectorAll('.gpv-performance-chart-wrapper'))
+            .filter(wrapper => isVisibleElement(wrapper));
+
+        const visibleWrapperStateIsRendered = wrapper => {
+            if (/loading performance data/i.test((wrapper.textContent || '').trim())) {
+                return false;
+            }
+            if (wrapper.querySelector('.gpv-performance-chart-empty') !== null) {
+                return false;
+            }
+
+            const svgChart = wrapper.querySelector('svg.gpv-performance-chart');
+            if (!svgChart) {
+                return false;
+            }
+
+            const svgBox = svgChart.viewBox && typeof svgChart.viewBox.baseVal === 'object'
+                ? svgChart.viewBox.baseVal
+                : null;
+            const hasRenderableSize = (svgBox && svgBox.width > 0 && svgBox.height > 0)
+                || (svgChart.getBoundingClientRect().width > 0 && svgChart.getBoundingClientRect().height > 0);
+            return hasRenderableSize;
+        };
+
+        if (requireChart || requireChartWhenVisible) {
+            const panelsWithVisibleWrappers = visibleExpandedPanels.filter(panel => panelVisibleWrappers(panel).length > 0);
+            const visibleWrappersPresent = panelsWithVisibleWrappers.length > 0;
+
+            if (requireChart && !visibleWrappersPresent) {
+                return false;
+            }
+            if (requireChartWhenVisible && !visibleWrappersPresent) {
+                return true;
+            }
+
+            return panelsWithVisibleWrappers.every(panel => {
+                if (/loading performance data/i.test((panel.textContent || '').trim())) {
+                    return false;
+                }
+                const visibleWrappers = panelVisibleWrappers(panel);
+                return visibleWrappers.every(wrapper => visibleWrapperStateIsRendered(wrapper));
+            });
         }
 
         return visibleExpandedPanels.every(panel => {
@@ -352,7 +403,7 @@ async function waitForPerformancePanelsChartReadiness(page, { timeout = 7000 } =
                 return /unavailable|insufficient|no performance data|empty/i.test(terminalText);
             });
         });
-    }, null, { timeout });
+    }, { requireChart: requireRenderedChart, requireChartWhenVisible: requireRenderedChartWhenVisible }, { timeout });
 }
 
 async function clickButtonByRole(page, name, { timeout = 5000, retries = 1 } = {}) {
@@ -1458,7 +1509,7 @@ async function captureEndowusExtendedFlow(page, summary, outputDir) {
             return hasPanels && /return|performance/i.test(text);
         });
         recordAssertion(summary, 'endowus-performance-mode', 'performance-panels', performanceModeReady, 'Endowus performance mode renders return/performance panels.');
-        await waitForPerformancePanelsChartReadiness(page);
+        await waitForPerformancePanelsChartReadiness(page, { requireRenderedChart: true });
         await captureScreenshot(page, summary, outputDir, 'endowus-performance-mode');
 
         const allocationModeButtons = page.locator('.gpv-mode-btn[data-mode="allocation"]:visible');
@@ -1503,6 +1554,7 @@ async function captureEndowusExtendedFlow(page, summary, outputDir) {
         const expandedStateConfirmed = expandedState.isExpanded === true || expandedBySize;
         recordAssertion(summary, 'endowus-expanded', 'expanded-state', expandedStateConfirmed, 'Endowus expand control sets expanded container state.');
         await waitForBucketViewStability(page);
+        await waitForPerformancePanelsChartReadiness(page, { requireRenderedChartWhenVisible: true });
         await captureScreenshot(page, summary, outputDir, 'endowus-expanded');
     }
 }
