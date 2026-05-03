@@ -1490,6 +1490,11 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Asset 2');
 
         const modeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        const allocationOption = modeSelect.querySelector('option[value="allocation"]');
+        expect(modeSelect.value).toBe('portfolio');
+        expect(allocationOption.disabled).toBe(true);
+        expect(allocationOption.title).toContain('Allocation is unavailable for all cached holdings');
+        expect(modeSelect.getAttribute('aria-label')).toContain('allocation unavailable for all cached holdings');
         modeSelect.value = 'allocation';
         modeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
         overlay = document.querySelector('#gpv-overlay');
@@ -1497,6 +1502,24 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Portfolio P-1');
         expect(overlay.textContent).toContain('Portfolio P-2');
         expect(overlay.textContent).not.toContain('Planning');
+
+        const backToOverviewBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
+        backToOverviewBtn.click();
+        overlay = document.querySelector('#gpv-overlay');
+
+        const portfolioCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'))
+            .find(card => card.textContent.includes('Portfolio P-1'));
+        portfolioCard.click();
+        overlay = document.querySelector('#gpv-overlay');
+
+        const detailModeSelect = overlay.querySelector('#gpv-ocbc-mode-select');
+        const detailAllocationOption = detailModeSelect.querySelector('option[value="allocation"]');
+        expect(detailAllocationOption.disabled).toBe(false);
+        expect(detailAllocationOption.getAttribute('title')).toBeNull();
+        detailModeSelect.value = 'allocation';
+        detailModeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        expect(detailModeSelect.value).toBe('allocation');
+        expect(overlay.textContent).toContain('Planning');
     });
 
     test('OCBC allocation mode shows renamed columns and target assignment indicators', () => {

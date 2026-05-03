@@ -15348,6 +15348,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const contentDiv = createElement('div', 'gpv-content');
         container.appendChild(contentDiv);
         overlay.appendChild(container);
+        const allocationModeOption = Array.from(modeSelect.options).find(option => option.value === 'allocation') || null;
 
         const safeHoldings = ocbcHoldings && typeof ocbcHoldings === 'object'
             ? ocbcHoldings
@@ -16032,6 +16033,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
             controls.hidden = false;
             setElementsDisabled(detailToolbarControls, false);
+
+            const isAllPortfolioDetail = selectedPortfolioNo === FSM_ALL_PORTFOLIO_ID;
+            if (allocationModeOption) {
+                allocationModeOption.disabled = isAllPortfolioDetail;
+                if (isAllPortfolioDetail) {
+                    allocationModeOption.title = 'Allocation is unavailable for all cached holdings. Select a single portfolio to enable allocation mode.';
+                } else {
+                    allocationModeOption.removeAttribute('title');
+                }
+            }
+            if (isAllPortfolioDetail) {
+                modeSelect.setAttribute('aria-label', 'Select OCBC layout mode (allocation unavailable for all cached holdings)');
+            } else {
+                modeSelect.setAttribute('aria-label', 'Select OCBC layout mode');
+            }
 
             if (selectedPortfolioNo !== FSM_ALL_PORTFOLIO_ID) {
                 rows = rows.filter(row => utils.normalizeString(row?.portfolioNo, '-') === selectedPortfolioNo);
