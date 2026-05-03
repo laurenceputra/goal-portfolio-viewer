@@ -812,6 +812,68 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Suggested buys: Retirement - Bond Sleeve SGD\u00A0720.00');
     });
 
+    test('Endowus summary hides controls and bucket detail shows controls with back navigation', () => {
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        global.alert = jest.fn();
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const controlBar = overlay.querySelector('.gpv-control-bar');
+        const viewSelect = overlay.querySelector('#gpv-endowus-view-select');
+        const allocationButton = overlay.querySelector('.gpv-mode-btn[data-mode="allocation"]');
+        const performanceButton = overlay.querySelector('.gpv-mode-btn[data-mode="performance"]');
+        expect(controlBar.hidden).toBe(true);
+        expect(viewSelect.disabled).toBe(true);
+        expect(viewSelect.getAttribute('tabindex')).toBe('-1');
+        expect(allocationButton.disabled).toBe(true);
+        expect(performanceButton.disabled).toBe(true);
+
+        const bucketCard = overlay.querySelector('.gpv-bucket-card');
+        expect(bucketCard).toBeTruthy();
+        bucketCard.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(controlBar.hidden).toBe(false);
+        expect(viewSelect.disabled).toBe(false);
+        expect(viewSelect.hasAttribute('tabindex')).toBe(false);
+        expect(allocationButton.disabled).toBe(false);
+        expect(performanceButton.disabled).toBe(false);
+        expect(overlay.textContent).toContain('Back to overview');
+
+        const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
+        backBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Summary View');
+        expect(controlBar.hidden).toBe(true);
+        expect(viewSelect.value).toBe('SUMMARY');
+        expect(viewSelect.disabled).toBe(true);
+        expect(allocationButton.disabled).toBe(true);
+        expect(performanceButton.disabled).toBe(true);
+    });
+
     test('performance mode auto-expands all collapsed performance panels', () => {
         const performanceData = [
             {

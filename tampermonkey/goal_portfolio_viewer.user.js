@@ -16420,6 +16420,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         controls.appendChild(modeToggle);
         container.appendChild(controls);
+        const detailToolbarControls = [select, allocationButton, performanceButton];
 
         const contentDiv = createElement('div', 'gpv-content');
         container.appendChild(contentDiv);
@@ -16506,6 +16507,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             };
         }
 
+        function showSummaryView() {
+            select.value = 'SUMMARY';
+            renderView('SUMMARY', { scrollToTop: true });
+        }
+
         function renderView(value, { scrollToTop = false, useCacheOnly = false } = {}) {
             performanceRefreshToken += 1;
             const refreshToken = performanceRefreshToken;
@@ -16520,8 +16526,16 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 useCacheOnly
             });
             const isBucketView = value !== 'SUMMARY';
+            controls.hidden = !isBucketView;
+            setElementsDisabled(detailToolbarControls, !isBucketView);
             modeToggle.classList.toggle('gpv-mode-toggle--hidden', !isBucketView);
             if (isBucketView) {
+                const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
+                const backBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
+                backBtn.type = 'button';
+                backBtn.onclick = showSummaryView;
+                detailToolbar.appendChild(backBtn);
+                contentDiv.insertBefore(detailToolbar, contentDiv.firstChild);
                 applyBucketMode(currentBucketMode);
             } else {
                 contentDiv.classList.remove('gpv-mode-allocation', 'gpv-mode-performance');
