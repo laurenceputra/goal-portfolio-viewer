@@ -461,6 +461,136 @@ describe('initialization and URL monitoring', () => {
         expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBe('Retirement');
     });
 
+    test('opening Endowus readiness with incomplete datasets does not seed derived bucket assignments', () => {
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Fetching Endowus portfolio data');
+        expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBeUndefined();
+    });
+
+    test('Endowus bucket config signature changes when legacy cleared key changes', () => {
+        const performanceData = [{ goalId: 'goal1' }];
+        const investibleData = [{ goalId: 'goal1' }];
+        const summaryData = [{ goalId: 'goal1' }];
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        const clearedKey = exportsModule.storageKeys.goalBucketCleared('goal1');
+
+        const before = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
+        global.GM_setValue(clearedKey, true);
+        const after = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
+
+        expect(after).not.toBe(before);
+    });
+
+    test('Endowus bucket config signature changes when legacy goal bucket key changes', () => {
+        const performanceData = [{ goalId: 'goal1' }];
+        const investibleData = [{ goalId: 'goal1' }];
+        const summaryData = [{ goalId: 'goal1' }];
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        const bucketKey = exportsModule.storageKeys.goalBucket('goal1');
+
+        const before = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
+        global.GM_setValue(bucketKey, 'Legacy Override');
+        const after = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
+
+        expect(after).not.toBe(before);
+    });
+
+    test('Endowus readiness cache is invalidated by legacy goal bucket assignment changes', () => {
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Vacation Fund',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Vacation Fund',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        global.GM_setValue(exportsModule.storageKeys.goalBucket('goal1'), 'Legacy Bucket A');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Legacy Bucket A');
+
+        global.GM_setValue(exportsModule.storageKeys.goalBucket('goal1'), 'Legacy Bucket B');
+        exportsModule.showOverlay();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Legacy Bucket B');
+    });
+
+    test('Endowus readiness cache is invalidated by legacy cleared flag changes', () => {
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement Fund',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement Fund',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        global.GM_setValue(exportsModule.storageKeys.goalBucket('goal1'), 'Legacy Bucket A');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Legacy Bucket A');
+
+        global.GM_setValue(exportsModule.storageKeys.goalBucketCleared('goal1'), true);
+        exportsModule.showOverlay();
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).not.toContain('Legacy Bucket A');
+        expect(overlay.textContent).toContain('Retirement');
+    });
+
     test('bucket manager blur preserves seeded legacy bucket assignment', () => {
         const performanceData = [{
             goalId: 'goal1',

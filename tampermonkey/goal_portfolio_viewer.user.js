@@ -6384,6 +6384,15 @@ let GoalTargetStore;
                 holdingsLoaded: false,
                 latestPortfolioNos: []
             }
+        },
+        derived: {
+            endowusMergedInvestmentDataCache: {
+                performanceRef: null,
+                investibleRef: null,
+                summaryRef: null,
+                bucketConfigSignature: null,
+                mergedInvestmentDataState: null
+            }
         }
     };
 
@@ -13324,6 +13333,21 @@ syncUi.update = function updateSyncUI() {
         render: renderPortfolioView
     };
 
+    function getEndowusBucketConfigSignature(performanceData, investibleData, summaryData) {
+        const store = readEndowusStore();
+        const clearedGoalBuckets = store?.clearedGoalBuckets && typeof store.clearedGoalBuckets === 'object' ? store.clearedGoalBuckets : {};
+        const goalIds = Array.from(collectGoalIdSetFromApiData(performanceData, investibleData, summaryData)).sort();
+        const goalBucketEntries = goalIds
+            .map(goalId => [goalId, utils.normalizeString(GoalTargetStore.getBucket(goalId), '')]);
+        const clearedGoalBucketEntries = goalIds
+            .map(goalId => ({
+                goalId,
+                storeCleared: clearedGoalBuckets[goalId] === true,
+                legacyCleared: Storage.get(storageKeys.goalBucketCleared(goalId), false) === true
+            }));
+        return JSON.stringify({ goalBucketEntries, clearedGoalBucketEntries });
+    }
+
     function getEndowusReadinessState() {
         const hasPerformance = state.readiness.endowus.performanceLoaded === true
             && Array.isArray(state.apiData.performance);
@@ -13331,6 +13355,36 @@ syncUi.update = function updateSyncUI() {
             && Array.isArray(state.apiData.investible);
         const hasSummary = state.readiness.endowus.summaryLoaded === true
             && Array.isArray(state.apiData.summary);
+        if (!hasPerformance || !hasInvestible || !hasSummary) {
+            return {
+                hasPerformance,
+                hasInvestible,
+                hasSummary,
+                ready: false,
+                mergedInvestmentDataState: null
+            };
+        }
+        const bucketConfigSignatureBeforeSeed = getEndowusBucketConfigSignature(
+            state.apiData.performance,
+            state.apiData.investible,
+            state.apiData.summary
+        );
+        const mergedCache = state.derived.endowusMergedInvestmentDataCache || {};
+        if (
+            mergedCache.performanceRef === state.apiData.performance
+            && mergedCache.investibleRef === state.apiData.investible
+            && mergedCache.summaryRef === state.apiData.summary
+            && mergedCache.bucketConfigSignature === bucketConfigSignatureBeforeSeed
+            && mergedCache.mergedInvestmentDataState
+        ) {
+            return {
+                hasPerformance,
+                hasInvestible,
+                hasSummary,
+                ready: true,
+                mergedInvestmentDataState: mergedCache.mergedInvestmentDataState
+            };
+        }
         const goalBucketById = buildGoalBucketAssignmentMap({
             performanceData: state.apiData.performance,
             investibleData: state.apiData.investible,
@@ -13338,19 +13392,29 @@ syncUi.update = function updateSyncUI() {
             getAssignedBucket: GoalTargetStore.getBucket,
             seedAssignedBucket: GoalTargetStore.setBucket
         });
-        const mergedInvestmentDataState = hasPerformance && hasInvestible && hasSummary
-            ? buildMergedInvestmentData(
-                state.apiData.performance,
-                state.apiData.investible,
-                state.apiData.summary,
-                goalBucketById
-            )
-            : null;
+        const bucketConfigSignatureAfterSeed = getEndowusBucketConfigSignature(
+            state.apiData.performance,
+            state.apiData.investible,
+            state.apiData.summary
+        );
+        const mergedInvestmentDataState = buildMergedInvestmentData(
+            state.apiData.performance,
+            state.apiData.investible,
+            state.apiData.summary,
+            goalBucketById
+        );
+        state.derived.endowusMergedInvestmentDataCache = {
+            performanceRef: state.apiData.performance,
+            investibleRef: state.apiData.investible,
+            summaryRef: state.apiData.summary,
+            bucketConfigSignature: bucketConfigSignatureAfterSeed,
+            mergedInvestmentDataState
+        };
         return {
             hasPerformance,
             hasInvestible,
             hasSummary,
-            ready: Boolean(mergedInvestmentDataState),
+            ready: true,
             mergedInvestmentDataState
         };
     }
@@ -16909,6 +16973,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             showOverlay,
             startUrlMonitoring,
             init,
+            getEndowusBucketConfigSignature,
             buildBalanceCopyControls,
             isEndowusAuthContext,
             listCookieByQuery,
@@ -16988,6 +17053,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             createLineChartSvg: chartHelpers?.createLineChartSvg,
             buildPerformanceWindowGrid: chartHelpers?.buildPerformanceWindowGrid,
             buildMergedInvestmentData,
+            getEndowusBucketConfigSignature: testingHooks?.getEndowusBucketConfigSignature,
             getPerformanceCacheKey,
             isCacheFresh,
             isCacheRefreshAllowed,
