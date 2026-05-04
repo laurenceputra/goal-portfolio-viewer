@@ -1603,6 +1603,52 @@ async function captureOcbcFlow(page, summary, outputDir) {
             && text.includes('OCBC Global Equity Opportunities Fund');
     }, null, { timeout: 5000 });
 
+    const allCachedViewIsReadOnly = await page.$eval('.gpv-overlay', root => {
+        const select = root.querySelector('#gpv-ocbc-view-select');
+        if (!(select instanceof HTMLSelectElement)) {
+            return false;
+        }
+        return select.disabled;
+    });
+    recordAssertion(
+        summary,
+        ocbcFlowName,
+        'all-cached-read-only-view-select',
+        allCachedViewIsReadOnly,
+        'All-cached OCBC detail exposes a disabled view selector.'
+    );
+
+    await clickButtonByRole(page, /back to overview/i);
+    await page.waitForFunction(() => {
+        const overlay = document.querySelector('.gpv-overlay');
+        if (!overlay) {
+            return false;
+        }
+        const text = overlay.textContent || '';
+        const visibleOverviewCards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).filter(node => {
+            if (!(node instanceof HTMLElement)) {
+                return false;
+            }
+            const rect = node.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        }).length;
+        return visibleOverviewCards > 0 && text.includes('Portfolio 6500142646-2');
+    }, null, { timeout: 5000 });
+
+    await clickButtonByRole(page, /open portfolio 6500142646-2/i);
+    await page.waitForFunction(() => {
+        const overlay = document.querySelector('.gpv-overlay');
+        if (!overlay) {
+            return false;
+        }
+        const text = overlay.textContent || '';
+        const select = overlay.querySelector('#gpv-ocbc-view-select');
+        return text.includes('Back to overview')
+            && text.includes('Portfolio 6500142646-2')
+            && select instanceof HTMLSelectElement
+            && !select.disabled;
+    }, null, { timeout: 5000 });
+
     const liabilitiesValue = await page.$eval('#gpv-ocbc-view-select', select => {
         if (!(select instanceof HTMLSelectElement)) {
             return 'liabilities';
@@ -1624,16 +1670,16 @@ async function captureOcbcFlow(page, summary, outputDir) {
 
     const overlayTextLiabilities = await page.$eval('.gpv-overlay', node => node.textContent || '');
     const hasLiabilityName = overlayTextLiabilities.includes('OCBC Investment Credit Line');
-    recordAssertion(summary, ocbcFlowName, 'liabilities-has-loan-name', hasLiabilityName, 'Liabilities view contains OCBC Investment Credit Line.');
+    recordAssertion(summary, ocbcFlowName, 'liabilities-has-loan-name', hasLiabilityName, 'Selected-portfolio liabilities view contains OCBC Investment Credit Line.');
 
     const hasLiabilityClass = overlayTextLiabilities.includes('Investment Loans');
-    recordAssertion(summary, ocbcFlowName, 'liabilities-has-sub-asset-class', hasLiabilityClass, 'Liabilities view contains Investment Loans.');
+    recordAssertion(summary, ocbcFlowName, 'liabilities-has-sub-asset-class', hasLiabilityClass, 'Selected-portfolio liabilities view contains Investment Loans.');
 
     const hasNegativeAmount = /-\s*SGD\s*5,240\.75|SGD\s*-\s*5,240\.75|-\s*5,240\.75/.test(overlayTextLiabilities);
-    recordAssertion(summary, ocbcFlowName, 'liabilities-has-negative-amount', hasNegativeAmount, 'Liabilities view contains negative SGD amount for investment loan.');
+    recordAssertion(summary, ocbcFlowName, 'liabilities-has-negative-amount', hasNegativeAmount, 'Selected-portfolio liabilities view contains negative SGD amount for investment loan.');
 
     const assetRemovedInLiabilitiesView = !overlayTextLiabilities.includes('OCBC Global Equity Opportunities Fund');
-    recordAssertion(summary, ocbcFlowName, 'liabilities-excludes-asset', assetRemovedInLiabilitiesView, 'Liabilities view does not contain OCBC Global Equity Opportunities Fund.');
+    recordAssertion(summary, ocbcFlowName, 'liabilities-excludes-asset', assetRemovedInLiabilitiesView, 'Selected-portfolio liabilities view does not contain OCBC Global Equity Opportunities Fund.');
 
     await captureScreenshot(page, summary, outputDir, 'ocbc-liabilities');
 }
