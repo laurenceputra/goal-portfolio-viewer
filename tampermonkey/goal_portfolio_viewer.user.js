@@ -3106,7 +3106,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         };
     }
 
-    function normalizeOcbcSubPortfoliosForStore(data) {
+    function normalizeOcbcSubPortfolios(data) {
         const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
         const normalized = {};
         Object.entries(source).forEach(([viewKey, portfolios]) => {
@@ -3148,7 +3148,15 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return normalized;
     }
 
+    function normalizeOcbcSubPortfoliosForStore(data) {
+        return normalizeOcbcSubPortfolios(data);
+    }
+
     function normalizeOcbcAssignmentByCodeForStore(data) {
+        return normalizeOcbcAssignmentByCode(data);
+    }
+
+    function normalizeOcbcAssignmentByCode(data) {
         const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
         const normalized = {};
         Object.entries(source).forEach(([code, rawAssignment]) => {
@@ -3170,6 +3178,10 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     }
 
     function normalizeOcbcOrderByScopeForStore(data) {
+        return normalizeOcbcOrderByScope(data);
+    }
+
+    function normalizeOcbcOrderByScope(data) {
         const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
         const normalized = {};
         Object.entries(source).forEach(([scope, value]) => {
@@ -4592,91 +4604,15 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     }
 
     function normalizeOcbcSubPortfoliosConfig(data) {
-        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
-        const normalized = {};
-        Object.entries(source).forEach(([viewKey, portfolios]) => {
-            if (!portfolios || typeof portfolios !== 'object' || Array.isArray(portfolios)) {
-                return;
-            }
-            const normalizedView = {};
-            Object.entries(portfolios).forEach(([portfolioNo, items]) => {
-                if (!Array.isArray(items)) {
-                    return;
-                }
-                const filtered = items
-                    .map(item => {
-                        if (!item || typeof item !== 'object') {
-                            return null;
-                        }
-                        const id = utils.normalizeString(item.id, '');
-                        if (!id) {
-                            return null;
-                        }
-                        return {
-                            id,
-                            name: utils.normalizeString(item.name, 'Untitled sub-portfolio'),
-                            archived: item.archived === true,
-                            legacyProductType: utils.normalizeString(item.legacyProductType, ''),
-                            legacyBucketId: utils.normalizeString(item.legacyBucketId, '')
-                        };
-                    })
-                    .filter(Boolean)
-                    .map(item => ({ ...item }));
-                if (filtered.length) {
-                    normalizedView[portfolioNo] = filtered;
-                }
-            });
-            if (Object.keys(normalizedView).length) {
-                normalized[viewKey] = normalizedView;
-            }
-        });
-        return normalized;
+        return normalizeOcbcSubPortfolios(data);
     }
 
     function normalizeOcbcAssignmentByCodeConfig(data) {
-        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
-        const normalized = {};
-        Object.entries(source).forEach(([code, rawAssignment]) => {
-            const normalizedCode = utils.normalizeString(code, '');
-            if (!normalizedCode) {
-                return;
-            }
-            const subPortfolioId = utils.normalizeString(
-                rawAssignment && typeof rawAssignment === 'object' && !Array.isArray(rawAssignment)
-                    ? rawAssignment.subPortfolioId
-                    : rawAssignment,
-                ''
-            );
-            if (subPortfolioId) {
-                normalized[normalizedCode] = subPortfolioId;
-            }
-        });
-        return normalized;
+        return normalizeOcbcAssignmentByCode(data);
     }
 
     function normalizeOcbcOrderByScopeEntries(data) {
-        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
-        const normalized = {};
-        Object.entries(source).forEach(([scope, value]) => {
-            const normalizedScope = utils.normalizeString(scope, '');
-            if (!normalizedScope || !Array.isArray(value)) {
-                return;
-            }
-            const deduped = [];
-            const seen = new Set();
-            value.forEach(code => {
-                const normalizedCode = utils.normalizeString(code, '');
-                if (!normalizedCode || seen.has(normalizedCode)) {
-                    return;
-                }
-                seen.add(normalizedCode);
-                deduped.push(normalizedCode);
-            });
-            if (deduped.length) {
-                normalized[normalizedScope] = deduped;
-            }
-        });
-        return normalized;
+        return normalizeOcbcOrderByScope(data);
     }
 
     function normalizeSyncConfig(config) {
