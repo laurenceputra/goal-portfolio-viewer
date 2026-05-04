@@ -1664,8 +1664,8 @@ async function captureOcbcFlow(page, summary, outputDir) {
         }
         const text = overlay.textContent || '';
         return text.includes('OCBC Investment Credit Line')
-            && !text.includes('OCBC Global Equity Opportunities Fund')
-            && !text.includes('New sub-portfolio');
+            && text.includes('Portfolio 6500142647-2')
+            && !text.includes('OCBC Global Equity Opportunities Fund');
     }, null, { timeout: 5000 });
 
     const overlayTextLiabilities = await page.$eval('.gpv-overlay', node => node.textContent || '');
