@@ -796,6 +796,126 @@ describe('initialization and URL monitoring', () => {
         expect(document.querySelector('#gpv-overlay')).toBeNull();
     });
 
+    test('Endowus, FSM, and OCBC overlays start collapsed and support expand toggle', () => {
+        const assertExpandToggleBehavior = expectedTitle => {
+            const overlay = document.querySelector('#gpv-overlay');
+            expect(overlay).toBeTruthy();
+            expect(overlay.textContent).toContain(expectedTitle);
+            const container = overlay.querySelector('.gpv-container');
+            expect(container.classList.contains('gpv-container--expanded')).toBe(false);
+            const expandBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.classList.contains('gpv-expand-btn'));
+            expect(expandBtn).toBeTruthy();
+            expect(expandBtn.textContent).toBe('Expand');
+            expect(expandBtn.getAttribute('aria-pressed')).toBe('false');
+            expect(expandBtn.getAttribute('aria-label')).toBe('Expand overlay size');
+            expect(expandBtn.title).toBe('Expand overlay');
+
+            expandBtn.click();
+            expect(container.classList.contains('gpv-container--expanded')).toBe(true);
+            expect(expandBtn.textContent).toBe('Shrink');
+            expect(expandBtn.getAttribute('aria-pressed')).toBe('true');
+            expect(expandBtn.getAttribute('aria-label')).toBe('Shrink overlay size');
+            expect(expandBtn.title).toBe('Shrink overlay');
+        };
+
+        global.GM_setValue('api_performance', JSON.stringify([
+            { goalId: 'goal1', totalCumulativeReturn: { amount: 100 }, simpleRateOfReturnPercent: 0.1 }
+        ]));
+        global.GM_setValue('api_investible', JSON.stringify([
+            {
+                goalId: 'goal1',
+                goalName: 'Retirement - Core Portfolio',
+                investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+                totalInvestmentAmount: { display: { amount: 1000 } }
+            }
+        ]));
+        global.GM_setValue('api_summary', JSON.stringify([
+            { goalId: 'goal1', goalName: 'Retirement - Core Portfolio', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }
+        ]));
+
+        let exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+        assertExpandToggleBehavior('Portfolio Viewer');
+
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+        global.GM_setValue('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', currentValueLcy: 1234.56 }
+        ]));
+
+        jest.resetModules();
+        exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+        assertExpandToggleBehavior('Portfolio Viewer (FSM)');
+
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+        global.XMLHttpRequest = FakeXHR;
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                {
+                    code: 'P-1:AAA',
+                    portfolioNo: 'P-1',
+                    displayTicker: 'SG00AAA111',
+                    name: 'OCBC Asset',
+                    productType: 'Equity',
+                    currentValueLcy: 1000,
+                    profitValueLcy: 50,
+                    profitPercentLcy: 0.1
+                }
+            ],
+            liabilities: []
+        }));
+
+        jest.resetModules();
+        exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+        assertExpandToggleBehavior('Portfolio Viewer (OCBC)');
+    });
+
     test('shared modal focus trap keeps in-modal .gpv-select focused on outside focusin', () => {
         const performanceData = [{
             goalId: 'goal1',

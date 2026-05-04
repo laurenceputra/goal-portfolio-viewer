@@ -13710,7 +13710,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return calculateAllocationRatio(row?.currentValueLcy, total);
     }
 
-    function buildFsmHeader({ overlay, cleanupCallbacks, titleText = 'Portfolio Viewer (FSM)', syncReturnTo = 'fsm' }) {
+    function buildFsmHeader({ overlay, cleanupCallbacks, titleText = 'Portfolio Viewer (FSM)', syncReturnTo = 'fsm', actionButtons = [] }) {
         const createSyncButton = () => {
             const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
             syncBtn.title = 'Configure cross-device sync';
@@ -13738,7 +13738,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         const { header, titleId } = buildOverlayHeader({
             title: titleText,
-            actionButtons: [createSyncButton()],
+            actionButtons: [createSyncButton(), ...actionButtons],
             closeButton: closeBtn
         });
         return { header, closeBtn, titleId, closeOverlay };
@@ -13764,6 +13764,31 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
         header.appendChild(buttonContainer);
         return { header, titleId };
+    }
+
+    function createOverlayExpandToggleButton(container, options = {}) {
+        const expandBtn = createElement('button', 'gpv-expand-btn');
+        expandBtn.type = 'button';
+        let isExpanded = options.initialExpanded === true;
+
+        function refreshExpandButtonState() {
+            container.classList.toggle('gpv-container--expanded', isExpanded);
+            expandBtn.textContent = isExpanded ? 'Shrink' : 'Expand';
+            expandBtn.setAttribute('aria-pressed', String(isExpanded));
+            expandBtn.setAttribute(
+                'aria-label',
+                isExpanded ? 'Shrink overlay size' : 'Expand overlay size'
+            );
+            expandBtn.title = isExpanded ? 'Shrink overlay' : 'Expand overlay';
+        }
+
+        refreshExpandButtonState();
+        expandBtn.onclick = () => {
+            isExpanded = !isExpanded;
+            refreshExpandButtonState();
+        };
+
+        return expandBtn;
     }
 
     function calculateFsmRowDrift(total, row) {
@@ -14344,12 +14369,19 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const overlay = createElement('div', 'gpv-overlay');
         overlay.id = 'gpv-overlay';
 
-        const container = createElement('div', 'gpv-container gpv-container--expanded');
+        const container = createElement('div', 'gpv-container');
         const cleanupCallbacks = [];
         container.gpvCleanupCallbacks = cleanupCallbacks;
         overlay.gpvCleanupCallbacks = cleanupCallbacks;
 
-        const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({ overlay, cleanupCallbacks, titleText: 'Portfolio Viewer (FSM)' });
+        const expandBtn = createOverlayExpandToggleButton(container);
+
+        const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({
+            overlay,
+            cleanupCallbacks,
+            titleText: 'Portfolio Viewer (FSM)',
+            actionButtons: [expandBtn]
+        });
         container.appendChild(header);
 
         const contentDiv = createElement('div', 'gpv-content');
@@ -15338,16 +15370,19 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     function renderOcbcOverlay(ocbcHoldings, options = {}) {
         const overlay = createElement('div', 'gpv-overlay');
         overlay.id = 'gpv-overlay';
-        const container = createElement('div', 'gpv-container gpv-container--expanded');
+        const container = createElement('div', 'gpv-container');
         const cleanupCallbacks = [];
         container.gpvCleanupCallbacks = cleanupCallbacks;
         overlay.gpvCleanupCallbacks = cleanupCallbacks;
+
+        const expandBtn = createOverlayExpandToggleButton(container);
 
         const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({
             overlay,
             cleanupCallbacks,
             titleText: 'Portfolio Viewer (OCBC)',
-            syncReturnTo: 'ocbc'
+            syncReturnTo: 'ocbc',
+            actionButtons: [expandBtn]
         });
         container.appendChild(header);
 
@@ -16327,24 +16362,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         bucketManageBtn.type = 'button';
         bucketManageBtn.title = 'Manage assignments';
 
-        let isOverlayExpanded = false;
-        const expandBtn = createElement('button', 'gpv-expand-btn');
-        expandBtn.type = 'button';
-        function updateExpandButton() {
-            expandBtn.textContent = isOverlayExpanded ? 'Shrink' : 'Expand';
-            expandBtn.setAttribute('aria-pressed', String(isOverlayExpanded));
-            expandBtn.setAttribute(
-                'aria-label',
-                isOverlayExpanded ? 'Shrink overlay size' : 'Expand overlay size'
-            );
-            expandBtn.title = isOverlayExpanded ? 'Shrink overlay' : 'Expand overlay';
-        }
-        updateExpandButton();
-        expandBtn.onclick = () => {
-            isOverlayExpanded = !isOverlayExpanded;
-            container.classList.toggle('gpv-container--expanded', isOverlayExpanded);
-            updateExpandButton();
-        };
+        const expandBtn = createOverlayExpandToggleButton(container);
 
         const closeBtn = createElement('button', 'gpv-close-btn', '✕');
         function teardownOverlay() {
