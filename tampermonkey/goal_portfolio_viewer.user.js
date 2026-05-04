@@ -1391,6 +1391,44 @@ function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
         };
     }
 
+    function buildGoalTypeAllocationContext({
+        bucketName,
+        goalType,
+        group,
+        projectedInvestments,
+        goalTargets,
+        goalFixed
+    }) {
+        if (!group) {
+            return null;
+        }
+        const endingBalanceAmount = group.endingBalanceAmount || 0;
+        const projectedAmount = getProjectedInvestmentValue(projectedInvestments, bucketName, goalType);
+        const adjustedTotal = endingBalanceAmount + projectedAmount;
+        const goals = Array.isArray(group.goals) ? group.goals : [];
+        const allocationModel = computeGoalTypeViewState(
+            goals,
+            endingBalanceAmount,
+            adjustedTotal,
+            goalTargets,
+            goalFixed
+        );
+        return {
+            endingBalanceAmount,
+            projectedAmount,
+            adjustedTotal,
+            allocationModel
+        };
+    }
+
+    function buildBucketHealth(goalTypeModels) {
+        const bucketReasons = goalTypeModels.flatMap(model => model.health?.reasons || []);
+        return buildHealthStatus({
+            reasons: bucketReasons,
+            setupRequired: bucketReasons.some(reason => reason.includes('Target total is'))
+        });
+    }
+
     function buildSummaryViewModel(bucketMap, projectedInvestmentsState, goalTargetById, goalFixedById) {
         if (!bucketMap || typeof bucketMap !== 'object') {
             return { buckets: [], showAllocationDriftHint: false, attentionItems: [] };
@@ -1411,33 +1449,33 @@ function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
                 const goalTypeModels = orderedTypes
                     .map(goalType => {
                         const group = base.bucketObj[goalType];
-                        if (!group) {
+                        const allocationContext = buildGoalTypeAllocationContext({
+                            bucketName,
+                            goalType,
+                            group,
+                            projectedInvestments,
+                            goalTargets,
+                            goalFixed
+                        });
+                        if (!allocationContext) {
                             return null;
                         }
+                        const {
+                            endingBalanceAmount,
+                            projectedAmount,
+                            adjustedTotal,
+                            allocationModel
+                        } = allocationContext;
                         const typeReturn = group.totalCumulativeReturn === null
                             ? null
                             : toFiniteNumber(group.totalCumulativeReturn, null);
-                        const projectedAmount = getProjectedInvestmentValue(
-                            projectedInvestments,
-                            bucketName,
-                            goalType
-                        );
-                        const adjustedTotal = (group.endingBalanceAmount || 0) + projectedAmount;
-                        const goals = Array.isArray(group.goals) ? group.goals : [];
-                        const allocationModel = computeGoalTypeViewState(
-                            goals,
-                            group.endingBalanceAmount || 0,
-                            adjustedTotal,
-                            goalTargets,
-                            goalFixed
-                        );
                         if (allocationModel.allocationDriftAvailable === false) {
                             showAllocationDriftHint = true;
                         }
                         return enrichGoalTypeWithPlanning({
                             goalType,
                             displayName: getDisplayGoalType(goalType),
-                            endingBalanceAmount: group.endingBalanceAmount || 0,
+                            endingBalanceAmount,
                             endingBalanceDisplay: formatMoney(group.endingBalanceAmount),
                             totalReturn: typeReturn,
                             returnDisplay: formatMoney(typeReturn),
@@ -1455,7 +1493,6 @@ function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
                         });
                     })
                     .filter(Boolean);
-                const bucketReasons = goalTypeModels.flatMap(model => model.health?.reasons || []);
                 return {
                     bucketName,
                     endingBalanceAmount: endingBalanceTotal,
@@ -1468,10 +1505,7 @@ function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
                     ),
                     returnClass: getReturnClass(bucketTotalReturn),
                     goalTypes: goalTypeModels,
-                    health: buildHealthStatus({
-                        reasons: bucketReasons,
-                        setupRequired: bucketReasons.some(reason => reason.includes('Target total is'))
-                    })
+                    health: buildBucketHealth(goalTypeModels)
                 };
             })
             .filter(Boolean);
@@ -1506,17 +1540,18 @@ function buildBucketDetailViewModel({
     const goalTypeModels = orderedTypes
         .map(goalType => {
             const group = base.bucketObj[goalType];
-            if (!group) {
-                return null;
-            }
-            const projectedAmount = getProjectedInvestmentValue(projectedInvestments, bucketName, goalType);
-            const allocationModel = computeGoalTypeViewState(
-                Array.isArray(group.goals) ? group.goals : [],
-                group.endingBalanceAmount || 0,
-                (group.endingBalanceAmount || 0) + projectedAmount,
+            const allocationContext = buildGoalTypeAllocationContext({
+                bucketName,
+                goalType,
+                group,
+                projectedInvestments,
                 goalTargets,
                 goalFixed
-            );
+            });
+            if (!allocationContext) {
+                return null;
+            }
+            const { projectedAmount, allocationModel } = allocationContext;
             if (allocationModel.allocationDriftAvailable === false) {
                 showAllocationDriftHint = true;
             }
@@ -1528,8 +1563,6 @@ function buildBucketDetailViewModel({
             }));
         })
         .filter(Boolean);
-
-    const bucketReasons = goalTypeModels.flatMap(model => model.health?.reasons || []);
 
     return {
         bucketName,
@@ -1544,10 +1577,7 @@ function buildBucketDetailViewModel({
         returnClass: getReturnClass(bucketTotalReturn),
         goalTypes: goalTypeModels,
         showAllocationDriftHint,
-        health: buildHealthStatus({
-            reasons: bucketReasons,
-            setupRequired: bucketReasons.some(reason => reason.includes('Target total is'))
-        })
+        health: buildBucketHealth(goalTypeModels)
     };
 }
 
