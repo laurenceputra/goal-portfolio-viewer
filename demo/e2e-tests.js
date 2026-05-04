@@ -1576,7 +1576,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
             const rect = node.getBoundingClientRect();
             return rect.width > 0 && rect.height > 0;
         }).length;
-        return visibleOverviewCards > 0 && text.includes('Portfolio 6500142646-2');
+        return visibleOverviewCards > 0 && text.includes('Portfolio 6500142647-2');
     }, null, { timeout: 5000 });
 
     await clickButtonByRole(page, /view all cached holdings/i);
@@ -1632,10 +1632,10 @@ async function captureOcbcFlow(page, summary, outputDir) {
             const rect = node.getBoundingClientRect();
             return rect.width > 0 && rect.height > 0;
         }).length;
-        return visibleOverviewCards > 0 && text.includes('Portfolio 6500142646-2');
+        return visibleOverviewCards > 0 && text.includes('Portfolio 6500142647-2');
     }, null, { timeout: 5000 });
 
-    await clickButtonByRole(page, /open portfolio 6500142646-2/i);
+    await clickButtonByRole(page, /open portfolio 6500142647-2/i);
     await page.waitForFunction(() => {
         const overlay = document.querySelector('.gpv-overlay');
         if (!overlay) {
@@ -1644,7 +1644,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
         const text = overlay.textContent || '';
         const select = overlay.querySelector('#gpv-ocbc-view-select');
         return text.includes('Back to overview')
-            && text.includes('Portfolio 6500142646-2')
+            && text.includes('Portfolio 6500142647-2')
             && select instanceof HTMLSelectElement
             && !select.disabled;
     }, null, { timeout: 5000 });
