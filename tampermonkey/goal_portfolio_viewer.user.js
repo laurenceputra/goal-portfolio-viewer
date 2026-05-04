@@ -1424,7 +1424,7 @@ function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
                             displayName: getDisplayGoalType(goalType),
                             endingBalanceAmount: group.endingBalanceAmount || 0,
                             endingBalanceDisplay: formatMoney(group.endingBalanceAmount),
-                            returnAmount: typeReturn,
+                            totalReturn: typeReturn,
                             returnDisplay: formatMoney(typeReturn),
                             growthDisplay: formatGrowthPercentFromEndingBalance(
                                 typeReturn,
