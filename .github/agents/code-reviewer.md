@@ -80,6 +80,7 @@ Do not approve a PR based on a verbal claim that a comment was addressed.
 - touched repo surfaces remain internally consistent
 - docs and commands match the actual workflow
 - fixes are local and justified
+- avoidable duplicated or parallel implementations are flagged, and any new abstraction/helper has explicit justification
 - no evidence was skipped after review-driven changes
 - failed or inconclusive checks completed `ci-failure-triage`
 - final readiness uses the `pr-completion` gate

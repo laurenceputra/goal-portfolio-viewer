@@ -54,6 +54,7 @@ Treat these as blocking until resolved or explicitly escalated:
 - Are we choosing the right surface: userscript, workers, demo, docs, or workflow?
 - Is there a lower-risk alternative?
 - What new operational burden does this create?
+- Are we creating parallel code/process paths when extending existing ones would reduce risk?
 
 ### QA
 
