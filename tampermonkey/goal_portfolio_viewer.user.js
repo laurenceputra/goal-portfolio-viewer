@@ -8003,11 +8003,15 @@ let GoalTargetStore;
         titleClassName,
         badge,
         metrics,
-        metricsClassName
+        metricsClassName,
+        trailingNode = null
     }) {
         const header = createElement('div', className);
-        const safeLevel = Number.isFinite(Number(titleLevel)) ? Math.min(6, Math.max(1, Number(titleLevel))) : 2;
-        const titleElement = createElement(`h${safeLevel}`, titleClassName, title);
+        const titleElement = createWorkspaceTitle({
+            title,
+            level: titleLevel,
+            className: titleClassName
+        });
         header.appendChild(titleElement);
 
         if (badge) {
@@ -8020,6 +8024,10 @@ let GoalTargetStore;
 
         if (Array.isArray(metrics) && metrics.length > 0) {
             header.appendChild(createMetricStrip(metrics, metricsClassName || 'gpv-stats'));
+        }
+
+        if (trailingNode?.nodeType) {
+            header.appendChild(trailingNode);
         }
 
         return header;
@@ -8149,6 +8157,11 @@ let GoalTargetStore;
         return { table, tbody };
     }
 
+    function createWorkspaceTitle({ title, level = 2, className = null }) {
+        const safeLevel = Number.isFinite(Number(level)) ? Math.min(6, Math.max(1, Number(level))) : 2;
+        return createElement(`h${safeLevel}`, className, title);
+    }
+
     function createPercentTargetInput(value, ariaLabel, onChange) {
         const input = createElement('input', 'gpv-target-input');
         input.type = 'number';
@@ -8226,7 +8239,7 @@ let GoalTargetStore;
             }
             contentDiv.appendChild(panel);
         };
-        panel.appendChild(createElement('h3', 'gpv-planning-title', 'Planning'));
+        panel.appendChild(createWorkspaceTitle({ title: 'Planning', level: 3, className: 'gpv-planning-title' }));
 
         const planning = buildBucketPlanningModel(bucketViewModel.goalTypes);
         if (!planning) {
@@ -8407,14 +8420,24 @@ let GoalTargetStore;
     }
 
     function buildGoalTypeTable({ goalTypeModel, typeSection }) {
-        const table = createElement('table', `gpv-table ${CLASS_NAMES.goalTable}`);
-        const thead = createElement('thead');
-        const headerRow = createElement('tr');
+        const GOAL_NAME_COLUMN_INDEX = 0;
+        const FIXED_COLUMN_INDEX = 3;
+        const TARGET_COLUMN_INDEX = 4;
+        const DRIFT_COLUMN_INDEX = 5;
+        const RETURN_COLUMN_INDEX = 6;
+        const RETURN_PERCENT_COLUMN_INDEX = 7;
 
-        headerRow.appendChild(createElement('th', 'gpv-goal-name-header', 'Goal Name'));
-        headerRow.appendChild(createElement('th', null, 'Current value'));
-        headerRow.appendChild(createElement('th', null, '% of Goal Type'));
-        headerRow.appendChild(createElement('th', 'gpv-fixed-header gpv-column-fixed', 'Fixed'));
+        const { table, tbody } = createWorkspaceTable({
+            headers: ['Goal Name', 'Current value', '% of Goal Type', 'Fixed', '', 'Drift', 'Cumulative Return', 'Return %'],
+            className: `gpv-table ${CLASS_NAMES.goalTable}`
+        });
+        const headerRow = table.querySelector('thead tr');
+        if (!headerRow) {
+            typeSection.appendChild(table);
+            return;
+        }
+        headerRow.children[GOAL_NAME_COLUMN_INDEX].className = 'gpv-goal-name-header';
+        headerRow.children[FIXED_COLUMN_INDEX].className = 'gpv-fixed-header gpv-column-fixed';
 
         const targetHeader = createElement('th', 'gpv-target-header gpv-column-target');
         targetHeader.appendChild(createElement('div', null, 'Target %'));
@@ -8426,17 +8449,14 @@ let GoalTargetStore;
         remainingTarget.appendChild(document.createTextNode(' '));
         appendTextSpan(remainingTarget, 'gpv-remaining-value', goalTypeModel.remainingTargetDisplay);
         targetHeader.appendChild(remainingTarget);
-        headerRow.appendChild(targetHeader);
-
-        headerRow.appendChild(createElement('th', 'gpv-column-drift', 'Drift'));
-        headerRow.appendChild(createElement('th', 'gpv-column-return', 'Cumulative Return'));
-        headerRow.appendChild(createElement('th', 'gpv-column-return-percent', 'Return %'));
-
-        thead.appendChild(headerRow);
-        table.appendChild(thead);
+        targetHeader.className = 'gpv-target-header gpv-column-target';
+        const targetHeaderCell = headerRow.children[TARGET_COLUMN_INDEX];
+        targetHeaderCell.replaceWith(targetHeader);
+        headerRow.children[DRIFT_COLUMN_INDEX].className = 'gpv-column-drift';
+        headerRow.children[RETURN_COLUMN_INDEX].className = 'gpv-column-return';
+        headerRow.children[RETURN_PERCENT_COLUMN_INDEX].className = 'gpv-column-return-percent';
 
         const metricsColSpan = headerRow.children.length;
-        const tbody = createElement('tbody');
 
         goalTypeModel.goals.forEach(goalModel => {
             const tr = createElement('tr', 'gpv-goal-row');
@@ -8513,7 +8533,6 @@ let GoalTargetStore;
             tbody.appendChild(metricsRow);
         });
 
-        table.appendChild(tbody);
         typeSection.appendChild(table);
     }
 
@@ -8605,7 +8624,11 @@ let GoalTargetStore;
             );
             const bucketHeader = createElement('div', 'gpv-bucket-header');
             bucketHeader.appendChild(healthBadge);
-            bucketHeader.appendChild(createElement('h2', 'gpv-bucket-title', bucketModel.bucketName));
+            bucketHeader.appendChild(createWorkspaceTitle({
+                title: bucketModel.bucketName,
+                level: 2,
+                className: 'gpv-bucket-title'
+            }));
             bucketHeader.appendChild(createMetricStrip([
                 { label: 'Current value', value: bucketModel.endingBalanceDisplay },
                 { label: 'Return', value: bucketModel.returnDisplay, valueClass: bucketModel.returnClass },
@@ -8826,7 +8849,10 @@ let GoalTargetStore;
             typeSection.dataset.goalType = goalTypeModel.goalType;
 
             const typeHeader = createElement('div', 'gpv-type-header');
-            const typeTitle = createElement('h3', null, goalTypeModel.displayName);
+            const typeTitle = createWorkspaceTitle({
+                title: goalTypeModel.displayName,
+                level: 3
+            });
             const typeSummary = createElement('div', 'gpv-type-summary');
             appendLabeledValue(typeSummary, null, 'Current value:', goalTypeModel.endingBalanceDisplay);
             appendLabeledValue(typeSummary, null, 'Return:', goalTypeModel.returnDisplay);
@@ -13456,7 +13482,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const wrapper = createElement('div', `gpv-readiness gpv-readiness-${tone}`);
         wrapper.setAttribute('role', 'status');
         wrapper.setAttribute('aria-live', 'polite');
-        wrapper.appendChild(createElement('h2', 'gpv-readiness-title', title));
+        wrapper.appendChild(createWorkspaceTitle({ title, level: 2, className: 'gpv-readiness-title' }));
         wrapper.appendChild(createElement('p', 'gpv-readiness-copy', description));
         const list = createElement('ul', 'gpv-readiness-list');
         items.forEach(item => {
@@ -14103,7 +14129,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
     function buildFsmPlanningPanel(planning, scopeLabel, options = {}) {
         const panel = createElement('div', 'gpv-planning-panel');
-        panel.appendChild(createElement('h3', 'gpv-planning-title', 'Planning'));
+        panel.appendChild(createWorkspaceTitle({ title: 'Planning', level: 3, className: 'gpv-planning-title' }));
         appendPlanningDetails(panel, planning || {}, {
             scopeLabel,
             coverageText: planning?.targetCoverageLabel || null,
@@ -14114,7 +14140,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
     function buildFsmProjectionPanel({ selectedScopeLabel, projectedAmount, onInput }) {
         const panel = createElement('div', 'gpv-planning-panel');
-        panel.appendChild(createElement('h3', 'gpv-planning-title', 'Projection'));
+        panel.appendChild(createWorkspaceTitle({ title: 'Projection', level: 3, className: 'gpv-planning-title' }));
         const inputControl = createProjectedInvestmentInput({
             amount: projectedAmount,
             inputLabel: `Add Projected Investment for ${selectedScopeLabel} (simulation only):`,
@@ -14240,65 +14266,75 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         if (!Array.isArray(filteredRows) || filteredRows.length === 0) {
             return createElement('div', 'gpv-conflict-diff-empty', 'No holdings match this filter.');
         }
-        const table = createElement('table', 'gpv-table');
-        table.innerHTML = `
-            <thead>
-                <tr>
-                    <th><input type="checkbox" aria-label="Select all holdings" ${selectAllFiltered ? 'checked' : ''} /></th>
-                    <th>Ticker</th>
-                    <th>Name</th>
-                    <th>Type</th>
-                    <th>Value (SGD)</th>
-                    <th>Profit</th>
-                    <th>Current %</th>
-                    <th>Target %</th>
-                    ${showDrift ? '<th>Drift %</th>' : ''}
-                    <th>Fixed</th>
-                    <th>Portfolio</th>
-                </tr>
-            </thead>
-            <tbody></tbody>
-        `;
-
-        const headerCheckbox = table.querySelector('thead input[type="checkbox"]');
-        if (headerCheckbox) {
+        const headers = [
+            '',
+            'Ticker',
+            'Name',
+            'Type',
+            'Value (SGD)',
+            'Profit',
+            'Current %',
+            'Target %',
+            ...(showDrift ? ['Drift %'] : []),
+            'Fixed',
+            'Portfolio'
+        ];
+        const { table, tbody } = createWorkspaceTable({ headers });
+        const headerRow = table.querySelector('thead tr');
+        const selectAllHeaderCell = headerRow?.children?.[0] || null;
+        if (selectAllHeaderCell) {
+            selectAllHeaderCell.textContent = '';
+            const headerCheckbox = createElement('input');
+            headerCheckbox.type = 'checkbox';
+            headerCheckbox.checked = selectAllFiltered;
+            headerCheckbox.setAttribute('aria-label', 'Select all holdings');
             headerCheckbox.addEventListener('change', () => {
                 if (typeof onSelectAllChange === 'function') {
                     onSelectAllChange(headerCheckbox.checked);
                 }
             });
+            selectAllHeaderCell.appendChild(headerCheckbox);
         }
 
-        const tbody = table.querySelector('tbody');
         filteredRows.forEach(row => {
-            const tr = document.createElement('tr');
+            const tr = createElement('tr');
             const holdingId = row.holdingId || row.code;
             const checked = selectedHoldingIds.has(holdingId);
-            tr.innerHTML = `
-                <td data-col="select"><input type="checkbox" ${checked ? 'checked' : ''} aria-label="Select holding ${escapeHtml(row.displayTicker || row.code)}" /></td>
-                <td data-col="ticker">${escapeHtml(row.displayTicker || '-')}</td>
-                <td data-col="name">${escapeHtml(row.name)}</td>
-                <td data-col="product-type">${escapeHtml(row.productType)}</td>
-                <td data-col="value">${escapeHtml(formatMoney(row.currentValueLcy))}</td>
-                <td data-col="profit" class="${escapeHtml(row.profitClass || '')}">${escapeHtml(row.profitDisplay || '-')}</td>
-                <td data-col="current">${escapeHtml(row.currentAllocationDisplay || '-')}</td>
-                <td data-col="target"></td>
-                ${showDrift ? `<td data-col="drift" class="${escapeHtml(row.driftClass || '')}">${escapeHtml(row.driftDisplay || '-')}</td>` : ''}
-                <td data-col="fixed"></td>
-                <td data-col="portfolio"></td>
-            `;
-            const checkbox = tr.querySelector('input[type="checkbox"]');
+            const selectCell = createElement('td');
+            selectCell.dataset.col = 'select';
+            const checkbox = createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = checked;
+            checkbox.setAttribute('aria-label', `Select holding ${row.displayTicker || row.code}`);
+            selectCell.appendChild(checkbox);
+            tr.appendChild(selectCell);
+            tr.appendChild(createTableCell(row.displayTicker || '-', null)).dataset.col = 'ticker';
+            tr.appendChild(createTableCell(row.name, null)).dataset.col = 'name';
+            tr.appendChild(createTableCell(row.productType, null)).dataset.col = 'product-type';
+            tr.appendChild(createTableCell(formatMoney(row.currentValueLcy), null)).dataset.col = 'value';
+            tr.appendChild(createTableCell(row.profitDisplay || '-', row.profitClass || null)).dataset.col = 'profit';
+            tr.appendChild(createTableCell(row.currentAllocationDisplay || '-', null)).dataset.col = 'current';
+            const targetCell = createElement('td');
+            targetCell.dataset.col = 'target';
+            tr.appendChild(targetCell);
+            if (showDrift) {
+                const driftCell = createTableCell(row.driftDisplay || '-', row.driftClass || null);
+                driftCell.dataset.col = 'drift';
+                tr.appendChild(driftCell);
+            }
+            const fixedCell = createElement('td');
+            fixedCell.dataset.col = 'fixed';
+            tr.appendChild(fixedCell);
+            const portfolioCell = createElement('td');
+            portfolioCell.dataset.col = 'portfolio';
+            tr.appendChild(portfolioCell);
+
             checkbox.addEventListener('change', () => {
                 if (typeof onRowSelectChange === 'function') {
                     onRowSelectChange(holdingId, checkbox.checked);
                 }
             });
 
-            const targetCell = tr.querySelector('td[data-col="target"]');
-            if (!targetCell) {
-                tbody.appendChild(tr);
-                return;
-            }
             const targetInput = createElement('input', 'gpv-target-input');
             targetInput.type = 'number';
             targetInput.min = '0';
@@ -14322,11 +14358,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 targetCell.appendChild(err);
             }
 
-            const fixedCell = tr.querySelector('td[data-col="fixed"]');
-            if (!fixedCell) {
-                tbody.appendChild(tr);
-                return;
-            }
             const fixedCheckbox = createElement('input');
             fixedCheckbox.type = 'checkbox';
             fixedCheckbox.checked = row.fixed === true;
@@ -14338,11 +14369,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             };
             fixedCell.appendChild(fixedCheckbox);
 
-            const selectCell = tr.querySelector('td[data-col="portfolio"]');
-            if (!selectCell) {
-                tbody.appendChild(tr);
-                return;
-            }
             const select = createElement('select', 'gpv-select gpv-fsm-table-portfolio-select');
             select.innerHTML = [
                 { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: 'Unassigned' },
@@ -14357,7 +14383,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     onPortfolioChange(holdingId, select.value);
                 }
             };
-            selectCell.appendChild(select);
+            portfolioCell.appendChild(select);
             tbody.appendChild(tr);
         });
         const tableWrapper = createElement('div', 'gpv-table-wrap gpv-fsm-table-wrap');
@@ -15409,7 +15435,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
 
             const planningPanel = createElement('section', 'gpv-planning-panel');
-            planningPanel.appendChild(createElement('h2', 'gpv-planning-title', 'Planning'));
+            planningPanel.appendChild(createWorkspaceTitle({ title: 'Planning', level: 2, className: 'gpv-planning-title' }));
             planningPanel.appendChild(createElement(
                 'p',
                 'gpv-planning-copy',
@@ -15551,7 +15577,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 planningStatusItems.push(`${planningMaterialDriftCount} sub-portfolio scope(s) show high drift`);
             }
             if (planningStatusItems.length > 0) {
-                planningPanel.appendChild(createElement('h3', 'gpv-planning-subtitle', 'Needs attention'));
+                planningPanel.appendChild(createWorkspaceTitle({ title: 'Needs attention', level: 3, className: 'gpv-planning-subtitle' }));
                 const statusList = createElement('ul', 'gpv-health-reasons');
                 planningStatusItems.forEach(item => {
                     statusList.appendChild(createElement('li', 'gpv-health-reason', item));
@@ -15619,7 +15645,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     }
                 });
                 section.appendChild(managerRow);
-                section.appendChild(createElement('h3', 'gpv-detail-title', `Sub-portfolio allocation within Portfolio ${portfolioNo}`));
+                section.appendChild(createWorkspaceSectionHeader({
+                    className: 'gpv-ocbc-instrument-header-row',
+                    title: `Sub-portfolio allocation within Portfolio ${portfolioNo}`,
+                    titleLevel: 3,
+                    titleClassName: 'gpv-detail-title gpv-ocbc-instrument-heading'
+                }));
 
                 const { table: subPortfolioRows, tbody: subPortfolioBody } = createWorkspaceTable({
                     headers: [
@@ -15744,9 +15775,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     if (!rows.length) {
                         return;
                     }
-                    const headerRow = createElement('div', 'gpv-ocbc-instrument-header-row');
-                    const headingElement = createElement('h3', `gpv-detail-title gpv-ocbc-instrument-heading ${sectionClass}`.trim(), heading);
-                    headerRow.appendChild(headingElement);
+                    const headerRow = createWorkspaceSectionHeader({
+                        className: 'gpv-ocbc-instrument-header-row',
+                        title: heading,
+                        titleLevel: 3,
+                        titleClassName: `gpv-detail-title gpv-ocbc-instrument-heading ${sectionClass}`.trim()
+                    });
                     section.appendChild(headerRow);
                     const scopeKey = buildOcbcAllocationOrderScope(activeView, portfolioNo, subPortfolioId);
                     const currentOrder = Array.isArray(orderByScope[scopeKey]) ? orderByScope[scopeKey] : [];
@@ -15993,7 +16027,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const overview = createElement('div', 'gpv-fsm-overview');
             const header = createElement('div', 'gpv-fsm-overview-header');
             const copy = createElement('div', 'gpv-fsm-overview-copy');
-            copy.appendChild(createElement('h2', null, 'Overview'));
+            copy.appendChild(createWorkspaceTitle({ title: 'Overview', level: 2 }));
             copy.appendChild(createElement('p', null, 'Select a portfolio to open details, or view all cached holdings.'));
             header.appendChild(copy);
             const viewAllBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'View all cached holdings');
