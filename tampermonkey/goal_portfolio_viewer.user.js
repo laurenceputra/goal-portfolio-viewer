@@ -14895,29 +14895,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
     }
 
-    function buildOcbcSimpleTable(rows, total) {
-        const displayRows = buildFsmDisplayRows(rows, total);
-        if (displayRows.length === 0) {
-            return createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.');
-        }
-        const { table, tbody } = createWorkspaceTable({
-            headers: ['Identifier', 'Name', 'Type', 'Value (SGD)', 'Profit', 'Current %']
-        });
-        displayRows.forEach(row => {
-            const tr = createElement('tr');
-            tr.innerHTML = `
-                <td>${escapeHtml(row.displayTicker || row.code || '-')}</td>
-                <td>${escapeHtml(row.name || '-')}</td>
-                <td>${escapeHtml(row.productType || '-')}</td>
-                <td>${escapeHtml(formatMoney(row.currentValueLcy))}</td>
-                <td class="${escapeHtml(row.profitClass || '')}">${escapeHtml(row.profitDisplay || '-')}</td>
-                <td>${escapeHtml(row.currentAllocationDisplay || '-')}</td>
-            `;
-            tbody.appendChild(tr);
-        });
-        return table;
-    }
-
     function buildOcbcSummary(rows) {
         const safeRows = Array.isArray(rows) ? rows : [];
         const summary = buildFsmScopedSummary(safeRows.map(row => ({
@@ -15814,6 +15791,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             'Name',
                             'Product Type',
                             'Value (SGD)',
+                            'Profit',
                             'Current % of sub-portfolio',
                             'Target % of sub-portfolio',
                             'Drift',
@@ -15827,6 +15805,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         tr.appendChild(createElement('td', null, row.name || '-'));
                         tr.appendChild(createElement('td', null, row.productType || '-'));
                         tr.appendChild(createElement('td', null, formatMoney(row.currentValueLcy)));
+                        tr.appendChild(createElement('td', row.profitClass || null, row.profitDisplay || '-'));
                         const code = utils.normalizeString(row.code, '');
                         const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
                         const effectiveSubPortfolioId = utils.normalizeString(subPortfolioId || assignment.subPortfolioId, '');
@@ -16113,26 +16092,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 return;
             }
 
-            if (isAllPortfolioDetail) {
-                portfolioNos.forEach(portfolioNo => {
-                    const portfolioSection = createElement('section', 'gpv-bucket-detail-section');
-                    const portfolioRows = grouped[portfolioNo] || [];
-                    const portfolioSummary = buildOcbcSummary(portfolioRows);
-                    portfolioSection.appendChild(buildOcbcPortfolioHeader(portfolioNo, portfolioSummary));
-                    portfolioSection.appendChild(buildOcbcSimpleTable(portfolioRows, portfolioSummary.total));
-                    contentDiv.appendChild(portfolioSection);
-                });
-                return;
-            }
-
-            portfolioNos.forEach(portfolioNo => {
-                const portfolioSection = createElement('section', 'gpv-bucket-detail-section');
-                const portfolioRows = grouped[portfolioNo] || [];
-                const portfolioSummary = buildOcbcSummary(portfolioRows);
-                portfolioSection.appendChild(buildOcbcPortfolioHeader(portfolioNo, portfolioSummary));
-                portfolioSection.appendChild(buildOcbcSimpleTable(portfolioRows, portfolioSummary.total));
-                contentDiv.appendChild(portfolioSection);
-            });
             renderAllocationMode(activeView, rows);
         }
         viewSelect.onchange = rerender;
