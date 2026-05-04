@@ -293,6 +293,13 @@ describe('route matchers', () => {
         ).toBe(false);
         window.__GPV_OCBC_DEMO_ROUTE__ = false;
     });
+
+    test('returns false for invalid or non-string OCBC holdings URLs', () => {
+        expect(isOcbcPortfolioHoldingsRoute('')).toBe(false);
+        expect(isOcbcPortfolioHoldingsRoute(null)).toBe(false);
+        expect(isOcbcPortfolioHoldingsRoute(undefined)).toBe(false);
+        expect(isOcbcPortfolioHoldingsRoute({ href: 'https://internet.ocbc.com' })).toBe(false);
+    });
 });
 
 describe('normalizeOcbcHoldingsPayload', () => {

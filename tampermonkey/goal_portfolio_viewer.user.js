@@ -788,68 +788,65 @@
         };
     }
 
-    function isDashboardRoute(url, originFallback = 'https://app.sg.endowus.com') {
+    function parseRouteUrl(url, originFallback, { normalizeTrailingSlash = false } = {}) {
         if (typeof url !== 'string' || !url) {
-            return false;
+            return null;
         }
         try {
             const target = new URL(url, originFallback);
-            return target.pathname === '/dashboard' || target.pathname === '/dashboard/';
+            return {
+                target,
+                pathname: normalizeTrailingSlash ? target.pathname.replace(/\/+$/, '') : target.pathname
+            };
         } catch (_error) {
+            return null;
+        }
+    }
+
+    function isDashboardRoute(url, originFallback = 'https://app.sg.endowus.com') {
+        const parsed = parseRouteUrl(url, originFallback);
+        if (!parsed) {
             return false;
         }
+        return parsed.pathname === '/dashboard' || parsed.pathname === '/dashboard/';
     }
 
     function isFsmInvestmentsRoute(url, originFallback = 'https://secure.fundsupermart.com') {
-        if (typeof url !== 'string' || !url) {
+        const parsed = parseRouteUrl(url, originFallback);
+        if (!parsed) {
             return false;
         }
-        try {
-            const target = new URL(url, originFallback);
-            return target.pathname === '/fsmone/holdings/investments';
-        } catch (_error) {
-            return false;
-        }
+        return parsed.pathname === '/fsmone/holdings/investments';
     }
 
     function isOcbcPortfolioHoldingsRoute(url, originFallback = 'https://internet.ocbc.com') {
-        if (typeof url !== 'string' || !url) {
+        const parsed = parseRouteUrl(url, originFallback, { normalizeTrailingSlash: true });
+        if (!parsed) {
             return false;
         }
-        try {
-            const target = new URL(url, originFallback);
-            const expectedOrigin = 'https://internet.ocbc.com';
-            const normalizedPath = target.pathname.replace(/\/+$/, '');
-            const isExpectedPath = normalizedPath === '/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings';
-            if (!isExpectedPath) {
-                return false;
-            }
-            if (target.origin === expectedOrigin) {
-                return true;
-            }
-
-            const demoRouteEnabled = typeof window !== 'undefined' && window.__GPV_OCBC_DEMO_ROUTE__ === true;
-            if (!demoRouteEnabled) {
-                return false;
-            }
-
-            return target.hostname === 'localhost' || target.hostname === '127.0.0.1';
-        } catch (_error) {
+        const expectedOrigin = 'https://internet.ocbc.com';
+        const isExpectedPath = parsed.pathname === '/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings';
+        if (!isExpectedPath) {
             return false;
         }
+        if (parsed.target.origin === expectedOrigin) {
+            return true;
+        }
+
+        const demoRouteEnabled = typeof window !== 'undefined' && window.__GPV_OCBC_DEMO_ROUTE__ === true;
+        if (!demoRouteEnabled) {
+            return false;
+        }
+
+        return parsed.target.hostname === 'localhost' || parsed.target.hostname === '127.0.0.1';
     }
 
     function isOcbcDashboardRoute(url, originFallback = 'https://internet.ocbc.com') {
-        if (typeof url !== 'string' || !url) {
+        const parsed = parseRouteUrl(url, originFallback, { normalizeTrailingSlash: true });
+        if (!parsed) {
             return false;
         }
-        try {
-            const target = new URL(url, originFallback);
-            const normalizedPath = target.pathname.replace(/\/+$/, '');
-            return normalizedPath === '/internet-banking/digital/web/sg/cfo/dashboard';
-        } catch (_error) {
-            return false;
-        }
+        return parsed.pathname === '/internet-banking/digital/web/sg/cfo/dashboard';
     }
 
     function parseOcbcNumericValue(value) {
