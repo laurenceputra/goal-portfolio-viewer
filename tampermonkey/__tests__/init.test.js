@@ -796,6 +796,53 @@ describe('initialization and URL monitoring', () => {
         expect(document.querySelector('#gpv-overlay')).toBeNull();
     });
 
+    test('showOverlay hides sibling aria-hidden while open and restores on close', () => {
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        const plainSibling = document.createElement('div');
+        plainSibling.id = 'gpv-test-sibling-plain';
+        document.body.appendChild(plainSibling);
+
+        const explicitSibling = document.createElement('div');
+        explicitSibling.id = 'gpv-test-sibling-explicit';
+        explicitSibling.setAttribute('aria-hidden', 'false');
+        document.body.appendChild(explicitSibling);
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        global.alert = jest.fn();
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        expect(plainSibling.getAttribute('aria-hidden')).toBe('true');
+        expect(explicitSibling.getAttribute('aria-hidden')).toBe('true');
+
+        const overlay = document.querySelector('#gpv-overlay');
+        overlay.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+        expect(document.querySelector('#gpv-overlay')).toBeNull();
+        expect(plainSibling.hasAttribute('aria-hidden')).toBe(false);
+        expect(explicitSibling.getAttribute('aria-hidden')).toBe('false');
+    });
+
     test('Endowus, FSM, and OCBC overlays start collapsed and support expand toggle', () => {
         const assertExpandToggleBehavior = expectedTitle => {
             const overlay = document.querySelector('#gpv-overlay');

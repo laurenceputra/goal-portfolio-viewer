@@ -10196,27 +10196,9 @@ function renderSyncOverlayView({
     allowOverlayClose = true,
     onOverlayClick
 }) {
-    let overlay = document.getElementById('gpv-overlay');
-    if (overlay) {
-        overlay.remove();
-    }
-    overlay = document.createElement('div');
-    overlay.id = 'gpv-overlay';
-    overlay.className = overlayClassName;
-    document.body.appendChild(overlay);
-
-    const container = document.createElement('div');
-    container.className = containerClassName;
-
-    const closeOverlay = () => {
-        if (typeof overlay.gpvModalCleanup === 'function') {
-            overlay.gpvModalCleanup();
-        }
-        overlay.remove();
-    };
-
     const actionButtons = [];
 
+    let closeOverlay = null;
     if (typeof onBack === 'function') {
         const backBtn = document.createElement('button');
         backBtn.className = 'gpv-sync-btn';
@@ -10224,56 +10206,27 @@ function renderSyncOverlayView({
         backBtn.textContent = backLabel || '← Back';
         backBtn.title = 'Return to previous view';
         backBtn.onclick = () => {
-            closeOverlay();
+            if (typeof closeOverlay === 'function') {
+                closeOverlay();
+            }
             onBack();
         };
         actionButtons.push(backBtn);
     }
 
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'gpv-close-btn';
-    closeBtn.type = 'button';
-    closeBtn.textContent = '✕';
-    closeBtn.onclick = closeOverlay;
-    const { header } = buildOverlayHeader({
+    const shell = createOverlayShell({
+        overlayClassName,
+        containerClassName,
         title,
         actionButtons,
-        closeButton: closeBtn
+        allowOverlayClose,
+        onOverlayClick,
+        titleId: 'gpv-sync-overlay-title'
     });
-    const titleId = 'gpv-sync-overlay-title';
-    const headerTitleNode = header.querySelector('h1');
-    if (headerTitleNode) {
-        headerTitleNode.id = titleId;
-    }
+    const { overlay, container, contentDiv: body } = shell;
+    closeOverlay = shell.closeOverlay;
 
-    const body = document.createElement('div');
-    body.className = 'gpv-content';
     body.innerHTML = bodyHtml;
-
-    container.appendChild(header);
-    container.appendChild(body);
-    overlay.appendChild(container);
-
-    overlay.addEventListener('click', (e) => {
-        if (e.target !== overlay) {
-            return;
-        }
-        if (allowOverlayClose) {
-            closeOverlay();
-            return;
-        }
-        if (typeof onOverlayClick === 'function') {
-            onOverlayClick();
-        }
-    });
-
-    overlay.gpvModalCleanup = setupModalAccessibility({
-        overlay,
-        container,
-        titleId,
-        onClose: allowOverlayClose ? closeOverlay : null,
-        initialFocus: closeBtn
-    });
 
     return { overlay, container, body };
 }
@@ -13730,40 +13683,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return calculateAllocationRatio(row?.currentValueLcy, total);
     }
 
-    function buildFsmHeader({ overlay, cleanupCallbacks, titleText = 'Portfolio Viewer (FSM)', syncReturnTo = 'fsm', actionButtons = [] }) {
-        const createSyncButton = () => {
-            const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
-            syncBtn.title = 'Configure cross-device sync';
-            syncBtn.onclick = () => {
-                if (typeof showSyncSettings === 'function') {
-                    showSyncSettings({ returnTo: syncReturnTo });
-                }
-            };
-            return syncBtn;
-        };
-        const closeBtn = createElement('button', 'gpv-close-btn', '✕');
-        const closeOverlay = () => {
-            if (!overlay.isConnected) {
-                return;
-            }
-            cleanupCallbacks.forEach(callback => {
-                if (typeof callback === 'function') {
-                    callback();
-                }
-            });
-            cleanupCallbacks.length = 0;
-            overlay.remove();
-        };
-        closeBtn.onclick = closeOverlay;
-
-        const { header, titleId } = buildOverlayHeader({
-            title: titleText,
-            actionButtons: [createSyncButton(), ...actionButtons],
-            closeButton: closeBtn
-        });
-        return { header, closeBtn, titleId, closeOverlay };
-    }
-
     function buildOverlayHeader({ title, actionButtons = [], closeButton, centerNode = null }) {
         const header = createElement('div', 'gpv-header');
         const titleNode = createElement('h1', null, title || 'Portfolio Viewer');
@@ -13784,6 +13703,119 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
         header.appendChild(buttonContainer);
         return { header, titleId };
+    }
+
+    function createOverlayShell({
+        title,
+        overlayId = 'gpv-overlay',
+        overlayClassName = 'gpv-overlay',
+        containerClassName = 'gpv-container',
+        actionButtons = [],
+        centerNode = null,
+        allowOverlayClose = true,
+        onOverlayClick = null,
+        initialFocus = null,
+        titleId = null
+    }) {
+        const existingOverlay = document.getElementById(overlayId);
+        if (existingOverlay) {
+            if (Array.isArray(existingOverlay.gpvCleanupCallbacks)) {
+                existingOverlay.gpvCleanupCallbacks.forEach(callback => {
+                    if (typeof callback === 'function') {
+                        callback();
+                    }
+                });
+                existingOverlay.gpvCleanupCallbacks.length = 0;
+            } else if (typeof existingOverlay.gpvModalCleanup === 'function') {
+                existingOverlay.gpvModalCleanup();
+            }
+            existingOverlay.remove();
+        }
+
+        const overlay = createElement('div', overlayClassName);
+        overlay.id = overlayId;
+        const container = createElement('div', containerClassName);
+        const cleanupCallbacks = [];
+        container.gpvCleanupCallbacks = cleanupCallbacks;
+        overlay.gpvCleanupCallbacks = cleanupCallbacks;
+
+        const teardown = () => {
+            cleanupCallbacks.forEach(callback => {
+                if (typeof callback === 'function') {
+                    callback();
+                }
+            });
+            cleanupCallbacks.length = 0;
+        };
+        overlay.gpvModalCleanup = teardown;
+
+        const closeOverlay = () => {
+            if (!overlay.isConnected) {
+                return;
+            }
+            teardown();
+            overlay.remove();
+        };
+
+        const closeBtn = createElement('button', 'gpv-close-btn', '✕');
+        closeBtn.type = 'button';
+        closeBtn.onclick = closeOverlay;
+
+        const headerResult = buildOverlayHeader({
+            title,
+            actionButtons,
+            closeButton: closeBtn,
+            centerNode
+        });
+        const header = headerResult.header;
+        const resolvedTitleId = titleId || headerResult.titleId;
+        const headerTitleNode = header.querySelector('h1');
+        if (headerTitleNode) {
+            headerTitleNode.id = resolvedTitleId;
+        }
+
+        const contentDiv = createElement('div', 'gpv-content');
+        container.appendChild(header);
+        container.appendChild(contentDiv);
+        overlay.appendChild(container);
+
+        overlay.onclick = event => {
+            if (event.target !== overlay) {
+                return;
+            }
+            if (allowOverlayClose) {
+                closeOverlay();
+                return;
+            }
+            if (typeof onOverlayClick === 'function') {
+                onOverlayClick();
+            }
+        };
+
+        document.body.appendChild(overlay);
+
+        const modalCleanup = setupModalAccessibility({
+            overlay,
+            container,
+            titleId: resolvedTitleId,
+            onClose: allowOverlayClose ? closeOverlay : null,
+            initialFocus: initialFocus || closeBtn
+        });
+        if (typeof modalCleanup === 'function') {
+            cleanupCallbacks.push(modalCleanup);
+        }
+
+        return {
+            overlay,
+            container,
+            cleanupCallbacks,
+            closeBtn,
+            closeOverlay,
+            header,
+            contentDiv,
+            teardown,
+            titleId: resolvedTitleId
+        };
     }
 
     function createOverlayExpandToggleButton(container, options = {}) {
@@ -14386,27 +14418,25 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function renderFsmOverlay(fsmHoldings) {
-        const overlay = createElement('div', 'gpv-overlay');
-        overlay.id = 'gpv-overlay';
-
-        const container = createElement('div', 'gpv-container');
-        const cleanupCallbacks = [];
-        container.gpvCleanupCallbacks = cleanupCallbacks;
-        overlay.gpvCleanupCallbacks = cleanupCallbacks;
+        const shell = createOverlayShell({
+            title: 'Portfolio Viewer (FSM)',
+            allowOverlayClose: true
+        });
+        const { overlay, container, cleanupCallbacks, header, contentDiv } = shell;
 
         const expandBtn = createOverlayExpandToggleButton(container);
-
-        const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({
-            overlay,
-            cleanupCallbacks,
-            titleText: 'Portfolio Viewer (FSM)',
-            actionButtons: [expandBtn]
-        });
-        container.appendChild(header);
-
-        const contentDiv = createElement('div', 'gpv-content');
-        container.appendChild(contentDiv);
-        overlay.appendChild(container);
+        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
+        syncBtn.title = 'Configure cross-device sync';
+        syncBtn.onclick = () => {
+            if (typeof showSyncSettings === 'function') {
+                showSyncSettings({ returnTo: 'fsm' });
+            }
+        };
+        const headerButtons = header.querySelector('.gpv-header-buttons');
+        if (headerButtons) {
+            headerButtons.prepend(expandBtn);
+            headerButtons.prepend(syncBtn);
+        }
 
         const config = loadFsmPortfolioConfig(fsmHoldings);
         let portfolios = config.portfolios;
@@ -14466,7 +14496,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             rerender();
         };
 
-        const headerButtons = header.querySelector('.gpv-header-buttons');
         const headerBackBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to portfolios');
         headerBackBtn.type = 'button';
         headerBackBtn.onclick = handleBackToOverview;
@@ -14895,24 +14924,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         rerender();
 
-        overlay.onclick = (e) => {
-            if (e.target === overlay) {
-                closeOverlay();
-            }
-        };
-
-        document.body.appendChild(overlay);
-
-        const modalCleanup = setupModalAccessibility({
-            overlay,
-            container,
-            titleId,
-            onClose: closeOverlay,
-            initialFocus: closeBtn
-        });
-        if (typeof modalCleanup === 'function') {
-            cleanupCallbacks.push(modalCleanup);
-        }
     }
 
     function buildOcbcSummary(rows) {
@@ -15394,23 +15405,25 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function renderOcbcOverlay(ocbcHoldings, options = {}) {
-        const overlay = createElement('div', 'gpv-overlay');
-        overlay.id = 'gpv-overlay';
-        const container = createElement('div', 'gpv-container');
-        const cleanupCallbacks = [];
-        container.gpvCleanupCallbacks = cleanupCallbacks;
-        overlay.gpvCleanupCallbacks = cleanupCallbacks;
+        const shell = createOverlayShell({
+            title: 'Portfolio Viewer (OCBC)',
+            allowOverlayClose: true
+        });
+        const { container, contentDiv, header } = shell;
 
         const expandBtn = createOverlayExpandToggleButton(container);
-
-        const { header, closeBtn, titleId, closeOverlay } = buildFsmHeader({
-            overlay,
-            cleanupCallbacks,
-            titleText: 'Portfolio Viewer (OCBC)',
-            syncReturnTo: 'ocbc',
-            actionButtons: [expandBtn]
-        });
-        container.appendChild(header);
+        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
+        syncBtn.title = 'Configure cross-device sync';
+        syncBtn.onclick = () => {
+            if (typeof showSyncSettings === 'function') {
+                showSyncSettings({ returnTo: 'ocbc' });
+            }
+        };
+        const headerButtons = header.querySelector('.gpv-header-buttons');
+        if (headerButtons) {
+            headerButtons.prepend(expandBtn);
+            headerButtons.prepend(syncBtn);
+        }
 
         const controls = createElement('div', 'gpv-controls gpv-control-bar');
         const viewSelectId = 'gpv-ocbc-view-select';
@@ -15426,12 +15439,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         controls.appendChild(viewLabel);
         controls.appendChild(viewSelect);
 
-        container.appendChild(controls);
+        container.insertBefore(controls, contentDiv);
         const detailToolbarControls = [viewSelect];
 
-        const contentDiv = createElement('div', 'gpv-content');
-        container.appendChild(contentDiv);
-        overlay.appendChild(container);
         const safeHoldings = ocbcHoldings && typeof ocbcHoldings === 'object'
             ? ocbcHoldings
             : { assets: [], liabilities: [] };
@@ -16114,22 +16124,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         viewSelect.onchange = rerender;
         rerender();
 
-        overlay.onclick = event => {
-            if (event.target === overlay) {
-                closeOverlay();
-            }
-        };
-        document.body.appendChild(overlay);
-        const modalCleanup = setupModalAccessibility({
-            overlay,
-            container,
-            titleId,
-            onClose: closeOverlay,
-            initialFocus: closeBtn
-        });
-        if (typeof modalCleanup === 'function') {
-            cleanupCallbacks.push(modalCleanup);
-        }
     }
 
     function renderDataReadinessOverlay({
@@ -16139,41 +16133,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         isReady,
         onReady
     }) {
-        const overlay = createElement('div', 'gpv-overlay');
-        overlay.id = 'gpv-overlay';
-
-        const container = createElement('div', 'gpv-container');
-        const cleanupCallbacks = [];
-        container.gpvCleanupCallbacks = cleanupCallbacks;
-        overlay.gpvCleanupCallbacks = cleanupCallbacks;
-
-        const closeBtn = createElement('button', 'gpv-close-btn', '✕');
-        closeBtn.type = 'button';
-
-        function teardown() {
-            cleanupCallbacks.forEach(callback => {
-                if (typeof callback === 'function') {
-                    callback();
-                }
-            });
-            cleanupCallbacks.length = 0;
-        }
-
-        function closeOverlay() {
-            teardown();
-            overlay.remove();
-        }
-
-        closeBtn.onclick = closeOverlay;
-        const { header, titleId } = buildOverlayHeader({
+        const shell = createOverlayShell({
             title: title || 'Portfolio Viewer',
-            closeButton: closeBtn
+            allowOverlayClose: true
         });
-        container.appendChild(header);
-
-        const contentDiv = createElement('div', 'gpv-content');
-        container.appendChild(contentDiv);
-        overlay.appendChild(container);
+        const { cleanupCallbacks, closeOverlay, teardown, contentDiv } = shell;
 
         const updateReadinessView = () => {
             const items = typeof getItems === 'function' ? getItems() : [];
@@ -16197,42 +16161,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const unsubscribe = subscribeDataUpdates(updateReadinessView);
         cleanupCallbacks.push(unsubscribe);
 
-        overlay.onclick = event => {
-            if (event.target === overlay) {
-                closeOverlay();
-            }
-        };
-
-        document.body.appendChild(overlay);
-
-        const modalCleanup = setupModalAccessibility({
-            overlay,
-            container,
-            titleId,
-            onClose: closeOverlay,
-            initialFocus: closeBtn
-        });
-        if (typeof modalCleanup === 'function') {
-            cleanupCallbacks.push(modalCleanup);
-        }
-
         updateReadinessView();
     }
 
     function showOverlay() {
-
-        let old = document.getElementById('gpv-overlay');
-        if (old) {
-            if (Array.isArray(old.gpvCleanupCallbacks)) {
-                old.gpvCleanupCallbacks.forEach(callback => {
-                    if (typeof callback === 'function') {
-                        callback();
-                    }
-                });
-                old.gpvCleanupCallbacks.length = 0;
-            }
-            old.remove();
-        }
 
         const isFsmRoute = isFsmInvestmentsRoute(window.location.href, window.location.origin);
         if (isFsmRoute) {
@@ -16301,14 +16233,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         let mergedInvestmentDataState = readinessState.mergedInvestmentDataState;
         logDebug('[Goal Portfolio Viewer] Data merged successfully');
 
-        const overlay = createElement('div', 'gpv-overlay');
-        overlay.id = 'gpv-overlay';
-
-        const container = createElement('div', 'gpv-container');
-        const cleanupCallbacks = [];
-        container.gpvCleanupCallbacks = cleanupCallbacks;
-        overlay.gpvCleanupCallbacks = cleanupCallbacks;
-
         // Add sync status indicator if sync is enabled
         const syncIndicatorContainer = createElement('div', 'gpv-sync-indicator-container');
         if (typeof createSyncIndicatorHTML === 'function') {
@@ -16338,42 +16262,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         bucketManageBtn.type = 'button';
         bucketManageBtn.title = 'Manage assignments';
 
+        const shell = createOverlayShell({
+            title: 'Portfolio Viewer',
+            centerNode: syncIndicatorContainer,
+            allowOverlayClose: true
+        });
+        const { overlay, container, cleanupCallbacks, closeBtn, header, contentDiv } = shell;
+
         const expandBtn = createOverlayExpandToggleButton(container);
 
-        const closeBtn = createElement('button', 'gpv-close-btn', '✕');
-        function teardownOverlay() {
-            if (!overlay.isConnected) {
-                return;
-            }
-            if (!Array.isArray(cleanupCallbacks)) {
-                return;
-            }
-            cleanupCallbacks.forEach(callback => {
-                if (typeof callback === 'function') {
-                    callback();
-                }
-            });
-            cleanupCallbacks.length = 0;
+        const headerButtons = header.querySelector('.gpv-header-buttons');
+        if (headerButtons) {
+            headerButtons.prepend(expandBtn);
+            headerButtons.prepend(syncBtn);
+            headerButtons.prepend(bucketManageBtn);
         }
-
-        function closeOverlay() {
-            if (!overlay.isConnected) {
-                return;
-            }
-            teardownOverlay();
-            overlay.remove();
-        }
-
-        closeBtn.onclick = closeOverlay;
-
-        const { header, titleId } = buildOverlayHeader({
-            title: 'Portfolio Viewer',
-            actionButtons: [bucketManageBtn, syncBtn, expandBtn],
-            closeButton: closeBtn,
-            centerNode: syncIndicatorContainer
-        });
-        container.appendChild(header);
-
         const controls = createElement('div', 'gpv-controls gpv-control-bar');
         const { label: selectLabel, select } = createSelectControl({
             id: 'gpv-endowus-view-select',
@@ -16416,15 +16319,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         modeToggle.appendChild(performanceButton);
 
         controls.appendChild(modeToggle);
-        container.appendChild(controls);
+        container.insertBefore(controls, contentDiv);
         const detailToolbarControls = [select, allocationButton, performanceButton];
 
-        const contentDiv = createElement('div', 'gpv-content');
         const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
         const backToOverviewBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
         backToOverviewBtn.type = 'button';
         detailToolbar.appendChild(backToOverviewBtn);
-        container.appendChild(contentDiv);
 
         let currentBucketMode = getBucketViewModePreference();
         let viewMode = 'summary';
@@ -16760,27 +16661,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             renderView({ scrollToTop: true });
         };
 
-        overlay.appendChild(container);
-        
-        // Close overlay when clicking outside the container
-        overlay.onclick = (e) => {
-            if (e.target === overlay) {
-                closeOverlay();
-            }
-        };
-        
-        document.body.appendChild(overlay);
-
-        const modalCleanup = setupModalAccessibility({
-            overlay,
-            container,
-            titleId,
-            onClose: closeOverlay,
-            initialFocus: closeBtn
-        });
-        if (typeof modalCleanup === 'function') {
-            cleanupCallbacks.push(modalCleanup);
-        }
     }
 
     // ============================================
