@@ -1727,7 +1727,7 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Overview');
     });
 
-    test('OCBC selected detail renders merged simple table and planning without cross-portfolio bleed', () => {
+    test('OCBC selected detail renders allocation holdings once and planning without cross-portfolio bleed', () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -1786,6 +1786,14 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Asset 1');
         expect(overlay.textContent).toContain('Bond 1');
         expect(overlay.textContent).not.toContain('Asset 2');
+        const instrumentRows = Array.from(overlay.querySelectorAll('tbody tr'));
+        const rowsWithExactCellText = value => instrumentRows.filter(row => (
+            Array.from(row.querySelectorAll('td')).some(cell => (cell.textContent || '').trim() === value)
+        ));
+        expect(rowsWithExactCellText('EQ1')).toHaveLength(1);
+        expect(rowsWithExactCellText('Asset 1')).toHaveLength(1);
+        expect(rowsWithExactCellText('BD1')).toHaveLength(1);
+        expect(rowsWithExactCellText('Bond 1')).toHaveLength(1);
         expect(overlay.querySelector('.gpv-type-section')).toBeNull();
         const headers = Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim());
         expect(headers).toContain('Product Type');
@@ -1895,7 +1903,7 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.querySelector('#gpv-ocbc-mode-select')).toBeNull();
         expect(Array.from(overlay.querySelectorAll('label')).some(label => label.textContent.includes('Mode:'))).toBe(false);
 
-        expect(overlay.textContent).not.toContain('Planning');
+        expect(overlay.textContent).toContain('Planning');
 
         viewSelect.value = 'liabilities';
         viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -1908,7 +1916,7 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Asset 1');
         expect(overlay.textContent).toContain('Portfolio P-1');
         expect(overlay.textContent).toContain('Portfolio P-2');
-        expect(overlay.textContent).not.toContain('Planning');
+        expect(overlay.textContent).toContain('Planning');
 
         const backToOverviewBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
         backToOverviewBtn.click();
@@ -2181,8 +2189,8 @@ describe('initialization and URL monitoring', () => {
 
         global.GM_setValue('api_ocbc_holdings', JSON.stringify({
             assets: [
-                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 100 },
-                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 300 },
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 100, profitValueLcy: 10 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 300, profitValueLcy: -30 },
                 { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Asset 3', productType: 'Bond', currentValueLcy: 600 }
             ],
             liabilities: []
@@ -2232,8 +2240,35 @@ describe('initialization and URL monitoring', () => {
         const headers = Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim());
         expect(headers).toContain('Current % of portfolio');
         expect(headers).toContain('Target % of portfolio');
+        expect(headers).toContain('Profit');
         expect(headers).toContain('Current % of sub-portfolio');
         expect(headers).toContain('Target % of sub-portfolio');
+        const getColumnIndex = (table, columnLabel) => Array.from(table.querySelectorAll('thead th'))
+            .findIndex(cell => cell.textContent.trim() === columnLabel);
+        const getRowByExactTicker = (table, ticker) => Array.from(table.querySelectorAll('tbody tr'))
+            .find(row => Array.from(row.querySelectorAll('td')).some(cell => (cell.textContent || '').trim() === ticker));
+
+        const coreHeading = Array.from(overlay.querySelectorAll('h3'))
+            .find(node => node.textContent.trim() === 'Instrument allocation · Core');
+        const coreTable = nextTableFrom(coreHeading?.parentElement);
+        const coreProfitColumnIndex = getColumnIndex(coreTable, 'Profit');
+        expect(coreProfitColumnIndex).toBeGreaterThanOrEqual(0);
+
+        const eq1Row = getRowByExactTicker(coreTable, 'EQ1');
+        const eq2Row = getRowByExactTicker(coreTable, 'EQ2');
+        expect(eq1Row).toBeTruthy();
+        expect(eq2Row).toBeTruthy();
+        expect(eq1Row.querySelectorAll('td')[coreProfitColumnIndex].textContent.trim()).toContain('+SGD 10.00');
+        expect(eq2Row.querySelectorAll('td')[coreProfitColumnIndex].textContent.trim()).toContain('-SGD 30.00');
+
+        const unassignedHeading = Array.from(overlay.querySelectorAll('h3'))
+            .find(node => node.textContent.trim() === 'Unassigned instruments');
+        const unassignedTable = nextTableFrom(unassignedHeading?.parentElement);
+        const unassignedProfitColumnIndex = getColumnIndex(unassignedTable, 'Profit');
+        const bd1Row = getRowByExactTicker(unassignedTable, 'BD1');
+        expect(unassignedProfitColumnIndex).toBeGreaterThanOrEqual(0);
+        expect(bd1Row).toBeTruthy();
+        expect(bd1Row.querySelectorAll('td')[unassignedProfitColumnIndex].textContent.trim()).toBe('-');
 
         expect(allocationText).toContain('25.00%');
         expect(allocationText).toContain('50.00%');
