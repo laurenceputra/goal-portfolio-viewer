@@ -3928,34 +3928,47 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return migrated;
     }
 
-    function updateEndowusStore(updater, context = 'Error saving Endowus store') {
-        const current = readEndowusStore();
-        const updated = normalizeEndowusStore(typeof updater === 'function' ? updater(current) : current);
-        const didWrite = writePlatformStore(STORAGE_KEYS.endowus, updated, context);
+    function updatePlatformStore({ readStore, normalizeStore, storageKey, cleanupLegacyKeys, updater, context }) {
+        const current = readStore();
+        const updated = normalizeStore(typeof updater === 'function' ? updater(current) : current);
+        const didWrite = writePlatformStore(storageKey, updated, context);
         if (didWrite) {
-            cleanupLegacyEndowusKeys();
+            cleanupLegacyKeys();
         }
         return { value: updated, success: didWrite };
+    }
+
+    function updateEndowusStore(updater, context = 'Error saving Endowus store') {
+        return updatePlatformStore({
+            readStore: readEndowusStore,
+            normalizeStore: normalizeEndowusStore,
+            storageKey: STORAGE_KEYS.endowus,
+            cleanupLegacyKeys: cleanupLegacyEndowusKeys,
+            updater,
+            context
+        });
     }
 
     function updateFsmStore(updater, context = 'Error saving FSM store') {
-        const current = readFsmStore();
-        const updated = normalizeFsmStore(typeof updater === 'function' ? updater(current) : current);
-        const didWrite = writePlatformStore(STORAGE_KEYS.fsm, updated, context);
-        if (didWrite) {
-            cleanupLegacyFsmKeys();
-        }
-        return { value: updated, success: didWrite };
+        return updatePlatformStore({
+            readStore: readFsmStore,
+            normalizeStore: normalizeFsmStore,
+            storageKey: STORAGE_KEYS.fsm,
+            cleanupLegacyKeys: cleanupLegacyFsmKeys,
+            updater,
+            context
+        });
     }
 
     function updateOcbcStore(updater, context = 'Error saving OCBC store') {
-        const current = readOcbcStore();
-        const updated = normalizeOcbcStore(typeof updater === 'function' ? updater(current) : current);
-        const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, updated, context);
-        if (didWrite) {
-            cleanupLegacyOcbcKeys();
-        }
-        return { value: updated, success: didWrite };
+        return updatePlatformStore({
+            readStore: readOcbcStore,
+            normalizeStore: normalizeOcbcStore,
+            storageKey: STORAGE_KEYS.ocbc,
+            cleanupLegacyKeys: cleanupLegacyOcbcKeys,
+            updater,
+            context
+        });
     }
 
     function normalizeBucketViewMode(value) {
