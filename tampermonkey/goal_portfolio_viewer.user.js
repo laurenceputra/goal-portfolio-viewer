@@ -16138,7 +16138,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             title: title || 'Portfolio Viewer',
             allowOverlayClose: true
         });
-        const { cleanupCallbacks, closeOverlay, teardown, contentDiv } = shell;
+        const { cleanupCallbacks, teardown, contentDiv } = shell;
 
         const updateReadinessView = () => {
             const items = typeof getItems === 'function' ? getItems() : [];
