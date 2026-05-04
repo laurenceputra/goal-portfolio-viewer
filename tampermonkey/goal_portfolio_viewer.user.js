@@ -487,22 +487,38 @@
         return numericProfitValue / costBasis;
     }
 
+    function composeDisplayPair(primaryDisplay, secondaryDisplay, options = {}) {
+        const {
+            fallback = '-',
+            requireBoth = false
+        } = options;
+        const hasPrimary = primaryDisplay !== fallback;
+        const hasSecondary = secondaryDisplay !== fallback;
+        if (requireBoth) {
+            if (!hasPrimary || !hasSecondary) {
+                return fallback;
+            }
+            return `${primaryDisplay} (${secondaryDisplay})`;
+        }
+        if (!hasPrimary && !hasSecondary) {
+            return fallback;
+        }
+        if (!hasPrimary) {
+            return secondaryDisplay;
+        }
+        if (!hasSecondary) {
+            return primaryDisplay;
+        }
+        return `${primaryDisplay} (${secondaryDisplay})`;
+    }
+
     function formatProfitDisplay(profitValue, profitPercent) {
         const valueDisplay = formatSignedMoney(profitValue);
         const percentDisplay = formatPercent(profitPercent, {
             multiplier: 100,
             showSign: true
         });
-        if (valueDisplay === '-' && percentDisplay === '-') {
-            return '-';
-        }
-        if (valueDisplay === '-') {
-            return percentDisplay;
-        }
-        if (percentDisplay === '-') {
-            return valueDisplay;
-        }
-        return `${valueDisplay} (${percentDisplay})`;
+        return composeDisplayPair(valueDisplay, percentDisplay);
     }
 
     function normalizeMoneyDisplaySpacing(value) {
@@ -518,16 +534,7 @@
             showSign: true
         });
         const valueDisplay = normalizeMoneyDisplaySpacing(formatSignedMoney(profitValue));
-        if (percentDisplay === '-' && valueDisplay === '-') {
-            return '-';
-        }
-        if (percentDisplay === '-') {
-            return valueDisplay;
-        }
-        if (valueDisplay === '-') {
-            return percentDisplay;
-        }
-        return `${percentDisplay} (${valueDisplay})`;
+        return composeDisplayPair(percentDisplay, valueDisplay);
     }
 
     function getFsmProfitClass(profitPercent) {
@@ -565,10 +572,7 @@
             showSign: true
         });
         const amountDisplay = formatSignedMoney(driftAmount);
-        if (percentDisplay === '-' || amountDisplay === '-') {
-            return '-';
-        }
-        return `${percentDisplay} (${amountDisplay})`;
+        return composeDisplayPair(percentDisplay, amountDisplay, { requireBoth: true });
     }
 
     function getFiniteNumbers(values) {
@@ -16890,6 +16894,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             normalizePercentTargetValue,
             formatProfitDisplay,
             formatFsmProfitDisplay,
+            formatDriftDisplay,
             getFsmProfitClass,
             formatGrowthPercentFromEndingBalance,
             getReturnClass,

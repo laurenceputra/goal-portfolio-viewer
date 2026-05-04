@@ -126,10 +126,32 @@ describe('FSM profit models', () => {
         expect(formatProfitDisplay(-25, -0.01)).toBe('-SGD\u00A025.00 (-1.00%)');
     });
 
+    test('formatProfitDisplay falls back to available side or dash', () => {
+        const { formatProfitDisplay } = require('../goal_portfolio_viewer.user.js');
+        expect(formatProfitDisplay(120, null)).toBe('+SGD\u00A0120.00');
+        expect(formatProfitDisplay(null, 0.01)).toBe('+1.00%');
+        expect(formatProfitDisplay(null, null)).toBe('-');
+    });
+
     test('formatFsmProfitDisplay renders percent-first with standard spacing', () => {
         const { formatFsmProfitDisplay } = require('../goal_portfolio_viewer.user.js');
         expect(formatFsmProfitDisplay(120, 0.01)).toBe('+1.00% (+SGD 120.00)');
         expect(formatFsmProfitDisplay(-3334.65, -0.076)).toBe('-7.60% (-SGD 3,334.65)');
+    });
+
+    test('formatFsmProfitDisplay falls back to available side or dash', () => {
+        const { formatFsmProfitDisplay } = require('../goal_portfolio_viewer.user.js');
+        expect(formatFsmProfitDisplay(120, null)).toBe('+SGD 120.00');
+        expect(formatFsmProfitDisplay(null, 0.01)).toBe('+1.00%');
+        expect(formatFsmProfitDisplay(null, null)).toBe('-');
+    });
+
+    test('formatDriftDisplay requires both percent and amount', () => {
+        const { formatDriftDisplay } = require('../goal_portfolio_viewer.user.js');
+        expect(formatDriftDisplay(0.2, 300)).toBe('+20.00% (+SGD\u00A0300.00)');
+        expect(formatDriftDisplay(0.2, null)).toBe('-');
+        expect(formatDriftDisplay(null, 300)).toBe('-');
+        expect(formatDriftDisplay(null, null)).toBe('-');
     });
 
     test('getFsmProfitClass applies threshold boundaries', () => {
