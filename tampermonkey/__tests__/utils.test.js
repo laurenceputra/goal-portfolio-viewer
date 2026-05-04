@@ -16,6 +16,7 @@ const {
     sortGoalsByName,
     formatMoney,
     formatPercent,
+    normalizePercentTargetValue,
     formatGrowthPercentFromEndingBalance,
     calculateGoalDiff,
     calculateFixedTargetPercent,
@@ -113,6 +114,23 @@ describe('normalizeString', () => {
         expect(utils.normalizeString(123)).toBe('123');
         expect(utils.normalizeString(false)).toBe('false');
         expect(utils.normalizeString({ key: 'value' })).toBe('[object Object]');
+    });
+});
+
+describe('normalizePercentTargetValue', () => {
+    test('clamps finite values to 0-100', () => {
+        expect(normalizePercentTargetValue('150')).toEqual({ kind: 'value', value: 100 });
+        expect(normalizePercentTargetValue(-5)).toEqual({ kind: 'value', value: 0 });
+    });
+
+    test('treats blank values as clear signal', () => {
+        expect(normalizePercentTargetValue('')).toEqual({ kind: 'blank', value: null });
+        expect(normalizePercentTargetValue('   ')).toEqual({ kind: 'blank', value: null });
+    });
+
+    test('returns invalid for non-finite values', () => {
+        expect(normalizePercentTargetValue('not-a-number')).toEqual({ kind: 'invalid', value: null });
+        expect(normalizePercentTargetValue('Infinity')).toEqual({ kind: 'invalid', value: null });
     });
 });
 

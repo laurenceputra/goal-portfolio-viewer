@@ -397,6 +397,21 @@
         return Number.isFinite(numericValue) ? numericValue : null;
     }
 
+    function normalizePercentTargetValue(rawValue) {
+        if (typeof rawValue === 'string' && rawValue.trim() === '') {
+            return { kind: 'blank', value: null };
+        }
+        if (rawValue === null || rawValue === undefined || rawValue === '') {
+            return { kind: 'blank', value: null };
+        }
+        const numericValue = Number(rawValue);
+        if (!Number.isFinite(numericValue)) {
+            return { kind: 'invalid', value: null };
+        }
+        const clampedValue = Math.max(0, Math.min(100, numericValue));
+        return { kind: 'value', value: Number(clampedValue.toFixed(2)) };
+    }
+
     function formatMoney(val) {
         if (typeof val === 'number' && Number.isFinite(val)) {
             return MONEY_FORMATTER.format(val);
@@ -6622,11 +6637,11 @@ let GoalTargetStore;
             return Number.isFinite(numericValue) ? numericValue : null;
         },
         setTarget(goalId, percentage) {
-            const numericPercentage = parseFloat(percentage);
-            if (!Number.isFinite(numericPercentage)) {
+            const normalizedTarget = normalizePercentTargetValue(percentage);
+            if (normalizedTarget.kind !== 'value') {
                 return null;
             }
-            const validPercentage = Math.max(0, Math.min(100, numericPercentage));
+            const validPercentage = normalizedTarget.value;
             const result = updateEndowusStore(current => ({
                 ...current,
                 goalTargets: { ...current.goalTargets, [goalId]: validPercentage }
@@ -14772,7 +14787,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 },
                 onTargetChange: (row, rawValue) => {
                     const holdingId = row.holdingId || row.code;
-                    if (!rawValue) {
+                    const normalizedTarget = normalizePercentTargetValue(rawValue);
+                    if (normalizedTarget.kind === 'blank') {
                         delete targetErrorsByHoldingId[holdingId];
                         updateFsmStore(current => {
                             const targetsByCode = { ...current.targetsByCode };
@@ -14786,8 +14802,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         rerender();
                         return;
                     }
-                    const parsed = Number(rawValue);
-                    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+                    if (normalizedTarget.kind === 'invalid') {
                         targetErrorsByHoldingId[holdingId] = 'Enter target between 0 and 100';
                         rerender();
                         return;
@@ -14795,7 +14810,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     delete targetErrorsByHoldingId[holdingId];
                     updateFsmStore(current => ({
                         ...current,
-                        targetsByCode: { ...current.targetsByCode, [holdingId]: Number(parsed.toFixed(2)) }
+                        targetsByCode: { ...current.targetsByCode, [holdingId]: normalizedTarget.value }
                     }));
                     clearLegacyFsmAllocationKeys(row, holdingId, { target: true });
                     if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
@@ -15263,6 +15278,35 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return null;
     }
 
+    function applyOcbcTargetScopeUpdate(scope, rawValue) {
+        const normalizedTarget = normalizePercentTargetValue(rawValue);
+        if (normalizedTarget.kind === 'invalid') {
+            return false;
+        }
+        if (normalizedTarget.kind === 'blank') {
+            updateOcbcStore(current => {
+                const targetsByScope = { ...current.targetsByScope };
+                delete targetsByScope[scope];
+                return { ...current, targetsByScope };
+            });
+            if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
+                SyncManager.scheduleSyncOnChange('ocbc-target-clear');
+            }
+            return true;
+        }
+        updateOcbcStore(current => ({
+            ...current,
+            targetsByScope: {
+                ...current.targetsByScope,
+                [scope]: normalizedTarget.value
+            }
+        }));
+        if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
+            SyncManager.scheduleSyncOnChange('ocbc-target-update');
+        }
+        return true;
+    }
+
     function normalizeOcbcRowOrderCodes(currentOrder, rows) {
         const normalizedRows = Array.isArray(rows) ? rows : [];
         const rowCodes = normalizedRows.map(row => utils.normalizeString(row?.code, '')).filter(Boolean);
@@ -15654,30 +15698,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             targetPercent,
                             `Target percentage for portfolio ${portfolioNo} sub-portfolio ${subPortfolio.name}`,
                             () => {
-                            const parsed = toOptionalFiniteNumber(targetInput.value);
-                            const scope = buildOcbcTargetScope(activeView, portfolioNo, subPortfolio.id, '');
-                            if (parsed === null) {
-                                updateOcbcStore(current => {
-                                    const targetsByScope = { ...current.targetsByScope };
-                                    delete targetsByScope[scope];
-                                    return { ...current, targetsByScope };
-                                });
-                                if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
-                                    SyncManager.scheduleSyncOnChange('ocbc-target-clear');
+                                const scope = buildOcbcTargetScope(activeView, portfolioNo, subPortfolio.id, '');
+                                if (applyOcbcTargetScopeUpdate(scope, targetInput.value)) {
+                                    rerender();
                                 }
-                            } else {
-                                updateOcbcStore(current => ({
-                                    ...current,
-                                    targetsByScope: {
-                                        ...current.targetsByScope,
-                                        [scope]: Number(Math.min(100, Math.max(0, parsed)).toFixed(2))
-                                    }
-                                }));
-                                if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
-                                    SyncManager.scheduleSyncOnChange('ocbc-target-update');
-                                }
-                            }
-                            rerender();
                             }
                         );
                         targetCell.appendChild(targetInput);
@@ -15814,30 +15838,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                                 targetPercent,
                                 `Target percentage for instrument ${row.displayTicker || row.code || row.name || '-'} in sub-portfolio ${inputSubPortfolioName}`,
                                 () => {
-                                const parsed = toOptionalFiniteNumber(targetInput.value);
-                                const scope = buildOcbcTargetScope(activeView, portfolioNo, effectiveSubPortfolioId, code);
-                                if (parsed === null) {
-                                    updateOcbcStore(current => {
-                                        const targetsByScope = { ...current.targetsByScope };
-                                        delete targetsByScope[scope];
-                                        return { ...current, targetsByScope };
-                                    });
-                                    if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
-                                        SyncManager.scheduleSyncOnChange('ocbc-target-clear');
+                                    const scope = buildOcbcTargetScope(activeView, portfolioNo, effectiveSubPortfolioId, code);
+                                    if (applyOcbcTargetScopeUpdate(scope, targetInput.value)) {
+                                        rerender();
                                     }
-                                } else {
-                                    updateOcbcStore(current => ({
-                                        ...current,
-                                        targetsByScope: {
-                                            ...current.targetsByScope,
-                                            [scope]: Number(Math.min(100, Math.max(0, parsed)).toFixed(2))
-                                        }
-                                    }));
-                                    if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
-                                        SyncManager.scheduleSyncOnChange('ocbc-target-update');
-                                    }
-                                }
-                                rerender();
                                 }
                             );
                             targetCell.appendChild(targetInput);
@@ -16973,6 +16977,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             sortGoalTypes,
             formatMoney,
             formatPercent,
+            normalizePercentTargetValue,
             formatProfitDisplay,
             formatFsmProfitDisplay,
             getFsmProfitClass,

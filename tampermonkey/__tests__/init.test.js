@@ -4610,7 +4610,7 @@ describe('initialization and URL monitoring', () => {
         expect(fixedCheckbox.checked).toBe(false);
     });
 
-    test('FSM target input rejects invalid values without persisting', () => {
+    test('FSM target input clamps finite out-of-range values before persisting', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
@@ -4661,8 +4661,70 @@ describe('initialization and URL monitoring', () => {
         targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
 
         overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).toContain('Enter target between 0 and 100');
-        expect(storage.has('fsm_target_pct_AAA|sub:AAPL')).toBe(false);
+        const refreshedTargetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
+        expect(refreshedTargetInput.value).toBe('100.00');
+        expect(JSON.parse(storage.get('fsm')).targetsByCode['AAA|sub:AAPL']).toBe(100);
+
+        refreshedTargetInput.value = '-5';
+        refreshedTargetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        const clampedLowTargetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
+        expect(clampedLowTargetInput.value).toBe('0.00');
+        expect(JSON.parse(storage.get('fsm')).targetsByCode['AAA|sub:AAPL']).toBe(0);
+    });
+
+    test('FSM target input does not persist non-finite browser values', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_fsm_holdings', JSON.stringify([
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+        ]));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        viewAllBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
+        targetInput.value = 'Infinity';
+        targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(JSON.parse(storage.get('fsm')).targetsByCode['AAA|sub:AAPL']).toBeUndefined();
     });
 
     test('FSM inline edits schedule sync updates', () => {
