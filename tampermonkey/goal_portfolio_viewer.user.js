@@ -16202,26 +16202,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             copy.appendChild(createElement('p', null, 'Select a portfolio to open details for assets or liabilities.'));
             header.appendChild(copy);
 
-            const allActions = createElement('div', 'gpv-actions-row');
-            const viewAllAssetsBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'View all assets');
-            viewAllAssetsBtn.type = 'button';
-            viewAllAssetsBtn.onclick = () => {
-                viewSelect.value = 'assets';
-                selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
-                viewMode = 'detail';
-                rerender();
-            };
-            const viewAllLiabilitiesBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'View all liabilities');
-            viewAllLiabilitiesBtn.type = 'button';
-            viewAllLiabilitiesBtn.onclick = () => {
-                viewSelect.value = 'liabilities';
-                selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
-                viewMode = 'detail';
-                rerender();
-            };
-            allActions.appendChild(viewAllAssetsBtn);
-            allActions.appendChild(viewAllLiabilitiesBtn);
-            header.appendChild(allActions);
             overview.appendChild(header);
 
             const renderOverviewSection = ({ sectionTitle, sectionView, rows }) => {

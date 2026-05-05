@@ -1781,8 +1781,6 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('Overview');
         expect(overlay.textContent).toContain('Assets');
         expect(overlay.textContent).toContain('Liabilities');
-        expect(overlay.textContent).toContain('View all assets');
-        expect(overlay.textContent).toContain('View all liabilities');
         const overviewCards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'));
         expect(overviewCards.length).toBe(2);
         const assetCard = overviewCards.find(card => card.textContent.includes('Assets'));
@@ -1911,11 +1909,10 @@ describe('initialization and URL monitoring', () => {
         backBtn.click();
 
         expect(overlay.textContent).toContain('Overview');
-        expect(overlay.textContent).toContain('View all assets');
-        expect(overlay.textContent).toContain('View all liabilities');
+        expect(overlay.querySelectorAll('.gpv-fsm-overview-card').length).toBeGreaterThan(0);
     });
 
-    test('OCBC overview shows split sections, split all-scope actions, and detail selector enabled in all-scope', () => {
+    test('OCBC overview shows split sections and detail selector behavior for portfolio cards', () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -2005,41 +2002,14 @@ describe('initialization and URL monitoring', () => {
         viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
         overlay = document.querySelector('#gpv-overlay');
 
-        const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
-        backBtn.click();
-        overlay = document.querySelector('#gpv-overlay');
-        const viewAllAssetsBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all assets'));
-        viewAllAssetsBtn.click();
-        overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).toContain('Asset 1');
-        expect(overlay.textContent).toContain('Asset 2');
-        expect(controlBar.hidden).toBe(false);
-        expect(overviewViewSelect.disabled).toBe(false);
-        expect(overviewViewSelect.hasAttribute('tabindex')).toBe(false);
-        expect(overlay.querySelector('#gpv-ocbc-mode-select')).toBeNull();
-        expect(Array.from(overlay.querySelectorAll('label')).some(label => label.textContent.includes('Mode:'))).toBe(false);
-
-        expect(overlay.textContent).toContain('Planning');
-
-        viewSelect.value = 'liabilities';
-        viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-        overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).toContain('Liability 1');
-
-        viewSelect.value = 'assets';
-        viewSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-        overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).toContain('Asset 1');
-        expect(overlay.textContent).toContain('Portfolio P-1');
-        expect(overlay.textContent).toContain('Portfolio P-2');
-        expect(overlay.textContent).toContain('Planning');
-
         const backToOverviewBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
         backToOverviewBtn.click();
         overlay = document.querySelector('#gpv-overlay');
 
-        const viewAllLiabilitiesBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all liabilities'));
-        viewAllLiabilitiesBtn.click();
+        const currentOverviewCards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'));
+        const currentP1LiabilityCard = currentOverviewCards.find(card => card.textContent.includes('Portfolio P-1') && card.textContent.includes('Liabilities'));
+        expect(currentP1LiabilityCard).toBeTruthy();
+        currentP1LiabilityCard.click();
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Liability 1');
         expect(overlay.textContent).not.toContain('Asset 1');
