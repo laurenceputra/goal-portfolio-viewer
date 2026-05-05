@@ -6086,6 +6086,22 @@ function getFsmSyncView(config) {
     return { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} };
 }
 
+function getOcbcSyncView(config) {
+    if (!config || typeof config !== 'object') {
+        return { allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {} };
+    }
+    const source = config.platforms && typeof config.platforms === 'object'
+        ? (config.platforms.ocbc && typeof config.platforms.ocbc === 'object' ? config.platforms.ocbc : {})
+        : config;
+    return {
+        allocationBuckets: source.allocationBuckets && typeof source.allocationBuckets === 'object' ? source.allocationBuckets : {},
+        subPortfolios: normalizeOcbcSubPortfolios(source.subPortfolios),
+        assignmentByCode: normalizeOcbcAssignmentByCode(source.assignmentByCode),
+        orderByScope: normalizeOcbcOrderByScope(source.orderByScope),
+        targetsByScope: source.targetsByScope && typeof source.targetsByScope === 'object' ? source.targetsByScope : {}
+    };
+}
+
 function formatSyncValue(value) {
     if (value == null) {
         return '-';
@@ -6162,6 +6178,149 @@ function formatFsmInstrumentLabel(holdingId, holdingsByCode) {
 function formatFsmAssignmentDisplay({ portfolioId, target, fixed }, portfolioNameMap) {
     const portfolioLabel = formatFsmPortfolioLabel(portfolioId, portfolioNameMap);
     return `${portfolioLabel} · Target ${formatSyncTarget(target)} · Fixed ${formatSyncFixed(fixed === true)}`;
+}
+
+function stableStringify(value) {
+    if (Array.isArray(value)) {
+        return `[${value.map(item => stableStringify(item)).join(',')}]`;
+    }
+    if (value && typeof value === 'object') {
+        const entries = Object.keys(value)
+            .sort()
+            .map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`);
+        return `{${entries.join(',')}}`;
+    }
+    return JSON.stringify(value);
+}
+
+function formatOcbcAllocationBucketsDisplay(buckets) {
+    const source = buckets && typeof buckets === 'object' && !Array.isArray(buckets) ? buckets : {};
+    return Object.keys(source)
+        .sort()
+        .map(key => `${key}: ${stableStringify(source[key])}`);
+}
+
+function formatOcbcSubPortfoliosDisplay(subPortfolios) {
+    const source = subPortfolios && typeof subPortfolios === 'object' && !Array.isArray(subPortfolios) ? subPortfolios : {};
+    const rows = [];
+    Object.keys(source).sort().forEach(viewKey => {
+        const byPortfolio = source[viewKey];
+        if (!byPortfolio || typeof byPortfolio !== 'object' || Array.isArray(byPortfolio)) {
+            return;
+        }
+        Object.keys(byPortfolio).sort().forEach(portfolioNo => {
+            const items = Array.isArray(byPortfolio[portfolioNo])
+                ? byPortfolio[portfolioNo]
+                : [];
+            const labels = items
+                .map(item => {
+                    const id = utils.normalizeString(item?.id, '');
+                    const name = utils.normalizeString(item?.name, 'Untitled sub-portfolio');
+                    const legacyProductType = utils.normalizeString(item?.legacyProductType, '');
+                    const legacyBucketId = utils.normalizeString(item?.legacyBucketId, '');
+                    if (!id) {
+                        return null;
+                    }
+                    const legacyLabel = legacyProductType || legacyBucketId
+                        ? ` [legacy ${legacyProductType || '-'}:${legacyBucketId || '-'}]`
+                        : '';
+                    return `${name} (${id})${legacyLabel}${item?.archived === true ? ' [archived]' : ''}`;
+                })
+                .filter(Boolean);
+            rows.push(`${viewKey}/${portfolioNo}: ${labels.length ? labels.join(' | ') : '-'}`);
+        });
+    });
+    return rows;
+}
+
+function formatOcbcAssignmentByCodeDisplay(assignmentByCode) {
+    const source = assignmentByCode && typeof assignmentByCode === 'object' && !Array.isArray(assignmentByCode) ? assignmentByCode : {};
+    return Object.keys(source)
+        .sort()
+        .map(code => `${code} → ${utils.normalizeString(source[code], '-') || '-'}`);
+}
+
+function formatOcbcOrderByScopeDisplay(orderByScope) {
+    const source = orderByScope && typeof orderByScope === 'object' && !Array.isArray(orderByScope) ? orderByScope : {};
+    return Object.keys(source)
+        .sort()
+        .map(scope => {
+            const codes = Array.isArray(source[scope]) ? source[scope] : [];
+            return `${scope}: ${codes.length ? codes.join(' > ') : '-'}`;
+        });
+}
+
+function formatOcbcTargetsByScopeDisplay(targetsByScope) {
+    const source = targetsByScope && typeof targetsByScope === 'object' && !Array.isArray(targetsByScope) ? targetsByScope : {};
+    return Object.keys(source)
+        .sort()
+        .map(scope => `${scope}: ${formatSyncTarget(source[scope])}`);
+}
+
+function buildOcbcConflictDiffItems(conflict) {
+    if (!conflict || !conflict.local || !conflict.remote) {
+        return [];
+    }
+    const localOcbc = getOcbcSyncView(conflict.local);
+    const remoteOcbc = getOcbcSyncView(conflict.remote);
+    const rows = [];
+
+    const localAllocationBuckets = formatOcbcAllocationBucketsDisplay(localOcbc.allocationBuckets);
+    const remoteAllocationBuckets = formatOcbcAllocationBucketsDisplay(remoteOcbc.allocationBuckets);
+    if (JSON.stringify(localAllocationBuckets) !== JSON.stringify(remoteAllocationBuckets)) {
+        rows.push({
+            section: 'definition',
+            settingName: 'Allocation Buckets',
+            localDisplay: formatSyncValue(localAllocationBuckets),
+            remoteDisplay: formatSyncValue(remoteAllocationBuckets)
+        });
+    }
+
+    const localSubPortfolios = formatOcbcSubPortfoliosDisplay(localOcbc.subPortfolios);
+    const remoteSubPortfolios = formatOcbcSubPortfoliosDisplay(remoteOcbc.subPortfolios);
+    if (JSON.stringify(localSubPortfolios) !== JSON.stringify(remoteSubPortfolios)) {
+        rows.push({
+            section: 'definition',
+            settingName: 'Sub-portfolios',
+            localDisplay: formatSyncValue(localSubPortfolios),
+            remoteDisplay: formatSyncValue(remoteSubPortfolios)
+        });
+    }
+
+    const localAssignmentByCode = formatOcbcAssignmentByCodeDisplay(localOcbc.assignmentByCode);
+    const remoteAssignmentByCode = formatOcbcAssignmentByCodeDisplay(remoteOcbc.assignmentByCode);
+    if (JSON.stringify(localAssignmentByCode) !== JSON.stringify(remoteAssignmentByCode)) {
+        rows.push({
+            section: 'assignment',
+            settingName: 'Code assignments',
+            localDisplay: formatSyncValue(localAssignmentByCode),
+            remoteDisplay: formatSyncValue(remoteAssignmentByCode)
+        });
+    }
+
+    const localOrderByScope = formatOcbcOrderByScopeDisplay(localOcbc.orderByScope);
+    const remoteOrderByScope = formatOcbcOrderByScopeDisplay(remoteOcbc.orderByScope);
+    if (JSON.stringify(localOrderByScope) !== JSON.stringify(remoteOrderByScope)) {
+        rows.push({
+            section: 'assignment',
+            settingName: 'Display order',
+            localDisplay: formatSyncValue(localOrderByScope),
+            remoteDisplay: formatSyncValue(remoteOrderByScope)
+        });
+    }
+
+    const localTargetsByScope = formatOcbcTargetsByScopeDisplay(localOcbc.targetsByScope);
+    const remoteTargetsByScope = formatOcbcTargetsByScopeDisplay(remoteOcbc.targetsByScope);
+    if (JSON.stringify(localTargetsByScope) !== JSON.stringify(remoteTargetsByScope)) {
+        rows.push({
+            section: 'target',
+            settingName: 'Allocation targets',
+            localDisplay: formatSyncValue(localTargetsByScope),
+            remoteDisplay: formatSyncValue(remoteTargetsByScope)
+        });
+    }
+
+    return rows;
 }
 
 function buildFsmConflictDiffItems(conflict, options = {}) {
@@ -6256,7 +6415,8 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
 function buildConflictDiffSections(conflict, nameMapOverride = {}, fsmOptions = {}) {
     return {
         endowus: buildConflictDiffItemsForMap(conflict, nameMapOverride),
-        fsm: buildFsmConflictDiffItems(conflict, fsmOptions)
+        fsm: buildFsmConflictDiffItems(conflict, fsmOptions),
+        ocbc: buildOcbcConflictDiffItems(conflict)
     };
 }
 
@@ -10361,7 +10521,25 @@ function createConflictDialogHTML(conflict) {
                 <td>${escapeHtml(item.remoteDisplay)}</td>
             </tr>
         `).join('');
+    const ocbcDefinitionRows = diffSections.ocbc
+        .filter(item => item.section === 'definition')
+        .map(item => `
+            <tr>
+                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
+                <td>${escapeHtml(item.localDisplay)}</td>
+                <td>${escapeHtml(item.remoteDisplay)}</td>
+            </tr>
+        `).join('');
     const fsmAssignmentRows = diffSections.fsm
+        .filter(item => item.section === 'assignment')
+        .map(item => `
+            <tr>
+                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
+                <td>${escapeHtml(item.localDisplay)}</td>
+                <td>${escapeHtml(item.remoteDisplay)}</td>
+            </tr>
+        `).join('');
+    const ocbcAssignmentRows = diffSections.ocbc
         .filter(item => item.section === 'assignment')
         .map(item => `
             <tr>
@@ -10379,9 +10557,18 @@ function createConflictDialogHTML(conflict) {
                 <td>${escapeHtml(item.remoteDisplay)}</td>
             </tr>
         `).join('');
-    const hasTargetRows = endowusRows.length > 0 || fsmInstrumentRows.length > 0;
+    const ocbcTargetRows = diffSections.ocbc
+        .filter(item => item.section === 'target')
+        .map(item => `
+            <tr>
+                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
+                <td>${escapeHtml(item.localDisplay)}</td>
+                <td>${escapeHtml(item.remoteDisplay)}</td>
+            </tr>
+        `).join('');
+    const hasTargetRows = endowusRows.length > 0 || fsmInstrumentRows.length > 0 || ocbcTargetRows.length > 0;
     const targetRowsHtml = hasTargetRows
-        ? `${endowusRows.length > 0 ? sectionRows(endowusRows, 'Goal') : ''}${fsmInstrumentRows.length > 0 ? sectionRows(fsmInstrumentRows, 'Instrument') : ''}`
+        ? `${endowusRows.length > 0 ? sectionRows(endowusRows, 'Goal') : ''}${fsmInstrumentRows.length > 0 ? sectionRows(fsmInstrumentRows, 'Instrument') : ''}${ocbcTargetRows.length > 0 ? sectionRows(ocbcTargetRows, 'Setting') : ''}`
         : '<div class="gpv-conflict-diff-empty">No differences detected.</div>';
 
     return `
@@ -10401,15 +10588,16 @@ function createConflictDialogHTML(conflict) {
                     <li><strong>Server:</strong> ${remoteTargets} targets / ${remoteFixed} fixed</li>
                     <li><strong>FSM differences:</strong> ${diffSections.fsm.length}</li>
                     <li><strong>Endowus differences:</strong> ${diffSections.endowus.length}</li>
+                    <li><strong>OCBC differences:</strong> ${diffSections.ocbc.length}</li>
                 </ul>
             </div>
             <div class="gpv-conflict-step-panel" data-step-panel="2" hidden>
                 <h4>Portfolio definition changes</h4>
-                ${sectionRows(fsmDefinitionRows, 'Setting')}
+                ${sectionRows(`${fsmDefinitionRows}${ocbcDefinitionRows}`, 'Setting')}
             </div>
             <div class="gpv-conflict-step-panel" data-step-panel="3" hidden>
                 <h4>Assignment changes</h4>
-                ${sectionRows(fsmAssignmentRows, 'Setting')}
+                ${sectionRows(`${fsmAssignmentRows}${ocbcAssignmentRows}`, 'Setting')}
             </div>
             <div class="gpv-conflict-step-panel" data-step-panel="4" hidden>
                 <h4>Targets and drift changes</h4>
@@ -16949,6 +17137,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             buildConflictDiffItems: buildConflictDiffItemsForMap,
             buildConflictDiffSections,
             buildFsmConflictDiffItems,
+            buildOcbcConflictDiffItems,
             formatSyncTarget,
             formatSyncFixed,
             injectStyles: testingHooks?.injectStyles,

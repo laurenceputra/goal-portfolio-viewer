@@ -2,6 +2,7 @@ const {
     buildConflictDiffItems: buildConflictDiffItemsForMap,
     buildConflictDiffSections,
     buildFsmConflictDiffItems,
+    buildOcbcConflictDiffItems,
     formatSyncTarget,
     formatSyncFixed
 } = require('../goal_portfolio_viewer.user.js');
@@ -185,6 +186,423 @@ describe('conflict diff helpers', () => {
         expect(formatSyncTarget(null)).toBe('-');
         expect(formatSyncFixed(true)).toBe('Yes');
         expect(formatSyncFixed(false)).toBe('No');
+    });
+
+    it('detects OCBC allocation bucket and sub-portfolio differences', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: { growth: { label: 'Growth' } },
+                        subPortfolios: { goal: { P001: [{ id: 'sp1', name: 'Core', archived: false }] } },
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {}
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: { growth: { label: 'Growth+' } },
+                        subPortfolios: { goal: { P001: [{ id: 'sp2', name: 'Satellite', archived: false }] } },
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {}
+                    }
+                }
+            }
+        };
+
+        const rows = buildOcbcConflictDiffItems(conflict);
+        expect(rows.some(item => item.section === 'definition' && item.settingName === 'Allocation Buckets')).toBe(true);
+        expect(rows.some(item => item.section === 'definition' && item.settingName === 'Sub-portfolios')).toBe(true);
+    });
+
+    it('shows OCBC sub-portfolio legacy linkage and preserves inner order', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {
+                            goal: {
+                                P001: [
+                                    { id: 'sp2', name: 'Second', archived: false },
+                                    { id: 'sp1', name: 'First', archived: false, legacyProductType: 'MUTUAL_FUND', legacyBucketId: 'bucket-1' }
+                                ]
+                            }
+                        },
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {}
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {
+                            goal: {
+                                P001: [
+                                    { id: 'sp1', name: 'First', archived: false, legacyProductType: 'BOND', legacyBucketId: 'bucket-1' },
+                                    { id: 'sp2', name: 'Second', archived: false }
+                                ]
+                            }
+                        },
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {}
+                    }
+                }
+            }
+        };
+
+        const rows = buildOcbcConflictDiffItems(conflict);
+        const subPortfolioRow = rows.find(item => item.settingName === 'Sub-portfolios');
+        expect(subPortfolioRow).toBeTruthy();
+        expect(subPortfolioRow.localDisplay).toContain('Second (sp2) | First (sp1) [legacy MUTUAL_FUND:bucket-1]');
+        expect(subPortfolioRow.remoteDisplay).toContain('First (sp1) [legacy BOND:bucket-1] | Second (sp2)');
+    });
+
+    it('detects OCBC assignment and order differences', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: { AAPL: 'sp1' },
+                        orderByScope: { goal: ['AAPL', 'BOND'] },
+                        targetsByScope: {}
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: { AAPL: 'sp2' },
+                        orderByScope: { goal: ['BOND', 'AAPL'] },
+                        targetsByScope: {}
+                    }
+                }
+            }
+        };
+
+        const rows = buildOcbcConflictDiffItems(conflict);
+        expect(rows.some(item => item.section === 'assignment' && item.settingName === 'Code assignments')).toBe(true);
+        expect(rows.some(item => item.section === 'assignment' && item.settingName === 'Display order')).toBe(true);
+    });
+
+    it('detects OCBC target differences', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: { goal: 20 }
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: { goal: 25 }
+                    }
+                }
+            }
+        };
+
+        const rows = buildOcbcConflictDiffItems(conflict);
+        const targetRow = rows.find(item => item.section === 'target');
+        expect(targetRow).toBeTruthy();
+        expect(targetRow.settingName).toBe('Allocation targets');
+    });
+
+    it('adds OCBC section into combined conflict sections', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} },
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: { global: 10 }
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} },
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: { global: 12 }
+                    }
+                }
+            }
+        };
+
+        const sections = buildConflictDiffSections(conflict, {});
+        expect(Array.isArray(sections.ocbc)).toBe(true);
+        expect(sections.ocbc.length).toBeGreaterThan(0);
+    });
+
+    it('ignores OCBC local-only holdings fields and raw payload differences', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} },
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {},
+                        holdings: [{ code: 'AAA', name: 'Alpha' }],
+                        holdingsByPortfolio: { P001: [{ code: 'AAA', name: 'Alpha' }] },
+                        raw: { payloadVersion: 1 }
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} },
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {},
+                        holdings: [{ code: 'BBB', name: 'Beta' }],
+                        holdingsByPortfolio: { P999: [{ code: 'BBB', name: 'Beta' }] },
+                        raw: { payloadVersion: 2 }
+                    }
+                }
+            }
+        };
+
+        expect(buildOcbcConflictDiffItems(conflict)).toHaveLength(0);
+
+        const sections = buildConflictDiffSections(conflict, {});
+        expect(sections.ocbc).toHaveLength(0);
+        expect(sections.endowus).toHaveLength(0);
+        expect(sections.fsm).toHaveLength(0);
+    });
+
+    it('does not diff allocation buckets when nested key order differs only', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {
+                            growth: {
+                                label: 'Growth',
+                                config: { alpha: 1, beta: 2 }
+                            }
+                        },
+                        subPortfolios: {},
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {}
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {
+                            growth: {
+                                config: { beta: 2, alpha: 1 },
+                                label: 'Growth'
+                            }
+                        },
+                        subPortfolios: {},
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {}
+                    }
+                }
+            }
+        };
+
+        const rows = buildOcbcConflictDiffItems(conflict);
+        expect(rows.some(item => item.settingName === 'Allocation Buckets')).toBe(false);
+    });
+
+    it('uses top-level OCBC fallback when platforms is missing or malformed', () => {
+        const cases = [
+            {
+                local: {
+                    version: 2,
+                    platforms: 'malformed',
+                    allocationBuckets: {},
+                    subPortfolios: {},
+                    assignmentByCode: { AAPL: 'sp1', BOND: 'sp2' },
+                    orderByScope: { goal: ['AAPL', 'BOND'] },
+                    targetsByScope: { goal: 20, global: 80 }
+                },
+                remote: {
+                    version: 2,
+                    platforms: {
+                        ocbc: {
+                            allocationBuckets: {},
+                            subPortfolios: {},
+                            assignmentByCode: { AAPL: 'sp1', BOND: 'sp2' },
+                            orderByScope: { goal: ['AAPL', 'BOND'] },
+                            targetsByScope: { goal: 20, global: 80 }
+                        }
+                    }
+                }
+            },
+            {
+                local: {
+                    version: 2,
+                    allocationBuckets: {},
+                    subPortfolios: {},
+                    assignmentByCode: { AAPL: 'sp1' },
+                    orderByScope: { goal: ['AAPL'] },
+                    targetsByScope: { goal: 20 }
+                },
+                remote: {
+                    version: 2,
+                    platforms: {
+                        ocbc: {
+                            allocationBuckets: {},
+                            subPortfolios: {},
+                            assignmentByCode: { AAPL: 'sp1' },
+                            orderByScope: { goal: ['AAPL'] },
+                            targetsByScope: { goal: 20 }
+                        }
+                    }
+                }
+            }
+        ];
+
+        cases.forEach(({ local, remote }) => {
+            expect(buildOcbcConflictDiffItems({ local, remote })).toHaveLength(0);
+        });
+    });
+
+    it('does not diff OCBC assignments and targets when object insertion order differs only', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: { AAPL: 'sp1', BOND: 'sp2' },
+                        orderByScope: {},
+                        targetsByScope: { goal: 20, global: 80 }
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: { BOND: 'sp2', AAPL: 'sp1' },
+                        orderByScope: {},
+                        targetsByScope: { global: 80, goal: 20 }
+                    }
+                }
+            }
+        };
+
+        const rows = buildOcbcConflictDiffItems(conflict);
+        expect(rows.some(item => item.settingName === 'Code assignments')).toBe(false);
+        expect(rows.some(item => item.settingName === 'Allocation targets')).toBe(false);
+    });
+
+    it('does not diff OCBC sub-portfolios when top-level key order differs only', () => {
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {
+                            goal: {
+                                P001: [
+                                    { id: 'sp1', name: 'First', archived: false },
+                                    { id: 'sp2', name: 'Second', archived: false }
+                                ]
+                            },
+                            global: {
+                                P100: [
+                                    { id: 'sp3', name: 'Third', archived: false }
+                                ]
+                            }
+                        },
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {}
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {
+                            global: {
+                                P100: [
+                                    { id: 'sp3', name: 'Third', archived: false }
+                                ]
+                            },
+                            goal: {
+                                P001: [
+                                    { id: 'sp1', name: 'First', archived: false },
+                                    { id: 'sp2', name: 'Second', archived: false }
+                                ]
+                            }
+                        },
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {}
+                    }
+                }
+            }
+        };
+
+        const rows = buildOcbcConflictDiffItems(conflict);
+        expect(rows.some(item => item.settingName === 'Sub-portfolios')).toBe(false);
     });
 
     it('detects FSM portfolio definition and assignment differences', () => {

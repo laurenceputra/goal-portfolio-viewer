@@ -286,6 +286,103 @@ describe('sync settings UI', () => {
         expect(targetsPanel.textContent).not.toContain('No differences detected.');
     });
 
+    test('renders OCBC differences in summary and mapped steps', () => {
+        const { createConflictDialogHTML } = exportsModule;
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} },
+                    ocbc: {
+                        allocationBuckets: { growth: { label: 'Growth' } },
+                        subPortfolios: { goal: { P001: [{ id: 'sp1', name: 'Core', archived: false }] } },
+                        assignmentByCode: { AAA: 'sp1' },
+                        orderByScope: { goal: ['AAA', 'BBB'] },
+                        targetsByScope: { goal: 20 }
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} },
+                    ocbc: {
+                        allocationBuckets: { growth: { label: 'Growth+' } },
+                        subPortfolios: { goal: { P001: [{ id: 'sp2', name: 'Satellite', archived: false }] } },
+                        assignmentByCode: { AAA: 'sp2' },
+                        orderByScope: { goal: ['BBB', 'AAA'] },
+                        targetsByScope: { goal: 25 }
+                    }
+                }
+            }
+        };
+
+        document.body.innerHTML = createConflictDialogHTML(conflict);
+
+        const summaryPanel = document.querySelector('[data-step-panel="1"]');
+        expect(summaryPanel.textContent).toMatch(/OCBC differences:\s*5/);
+
+        const definitionsPanel = document.querySelector('[data-step-panel="2"]');
+        expect(definitionsPanel.textContent).toContain('Allocation Buckets');
+        expect(definitionsPanel.textContent).toContain('Sub-portfolios');
+
+        const assignmentsPanel = document.querySelector('[data-step-panel="3"]');
+        expect(assignmentsPanel.textContent).toContain('Code assignments');
+        expect(assignmentsPanel.textContent).toContain('Display order');
+
+        const targetsPanel = document.querySelector('[data-step-panel="4"]');
+        expect(targetsPanel.textContent).toContain('Allocation targets');
+    });
+
+    test('does not show OCBC conflicts for local-only holdings payload differences', () => {
+        const { createConflictDialogHTML } = exportsModule;
+        const conflict = {
+            local: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} },
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {},
+                        holdings: [{ code: 'AAA' }],
+                        holdingsByPortfolio: { P001: [{ code: 'AAA' }] },
+                        raw: { token: 'local-only' }
+                    }
+                }
+            },
+            remote: {
+                version: 2,
+                platforms: {
+                    endowus: { goalTargets: {}, goalFixed: {} },
+                    fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} },
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {},
+                        holdings: [{ code: 'BBB' }],
+                        holdingsByPortfolio: { P999: [{ code: 'BBB' }] },
+                        raw: { token: 'remote-only' }
+                    }
+                }
+            }
+        };
+
+        document.body.innerHTML = createConflictDialogHTML(conflict);
+
+        const summaryPanel = document.querySelector('[data-step-panel="1"]');
+        expect(summaryPanel.textContent).toMatch(/OCBC differences:\s*0/);
+        const targetsPanel = document.querySelector('[data-step-panel="4"]');
+        expect(targetsPanel.textContent).toContain('No differences detected.');
+    });
+
     test('renders remember-key control as explicit opt-in by default', () => {
         const { createSyncSettingsHTML } = exportsModule;
         seedStatus();

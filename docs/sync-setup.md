@@ -14,9 +14,10 @@ Keep your Goal Portfolio Viewer settings synchronized across all your devices wi
 ✅ **Synced**:
 - Goal target percentages (your custom allocations)
 - Goal fixed flags (whether goals are locked)
+- OCBC allocation configuration (allocation buckets, sub-portfolios, assignments/order, and scope targets)
 
 ❌ **Not Synced** (cached data, regenerated on each device):
-- API responses
+- API responses (including OCBC holdings payloads)
 - Performance chart cache
 - Session data
 
@@ -39,7 +40,7 @@ Default server URL: `https://goal-portfolio-sync.laurenceputra.workers.dev`
    - ⚠️ **Important**: Save this password! It cannot be recovered if lost
    - Your password encrypts your data - without it, synced data is useless
    - Optional: Enable **"Remember encryption key on this device"** to keep sync unlocked across browser sessions (trusted devices only)
-   - Only encrypted goal targets + fixed flags are synced; holdings, balances, and transactions never leave your browser
+   - Encrypted sync covers configuration (goal targets/fixed flags and OCBC allocation setup); holdings, balances, raw API responses, and transactions never leave your browser
 
 4. **Create Account**
    - Click "Sign Up" to register
