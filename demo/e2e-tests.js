@@ -1179,8 +1179,8 @@ async function captureOcbcFlow(page, summary, outputDir) {
     const hasAssetName = overlayTextAssets.includes('OCBC Global Equity Opportunities Fund');
     recordAssertion(summary, ocbcFlowName, 'assets-has-fund-name', hasAssetName, 'Assets view contains OCBC Global Equity Opportunities Fund.');
 
-    const hasAssetClass = overlayTextAssets.includes('Equity Funds') && overlayTextAssets.includes('Structured Products');
-    recordAssertion(summary, ocbcFlowName, 'assets-has-sub-asset-classes', hasAssetClass, 'Assets view contains Equity Funds and Structured Products.');
+    const hasSelectedPortfolioProductType = overlayTextAssets.includes('Equity Funds');
+    recordAssertion(summary, ocbcFlowName, 'assets-has-selected-portfolio-product-type', hasSelectedPortfolioProductType, 'Selected-portfolio assets view contains selected portfolio product type Equity Funds.');
 
     const hasReferenceAmount = /16,758\.20/.test(overlayTextAssets);
     recordAssertion(summary, ocbcFlowName, 'assets-has-reference-amount', hasReferenceAmount, 'Assets view contains 16,758.20 reference amount.');
