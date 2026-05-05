@@ -179,14 +179,14 @@ async function runE2ETests() {
         await captureScreenshot(page, summary, outputDir, 'summary');
         recordAssertion(summary, 'summary', 'summary-header', true, 'Summary header rendered.');
 
-        const options = await page.$$eval('select.gpv-select option', opts =>
-            opts.map(opt => opt.textContent)
+        const bucketCardTitles = await page.$$eval('.gpv-bucket-card .gpv-bucket-title', titles =>
+            titles.map(title => String(title.textContent || '').trim())
         );
-        const hasHouse = options.some(text => text.includes('House Purchase'));
-        const hasRetirement = options.some(text => text.includes('Retirement'));
-        assertCondition(hasHouse, 'Expected House Purchase option.');
-        assertCondition(hasRetirement, 'Expected Retirement option.');
-        recordAssertion(summary, 'summary', 'bucket-options', hasHouse && hasRetirement, 'Found bucket options.');
+        const hasHouse = bucketCardTitles.some(text => text.includes('House Purchase'));
+        const hasRetirement = bucketCardTitles.some(text => text.includes('Retirement'));
+        assertCondition(hasHouse, 'Expected House Purchase bucket card.');
+        assertCondition(hasRetirement, 'Expected Retirement bucket card.');
+        recordAssertion(summary, 'summary', 'bucket-cards', hasHouse && hasRetirement, 'Found bucket cards.');
 
         await openBucket(page, 'House Purchase');
         await page.waitForSelector('.gpv-content .gpv-fixed-toggle-input', { state: 'attached', timeout: 5000 });
@@ -210,6 +210,8 @@ async function runE2ETests() {
     recordAssertion(summary, 'house-purchase', 'fixed-toggle', true, 'Fixed toggle enabled.');
         await captureScreenshot(page, summary, outputDir, 'house-purchase');
 
+        await clickButtonByRole(page, /back to overview/i);
+        await page.waitForSelector('.gpv-bucket-card', { state: 'visible', timeout: 5000 });
         await openBucket(page, 'Retirement');
     recordAssertion(summary, 'retirement', 'detail-title', true, 'Retirement detail loaded.');
         await captureScreenshot(page, summary, outputDir, 'retirement');
@@ -1711,7 +1713,7 @@ async function captureEndowusExtendedFlow(page, summary, outputDir) {
         await captureScreenshot(page, summary, outputDir, 'endowus-bucket-manager');
         await clickButtonByRole(page, /back to portfolio viewer/i);
         await page.waitForSelector('.gpv-overlay .gpv-header', { timeout: 5000 });
-        await page.waitForSelector('select.gpv-select', { timeout: 5000 });
+        await page.waitForSelector('.gpv-bucket-card', { timeout: 5000 });
     }
 
     await openBucket(page, 'House Purchase');
