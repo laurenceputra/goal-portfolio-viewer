@@ -843,6 +843,62 @@ describe('initialization and URL monitoring', () => {
         expect(explicitSibling.getAttribute('aria-hidden')).toBe('false');
     });
 
+    test('showOverlay replacement runs prior cleanup and preserves aria-hidden restore semantics', () => {
+        const performanceData = [{
+            goalId: 'goal1',
+            totalCumulativeReturn: { amount: 100 },
+            simpleRateOfReturnPercent: 0.1
+        }];
+        const investibleData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
+            totalInvestmentAmount: { display: { amount: 1000 } }
+        }];
+        const summaryData = [{
+            goalId: 'goal1',
+            goalName: 'Retirement - Core Portfolio',
+            investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
+        }];
+
+        const plainSibling = document.createElement('div');
+        plainSibling.id = 'gpv-test-sibling-replace-plain';
+        document.body.appendChild(plainSibling);
+
+        const explicitSibling = document.createElement('div');
+        explicitSibling.id = 'gpv-test-sibling-replace-explicit';
+        explicitSibling.setAttribute('aria-hidden', 'false');
+        document.body.appendChild(explicitSibling);
+
+        global.GM_setValue('api_performance', JSON.stringify(performanceData));
+        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        global.alert = jest.fn();
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        const firstOverlay = document.querySelector('#gpv-overlay');
+        const replacementCleanupSpy = jest.fn();
+        firstOverlay.gpvCleanupCallbacks.push(replacementCleanupSpy);
+
+        exportsModule.showOverlay();
+
+        const secondOverlay = document.querySelector('#gpv-overlay');
+        expect(secondOverlay).toBeTruthy();
+        expect(secondOverlay).not.toBe(firstOverlay);
+        expect(replacementCleanupSpy).toHaveBeenCalledTimes(1);
+        expect(plainSibling.getAttribute('aria-hidden')).toBe('true');
+        expect(explicitSibling.getAttribute('aria-hidden')).toBe('true');
+
+        secondOverlay.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+        expect(document.querySelector('#gpv-overlay')).toBeNull();
+        expect(plainSibling.hasAttribute('aria-hidden')).toBe(false);
+        expect(explicitSibling.getAttribute('aria-hidden')).toBe('false');
+    });
+
     test('Endowus, FSM, and OCBC overlays start collapsed and support expand toggle', () => {
         const assertExpandToggleBehavior = expectedTitle => {
             const overlay = document.querySelector('#gpv-overlay');
@@ -2772,6 +2828,93 @@ describe('initialization and URL monitoring', () => {
         const targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core Equity"]');
         expect(targetInput).toBeTruthy();
         expect(targetInput.value).toBe('72.00');
+    });
+
+    test('OCBC target input clamps finite values, clears blanks, and ignores non-finite entries', () => {
+        teardownDom();
+        setupDom({
+            url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
+        });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                this._method = method;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        }));
+        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+            assets: {
+                'P-1': [{ id: 'core', name: 'Core', archived: false, buckets: [] }]
+            }
+        }));
+        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            'P-1:EQ1': { subPortfolioId: 'core', bucketId: '' }
+        }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = openOcbcOverviewPortfolio();
+        let targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core"]');
+        expect(targetInput).toBeTruthy();
+
+        targetInput.value = '150';
+        targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+        expect(JSON.parse(storage.get('ocbc')).targetsByScope['assets|P-1|core|']).toBe(100);
+
+        overlay = document.querySelector('#gpv-overlay');
+        targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core"]');
+        expect(targetInput.value).toBe('100.00');
+
+        targetInput.value = '-5';
+        targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+        expect(JSON.parse(storage.get('ocbc')).targetsByScope['assets|P-1|core|']).toBe(0);
+
+        overlay = document.querySelector('#gpv-overlay');
+        targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core"]');
+        expect(targetInput.value).toBe('0.00');
+
+        targetInput.value = '';
+        targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+        expect(JSON.parse(storage.get('ocbc')).targetsByScope['assets|P-1|core|']).toBeUndefined();
+
+        overlay = document.querySelector('#gpv-overlay');
+        targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core"]');
+        expect(targetInput.value).toBe('');
+
+        targetInput.value = 'Infinity';
+        targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+        expect(JSON.parse(storage.get('ocbc')).targetsByScope['assets|P-1|core|']).toBeUndefined();
     });
 
     test('OCBC allocation mode resolves duplicate legacy bucket ids by row product type and keeps product-scoped legacy targets', () => {

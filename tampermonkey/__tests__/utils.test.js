@@ -250,6 +250,19 @@ describe('route matchers', () => {
         ).toBe(false);
     });
 
+    test('normalizes trailing slashes for OCBC holdings route and rejects non-target path', () => {
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings///?menuId=111'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings-extra///?menuId=111'
+            )
+        ).toBe(false);
+    });
+
     test('does not match localhost OCBC route without explicit demo flag', () => {
         window.__GPV_OCBC_DEMO_ROUTE__ = false;
         expect(
