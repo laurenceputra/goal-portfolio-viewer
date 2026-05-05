@@ -127,15 +127,9 @@ async function takeScreenshots() {
         
         // Screenshot 2: House Purchase bucket detail
         console.log('📸 Capturing House Purchase bucket detail...');
-        
-        // Debug: check available options
-        const options = await page.$$eval('select.gpv-select option', opts => 
-            opts.map(opt => ({ value: opt.value, text: opt.textContent }))
-        );
-        console.log('   Available options:', options);
-        
-        // Select House Purchase from dropdown
-        await page.selectOption('select.gpv-select', options.find(opt => opt.text.includes('House Purchase'))?.value || 'House Purchase');
+
+        // Open House Purchase from bucket card
+        await page.locator('.gpv-bucket-card', { hasText: 'House Purchase' }).first().click();
         await page.waitForTimeout(1000); // Wait for view to update
         
         // Take screenshot of top section (performance graph)
@@ -163,6 +157,12 @@ async function takeScreenshots() {
         
         // Screenshot 3: Retirement bucket detail
         console.log('📸 Capturing Retirement bucket detail...');
+
+        await page.getByRole('button', { name: /back to overview/i }).click();
+        await page.waitForTimeout(500);
+
+        // Open Retirement from bucket card
+        await page.locator('.gpv-bucket-card', { hasText: 'Retirement' }).first().click();
         
         // Scroll back to top first
         await page.evaluate(() => {
@@ -172,9 +172,7 @@ async function takeScreenshots() {
             }
         });
         await page.waitForTimeout(300);
-        
-        // Select Retirement from dropdown using value
-        await page.selectOption('select.gpv-select', 'Retirement');
+
         await page.waitForTimeout(1000); // Wait for view to update
         
         // Take screenshot of top section (performance graph)

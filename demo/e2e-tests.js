@@ -1588,7 +1588,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
         return visibleOverviewCards > 0 && text.includes('Portfolio 6500142647-2');
     }, null, { timeout: 5000 });
 
-    await clickButtonByRole(page, /view all cached holdings/i);
+    await clickButtonByRole(page, /view all assets/i);
     await page.waitForFunction(() => {
         const overlay = document.querySelector('.gpv-overlay');
         if (!overlay) {
@@ -1612,19 +1612,19 @@ async function captureOcbcFlow(page, summary, outputDir) {
             && text.includes('OCBC Global Equity Opportunities Fund');
     }, null, { timeout: 5000 });
 
-    const allCachedViewIsReadOnly = await page.$eval('.gpv-overlay', root => {
+    const allScopeViewSelectorIsEnabled = await page.$eval('.gpv-overlay', root => {
         const select = root.querySelector('#gpv-ocbc-view-select');
         if (!(select instanceof HTMLSelectElement)) {
             return false;
         }
-        return select.disabled;
+        return !select.disabled;
     });
     recordAssertion(
         summary,
         ocbcFlowName,
-        'all-cached-read-only-view-select',
-        allCachedViewIsReadOnly,
-        'All-cached OCBC detail exposes a disabled view selector.'
+        'all-scope-enabled-view-select',
+        allScopeViewSelectorIsEnabled,
+        'All-scope OCBC detail exposes an enabled view selector.'
     );
 
     await clickButtonByRole(page, /back to overview/i);
