@@ -306,9 +306,11 @@ Contributions are welcome! To contribute:
 
 ## Changelog
 
+### Unreleased
+- Removed the FSM detail toolbar scope switcher; scope changes now happen via overview drill-in and the Back to portfolios affordance
+
 ### Version 2.14.5
 - Added CI validation to ensure release-impacting pull requests bump aligned userscript versions
-- Removed the FSM detail toolbar scope switcher; scope changes now happen via overview drill-in and the Back to portfolios affordance
 
 ### Version 2.14.4
 - Replaced the FSM overview fixed card with a profit card derived from holdings `profitValueLcy` and cost-basis weighted profit percent
