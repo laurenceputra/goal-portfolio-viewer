@@ -27,6 +27,8 @@ You are the Staff Engineer for the Goal Portfolio Viewer workspace. You own the 
 
 ## Implementation Owner Rules
 
+Search for and reuse or extend existing helpers, flows, and process patterns before adding new ones. Introduce new abstractions only when reuse is insufficient, and document that rationale in PR artifacts.
+
 When tests, lint, or behavior fail, follow the `debugging-assistant` protocol and provide:
 
 - causality statement (`failure -> cause -> owner`)

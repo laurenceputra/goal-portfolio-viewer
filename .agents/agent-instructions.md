@@ -167,6 +167,20 @@ If the gate fails:
 - The durable, approved spec record must live in the PR body, not in committed `spec/` files.
 - The PR body must be updated before implementation proceeds if the Spec-Clarity Gate fails, and before merge for all changes.
 
+## Reuse-First Implementation Policy
+
+Apply this policy to all repository surfaces and change types: code, tests, docs, workflows, and agent/process rules.
+
+Before adding new code or process paths:
+
+1. Inspect and search for existing helpers, renderers, stores, process rules, or workflow patterns that already solve part of the problem.
+2. Prefer reusing or extending existing abstractions over adding parallel implementations.
+3. Add a new abstraction or helper only when reuse/extension is not sufficient.
+
+When a new abstraction or helper is introduced, the PR artifacts must justify why extension of existing paths was not the right option.
+
+Reuse-first changes must preserve current behavior and keep tests aligned with that behavior.
+
 ## Required PR Artifacts
 
 Every PR or change record must include these sections:

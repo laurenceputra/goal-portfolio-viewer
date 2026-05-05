@@ -46,6 +46,8 @@ After any `important` or `blocking` review finding is fixed:
 - confirm focused QA and broad affected-surface QA are both represented
 - call out any remaining gaps before the PR returns to review
 
+For reuse/refactor changes that consolidate or expand shared paths, verify all callers of the shared/reused path and confirm behavior parity with any previously separate path.
+
 ## Verification Priorities
 
 ### Critical

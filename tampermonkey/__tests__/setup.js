@@ -46,8 +46,16 @@ if (!global.window.__GPV_DISABLE_AUTO_INIT) {
 
 if (typeof global.afterEach === 'function') {
     global.afterEach(() => {
+        const modulePath = require.resolve('../goal_portfolio_viewer.user.js');
+        const cachedModule = require.cache[modulePath];
+        if (cachedModule?.exports?.SyncManager?.stopAutoSync) {
+            cachedModule.exports.SyncManager.stopAutoSync();
+        }
         if (global.window?.__gpvUrlMonitorCleanup) {
             global.window.__gpvUrlMonitorCleanup();
+        }
+        if (typeof jest !== 'undefined') {
+            jest.clearAllTimers();
         }
     });
 }

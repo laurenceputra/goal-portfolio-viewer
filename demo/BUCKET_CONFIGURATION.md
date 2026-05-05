@@ -14,13 +14,13 @@ This document tracks the bucket and target configuration used in the demo.
 
 **Total Returns:** $7,071.36 (+4.16%)
 
-**Ending Balance:** $176,925.49
+**Current value:** $176,925.49
 
 **Time Horizon:** 1.0 year(s) (365 days)
 
 ### Goals Breakdown
 
-| Goal | Target | Actual Investment | Returns | Return % | Ending Balance |
+| Goal | Target | Actual Investment | Returns | Return % | Current value |
 |------|--------|-------------------|---------|----------|----------------|
 | Core - Balanced | $140,000.00 | $122,215.72 | $6,702.31 | +5.80% | $128,918.03 |
 | Megatrends | $20,000.00 | $16,034.20 | $219.66 | +1.39% | $16,253.86 |
@@ -55,13 +55,13 @@ This document tracks the bucket and target configuration used in the demo.
 
 **Total Returns:** $7,742.07 (+14.05%)
 
-**Ending Balance:** $62,840.20
+**Current value:** $62,840.20
 
 **Time Horizon:** 2.0 year(s) (730 days)
 
 ### Goals Breakdown
 
-| Goal | Target | Actual Investment | Returns | Return % | Ending Balance |
+| Goal | Target | Actual Investment | Returns | Return % | Current value |
 |------|--------|-------------------|---------|----------|----------------|
 | Core - Aggressive | $33,000.00 | $33,454.81 | $7,072.67 | +26.81% | $40,527.48 |
 | Megatrends | $9,000.00 | $9,599.74 | $2,460.42 | +34.46% | $12,060.16 |

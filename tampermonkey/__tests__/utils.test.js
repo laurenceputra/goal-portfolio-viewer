@@ -16,6 +16,7 @@ const {
     sortGoalsByName,
     formatMoney,
     formatPercent,
+    normalizePercentTargetValue,
     formatGrowthPercentFromEndingBalance,
     calculateGoalDiff,
     calculateFixedTargetPercent,
@@ -113,6 +114,23 @@ describe('normalizeString', () => {
         expect(utils.normalizeString(123)).toBe('123');
         expect(utils.normalizeString(false)).toBe('false');
         expect(utils.normalizeString({ key: 'value' })).toBe('[object Object]');
+    });
+});
+
+describe('normalizePercentTargetValue', () => {
+    test('clamps finite values to 0-100', () => {
+        expect(normalizePercentTargetValue('150')).toEqual({ kind: 'value', value: 100 });
+        expect(normalizePercentTargetValue(-5)).toEqual({ kind: 'value', value: 0 });
+    });
+
+    test('treats blank values as clear signal', () => {
+        expect(normalizePercentTargetValue('')).toEqual({ kind: 'blank', value: null });
+        expect(normalizePercentTargetValue('   ')).toEqual({ kind: 'blank', value: null });
+    });
+
+    test('returns invalid for non-finite values', () => {
+        expect(normalizePercentTargetValue('not-a-number')).toEqual({ kind: 'invalid', value: null });
+        expect(normalizePercentTargetValue('Infinity')).toEqual({ kind: 'invalid', value: null });
     });
 });
 
@@ -232,6 +250,19 @@ describe('route matchers', () => {
         ).toBe(false);
     });
 
+    test('normalizes trailing slashes for OCBC holdings route and rejects non-target path', () => {
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings///?menuId=111'
+            )
+        ).toBe(true);
+        expect(
+            isOcbcPortfolioHoldingsRoute(
+                'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings-extra///?menuId=111'
+            )
+        ).toBe(false);
+    });
+
     test('does not match localhost OCBC route without explicit demo flag', () => {
         window.__GPV_OCBC_DEMO_ROUTE__ = false;
         expect(
@@ -274,6 +305,13 @@ describe('route matchers', () => {
             )
         ).toBe(false);
         window.__GPV_OCBC_DEMO_ROUTE__ = false;
+    });
+
+    test('returns false for invalid or non-string OCBC holdings URLs', () => {
+        expect(isOcbcPortfolioHoldingsRoute('')).toBe(false);
+        expect(isOcbcPortfolioHoldingsRoute(null)).toBe(false);
+        expect(isOcbcPortfolioHoldingsRoute(undefined)).toBe(false);
+        expect(isOcbcPortfolioHoldingsRoute({ href: 'https://internet.ocbc.com' })).toBe(false);
     });
 });
 
