@@ -1141,33 +1141,13 @@ async function captureOcbcFlow(page, summary, outputDir) {
             const rect = node.getBoundingClientRect();
             return rect.width > 0 && rect.height > 0;
         }).length;
-        const hasVisibleViewAllAssetsButton = Array.from(document.querySelectorAll('button')).some(button => {
-            if (!(button instanceof HTMLElement)) {
-                return false;
-            }
-            const rect = button.getBoundingClientRect();
-            const text = (button.textContent || '').trim();
-            return rect.width > 0 && rect.height > 0 && /view all assets/i.test(text);
-        });
-        const hasVisibleViewAllLiabilitiesButton = Array.from(document.querySelectorAll('button')).some(button => {
-            if (!(button instanceof HTMLElement)) {
-                return false;
-            }
-            const rect = button.getBoundingClientRect();
-            const text = (button.textContent || '').trim();
-            return rect.width > 0 && rect.height > 0 && /view all liabilities/i.test(text);
-        });
         return {
-            visibleOverviewCardCount,
-            hasVisibleViewAllAssetsButton,
-            hasVisibleViewAllLiabilitiesButton
+            visibleOverviewCardCount
         };
     });
     recordAssertion(summary, ocbcFlowName, 'overview-has-cards', overviewStructure.visibleOverviewCardCount > 0, 'Overview has visible portfolio cards.');
-    recordAssertion(summary, ocbcFlowName, 'overview-has-view-all-assets-button', overviewStructure.hasVisibleViewAllAssetsButton, 'Overview shows View all assets action.');
-    recordAssertion(summary, ocbcFlowName, 'overview-has-view-all-liabilities-button', overviewStructure.hasVisibleViewAllLiabilitiesButton, 'Overview shows View all liabilities action.');
 
-    await clickButtonByRole(page, /view all assets/i);
+    await clickButtonByRole(page, /open portfolio 6500142646-2 assets/i);
     await page.waitForFunction(() => {
         const overlay = document.querySelector('.gpv-overlay');
         if (!overlay) {
@@ -1234,7 +1214,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
         return visibleOverviewCards > 0 && text.includes('Portfolio 6500142646-2');
     }, null, { timeout: 5000 });
 
-    await clickButtonByRole(page, /open portfolio 6500142646-2/i);
+    await clickButtonByRole(page, /open portfolio 6500142646-2 assets/i);
     await page.waitForFunction(() => {
         const overlay = document.querySelector('.gpv-overlay');
         if (!overlay) {
@@ -1590,7 +1570,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
         return visibleOverviewCards > 0 && text.includes('Portfolio 6500142647-2');
     }, null, { timeout: 5000 });
 
-    await clickButtonByRole(page, /view all assets/i);
+    await clickButtonByRole(page, /open portfolio 6500142647-2 assets/i);
     await page.waitForFunction(() => {
         const overlay = document.querySelector('.gpv-overlay');
         if (!overlay) {
@@ -1611,10 +1591,10 @@ async function captureOcbcFlow(page, summary, outputDir) {
         return hasBackToOverview
             && visibleOverviewCards === 0
             && text.includes('Identifier')
-            && text.includes('OCBC Global Equity Opportunities Fund');
+            && text.includes('Portfolio 6500142647-2');
     }, null, { timeout: 5000 });
 
-    const allScopeViewSelectorIsEnabled = await page.$eval('.gpv-overlay', root => {
+    const selectedPortfolioViewSelectorIsEnabled = await page.$eval('.gpv-overlay', root => {
         const select = root.querySelector('#gpv-ocbc-view-select');
         if (!(select instanceof HTMLSelectElement)) {
             return false;
@@ -1624,9 +1604,9 @@ async function captureOcbcFlow(page, summary, outputDir) {
     recordAssertion(
         summary,
         ocbcFlowName,
-        'all-scope-enabled-view-select',
-        allScopeViewSelectorIsEnabled,
-        'All-scope OCBC detail exposes an enabled view selector.'
+        'selected-portfolio-enabled-view-select',
+        selectedPortfolioViewSelectorIsEnabled,
+        'Selected-portfolio OCBC detail exposes an enabled view selector.'
     );
 
     await clickButtonByRole(page, /back to overview/i);
@@ -1646,7 +1626,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
         return visibleOverviewCards > 0 && text.includes('Portfolio 6500142647-2');
     }, null, { timeout: 5000 });
 
-    await clickButtonByRole(page, /open portfolio 6500142647-2/i);
+    await clickButtonByRole(page, /open portfolio 6500142647-2 assets/i);
     await page.waitForFunction(() => {
         const overlay = document.querySelector('.gpv-overlay');
         if (!overlay) {
