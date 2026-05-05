@@ -1139,23 +1139,33 @@ async function captureOcbcFlow(page, summary, outputDir) {
             const rect = node.getBoundingClientRect();
             return rect.width > 0 && rect.height > 0;
         }).length;
-        const hasVisibleViewAllButton = Array.from(document.querySelectorAll('button')).some(button => {
+        const hasVisibleViewAllAssetsButton = Array.from(document.querySelectorAll('button')).some(button => {
             if (!(button instanceof HTMLElement)) {
                 return false;
             }
             const rect = button.getBoundingClientRect();
             const text = (button.textContent || '').trim();
-            return rect.width > 0 && rect.height > 0 && /view all cached holdings/i.test(text);
+            return rect.width > 0 && rect.height > 0 && /view all assets/i.test(text);
+        });
+        const hasVisibleViewAllLiabilitiesButton = Array.from(document.querySelectorAll('button')).some(button => {
+            if (!(button instanceof HTMLElement)) {
+                return false;
+            }
+            const rect = button.getBoundingClientRect();
+            const text = (button.textContent || '').trim();
+            return rect.width > 0 && rect.height > 0 && /view all liabilities/i.test(text);
         });
         return {
             visibleOverviewCardCount,
-            hasVisibleViewAllButton
+            hasVisibleViewAllAssetsButton,
+            hasVisibleViewAllLiabilitiesButton
         };
     });
     recordAssertion(summary, ocbcFlowName, 'overview-has-cards', overviewStructure.visibleOverviewCardCount > 0, 'Overview has visible portfolio cards.');
-    recordAssertion(summary, ocbcFlowName, 'overview-has-view-all-button', overviewStructure.hasVisibleViewAllButton, 'Overview shows View all cached holdings action.');
+    recordAssertion(summary, ocbcFlowName, 'overview-has-view-all-assets-button', overviewStructure.hasVisibleViewAllAssetsButton, 'Overview shows View all assets action.');
+    recordAssertion(summary, ocbcFlowName, 'overview-has-view-all-liabilities-button', overviewStructure.hasVisibleViewAllLiabilitiesButton, 'Overview shows View all liabilities action.');
 
-    await clickButtonByRole(page, /view all cached holdings/i);
+    await clickButtonByRole(page, /view all assets/i);
     await page.waitForFunction(() => {
         const overlay = document.querySelector('.gpv-overlay');
         if (!overlay) {

@@ -1699,7 +1699,7 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).toContain('OCBC portfolio holdings data');
     });
 
-    test('showOverlay renders OCBC overview first and supports portfolio detail/liabilities switch', () => {
+    test('showOverlay renders OCBC overview sections and detail switch without filtering overview by selector', () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -1779,10 +1779,20 @@ describe('initialization and URL monitoring', () => {
         expect(overlay).toBeTruthy();
         expect(overlay.textContent).toContain('Portfolio Viewer (OCBC)');
         expect(overlay.textContent).toContain('Overview');
+        expect(overlay.textContent).toContain('Assets');
+        expect(overlay.textContent).toContain('Liabilities');
+        expect(overlay.textContent).toContain('View all assets');
+        expect(overlay.textContent).toContain('View all liabilities');
         const overviewCards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'));
-        expect(overviewCards.length).toBe(1);
-        expect(overviewCards[0].textContent).toContain('Portfolio P-1');
-        expect(overlay.textContent).toContain('View all cached holdings');
+        expect(overviewCards.length).toBe(2);
+        const assetCard = overviewCards.find(card => card.textContent.includes('Assets'));
+        const liabilityCard = overviewCards.find(card => card.textContent.includes('Liabilities'));
+        expect(assetCard).toBeTruthy();
+        expect(liabilityCard).toBeTruthy();
+        expect(assetCard.textContent).toContain('2 holding');
+        expect(assetCard.textContent).not.toContain('OCBC Liability');
+        expect(liabilityCard.textContent).toContain('1 holding');
+        expect(liabilityCard.textContent).not.toContain('OCBC Asset');
 
         const viewSelect = overlay.querySelector('#gpv-ocbc-view-select');
         const controlBar = overlay.querySelector('.gpv-control-bar');
@@ -1794,7 +1804,7 @@ describe('initialization and URL monitoring', () => {
         expect(viewSelect.disabled).toBe(true);
         expect(viewSelect.getAttribute('tabindex')).toBe('-1');
 
-        overviewCards[0].click();
+        assetCard.click();
         expect(overlay.textContent).toContain('Back to overview');
         expect(overlay.textContent).toContain('Portfolio P-1');
         expect(overlay.textContent).toContain('OCBC Asset');
@@ -1819,6 +1829,8 @@ describe('initialization and URL monitoring', () => {
         expect(viewSelect.disabled).toBe(true);
         expect(viewSelect.getAttribute('tabindex')).toBe('-1');
         expect(overlay.textContent).toContain('Overview');
+        expect(overlay.textContent).toContain('Assets');
+        expect(overlay.textContent).toContain('Liabilities');
     });
 
     test('OCBC selected detail renders allocation holdings once and planning without cross-portfolio bleed', () => {
@@ -1899,10 +1911,11 @@ describe('initialization and URL monitoring', () => {
         backBtn.click();
 
         expect(overlay.textContent).toContain('Overview');
-        expect(overlay.textContent).toContain('View all cached holdings');
+        expect(overlay.textContent).toContain('View all assets');
+        expect(overlay.textContent).toContain('View all liabilities');
     });
 
-    test('OCBC overview shows cached portfolios, card drill-down, and view all cached holdings', () => {
+    test('OCBC overview shows split sections, split all-scope actions, and detail selector enabled in all-scope', () => {
         teardownDom();
         setupDom({
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
@@ -1958,7 +1971,7 @@ describe('initialization and URL monitoring', () => {
 
         let overlay = document.querySelector('#gpv-overlay');
         const cards = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'));
-        expect(cards.length).toBe(2);
+        expect(cards.length).toBe(3);
         const controlBar = overlay.querySelector('.gpv-control-bar');
         const overviewViewSelect = overlay.querySelector('#gpv-ocbc-view-select');
         expect(controlBar.hidden).toBe(true);
@@ -1967,7 +1980,16 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.querySelector('#gpv-ocbc-mode-select')).toBeNull();
         expect(Array.from(overlay.querySelectorAll('label')).some(label => label.textContent.includes('Mode:'))).toBe(false);
 
-        const p1Card = cards.find(card => card.textContent.includes('Portfolio P-1'));
+        const p1AssetCard = cards.find(card => card.textContent.includes('Portfolio P-1') && card.textContent.includes('Assets'));
+        expect(p1AssetCard).toBeTruthy();
+        const p1LiabilityCard = cards.find(card => card.textContent.includes('Portfolio P-1') && card.textContent.includes('Liabilities'));
+        expect(p1LiabilityCard).toBeTruthy();
+        expect(p1AssetCard.textContent).toContain('1 holding');
+        expect(p1AssetCard.textContent).not.toContain('Liability 1');
+        expect(p1LiabilityCard.textContent).toContain('1 holding');
+        expect(p1LiabilityCard.textContent).not.toContain('Asset 1');
+
+        const p1Card = p1AssetCard;
         p1Card.click();
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Asset 1');
@@ -1986,14 +2008,14 @@ describe('initialization and URL monitoring', () => {
         const backBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
         backBtn.click();
         overlay = document.querySelector('#gpv-overlay');
-        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all cached holdings'));
-        viewAllBtn.click();
+        const viewAllAssetsBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all assets'));
+        viewAllAssetsBtn.click();
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Asset 1');
         expect(overlay.textContent).toContain('Asset 2');
-        expect(controlBar.hidden).toBe(true);
-        expect(overviewViewSelect.disabled).toBe(true);
-        expect(overviewViewSelect.getAttribute('tabindex')).toBe('-1');
+        expect(controlBar.hidden).toBe(false);
+        expect(overviewViewSelect.disabled).toBe(false);
+        expect(overviewViewSelect.hasAttribute('tabindex')).toBe(false);
         expect(overlay.querySelector('#gpv-ocbc-mode-select')).toBeNull();
         expect(Array.from(overlay.querySelectorAll('label')).some(label => label.textContent.includes('Mode:'))).toBe(false);
 
@@ -2016,8 +2038,20 @@ describe('initialization and URL monitoring', () => {
         backToOverviewBtn.click();
         overlay = document.querySelector('#gpv-overlay');
 
+        const viewAllLiabilitiesBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all liabilities'));
+        viewAllLiabilitiesBtn.click();
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Liability 1');
+        expect(overlay.textContent).not.toContain('Asset 1');
+        const liabilitiesSelect = overlay.querySelector('#gpv-ocbc-view-select');
+        expect(liabilitiesSelect.disabled).toBe(false);
+
+        const backAgainBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to overview'));
+        backAgainBtn.click();
+        overlay = document.querySelector('#gpv-overlay');
+
         const portfolioCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card'))
-            .find(card => card.textContent.includes('Portfolio P-1'));
+            .find(card => card.textContent.includes('Portfolio P-1') && card.textContent.includes('Assets'));
         portfolioCard.click();
         overlay = document.querySelector('#gpv-overlay');
 

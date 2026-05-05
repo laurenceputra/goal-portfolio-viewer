@@ -15988,75 +15988,96 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
         }
 
-        function renderOverview(activeView) {
-            const rows = activeView === 'liabilities' ? liabilities : assets;
-            const grouped = buildOcbcAllocationRowsByPortfolio(rows);
-            const portfolioNos = Object.keys(grouped).sort((left, right) => left.localeCompare(right, 'en', { sensitivity: 'base' }));
-            if (!portfolioNos.length) {
-                contentDiv.appendChild(createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.'));
-                return;
-            }
-
+        function renderOverview() {
             const overview = createElement('div', 'gpv-fsm-overview');
             const header = createElement('div', 'gpv-fsm-overview-header');
             const copy = createElement('div', 'gpv-fsm-overview-copy');
             copy.appendChild(createWorkspaceTitle({ title: 'Overview', level: 2 }));
-            copy.appendChild(createElement('p', null, 'Select a portfolio to open details, or view all cached holdings.'));
+            copy.appendChild(createElement('p', null, 'Select a portfolio to open details for assets or liabilities.'));
             header.appendChild(copy);
-            const viewAllBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'View all cached holdings');
-            viewAllBtn.type = 'button';
-            viewAllBtn.onclick = () => {
+
+            const allActions = createElement('div', 'gpv-actions-row');
+            const viewAllAssetsBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'View all assets');
+            viewAllAssetsBtn.type = 'button';
+            viewAllAssetsBtn.onclick = () => {
+                viewSelect.value = 'assets';
                 selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
                 viewMode = 'detail';
                 rerender();
             };
-            header.appendChild(viewAllBtn);
+            const viewAllLiabilitiesBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'View all liabilities');
+            viewAllLiabilitiesBtn.type = 'button';
+            viewAllLiabilitiesBtn.onclick = () => {
+                viewSelect.value = 'liabilities';
+                selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
+                viewMode = 'detail';
+                rerender();
+            };
+            allActions.appendChild(viewAllAssetsBtn);
+            allActions.appendChild(viewAllLiabilitiesBtn);
+            header.appendChild(allActions);
             overview.appendChild(header);
 
-            const grid = createElement('div', 'gpv-fsm-overview-grid');
-            portfolioNos.forEach(portfolioNo => {
-                const portfolioRows = grouped[portfolioNo] || [];
-                const summary = buildOcbcSummary(portfolioRows);
-                const card = createElement('button', 'gpv-fsm-overview-card');
-                card.type = 'button';
-                const meta = holdingsByPortfolio[portfolioNo] || {};
-                const statusText = latestPortfolioNos.has(portfolioNo)
-                    ? 'Current session'
-                    : (meta.lastSeenAt ? `Cached · ${new Date(meta.lastSeenAt).toLocaleString()}` : 'Cached');
-                createKeyboardSelectableCard(card, {
-                    ariaLabel: `Open portfolio ${portfolioNo}`,
-                    onSelect: () => {
-                        selectedPortfolioNo = portfolioNo;
-                        viewMode = 'detail';
-                        rerender();
-                    }
+            const renderOverviewSection = ({ sectionTitle, sectionView, rows }) => {
+                const section = createElement('section', 'gpv-fsm-overview-section');
+                section.appendChild(createWorkspaceTitle({ title: sectionTitle, level: 3 }));
+                const grouped = buildOcbcAllocationRowsByPortfolio(rows);
+                const portfolioNos = Object.keys(grouped).sort((left, right) => left.localeCompare(right, 'en', { sensitivity: 'base' }));
+                if (!portfolioNos.length) {
+                    section.appendChild(createElement('p', 'gpv-sync-help', `No ${sectionTitle.toLowerCase()} available.`));
+                    overview.appendChild(section);
+                    return;
+                }
+                const grid = createElement('div', 'gpv-fsm-overview-grid');
+                portfolioNos.forEach(portfolioNo => {
+                    const portfolioRows = grouped[portfolioNo] || [];
+                    const summary = buildOcbcSummary(portfolioRows);
+                    const card = createElement('button', 'gpv-fsm-overview-card');
+                    card.type = 'button';
+                    const meta = holdingsByPortfolio[portfolioNo] || {};
+                    const statusText = latestPortfolioNos.has(portfolioNo)
+                        ? 'Current session'
+                        : (meta.lastSeenAt ? `Cached · ${new Date(meta.lastSeenAt).toLocaleString()}` : 'Cached');
+                    createKeyboardSelectableCard(card, {
+                        ariaLabel: `Open portfolio ${portfolioNo} ${sectionView}`,
+                        onSelect: () => {
+                            viewSelect.value = sectionView;
+                            selectedPortfolioNo = portfolioNo;
+                            viewMode = 'detail';
+                            rerender();
+                        }
+                    });
+                    card.innerHTML = `
+                        <div class="gpv-fsm-overview-card-header">
+                            <div>
+                                <h2 class="gpv-fsm-overview-card-title">${escapeHtml(`Portfolio ${portfolioNo}`)}</h2>
+                                <p class="gpv-fsm-overview-card-subtitle">${escapeHtml(`${portfolioRows.length} holding${portfolioRows.length === 1 ? '' : 's'}`)}</p>
+                            </div>
+                            <span class="gpv-fsm-overview-card-tag">${escapeHtml(sectionTitle)}</span>
+                        </div>
+                        <div class="gpv-fsm-overview-stats">
+                            <div class="gpv-fsm-overview-stat">
+                                <span class="gpv-fsm-overview-stat-label">Total value</span>
+                                <span class="gpv-fsm-overview-stat-value">${escapeHtml(formatMoney(summary.total))}</span>
+                            </div>
+                            <div class="gpv-fsm-overview-stat">
+                                <span class="gpv-fsm-overview-stat-label">Profit</span>
+                                <span class="gpv-fsm-overview-stat-value ${escapeHtml(summary.profitClass || '')}">${escapeHtml(summary.profitDisplay || '-')}</span>
+                            </div>
+                            <div class="gpv-fsm-overview-stat">
+                                <span class="gpv-fsm-overview-stat-label">Status</span>
+                                <span class="gpv-fsm-overview-stat-value">${escapeHtml(statusText)}</span>
+                            </div>
+                        </div>
+                    `;
+                    grid.appendChild(card);
                 });
-                card.innerHTML = `
-                    <div class="gpv-fsm-overview-card-header">
-                        <div>
-                            <h2 class="gpv-fsm-overview-card-title">${escapeHtml(`Portfolio ${portfolioNo}`)}</h2>
-                            <p class="gpv-fsm-overview-card-subtitle">${escapeHtml(`${portfolioRows.length} holding${portfolioRows.length === 1 ? '' : 's'}`)}</p>
-                        </div>
-                        <span class="gpv-fsm-overview-card-tag">${escapeHtml(activeView === 'liabilities' ? 'Liabilities' : 'Assets')}</span>
-                    </div>
-                    <div class="gpv-fsm-overview-stats">
-                        <div class="gpv-fsm-overview-stat">
-                            <span class="gpv-fsm-overview-stat-label">Total value</span>
-                            <span class="gpv-fsm-overview-stat-value">${escapeHtml(formatMoney(summary.total))}</span>
-                        </div>
-                        <div class="gpv-fsm-overview-stat">
-                            <span class="gpv-fsm-overview-stat-label">Profit</span>
-                            <span class="gpv-fsm-overview-stat-value ${escapeHtml(summary.profitClass || '')}">${escapeHtml(summary.profitDisplay || '-')}</span>
-                        </div>
-                        <div class="gpv-fsm-overview-stat">
-                            <span class="gpv-fsm-overview-stat-label">Status</span>
-                            <span class="gpv-fsm-overview-stat-value">${escapeHtml(statusText)}</span>
-                        </div>
-                    </div>
-                `;
-                grid.appendChild(card);
-            });
-            overview.appendChild(grid);
+                section.appendChild(grid);
+                overview.appendChild(section);
+            };
+
+            renderOverviewSection({ sectionTitle: 'Assets', sectionView: 'assets', rows: assets });
+            renderOverviewSection({ sectionTitle: 'Liabilities', sectionView: 'liabilities', rows: liabilities });
             contentDiv.appendChild(overview);
         }
 
@@ -16068,14 +16089,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             if (viewMode === 'overview') {
                 controls.hidden = true;
                 setElementsDisabled(detailToolbarControls, true);
-                renderOverview(activeView);
+                renderOverview();
                 return;
             }
 
-            const isAllPortfolioDetail = selectedPortfolioNo === FSM_ALL_PORTFOLIO_ID;
-            const showDetailControls = !isAllPortfolioDetail;
-            controls.hidden = !showDetailControls;
-            setElementsDisabled(detailToolbarControls, !showDetailControls);
+            controls.hidden = false;
+            setElementsDisabled(detailToolbarControls, false);
 
             if (selectedPortfolioNo !== FSM_ALL_PORTFOLIO_ID) {
                 rows = rows.filter(row => utils.normalizeString(row?.portfolioNo, '-') === selectedPortfolioNo);
