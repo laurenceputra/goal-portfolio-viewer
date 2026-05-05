@@ -14178,17 +14178,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return panel;
     }
 
-    function createFsmDetailToolbar({ onScopeChange, onFilterChange }) {
+    function createFsmDetailToolbar({ onFilterChange }) {
         const toolbar = createElement('div', 'gpv-fsm-toolbar gpv-fsm-filter-toolbar');
-
-        const scopeSelect = createElement('select', 'gpv-select');
-        scopeSelect.setAttribute('aria-label', 'Select portfolio scope');
-        scopeSelect.onchange = () => {
-            if (typeof onScopeChange === 'function') {
-                onScopeChange(scopeSelect.value);
-            }
-        };
-        toolbar.appendChild(scopeSelect);
 
         const searchInput = createElement('input', 'gpv-target-input gpv-fsm-filter-input');
         searchInput.placeholder = 'Filter holdings';
@@ -14200,16 +14191,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         };
         toolbar.appendChild(searchInput);
 
-        let lastOptionsMarkup = '';
-        const setState = ({ scopeOptions, selectedScope, filterTerm }) => {
-            const nextOptionsMarkup = (Array.isArray(scopeOptions) ? scopeOptions : []).map(option => `
-                <option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>
-            `).join('');
-            if (nextOptionsMarkup !== lastOptionsMarkup) {
-                scopeSelect.innerHTML = nextOptionsMarkup;
-                lastOptionsMarkup = nextOptionsMarkup;
-            }
-            scopeSelect.value = selectedScope;
+        const setState = ({ filterTerm }) => {
             if (searchInput.value !== filterTerm) {
                 searchInput.value = filterTerm;
             }
@@ -14217,8 +14199,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return {
             element: toolbar,
             setState,
-            searchInput,
-            scopeSelect
+            searchInput
         };
     }
 
@@ -14506,18 +14487,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
 
         const detailToolbar = createFsmDetailToolbar({
-            onScopeChange: value => {
-                selectedScope = value;
-                selectedHoldingIds = new Set();
-                rerender();
-            },
             onFilterChange: value => {
                 filterTerm = value;
                 rerender();
             }
         });
         toolbarSection.appendChild(detailToolbar.element);
-        const detailToolbarControls = [detailToolbar.searchInput, detailToolbar.scopeSelect];
+        const detailToolbarControls = [detailToolbar.searchInput];
 
         const focusAfterRender = () => {
             if (nextFocusTarget === 'overview') {
@@ -14774,8 +14750,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 }));
             }
             detailToolbar.setState({
-                scopeOptions: viewState.scopeOptions,
-                selectedScope,
                 filterTerm
             });
 

@@ -822,27 +822,26 @@ async function captureFsmFlow(page, summary, outputDir) {
             }
         }
     });
-    await page.selectOption('.gpv-fsm-filter-toolbar select.gpv-select', 'demo-fsm-core');
+    await clickButtonByRole(page, /back to portfolios/i);
+    const coreOverviewCard = page.locator('.gpv-fsm-overview-card').filter({ hasText: /core/i }).first();
+    await coreOverviewCard.click();
     await page.waitForSelector('.gpv-projected-input', { timeout: 5000 });
     await page.waitForFunction(() => {
-        const scopeSelect = document.querySelector('.gpv-fsm-filter-toolbar select.gpv-select');
         const projectedInput = document.querySelector('.gpv-projected-input');
         const overlay = document.querySelector('.gpv-overlay');
         const text = overlay && overlay.textContent ? overlay.textContent : '';
         return Boolean(
-            scopeSelect instanceof HTMLSelectElement
-            && scopeSelect.value === 'demo-fsm-core'
-            && projectedInput
+            projectedInput
             && /what-if split/i.test(text)
+            && /add projected investment for core/i.test(text)
         );
     }, null, { timeout: 5000 });
     const preAmountCoreState = await page.evaluate(() => {
-        const scopeSelect = document.querySelector('.gpv-fsm-filter-toolbar select.gpv-select');
         const projectedInput = document.querySelector('.gpv-projected-input');
         const overlay = document.querySelector('.gpv-overlay');
         const text = overlay && overlay.textContent ? overlay.textContent : '';
         return {
-            coreScopeSelected: scopeSelect instanceof HTMLSelectElement && scopeSelect.value === 'demo-fsm-core',
+            coreScopeSelected: /add projected investment for core/i.test(text),
             hasProjectionInput: Boolean(projectedInput),
             hasWhatIfPrompt: /what-if split/i.test(text)
         };

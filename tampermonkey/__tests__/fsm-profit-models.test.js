@@ -404,9 +404,15 @@ describe('FSM profit models', () => {
         expect(overlay.textContent).not.toContain('Set a projected investment amount to see a what-if split.');
         expect(overlay.textContent).not.toContain('Projected Investment:');
 
-        const scopeSelect = overlay.querySelector('.gpv-fsm-filter-toolbar select.gpv-select');
-        scopeSelect.value = 'unassigned';
-        scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        const backToPortfoliosBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to portfolios'));
+        backToPortfoliosBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const unassignedCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).find(card => (
+            card.querySelector('.gpv-fsm-overview-card-title')?.textContent.trim() === 'Unassigned'
+        ));
+        unassignedCard.click();
+
         overlay = document.querySelector('#gpv-overlay');
         expect(getProjectionInput(overlay)).toBeNull();
         expect(overlay.textContent).not.toContain('Set a projected investment amount to see a what-if split.');
@@ -460,16 +466,29 @@ describe('FSM profit models', () => {
         expect(overlay.textContent).toContain('AAPL: SGD\u00A0500.00');
         expect(overlay.textContent).toContain('BOND: SGD\u00A0500.00');
 
-        const scopeSelect = overlay.querySelector('.gpv-fsm-filter-toolbar select.gpv-select');
-        scopeSelect.value = p2;
-        scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        const backToPortfoliosBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to portfolios'));
+        backToPortfoliosBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const growthCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).find(card => (
+            card.querySelector('.gpv-fsm-overview-card-title')?.textContent.trim() === 'Growth'
+        ));
+        growthCard.click();
+
         overlay = document.querySelector('#gpv-overlay');
         const growthProjectionInput = getProjectionInput(overlay);
         expect(growthProjectionInput).toBeTruthy();
         expect(growthProjectionInput.value).toBe('');
 
-        scopeSelect.value = p1;
-        scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        const backToPortfoliosButtonAgain = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to portfolios'));
+        backToPortfoliosButtonAgain.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const incomeCardAgain = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).find(card => (
+            card.querySelector('.gpv-fsm-overview-card-title')?.textContent.trim() === 'Income'
+        ));
+        incomeCardAgain.click();
+
         overlay = document.querySelector('#gpv-overlay');
         expect(getProjectionInput(overlay).value).toBe('1000');
     });
@@ -518,11 +537,24 @@ describe('FSM profit models', () => {
         expect(overlay.textContent).not.toContain('AAPL: SGD\u00A0');
         expect(overlay.textContent).not.toContain('BOND: SGD\u00A0');
 
-        const scopeSelect = overlay.querySelector('.gpv-fsm-filter-toolbar select.gpv-select');
-        scopeSelect.value = 'growth';
-        scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-        scopeSelect.value = portfolioId;
-        scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        const backToPortfoliosBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to portfolios'));
+        backToPortfoliosBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const growthCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).find(card => (
+            card.querySelector('.gpv-fsm-overview-card-title')?.textContent.trim() === 'Growth'
+        ));
+        growthCard.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const backToPortfoliosButtonAgain = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to portfolios'));
+        backToPortfoliosButtonAgain.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const incomeCardAgain = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).find(card => (
+            card.querySelector('.gpv-fsm-overview-card-title')?.textContent.trim() === 'Income'
+        ));
+        incomeCardAgain.click();
 
         overlay = document.querySelector('#gpv-overlay');
         expect(getProjectionInput(overlay).value).toBe('');

@@ -5224,12 +5224,13 @@ describe('initialization and URL monitoring', () => {
         expect(firstRow.querySelector('td[data-col="current"]').textContent.trim()).toBe('100.00%');
         expect(firstRow.querySelector('td[data-col="drift"]').textContent.trim()).toBe('+66.67% (+SGD\u00A0480.00)');
 
-        const scopeToolbar = Array.from(overlay.querySelectorAll('.gpv-fsm-toolbar')).find(toolbar =>
-            toolbar.querySelector('input.gpv-target-input.gpv-fsm-filter-input')
-        );
-        const scopeSelect = scopeToolbar.querySelector('select.gpv-select');
-        scopeSelect.value = 'all';
-        scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+        const topBarButtons = overlay.querySelector('.gpv-header-buttons');
+        const backBtn = Array.from(topBarButtons.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to portfolios'));
+        backBtn.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const viewAllBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        viewAllBtn.click();
 
         overlay = document.querySelector('#gpv-overlay');
         firstRow = overlay.querySelector('table tbody tr');
@@ -5763,6 +5764,7 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.querySelector('table')).toBeTruthy();
+        expect(overlay.querySelector('select[aria-label="Select portfolio scope"]')).toBeNull();
         const topBarButtons = overlay.querySelector('.gpv-header-buttons');
         const backButtons = Array.from(topBarButtons.querySelectorAll('button')).filter(btn => btn.textContent.includes('Back to portfolios'));
         expect(backButtons.filter(btn => !btn.hidden)).toHaveLength(1);
