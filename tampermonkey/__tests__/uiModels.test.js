@@ -21,6 +21,9 @@ const {
     buildPlanningModel,
     buildPlanningTradeLines,
     buildPlanningRecommendations,
+    calculateAllocationRowDrift,
+    calculateFsmRowDrift,
+    buildNeedsAttentionItemsFromHealth,
     collectGoalIds,
     collectAllGoalIds,
     buildGoalTargetById,
@@ -42,6 +45,7 @@ const {
     createGoalTargetFixture,
     createGoalFixedFixture
 } = require('./fixtures/uiFixtures');
+
 
 describe('format helpers', () => {
     test('should return correct return class', () => {
@@ -92,6 +96,23 @@ describe('format helpers', () => {
         expect(isRemainingTargetAboveThreshold(2)).toBe(false);
         expect(isRemainingTargetAboveThreshold(2.01)).toBe(true);
         expect(isRemainingTargetAboveThreshold('invalid')).toBe(false);
+    });
+
+    test('should keep allocation drift helper alias behavior identical', () => {
+        const total = 1000;
+        const row = { currentValueLcy: 300, targetPercent: 40 };
+        expect(calculateAllocationRowDrift(total, row)).toEqual(calculateFsmRowDrift(total, row));
+    });
+
+    test('should build needs-attention items from health reasons', () => {
+        const items = buildNeedsAttentionItemsFromHealth([
+            { id: 'a', label: 'Portfolio A', health: { reasons: ['Coverage missing'] } },
+            { id: 'b', label: 'Portfolio B', health: { reasons: ['Large drift'] } }
+        ]);
+        expect(items).toEqual([
+            { id: 'a', label: 'Portfolio A: Coverage missing', reason: 'Coverage missing' },
+            { id: 'b', label: 'Portfolio B: Large drift', reason: 'Large drift' }
+        ]);
     });
 });
 
