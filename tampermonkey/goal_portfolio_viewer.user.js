@@ -83,6 +83,7 @@
     const LEGACY_FSM_EXACT_KEYS = [STORAGE_KEYS.fsmHoldings, STORAGE_KEYS.fsmPortfolios, STORAGE_KEYS.fsmAssignmentByCode];
     const LEGACY_FSM_PREFIXES = [STORAGE_KEY_PREFIXES.fsmTarget, STORAGE_KEY_PREFIXES.fsmFixed];
     const LEGACY_OCBC_EXACT_KEYS = [
+        STORAGE_KEYS.ocbcAllocationBuckets,
         STORAGE_KEYS.ocbcHoldings,
         STORAGE_KEYS.ocbcSubPortfolios,
         STORAGE_KEYS.ocbcAllocationAssignmentByCode,
@@ -3259,6 +3260,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return {
             holdingsByPortfolio,
             holdings: normalizedHoldings || (Object.keys(holdingsByPortfolio).length ? flattenOcbcHoldingsByPortfolio(holdingsByPortfolio) : null),
+            allocationBuckets: source.allocationBuckets && typeof source.allocationBuckets === 'object' ? source.allocationBuckets : {},
             subPortfolios: normalizeOcbcSubPortfoliosForStore(source.subPortfolios),
             assignmentByCode: normalizeOcbcAssignmentByCodeForStore(source.assignmentByCode),
             orderByScope: normalizeOcbcOrderByScopeForStore(source.orderByScope),
@@ -3311,6 +3313,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     }
 
     function cleanupLegacyOcbcKeys() {
+        Storage.remove(STORAGE_KEYS.ocbcAllocationBuckets, 'Error deleting legacy OCBC allocation buckets data');
         Storage.remove(STORAGE_KEYS.ocbcHoldings, 'Error deleting legacy OCBC holdings data');
         Storage.remove(STORAGE_KEYS.ocbcSubPortfolios, 'Error deleting legacy OCBC sub-portfolios data');
         Storage.remove(STORAGE_KEYS.ocbcAllocationAssignmentByCode, 'Error deleting legacy OCBC assignment data');
@@ -3468,6 +3471,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         }
         const hasLegacyKeys = hasAnyLegacyStoreKeys(
             [
+                STORAGE_KEYS.ocbcAllocationBuckets,
                 STORAGE_KEYS.ocbcHoldings,
                 STORAGE_KEYS.ocbcSubPortfolios,
                 STORAGE_KEYS.ocbcAllocationAssignmentByCode,
@@ -3583,6 +3587,11 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             }
         }
         return {
+            allocationBuckets: Storage.readJson(
+                STORAGE_KEYS.ocbcAllocationBuckets,
+                data => data && typeof data === 'object' && !Array.isArray(data),
+                'Error loading OCBC allocation buckets'
+            ) || {},
             subPortfolios: normalizeOcbcSubPortfoliosForStore(
                 Storage.readJson(STORAGE_KEYS.ocbcSubPortfolios, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC sub-portfolios') || {}
             ),
@@ -3949,7 +3958,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 rawStored,
                 normalized,
                 legacy,
-                ['holdings', 'subPortfolios', 'assignmentByCode', 'orderByScope', 'targetsByScope']
+                ['holdings', 'allocationBuckets', 'subPortfolios', 'assignmentByCode', 'orderByScope', 'targetsByScope']
             );
             if (didMerge) {
                 const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, merged, 'Error writing merged OCBC store');
@@ -4687,7 +4696,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 : { targetsByCode: {}, fixedByCode: {}, timestamp: config.timestamp || Date.now() };
             const ocbc = config.platforms.ocbc && typeof config.platforms.ocbc === 'object'
                 ? config.platforms.ocbc
-                : { subPortfolios: {}, assignmentByCode: {}, targetsByScope: {}, timestamp: config.timestamp || Date.now() };
+                : { allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, targetsByScope: {}, timestamp: config.timestamp || Date.now() };
             return {
                 version: 2,
                 platforms: {
@@ -4706,6 +4715,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                         timestamp: typeof fsm.timestamp === 'number' ? fsm.timestamp : (config.timestamp || Date.now())
                     },
                     ocbc: {
+                        allocationBuckets: ocbc.allocationBuckets && typeof ocbc.allocationBuckets === 'object' ? ocbc.allocationBuckets : {},
                         subPortfolios: normalizeOcbcSubPortfoliosConfig(ocbc.subPortfolios),
                         assignmentByCode: normalizeOcbcAssignmentByCodeConfig(ocbc.assignmentByCode),
                         orderByScope: normalizeOcbcOrderByScopeEntries(ocbc.orderByScope),
@@ -4735,6 +4745,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
                 },
                 ocbc: {
+                    allocationBuckets: {},
                     subPortfolios: {},
                     assignmentByCode: {},
                     orderByScope: {},
@@ -4773,6 +4784,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     timestamp
                 },
                 ocbc: {
+                    allocationBuckets: ocbc.allocationBuckets && typeof ocbc.allocationBuckets === 'object' ? ocbc.allocationBuckets : {},
                     subPortfolios: ocbc.subPortfolios,
                     assignmentByCode: ocbc.assignmentByCode,
                     orderByScope: ocbc.orderByScope,
@@ -4917,10 +4929,12 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const ocbcSubPortfolios = normalizeOcbcSubPortfoliosConfig(ocbc.subPortfolios);
         const ocbcAssignmentByCode = normalizeOcbcAssignmentByCodeConfig(ocbc.assignmentByCode);
         const ocbcOrderByScope = normalizeOcbcOrderByScopeEntries(ocbc.orderByScope);
+        const ocbcAllocationBuckets = ocbc.allocationBuckets && typeof ocbc.allocationBuckets === 'object' ? ocbc.allocationBuckets : {};
         const ocbcTargetsByScope = ocbc.targetsByScope && typeof ocbc.targetsByScope === 'object' ? ocbc.targetsByScope : {};
         const currentOcbcStore = readOcbcStore();
         const updatedOcbcStore = normalizeOcbcStore({
             ...currentOcbcStore,
+            allocationBuckets: ocbcAllocationBuckets,
             subPortfolios: ocbcSubPortfolios,
             assignmentByCode: ocbcAssignmentByCode,
             orderByScope: ocbcOrderByScope,
@@ -4991,6 +5005,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             ocbcSubPortfolios: Object.keys(ocbcSubPortfolios).length,
             ocbcAssignments: Object.keys(ocbcAssignmentByCode).length,
             ocbcOrderScopes: Object.keys(ocbcOrderByScope).length,
+            ocbcAllocationBucketViews: Object.keys(ocbcAllocationBuckets).length,
             ocbcTargets: Object.keys(ocbcTargetsByScope).length
         });
     }
@@ -15055,7 +15070,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function loadOcbcAllocationConfig() {
-        const bucketsByView = Storage.readJson(
+        const legacyBucketsByView = Storage.readJson(
             STORAGE_KEYS.ocbcAllocationBuckets,
             data => data && typeof data === 'object' && !Array.isArray(data),
             'Error reading OCBC allocation buckets'
@@ -15082,6 +15097,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             data => data && typeof data === 'object' && !Array.isArray(data),
             'Error reading OCBC allocation order'
         ) || {};
+        const bucketsByView = hasTopLevelOcbcStore
+            ? (ocbcStore.allocationBuckets || {})
+            : (Object.keys(ocbcStore.allocationBuckets || {}).length ? ocbcStore.allocationBuckets : legacyBucketsByView);
         const subPortfoliosByView = hasTopLevelOcbcStore
             ? (ocbcStore.subPortfolios || {})
             : (Object.keys(ocbcStore.subPortfolios || {}).length ? ocbcStore.subPortfolios : legacySubPortfolios);

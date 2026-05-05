@@ -860,7 +860,7 @@ describe('SyncManager', () => {
                 platforms: {
                     endowus: { goalTargets: { 'goal-1': 20 }, goalFixed: {}, timestamp: Date.now() },
                     fsm: { targetsByCode: { AAA: 10 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
-                    ocbc: { subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+                    ocbc: { allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
                 },
                 timestamp: Date.now()
             })).toThrow('Failed to save FSM sync config data');
@@ -899,7 +899,7 @@ describe('SyncManager', () => {
                 platforms: {
                     endowus: { goalTargets: { 'goal-1': 80 }, goalFixed: {}, timestamp: Date.now() },
                     fsm: { targetsByCode: { AAA: 33 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
-                    ocbc: { subPortfolios: { assets: {} }, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+                    ocbc: { allocationBuckets: {}, subPortfolios: { assets: {} }, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
                 },
                 timestamp: Date.now()
             })).toThrow('Failed to save OCBC sync config data');
@@ -948,7 +948,7 @@ describe('SyncManager', () => {
                 platforms: {
                     endowus: { goalTargets: { 'goal-1': 80 }, goalFixed: {}, timestamp: Date.now() },
                     fsm: { targetsByCode: { AAA: 33 }, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
-                    ocbc: { subPortfolios: { assets: {} }, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+                    ocbc: { allocationBuckets: {}, subPortfolios: { assets: {} }, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
                 },
                 timestamp: Date.now()
             })).toThrow('Failed to save OCBC sync config data');
@@ -967,6 +967,7 @@ describe('SyncManager', () => {
 
     test('collectConfigData includes OCBC config and excludes raw holdings', () => {
         const { SyncManager } = loadModule();
+        storage.set('ocbc_allocation_buckets', JSON.stringify({ assets: [{ id: 'legacy', name: 'Legacy' }] }));
         storage.set('ocbc_sub_portfolios', JSON.stringify({ assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false, buckets: [{ id: 'legacy' }] }] } }));
         storage.set('ocbc_allocation_assignment_by_code', JSON.stringify({ 'P-1:EQ1': { subPortfolioId: 'core', bucketId: 'legacy' } }));
         storage.set('ocbc_allocation_order_by_scope', JSON.stringify({
@@ -976,6 +977,7 @@ describe('SyncManager', () => {
         storage.set('api_ocbc_holdings', JSON.stringify({ assets: [{ code: 'P-1:EQ1' }], liabilities: [] }));
         global.GM_listValues = () => [
             'ocbc_sub_portfolios',
+            'ocbc_allocation_buckets',
             'ocbc_allocation_assignment_by_code',
             'ocbc_allocation_order_by_scope',
             'ocbc_target_pct_assets|P-1|core|P-1%3AEQ1',
@@ -989,10 +991,12 @@ describe('SyncManager', () => {
         expect(config.platforms.ocbc.orderByScope).toEqual({
             'assets|P-1|core': ['P-1:EQ2', 'P-1:EQ1']
         });
+        expect(config.platforms.ocbc.allocationBuckets).toEqual({ assets: [{ id: 'legacy', name: 'Legacy' }] });
         expect(config.platforms.ocbc.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 55 });
         expect(JSON.stringify(config)).not.toContain('api_ocbc_holdings');
         expect(JSON.stringify(config)).not.toContain('marketValueReferenceCcy');
         expect(config.platforms.ocbc.holdings).toBeUndefined();
+        expect(storage.has('ocbc_allocation_buckets')).toBe(false);
 
         storage.clear();
         global.GM_listValues = () => [];
@@ -1001,6 +1005,8 @@ describe('SyncManager', () => {
         expect(JSON.parse(storage.get('ocbc')).orderByScope).toEqual({
             'assets|P-1|core': ['P-1:EQ2', 'P-1:EQ1']
         });
+        expect(JSON.parse(storage.get('ocbc')).allocationBuckets).toEqual({ assets: [{ id: 'legacy', name: 'Legacy' }] });
+        expect(JSON.parse(storage.get('ocbc')).holdings).toBeNull();
     });
 
     test('collectConfigData excludes Endowus raw API payload fields', () => {
@@ -1108,7 +1114,7 @@ describe('SyncManager', () => {
                     timestamp: Date.now()
                 },
                 fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
-                ocbc: { subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
+                ocbc: { allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, timestamp: Date.now() }
             },
             timestamp: Date.now()
         });
@@ -1127,7 +1133,7 @@ describe('SyncManager', () => {
         const deleteSpy = jest.spyOn(global, 'GM_deleteValue');
         storage.set('endowus', JSON.stringify({ performance: null, investible: null, summary: null, goalTargets: {}, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} }));
         storage.set('fsm', JSON.stringify({ holdings: [], targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} }));
-        storage.set('ocbc', JSON.stringify({ holdings: null, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {} }));
+        storage.set('ocbc', JSON.stringify({ holdings: null, allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {} }));
         global.GM_listValues = () => ['endowus', 'fsm', 'ocbc'];
 
         SyncManager.collectConfigData();
@@ -1144,6 +1150,7 @@ describe('SyncManager', () => {
                 endowus: { goalTargets: {}, goalFixed: {}, timestamp: 100 },
                 fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: 100 },
                 ocbc: {
+                    allocationBuckets: {},
                     subPortfolios: { assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false }] } },
                     assignmentByCode: { 'P-1:gpv-ocbc-deadbeef': 'core' },
                     orderByScope: { 'assets|P-1|core': ['P-1:gpv-ocbc-deadbeef'] },
@@ -1181,6 +1188,7 @@ describe('SyncManager', () => {
                 endowus: { goalTargets: {}, goalFixed: {}, timestamp: Date.now() },
                 fsm: { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {}, timestamp: Date.now() },
                 ocbc: {
+                    allocationBuckets: {},
                     subPortfolios: { assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false, buckets: [{ id: 'drop-me' }] }] } },
                     assignmentByCode: { 'P-1:EQ1': { subPortfolioId: 'core', bucketId: 'legacy' } },
                     targetsByScope: { 'assets|P-1|core|P-1%3AEQ1': 60 },
@@ -1194,6 +1202,21 @@ describe('SyncManager', () => {
         expect(ocbc.subPortfolios.assets['P-1'][0].buckets).toBeUndefined();
         expect(ocbc.assignmentByCode).toEqual({ 'P-1:EQ1': 'core' });
         expect(ocbc.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 60 });
+        expect(ocbc.allocationBuckets).toEqual({});
+    });
+
+    test('collectConfigData merges legacy OCBC allocation buckets into namespaced store and cleans legacy key', () => {
+        const { SyncManager } = loadModule();
+        storage.set('ocbc', JSON.stringify({ subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {} }));
+        storage.set('ocbc_allocation_buckets', JSON.stringify({ assets: [{ id: 'legacy', name: 'Legacy' }] }));
+        global.GM_listValues = () => ['ocbc', 'ocbc_allocation_buckets'];
+
+        const config = SyncManager.collectConfigData();
+
+        expect(config.platforms.ocbc.allocationBuckets).toEqual({ assets: [{ id: 'legacy', name: 'Legacy' }] });
+        const ocbc = JSON.parse(storage.get('ocbc'));
+        expect(ocbc.allocationBuckets).toEqual({ assets: [{ id: 'legacy', name: 'Legacy' }] });
+        expect(storage.has('ocbc_allocation_buckets')).toBe(false);
     });
 
     describe('multi-device reconciliation', () => {
