@@ -10981,6 +10981,11 @@ syncUi.update = function updateSyncUI() {
                 gap: 10px;
                 flex-wrap: wrap;
             }
+
+            .gpv-controls[hidden],
+            .gpv-control-bar[hidden] {
+                display: none;
+            }
             
             .gpv-select-label {
                 font-weight: 600;
@@ -16253,31 +16258,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             headerButtons.prepend(bucketManageBtn);
         }
         const controls = createElement('div', 'gpv-controls gpv-control-bar');
-        const { label: selectLabel, select } = createSelectControl({
-            id: 'gpv-endowus-view-select',
-            labelText: 'View:',
-            labelClassName: 'gpv-select-label',
-            selectClassName: 'gpv-select',
-            options: []
-        });
-        function refreshBucketSelectOptions(preferredValue) {
-            const selectedValue = preferredValue || select.value || 'SUMMARY';
-            select.innerHTML = '';
-            const summaryOption = createElement('option', null, '📊 Summary View');
-            summaryOption.value = 'SUMMARY';
-            select.appendChild(summaryOption);
-            Object.keys(mergedInvestmentDataState || {}).sort().forEach(bucket => {
-                const opt = createElement('option', null, `📁 ${bucket}`);
-                opt.value = bucket;
-                select.appendChild(opt);
-            });
-            const hasSelected = Array.from(select.options).some(option => option.value === selectedValue);
-            select.value = hasSelected ? selectedValue : 'SUMMARY';
-        }
-        refreshBucketSelectOptions('SUMMARY');
-
-        controls.appendChild(selectLabel);
-        controls.appendChild(select);
 
         const modeToggle = createElement('div', 'gpv-mode-toggle');
         modeToggle.setAttribute('role', 'group');
@@ -16295,7 +16275,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         controls.appendChild(modeToggle);
         container.insertBefore(controls, contentDiv);
-        const detailToolbarControls = [select, allocationButton, performanceButton];
+        const detailToolbarControls = [allocationButton, performanceButton];
 
         const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
         const backToOverviewBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
@@ -16377,7 +16357,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 if (token !== performanceRefreshToken) {
                     return;
                 }
-                if (select.value !== selectionKey) {
+                if (viewMode !== 'detail' || selectedBucket !== selectionKey) {
                     return;
                 }
                 if (currentBucketMode !== BUCKET_VIEW_MODES.performance) {
@@ -16416,8 +16396,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         function focusAfterRender() {
             if (nextFocusTarget === 'detail') {
-                if (select && typeof select.focus === 'function') {
-                    select.focus();
+                if (backToOverviewBtn && typeof backToOverviewBtn.focus === 'function' && !backToOverviewBtn.disabled) {
+                    backToOverviewBtn.focus();
+                } else if (allocationButton && typeof allocationButton.focus === 'function' && !allocationButton.disabled) {
+                    allocationButton.focus();
+                } else if (performanceButton && typeof performanceButton.focus === 'function' && !performanceButton.disabled) {
+                    performanceButton.focus();
                 }
             } else if (nextFocusTarget === 'summary') {
                 const summaryFocusTarget = getSummaryFocusFallbackTarget();
@@ -16430,13 +16414,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         function renderView({ scrollToTop = false, useCacheOnly = false } = {}) {
             let selection = viewMode === 'detail' ? selectedBucket : 'SUMMARY';
-            const selectionExists = Array.from(select.options).some(option => option.value === selection);
+            const selectionExists = selection === 'SUMMARY' || Boolean(mergedInvestmentDataState?.[selection]);
             if (!selectionExists) {
                 viewMode = 'summary';
                 selectedBucket = 'SUMMARY';
                 selection = 'SUMMARY';
             }
-            select.value = selection;
             performanceRefreshToken += 1;
             const refreshToken = performanceRefreshToken;
             ViewPipeline.render({
@@ -16500,7 +16483,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 viewMode = 'summary';
                 selectedBucket = 'SUMMARY';
             }
-            refreshBucketSelectOptions(viewMode === 'detail' ? selectedBucket : 'SUMMARY');
             renderView();
         });
         cleanupCallbacks.push(unsubscribeOverlayUpdates);
@@ -16620,21 +16602,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             });
             setupBucketManagerListeners(managerView?.body);
         });
-
-        select.onchange = function() {
-            const nextSelection = utils.normalizeString(select.value, 'SUMMARY');
-            if (nextSelection === 'SUMMARY') {
-                showSummaryView();
-                return;
-            }
-            if (!mergedInvestmentDataState[nextSelection]) {
-                showSummaryView();
-                return;
-            }
-            viewMode = 'detail';
-            selectedBucket = nextSelection;
-            renderView({ scrollToTop: true });
-        };
 
     }
 

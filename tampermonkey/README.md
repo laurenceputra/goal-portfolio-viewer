@@ -84,7 +84,7 @@ Perfect for investors using strategies like Core + Satellite across multiple lif
 3. **Open Portfolio Viewer**: Click the "📊 Portfolio Viewer" button in the bottom-right corner
 4. **Explore Your Portfolio**: 
    - View the summary to see all buckets at a glance
-   - Select individual buckets from the dropdown to see detailed breakdowns
+   - Click a bucket card (or a Needs Attention item) to open its detailed breakdown
 
 ### Goal Naming Convention
 
@@ -110,10 +110,10 @@ The script will automatically group all goals starting with the same bucket name
 - Highlights a **Needs Attention** strip when setup or allocation issues need action
 - Shows a health status badge with explicit reasons on each summary card
 - Perfect for a quick overview of your entire portfolio
-- Click any bucket card to jump directly to its detail view (syncs the dropdown selection)
+- Click any bucket card (or an attention strip item) to jump directly to its detail view
 
 #### Bucket Detail View
-- Select a specific bucket from the dropdown (or click a bucket card in the summary view)
+- Enter from the summary by clicking a bucket card or Needs Attention item
 - See detailed information about each goal within that bucket
 - View individual goal performance metrics
 - Use the planning panel to review target coverage, scenario contribution split, and rebalance summary
@@ -121,6 +121,7 @@ The script will automatically group all goals starting with the same bucket name
 - Use `Allocation` mode for planning fields (Fixed/Target/Diff) and `Performance` mode for return-focused views
 - Mode selection persists between sessions for quick switching
 - Collapse the performance chart/metrics and projection sections per goal type (collapsed by default, remembered per section); switching to Performance mode auto-expands performance panels for visibility
+- Use **Back to overview** to return to the summary cards
 - Use the header `Expand` button to temporarily grow the overlay (resets to default size each time you reopen it)
 - Compare goals within the same bucket
 - Use per-goal fixed toggles to lock a goal's amount and auto-sync its target %
