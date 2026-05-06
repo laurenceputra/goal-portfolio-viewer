@@ -58,26 +58,10 @@
         </div>
     </div>
 
+    <script src="/shared-demo-bootstrap.js"></script>
+
     <script>
-        const mockStorage = {};
-
-        window.GM_setValue = function(key, value) {
-            mockStorage[key] = value;
-        };
-
-        window.GM_getValue = function(key, defaultValue) {
-            return Object.prototype.hasOwnProperty.call(mockStorage, key) ? mockStorage[key] : defaultValue;
-        };
-
-        window.GM_deleteValue = function(key) {
-            delete mockStorage[key];
-        };
-
-        window.GM_listValues = function() {
-            return Object.keys(mockStorage);
-        };
-
-        window.GM_cookie = undefined;
+        window.GpvDemoBootstrap.installGmShim({ includeListValues: true });
     </script>
 
     <script>
@@ -143,16 +127,6 @@
             GM_setValue('fsm_assignment_by_code', JSON.stringify(assignmentByCode));
         }
 
-        function loadUserscript() {
-            return new Promise((resolve, reject) => {
-                const script = document.createElement('script');
-                script.src = '/tampermonkey/goal_portfolio_viewer.user.js';
-                script.onload = () => resolve();
-                script.onerror = () => reject(new Error('Failed to load userscript'));
-                document.head.appendChild(script);
-            });
-        }
-
         async function bootstrapMockData() {
             const response = await fetch('/fsmone/rest/holding/client/protected/find-holdings-with-pnl');
             const payload = await response.json();
@@ -183,46 +157,25 @@
             return payload;
         }
 
-        function waitForButton() {
-            return new Promise(resolve => {
-                const check = () => {
-                    if (document.querySelector('.gpv-trigger-btn')) {
-                        resolve();
-                        return;
-                    }
-                    setTimeout(check, 100);
-                };
-                check();
-            });
-        }
-
         function waitForSyncUiExports() {
-            return new Promise(resolve => {
-                const check = () => {
-                    if (window.__gpvSyncUi?.createSyncSettingsHTML && window.__gpvSyncUi?.createConflictDialogHTML) {
-                        resolve();
-                        return;
-                    }
-                    setTimeout(check, 50);
-                };
-                check();
+            return window.GpvDemoBootstrap.waitForCondition(() => {
+                return Boolean(window.__gpvSyncUi?.createSyncSettingsHTML && window.__gpvSyncUi?.createConflictDialogHTML);
+            }, {
+                timeoutMs: 10000,
+                intervalMs: 50,
+                errorMessage: 'Timed out waiting for sync UI exports'
             });
-        }
-
-        function signalReady() {
-            window.__GPV_E2E_READY__ = true;
-            window.dispatchEvent(new Event('gpv:e2e-ready'));
         }
 
         seedFsmStoreBase();
 
-        loadUserscript()
+        window.GpvDemoBootstrap.loadUserscript('/tampermonkey/goal_portfolio_viewer.user.js')
             .then(bootstrapMockData)
-            .then(waitForButton)
+            .then(() => window.GpvDemoBootstrap.waitForButton())
             .then(waitForSyncUiExports)
             .then(() => {
                 updateStatus('FSM demo data loaded. Ready for E2E tests.');
-                signalReady();
+                window.GpvDemoBootstrap.signalReady();
             })
             .catch(error => {
                 console.error('[FSM Demo] Failed to initialize:', error);

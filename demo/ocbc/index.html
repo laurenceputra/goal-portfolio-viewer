@@ -58,26 +58,10 @@
         </div>
     </div>
 
+    <script src="/shared-demo-bootstrap.js"></script>
+
     <script>
-        const mockStorage = {};
-
-        window.GM_setValue = function(key, value) {
-            mockStorage[key] = value;
-        };
-
-        window.GM_getValue = function(key, defaultValue) {
-            return Object.prototype.hasOwnProperty.call(mockStorage, key) ? mockStorage[key] : defaultValue;
-        };
-
-        window.GM_deleteValue = function(key) {
-            delete mockStorage[key];
-        };
-
-        window.GM_listValues = function() {
-            return Object.keys(mockStorage);
-        };
-
-        window.GM_cookie = undefined;
+        window.GpvDemoBootstrap.installGmShim({ includeListValues: true });
     </script>
 
     <script>
@@ -93,16 +77,6 @@
             }
         }
 
-        function loadUserscript() {
-            return new Promise((resolve, reject) => {
-                const script = document.createElement('script');
-                script.src = '/tampermonkey/goal_portfolio_viewer.user.js';
-                script.onload = () => resolve();
-                script.onerror = () => reject(new Error('Failed to load userscript'));
-                document.head.appendChild(script);
-            });
-        }
-
         async function bootstrapMockData() {
             const response = await fetch('/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry', {
                 method: 'POST'
@@ -110,32 +84,14 @@
             await response.json();
         }
 
-        function waitForButton() {
-            return new Promise(resolve => {
-                const check = () => {
-                    if (document.querySelector('.gpv-trigger-btn')) {
-                        resolve();
-                        return;
-                    }
-                    setTimeout(check, 100);
-                };
-                check();
-            });
-        }
-
-        function signalReady() {
-            window.__GPV_E2E_READY__ = true;
-            window.dispatchEvent(new Event('gpv:e2e-ready'));
-        }
-
         window.__GPV_OCBC_DEMO_ROUTE__ = true;
 
-        loadUserscript()
+        window.GpvDemoBootstrap.loadUserscript('/tampermonkey/goal_portfolio_viewer.user.js')
             .then(bootstrapMockData)
-            .then(waitForButton)
+            .then(() => window.GpvDemoBootstrap.waitForButton())
             .then(() => {
                 updateStatus('OCBC demo data loaded. Ready for E2E tests.');
-                signalReady();
+                window.GpvDemoBootstrap.signalReady();
             })
             .catch(error => {
                 console.error('[OCBC Demo] Failed to initialize:', error);

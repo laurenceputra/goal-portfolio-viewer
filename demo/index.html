@@ -125,23 +125,11 @@
         </div>
     </div>
 
+    <script src="shared-demo-bootstrap.js"></script>
+
     <!-- Mock Tampermonkey API -->
     <script>
-        const mockStorage = {};
-        
-        window.GM_setValue = function(key, value) {
-            mockStorage[key] = value;
-        };
-        
-        window.GM_getValue = function(key, defaultValue) {
-            return mockStorage.hasOwnProperty(key) ? mockStorage[key] : defaultValue;
-        };
-        
-        window.GM_deleteValue = function(key) {
-            delete mockStorage[key];
-        };
-        
-        window.GM_cookie = undefined;
+        window.GpvDemoBootstrap.installGmShim({ includeListValues: false });
     </script>
     
     <!-- Load mock data and inject into storage -->
@@ -186,10 +174,7 @@
         // Override shouldShowButton before loading the userscript
         // This allows the button to show in demo mode
         (function() {
-            const originalScript = document.createElement('script');
-            originalScript.src = 'goal_portfolio_viewer.user.js';
-            
-            originalScript.onload = function() {
+            window.GpvDemoBootstrap.loadUserscript('goal_portfolio_viewer.user.js').then(function() {
                 console.log('[Demo] Userscript loaded');
                 
                 // Force button visibility in demo mode by patching the function
@@ -214,9 +199,9 @@
                 setTimeout(function() {
                     clearInterval(checkInterval);
                 }, 5000);
-            };
-            
-            document.head.appendChild(originalScript);
+            }).catch(function(error) {
+                console.error('[Demo] Failed to load userscript:', error);
+            });
         })();
     </script>
     
