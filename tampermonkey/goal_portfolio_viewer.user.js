@@ -8550,6 +8550,66 @@ let GoalTargetStore;
         return { row, input, button };
     }
 
+    function createManagerActionSelect({
+        ariaLabel,
+        placeholder = 'Actions',
+        options,
+        className = 'gpv-select',
+        onSelect
+    }) {
+        const select = createElement('select', className);
+        if (ariaLabel) {
+            select.setAttribute('aria-label', ariaLabel);
+        }
+        const normalizedOptions = [
+            { value: '', label: placeholder },
+            ...((Array.isArray(options) ? options : []).map(item => ({
+                value: utils.normalizeString(item?.value, ''),
+                label: utils.normalizeString(item?.label, '')
+            })))
+        ];
+        normalizedOptions.forEach(optionItem => {
+            const option = createElement('option', null, optionItem.label);
+            option.value = optionItem.value;
+            select.appendChild(option);
+        });
+        select.addEventListener('change', () => {
+            const action = select.value;
+            select.value = '';
+            if (!action) {
+                return;
+            }
+            if (typeof onSelect === 'function') {
+                onSelect(action, { select });
+            }
+        });
+        return select;
+    }
+
+    function createManagerListRow({ rowClassName, labelText, actionsNode = null }) {
+        const row = createElement('div', `gpv-manager-row ${rowClassName || ''}`.trim());
+        row.appendChild(createElement('span', null, labelText));
+        if (actionsNode?.nodeType) {
+            row.appendChild(actionsNode);
+        }
+        return row;
+    }
+
+    function attachInputCommitHandlers(input, onCommit) {
+        if (!input || typeof onCommit !== 'function') {
+            return;
+        }
+        const commit = () => onCommit({ input });
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                commit();
+                input.blur();
+            }
+        });
+    }
+
     function createWorkspaceTable({ headers, className = 'gpv-table' }) {
         const table = createElement('table', className);
         const thead = createElement('thead');
@@ -10602,6 +10662,7 @@ function withButtonState(button, busyText, action) {
 function renderSyncOverlayView({
     title,
     bodyHtml,
+    bodyNode,
     onBack,
     backLabel,
     overlayClassName = 'gpv-overlay',
@@ -10639,7 +10700,11 @@ function renderSyncOverlayView({
     const { overlay, container, contentDiv: body } = shell;
     closeOverlay = shell.closeOverlay;
 
-    body.innerHTML = bodyHtml;
+    if (bodyNode?.nodeType) {
+        body.replaceChildren(bodyNode);
+    } else {
+        body.innerHTML = bodyHtml;
+    }
 
     return { overlay, container, body };
 }
@@ -14415,32 +14480,35 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 };
                 row.appendChild(cancelRenameBtn);
             } else {
-                row.innerHTML = `<span>${escapeHtml(item.name)}</span>`;
                 const actions = createElement('div', 'gpv-fsm-portfolio-actions');
-                const actionSelect = createElement('select', 'gpv-select');
-                actionSelect.setAttribute('aria-label', `Actions for portfolio ${item.name}`);
-                actionSelect.innerHTML = `
-                    <option value="">Actions</option>
-                    <option value="rename">Rename portfolio</option>
-                    <option value="archive">Archive portfolio</option>
-                `;
-                actionSelect.onchange = () => {
-                    const action = actionSelect.value;
-                    actionSelect.value = '';
-                    if (action === 'rename') {
-                        if (typeof onStartRename === 'function') {
-                            onStartRename(item.id);
+                const actionSelect = createManagerActionSelect({
+                    ariaLabel: `Actions for portfolio ${item.name}`,
+                    options: [
+                        { value: 'rename', label: 'Rename portfolio' },
+                        { value: 'archive', label: 'Archive portfolio' }
+                    ],
+                    onSelect: action => {
+                        if (action === 'rename') {
+                            if (typeof onStartRename === 'function') {
+                                onStartRename(item.id);
+                            }
+                            return;
                         }
-                        return;
-                    }
-                    if (action === 'archive') {
-                        if (typeof onArchive === 'function') {
-                            onArchive(item.id);
+                        if (action === 'archive') {
+                            if (typeof onArchive === 'function') {
+                                onArchive(item.id);
+                            }
                         }
                     }
-                };
+                });
                 actions.appendChild(actionSelect);
-                row.appendChild(actions);
+                const displayRow = createManagerListRow({
+                    rowClassName: 'gpv-fsm-portfolio-list-row',
+                    labelText: item.name,
+                    actionsNode: actions
+                });
+                list.appendChild(displayRow);
+                return;
             }
             list.appendChild(row);
         });
@@ -16960,68 +17028,37 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             return bucketRows.sort((left, right) => left.goalName.localeCompare(right.goalName));
         }
 
-        function renderBucketManagerPanelHtml() {
+        function buildBucketManagerPanelBody() {
             const goalRows = collectEndowusGoalRows();
+            const manager = createElement('div', 'gpv-bucket-manager gpv-manager-panel');
+            manager.appendChild(createWorkspaceTitle({ title: 'Manage assignments', level: 3, className: 'gpv-bucket-manager-title' }));
             if (!goalRows.length) {
-                return `
-                    <div class="gpv-bucket-manager gpv-manager-panel">
-                        <h3 class="gpv-bucket-manager-title">Manage assignments</h3>
-                        <p class="gpv-bucket-manager-empty">No goals available to assign.</p>
-                    </div>
-                `;
+                manager.appendChild(createElement('p', 'gpv-bucket-manager-empty', 'No goals available to assign.'));
+                return manager;
             }
-            const rowsHtml = goalRows.map(row => `
-                <tr>
-                    <td class="gpv-bucket-manager-goal">${escapeHtml(row.goalName)}</td>
-                    <td>
-                        <input
-                            type="text"
-                            class="gpv-target-input gpv-bucket-manager-input"
-                            data-goal-id="${escapeHtml(row.goalId)}"
-                            data-goal-name="${escapeHtml(row.goalName)}"
-                            value="${escapeHtml(row.currentBucket)}"
-                            placeholder="Unassigned"
-                            aria-label="Bucket name for ${escapeHtml(row.goalName)}"
-                        />
-                    </td>
-                </tr>
-            `).join('');
-            return `
-                <div class="gpv-bucket-manager gpv-manager-panel">
-                    <h3 class="gpv-bucket-manager-title">Manage assignments</h3>
-                    <p class="gpv-bucket-manager-copy">Assign goals to buckets directly. Existing goals are seeded from naming and can be adjusted here without renaming goals.</p>
-                    <div class="gpv-table-wrap">
-                        <table class="gpv-table gpv-bucket-manager-table">
-                            <thead>
-                                <tr>
-                                    <th>Goal</th>
-                                    <th>Bucket</th>
-                                </tr>
-                            </thead>
-                            <tbody>${rowsHtml}</tbody>
-                        </table>
-                    </div>
-                </div>
-            `;
-        }
+            manager.appendChild(createElement('p', 'gpv-bucket-manager-copy', 'Assign goals to buckets directly. Existing goals are seeded from naming and can be adjusted here without renaming goals.'));
+            const { table, tbody } = createWorkspaceTable({
+                headers: ['Goal', 'Bucket'],
+                className: 'gpv-table gpv-bucket-manager-table'
+            });
+            goalRows.forEach(row => {
+                const tr = createElement('tr');
+                tr.appendChild(createTableCell(row.goalName, 'gpv-bucket-manager-goal'));
+                const bucketCell = createElement('td');
+                const input = createElement('input', 'gpv-target-input gpv-bucket-manager-input');
+                input.type = 'text';
+                input.value = row.currentBucket;
+                input.defaultValue = row.currentBucket;
+                input.placeholder = 'Unassigned';
+                input.setAttribute('aria-label', `Bucket name for ${row.goalName}`);
 
-        function setupBucketManagerListeners(root) {
-            if (!root) {
-                return;
-            }
-            const inputs = Array.from(root.querySelectorAll('.gpv-bucket-manager-input'));
-            inputs.forEach(input => {
-                const goalId = utils.normalizeString(input.dataset.goalId, '');
-                if (!goalId) {
-                    return;
-                }
-                const commit = () => {
-                    const derivedBucket = utils.extractBucketName(utils.normalizeString(input.dataset.goalName, ''));
+                attachInputCommitHandlers(input, () => {
+                    const derivedBucket = utils.extractBucketName(utils.normalizeString(row.goalName, ''));
                     const fallbackBucket = derivedBucket || 'Uncategorized';
                     const previousDisplayedBucket = utils.normalizeString(input.defaultValue, '') || fallbackBucket;
                     const nextBucket = utils.normalizeString(input.value, '');
                     if (!nextBucket) {
-                        GoalTargetStore.clearBucket(goalId);
+                        GoalTargetStore.clearBucket(row.goalId);
                         input.value = fallbackBucket;
                         input.defaultValue = input.value;
                         return;
@@ -17030,29 +17067,28 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         input.value = previousDisplayedBucket;
                         return;
                     }
-                    GoalTargetStore.setBucket(goalId, nextBucket);
+                    GoalTargetStore.setBucket(row.goalId, nextBucket);
                     input.value = nextBucket;
                     input.defaultValue = nextBucket;
-                };
-                input.addEventListener('blur', commit);
-                input.addEventListener('keydown', event => {
-                    if (event.key === 'Enter') {
-                        event.preventDefault();
-                        commit();
-                        input.blur();
-                    }
                 });
+
+                bucketCell.appendChild(input);
+                tr.appendChild(bucketCell);
+                tbody.appendChild(tr);
             });
+            const tableWrap = createElement('div', 'gpv-table-wrap');
+            tableWrap.appendChild(table);
+            manager.appendChild(tableWrap);
+            return manager;
         }
 
         bucketManageBtn.addEventListener('click', () => {
-            const managerView = renderSyncOverlayView({
+            renderSyncOverlayView({
                 title: 'Manage assignments',
-                bodyHtml: renderBucketManagerPanelHtml(),
+                bodyNode: buildBucketManagerPanelBody(),
                 onBack: () => showOverlay(),
                 backLabel: '← Back to Portfolio Viewer'
             });
-            setupBucketManagerListeners(managerView?.body);
         });
     }
 
