@@ -8624,6 +8624,44 @@ let GoalTargetStore;
         return { table, tbody };
     }
 
+    function createEditableAllocationTable({
+        headers,
+        rows,
+        emptyMessage = 'No rows available.',
+        rowBuilder,
+        tableClassName = 'gpv-table',
+        wrapperClassName = null,
+        onTableCreated
+    }) {
+        const normalizedRows = Array.isArray(rows) ? rows : [];
+        if (normalizedRows.length === 0) {
+            return {
+                table: null,
+                tbody: null,
+                wrapper: createElement('div', 'gpv-conflict-diff-empty', emptyMessage)
+            };
+        }
+        const { table, tbody } = createWorkspaceTable({ headers, className: tableClassName });
+        if (typeof onTableCreated === 'function') {
+            onTableCreated({ table, tbody });
+        }
+        if (typeof rowBuilder === 'function') {
+            normalizedRows.forEach((row, index) => {
+                const tr = rowBuilder({ row, index, table, tbody });
+                if (tr?.nodeType) {
+                    tbody.appendChild(tr);
+                }
+            });
+        }
+        const wrapper = wrapperClassName
+            ? createElement('div', wrapperClassName)
+            : null;
+        if (wrapper) {
+            wrapper.appendChild(table);
+        }
+        return { table, tbody, wrapper: wrapper || table };
+    }
+
     function createWorkspaceTitle({ title, level = 2, className = null }) {
         const safeLevel = Number.isFinite(Number(level)) ? Math.min(6, Math.max(1, Number(level))) : 2;
         return createElement(`h${safeLevel}`, className, title);
@@ -14786,9 +14824,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         onFixedChange,
         onPortfolioChange
     }) {
-        if (!Array.isArray(filteredRows) || filteredRows.length === 0) {
-            return createElement('div', 'gpv-conflict-diff-empty', 'No holdings match this filter.');
-        }
         const headers = [
             '',
             'Ticker',
@@ -14802,24 +14837,30 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             'Fixed',
             'Portfolio'
         ];
-        const { table, tbody } = createWorkspaceTable({ headers });
-        const headerRow = table.querySelector('thead tr');
-        const selectAllHeaderCell = headerRow?.children?.[0] || null;
-        if (selectAllHeaderCell) {
-            selectAllHeaderCell.textContent = '';
-            const headerCheckbox = createElement('input');
-            headerCheckbox.type = 'checkbox';
-            headerCheckbox.checked = selectAllFiltered;
-            headerCheckbox.setAttribute('aria-label', 'Select all holdings');
-            headerCheckbox.addEventListener('change', () => {
-                if (typeof onSelectAllChange === 'function') {
-                    onSelectAllChange(headerCheckbox.checked);
+        const { wrapper } = createEditableAllocationTable({
+            headers,
+            rows: filteredRows,
+            emptyMessage: 'No holdings match this filter.',
+            wrapperClassName: 'gpv-table-wrap gpv-fsm-table-wrap',
+            onTableCreated: ({ table }) => {
+                const headerRow = table.querySelector('thead tr');
+                const selectAllHeaderCell = headerRow?.children?.[0] || null;
+                if (!selectAllHeaderCell) {
+                    return;
                 }
-            });
-            selectAllHeaderCell.appendChild(headerCheckbox);
-        }
-
-        filteredRows.forEach(row => {
+                selectAllHeaderCell.textContent = '';
+                const headerCheckbox = createElement('input');
+                headerCheckbox.type = 'checkbox';
+                headerCheckbox.checked = selectAllFiltered;
+                headerCheckbox.setAttribute('aria-label', 'Select all holdings');
+                headerCheckbox.addEventListener('change', () => {
+                    if (typeof onSelectAllChange === 'function') {
+                        onSelectAllChange(headerCheckbox.checked);
+                    }
+                });
+                selectAllHeaderCell.appendChild(headerCheckbox);
+            },
+            rowBuilder: ({ row }) => {
             const tr = createElement('tr');
             const holdingId = row.holdingId || row.code;
             const checked = selectedHoldingIds.has(holdingId);
@@ -14907,11 +14948,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 }
             };
             portfolioCell.appendChild(select);
-            tbody.appendChild(tr);
+            return tr;
+            }
         });
-        const tableWrapper = createElement('div', 'gpv-table-wrap gpv-fsm-table-wrap');
-        tableWrapper.appendChild(table);
-        return tableWrapper;
+        return wrapper;
     }
 
     function renderFsmOverlay(fsmHoldings) {
@@ -16351,7 +16391,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     if (copyControls) {
                         section.appendChild(copyControls);
                     }
-                    const { table: holdingsTable, tbody: holdingsBody } = createWorkspaceTable({
+                    const { wrapper: holdingsTableWrap } = createEditableAllocationTable({
                         headers: [
                             'Identifier',
                             'Name',
@@ -16363,9 +16403,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             'Drift',
                             'Sub-portfolio',
                             'Reorder'
-                        ]
-                    });
-                    orderedRows.forEach((row, index) => {
+                        ],
+                        rows: orderedRows,
+                        emptyMessage: 'No assigned instruments',
+                        wrapperClassName: 'gpv-table-wrap gpv-ocbc-holdings-table-wrap',
+                        rowBuilder: ({ row, index }) => {
                         const tr = createElement('tr');
                         tr.appendChild(createElement('td', null, row.displayTicker || row.code || '-'));
                         tr.appendChild(createElement('td', null, row.name || '-'));
@@ -16493,10 +16535,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         reorderGroup.appendChild(moveDownButton);
                         reorderCell.appendChild(reorderGroup);
                         tr.appendChild(reorderCell);
-                        holdingsBody.appendChild(tr);
+                        return tr;
+                        }
                     });
-                    const holdingsTableWrap = createElement('div', 'gpv-table-wrap gpv-ocbc-holdings-table-wrap');
-                    holdingsTableWrap.appendChild(holdingsTable);
                     section.appendChild(holdingsTableWrap);
                 };
 
