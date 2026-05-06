@@ -3872,11 +3872,104 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         };
     }
 
-    function readEndowusStore() {
-        const rawStored = Storage.readJson(STORAGE_KEYS.endowus, data => data && typeof data === 'object' && !Array.isArray(data));
+    function readPlatformObjectStore(storageKey) {
+        return Storage.readJson(storageKey, data => data && typeof data === 'object' && !Array.isArray(data));
+    }
+
+    function runPlatformLegacyCleanup(definition, store, legacyStore, phase) {
+        if (typeof definition.cleanupLegacyKeys === 'function') {
+            definition.cleanupLegacyKeys();
+        }
+        const codes = typeof definition.getLegacyCleanupCodes === 'function'
+            ? definition.getLegacyCleanupCodes(store, legacyStore, phase)
+            : [];
+        if (Array.isArray(codes) && codes.length && typeof definition.cleanupLegacyKeysForCodes === 'function') {
+            definition.cleanupLegacyKeysForCodes(codes);
+        }
+        if (typeof definition.markLegacyCleanupComplete === 'function') {
+            definition.markLegacyCleanupComplete();
+        }
+    }
+
+    function applyPlatformStoreCleanup(definition, store) {
+        if (typeof definition.cleanupStore !== 'function') {
+            return { value: store, didMutate: false };
+        }
+        return definition.cleanupStore(store);
+    }
+
+    function mergePlatformStoreFromLegacy(definition, rawStored, normalized, legacy) {
+        let merged = normalized;
+        let didMerge = false;
+        if (Array.isArray(definition.mergeFieldNames) && definition.mergeFieldNames.length) {
+            const fieldMerge = mergeMissingFieldsFromLegacy(
+                rawStored,
+                merged,
+                legacy,
+                definition.mergeFieldNames
+            );
+            merged = fieldMerge.merged;
+            didMerge = fieldMerge.didMerge;
+        }
+        if (typeof definition.mergeMissingEntries === 'function') {
+            const entryMerge = definition.mergeMissingEntries(rawStored, merged, legacy);
+            merged = entryMerge.merged;
+            didMerge = didMerge || entryMerge.didMerge;
+        }
+        return { merged, didMerge };
+    }
+
+    function readPlatformStore(definition) {
+        const rawStored = readPlatformObjectStore(definition.storageKey);
         if (rawStored) {
-            const normalized = normalizeEndowusStore(rawStored);
-            const hasLegacyKeys = hasAnyLegacyStoreKeys(
+            const normalized = definition.normalizeStore(rawStored);
+            const shouldMergeWithLegacy = typeof definition.shouldMergeWithLegacy === 'function'
+                ? definition.shouldMergeWithLegacy(rawStored, normalized)
+                : true;
+            const legacy = shouldMergeWithLegacy && typeof definition.collectLegacyStore === 'function'
+                ? definition.collectLegacyStore()
+                : null;
+            const { merged, didMerge } = legacy
+                ? mergePlatformStoreFromLegacy(definition, rawStored, normalized, legacy)
+                : { merged: normalized, didMerge: false };
+            if (didMerge) {
+                const didWrite = writePlatformStore(definition.storageKey, merged, definition.mergedWriteContext);
+                if (didWrite) {
+                    runPlatformLegacyCleanup(definition, merged, legacy, 'merged');
+                }
+                const { value: cleanedMerged, didMutate } = applyPlatformStoreCleanup(definition, merged);
+                if (didMutate) {
+                    writePlatformStore(definition.storageKey, cleanedMerged, definition.cleanedWriteContext);
+                }
+                return cleanedMerged;
+            }
+            if (typeof definition.shouldCleanupLegacyKeysOnRead === 'function' && definition.shouldCleanupLegacyKeysOnRead()) {
+                runPlatformLegacyCleanup(definition, normalized, legacy, 'read');
+            }
+            const { value: cleanedNormalized, didMutate } = applyPlatformStoreCleanup(definition, normalized);
+            if (didMutate) {
+                writePlatformStore(definition.storageKey, cleanedNormalized, definition.cleanedWriteContext);
+            }
+            return cleanedNormalized;
+        }
+        const legacy = typeof definition.collectLegacyStore === 'function'
+            ? definition.collectLegacyStore()
+            : definition.normalizeStore({});
+        const { value: migrated } = applyPlatformStoreCleanup(definition, legacy);
+        const didWrite = writePlatformStore(definition.storageKey, migrated, definition.migratedWriteContext);
+        if (didWrite) {
+            runPlatformLegacyCleanup(definition, migrated, legacy, 'migrated');
+        }
+        return migrated;
+    }
+
+    const PLATFORM_STORE_DEFINITIONS = Object.freeze({
+        endowus: Object.freeze({
+            storageKey: STORAGE_KEYS.endowus,
+            normalizeStore: normalizeEndowusStore,
+            collectLegacyStore: collectLegacyEndowusStore,
+            mergeFieldNames: ['performance', 'investible', 'summary', 'goalTargets', 'goalFixed', 'goalBuckets', 'clearedGoalBuckets', 'performanceCache', 'uiPreferences'],
+            shouldMergeWithLegacy: () => hasAnyLegacyStoreKeys(
                 [
                     STORAGE_KEYS.performance,
                     STORAGE_KEYS.investible,
@@ -3889,129 +3982,68 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     STORAGE_KEY_PREFIXES.goalBucket,
                     ...LEGACY_ENDOWUS_LOCAL_PREFIXES
                 ]
-            );
-            const { merged, didMerge } = hasLegacyKeys
-                ? mergeMissingFieldsFromLegacy(
-                    rawStored,
-                    normalized,
-                    collectLegacyEndowusStore(),
-                    ['performance', 'investible', 'summary', 'goalTargets', 'goalFixed', 'goalBuckets', 'clearedGoalBuckets', 'performanceCache', 'uiPreferences']
-                )
-                : { merged: normalized, didMerge: false };
-            if (didMerge) {
-                const didWrite = writePlatformStore(STORAGE_KEYS.endowus, merged, 'Error writing merged Endowus store');
-                if (didWrite) {
-                    cleanupLegacyEndowusKeys();
-                    legacyCleanupSessionState.endowus = true;
+            ),
+            cleanupStore: cleanupEndowusLocalStore,
+            cleanupLegacyKeys: cleanupLegacyEndowusKeys,
+            shouldCleanupLegacyKeysOnRead: shouldCleanupLegacyEndowusKeysOnRead,
+            markLegacyCleanupComplete: () => { legacyCleanupSessionState.endowus = true; },
+            mergedWriteContext: 'Error writing merged Endowus store',
+            migratedWriteContext: 'Error writing migrated Endowus store',
+            cleanedWriteContext: 'Error writing cleaned Endowus store'
+        }),
+        fsm: Object.freeze({
+            storageKey: STORAGE_KEYS.fsm,
+            normalizeStore: normalizeFsmStore,
+            collectLegacyStore: collectLegacyFsmStore,
+            mergeFieldNames: ['holdings', 'targetsByCode', 'fixedByCode', 'portfolios', 'assignmentByCode'],
+            mergeMissingEntries: mergeMissingFsmEntriesFromLegacy,
+            cleanupLegacyKeys: cleanupLegacyFsmKeys,
+            cleanupLegacyKeysForCodes: cleanupLegacyFsmKeysForCodes,
+            getLegacyCleanupCodes: (store, legacyStore, phase) => {
+                if (phase === 'read') {
+                    return [];
                 }
-                const { value: cleanedMerged, didMutate } = cleanupEndowusLocalStore(merged);
-                if (didMutate) {
-                    writePlatformStore(STORAGE_KEYS.endowus, cleanedMerged, 'Error writing cleaned Endowus store');
+                if (phase === 'migrated') {
+                    return [
+                        ...Object.keys(store?.targetsByCode || {}),
+                        ...Object.keys(store?.fixedByCode || {})
+                    ];
                 }
-                return cleanedMerged;
-            }
-            if (shouldCleanupLegacyEndowusKeysOnRead()) {
-                cleanupLegacyEndowusKeys();
-                legacyCleanupSessionState.endowus = true;
-            }
-            const { value: cleanedNormalized, didMutate } = cleanupEndowusLocalStore(normalized);
-            if (didMutate) {
-                writePlatformStore(STORAGE_KEYS.endowus, cleanedNormalized, 'Error writing cleaned Endowus store');
-            }
-            return cleanedNormalized;
-        }
-        const migrated = collectLegacyEndowusStore();
-        const { value: cleanedMigrated } = cleanupEndowusLocalStore(migrated);
-        const didWrite = writePlatformStore(STORAGE_KEYS.endowus, cleanedMigrated, 'Error writing migrated Endowus store');
-        if (didWrite) {
-            cleanupLegacyEndowusKeys();
-            legacyCleanupSessionState.endowus = true;
-        }
-        return cleanedMigrated;
+                return [
+                    ...Object.keys(store?.targetsByCode || {}),
+                    ...Object.keys(store?.fixedByCode || {}),
+                    ...Object.keys(legacyStore?.targetsByCode || {}),
+                    ...Object.keys(legacyStore?.fixedByCode || {})
+                ];
+            },
+            shouldCleanupLegacyKeysOnRead: shouldCleanupLegacyFsmKeysOnRead,
+            markLegacyCleanupComplete: () => { legacyCleanupSessionState.fsm = true; },
+            mergedWriteContext: 'Error writing merged FSM store',
+            migratedWriteContext: 'Error writing migrated FSM store'
+        }),
+        ocbc: Object.freeze({
+            storageKey: STORAGE_KEYS.ocbc,
+            normalizeStore: normalizeOcbcStore,
+            collectLegacyStore: collectLegacyOcbcStore,
+            mergeFieldNames: ['holdings', 'allocationBuckets', 'subPortfolios', 'assignmentByCode', 'orderByScope', 'targetsByScope'],
+            cleanupLegacyKeys: cleanupLegacyOcbcKeys,
+            shouldCleanupLegacyKeysOnRead: shouldCleanupLegacyOcbcKeysOnRead,
+            markLegacyCleanupComplete: () => { legacyCleanupSessionState.ocbc = true; },
+            mergedWriteContext: 'Error writing merged OCBC store',
+            migratedWriteContext: 'Error writing migrated OCBC store'
+        })
+    });
+
+    function readEndowusStore() {
+        return readPlatformStore(PLATFORM_STORE_DEFINITIONS.endowus);
     }
 
     function readFsmStore() {
-        const rawStored = Storage.readJson(STORAGE_KEYS.fsm, data => data && typeof data === 'object' && !Array.isArray(data));
-        if (rawStored) {
-            const normalized = normalizeFsmStore(rawStored);
-            const legacy = collectLegacyFsmStore();
-            const { merged: mergedMissingFields, didMerge: didMergeFields } = mergeMissingFieldsFromLegacy(
-                rawStored,
-                normalized,
-                legacy,
-                ['holdings', 'targetsByCode', 'fixedByCode', 'portfolios', 'assignmentByCode']
-            );
-            const { merged, didMerge: didMergeEntries } = mergeMissingFsmEntriesFromLegacy(
-                rawStored,
-                mergedMissingFields,
-                legacy
-            );
-            const didMerge = didMergeFields || didMergeEntries;
-            if (didMerge) {
-                const didWrite = writePlatformStore(STORAGE_KEYS.fsm, merged, 'Error writing merged FSM store');
-                if (didWrite) {
-                    cleanupLegacyFsmKeys();
-                    cleanupLegacyFsmKeysForCodes([
-                        ...Object.keys(merged?.targetsByCode || {}),
-                        ...Object.keys(merged?.fixedByCode || {}),
-                        ...Object.keys(legacy?.targetsByCode || {}),
-                        ...Object.keys(legacy?.fixedByCode || {})
-                    ]);
-                    legacyCleanupSessionState.fsm = true;
-                }
-                return merged;
-            }
-            if (shouldCleanupLegacyFsmKeysOnRead()) {
-                cleanupLegacyFsmKeys();
-                legacyCleanupSessionState.fsm = true;
-            }
-            return normalized;
-        }
-        const migrated = collectLegacyFsmStore();
-        const didWrite = writePlatformStore(STORAGE_KEYS.fsm, migrated, 'Error writing migrated FSM store');
-        if (didWrite) {
-            cleanupLegacyFsmKeys();
-            cleanupLegacyFsmKeysForCodes([
-                ...Object.keys(migrated?.targetsByCode || {}),
-                ...Object.keys(migrated?.fixedByCode || {})
-            ]);
-            legacyCleanupSessionState.fsm = true;
-        }
-        return migrated;
+        return readPlatformStore(PLATFORM_STORE_DEFINITIONS.fsm);
     }
 
     function readOcbcStore() {
-        const rawStored = Storage.readJson(STORAGE_KEYS.ocbc, data => data && typeof data === 'object' && !Array.isArray(data));
-        if (rawStored) {
-            const normalized = normalizeOcbcStore(rawStored);
-            const legacy = collectLegacyOcbcStore();
-            const { merged, didMerge } = mergeMissingFieldsFromLegacy(
-                rawStored,
-                normalized,
-                legacy,
-                ['holdings', 'allocationBuckets', 'subPortfolios', 'assignmentByCode', 'orderByScope', 'targetsByScope']
-            );
-            if (didMerge) {
-                const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, merged, 'Error writing merged OCBC store');
-                if (didWrite) {
-                    cleanupLegacyOcbcKeys();
-                    legacyCleanupSessionState.ocbc = true;
-                }
-                return merged;
-            }
-            if (shouldCleanupLegacyOcbcKeysOnRead()) {
-                cleanupLegacyOcbcKeys();
-                legacyCleanupSessionState.ocbc = true;
-            }
-            return normalized;
-        }
-        const migrated = collectLegacyOcbcStore();
-        const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, migrated, 'Error writing migrated OCBC store');
-        if (didWrite) {
-            cleanupLegacyOcbcKeys();
-            legacyCleanupSessionState.ocbc = true;
-        }
-        return migrated;
+        return readPlatformStore(PLATFORM_STORE_DEFINITIONS.ocbc);
     }
 
     function updatePlatformStore({ readStore, normalizeStore, storageKey, cleanupLegacyKeys, updater, context }) {
