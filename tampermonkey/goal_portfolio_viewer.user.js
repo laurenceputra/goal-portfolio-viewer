@@ -10753,47 +10753,7 @@ function renderSyncOverlayView({
 
 function showSyncSettings(options = {}) {
     const returnTo = utils.normalizeString(options?.returnTo, 'endowus');
-    const syncReturnConfig = {
-        endowus: {
-            backLabel: '← Back to Portfolio Viewer',
-            onBack: () => {
-                if (typeof showOverlay === 'function') {
-                    showOverlay();
-                }
-            }
-        },
-        fsm: {
-            backLabel: '← Back to Portfolio Viewer (FSM)',
-            onBack: () => {
-                const holdings = getFsmReadinessState().fsmHoldings;
-                if (Array.isArray(holdings) && holdings.length > 0) {
-                    renderFsmOverlay(holdings);
-                    return;
-                }
-                if (typeof showOverlay === 'function') {
-                    showOverlay();
-                }
-            }
-        },
-        ocbc: {
-            backLabel: '← Back to Portfolio Viewer (OCBC)',
-            onBack: () => {
-                const readinessState = getOcbcReadinessState();
-                const holdings = readinessState.ocbcHoldings;
-                if (holdings) {
-                    renderOcbcOverlay(holdings, {
-                        holdingsByPortfolio: readinessState.holdingsByPortfolio,
-                        latestPortfolioNos: readinessState.latestPortfolioNos
-                    });
-                    return;
-                }
-                if (typeof showOverlay === 'function') {
-                    showOverlay();
-                }
-            }
-        }
-    };
-    const resolvedReturnConfig = syncReturnConfig[returnTo] || syncReturnConfig.endowus;
+    const resolvedReturnConfig = getSyncSettingsReturnConfig(returnTo);
     
     try {
         let settingsHTML;
@@ -10821,6 +10781,32 @@ function showSyncSettings(options = {}) {
     } catch (error) {
         console.error('[Goal Portfolio Viewer] Critical error in showSyncSettings:', error);
         alert('Error opening sync settings: ' + error.message + '\n\nPlease check the browser console for more details.');
+    }
+}
+
+function getSyncSettingsReturnConfig(returnTo) {
+    const fallback = {
+        backLabel: '← Back to Portfolio Viewer',
+        onBack: () => {
+            if (typeof showOverlay === 'function') {
+                showOverlay();
+            }
+        }
+    };
+
+    try {
+        const flowDefinition = getFlowDefinitionByReturnTo(returnTo);
+        if (!flowDefinition) {
+            return fallback;
+        }
+        return {
+            backLabel: flowDefinition.syncBackLabel || fallback.backLabel,
+            onBack: typeof flowDefinition.syncOnBack === 'function'
+                ? flowDefinition.syncOnBack
+                : fallback.onBack
+        };
+    } catch (_error) {
+        return fallback;
     }
 }
 
@@ -16781,6 +16767,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         endowus: Object.freeze({
             key: 'endowus',
             returnTo: 'endowus',
+            syncBackLabel: '← Back to Portfolio Viewer',
+            syncOnBack: () => {
+                if (typeof showOverlay === 'function') {
+                    showOverlay();
+                }
+            },
             overlayTitle: 'Portfolio Viewer',
             readinessDescription: 'Fetching Endowus portfolio data. This view updates automatically as data arrives.',
             notReadyLogMessage: '[Goal Portfolio Viewer] Not all API data available yet',
@@ -16797,6 +16789,17 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         fsm: Object.freeze({
             key: 'fsm',
             returnTo: 'fsm',
+            syncBackLabel: '← Back to Portfolio Viewer (FSM)',
+            syncOnBack: () => {
+                const holdings = getFsmReadinessState().fsmHoldings;
+                if (Array.isArray(holdings) && holdings.length > 0) {
+                    renderFsmOverlay(holdings);
+                    return;
+                }
+                if (typeof showOverlay === 'function') {
+                    showOverlay();
+                }
+            },
             overlayTitle: 'Portfolio Viewer (FSM)',
             readinessDescription: 'Waiting for FSM holdings response. This updates automatically when data arrives.',
             notReadyLogMessage: '[Goal Portfolio Viewer] FSM holdings not available yet',
@@ -16812,6 +16815,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         ocbc: Object.freeze({
             key: 'ocbc',
             returnTo: 'ocbc',
+            syncBackLabel: '← Back to Portfolio Viewer (OCBC)',
+            syncOnBack: () => {
+                const readinessState = getOcbcReadinessState();
+                const holdings = readinessState.ocbcHoldings;
+                if (holdings) {
+                    renderOcbcOverlay(holdings, {
+                        holdingsByPortfolio: readinessState.holdingsByPortfolio,
+                        latestPortfolioNos: readinessState.latestPortfolioNos
+                    });
+                    return;
+                }
+                if (typeof showOverlay === 'function') {
+                    showOverlay();
+                }
+            },
             overlayTitle: 'Portfolio Viewer (OCBC)',
             readinessDescription: 'Waiting for OCBC portfolio holdings response. This updates automatically when data arrives.',
             matchesRoute: (href, origin) => isOcbcDashboardRoute(href, origin)
@@ -16844,6 +16862,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
     function getOverlayFlowDefinition(href, origin) {
         return getRouteMatchedFlowDefinition(href, origin) || FLOW_DEFINITIONS.endowus;
+    }
+
+    function getFlowDefinitionByReturnTo(returnTo) {
+        const normalizedReturnTo = utils.normalizeString(returnTo, FLOW_DEFINITIONS.endowus.returnTo);
+        return FLOW_DEFINITIONS[normalizedReturnTo] || FLOW_DEFINITIONS.endowus;
     }
 
     function renderEndowusOverlay(readinessState) {
