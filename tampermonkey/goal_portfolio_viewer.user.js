@@ -1974,6 +1974,162 @@ function calculateRecommendedContributionSplit(goalModels, additionalAmount) {
     });
 }
 
+function splitAllocationScopeRows(rows, options = {}) {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const isFixedRow = typeof options.isFixedRow === 'function'
+        ? options.isFixedRow
+        : row => row?.fixed === true;
+    const fixedRows = [];
+    const activeRows = [];
+    safeRows.forEach(row => {
+        if (isFixedRow(row)) {
+            fixedRows.push(row);
+            return;
+        }
+        activeRows.push(row);
+    });
+    return { rows: safeRows, activeRows, fixedRows };
+}
+
+function summarizeAllocationScopeValue(rows, options = {}) {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const valueResolver = typeof options.valueResolver === 'function'
+        ? options.valueResolver
+        : row => row?.currentValueLcy;
+    return safeRows.reduce((sum, row) => sum + toFiniteNumber(valueResolver(row), 0), 0);
+}
+
+function calculateAllocationScopeFixedCoveragePercent(total, fixedRows, options = {}) {
+    const safeRows = Array.isArray(fixedRows) ? fixedRows : [];
+    const allocationResolver = typeof options.allocationResolver === 'function'
+        ? options.allocationResolver
+        : ((scopeTotal, row) => calculateAllocationRatio(row?.currentValueLcy, scopeTotal));
+    return safeRows.reduce((sum, row) => {
+        const allocation = allocationResolver(total, row);
+        if (!Number.isFinite(allocation)) {
+            return sum;
+        }
+        return sum + (allocation * 100);
+    }, 0);
+}
+
+function summarizeAllocationScopeTargetCoverage({ activeRows, fixedRows, total, targetResolver, allocationResolver }) {
+    const safeActiveRows = Array.isArray(activeRows) ? activeRows : [];
+    const safeFixedRows = Array.isArray(fixedRows) ? fixedRows : [];
+    const resolveTarget = typeof targetResolver === 'function'
+        ? targetResolver
+        : row => toFiniteNumber(row?.targetPercent, null);
+    const targetValues = [];
+    const activeTargetPercent = safeActiveRows.reduce((sum, row) => {
+        const targetPercent = resolveTarget(row);
+        if (targetPercent === null) {
+            return sum;
+        }
+        targetValues.push(targetPercent);
+        return sum + targetPercent;
+    }, 0);
+    const fixedCoveragePercent = calculateAllocationScopeFixedCoveragePercent(total, safeFixedRows, { allocationResolver });
+    const targetCoveragePercent = activeTargetPercent + fixedCoveragePercent;
+    const configuredIntent = hasConfiguredAllocationIntent({
+        targetValues,
+        fixedCount: safeFixedRows.length
+    });
+    return {
+        targetValues,
+        activeTargetPercent,
+        fixedCoveragePercent,
+        targetCoveragePercent,
+        configuredIntent,
+        targetCoverageLabel: configuredIntent ? buildTargetCoverageLabel(targetCoveragePercent) : null
+    };
+}
+
+function calculateAllocationScopeTotalAbsoluteDrift(rows, options = {}) {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const driftResolver = typeof options.driftResolver === 'function'
+        ? options.driftResolver
+        : row => toFiniteNumber(row?.driftPercent, null);
+    return safeRows.reduce((sum, row) => {
+        const drift = driftResolver(row);
+        return sum + (Number.isFinite(drift) ? Math.abs(drift) : 0);
+    }, 0);
+}
+
+function summarizeAllocationScopeProfit(rows, total, options = {}) {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const valueResolver = typeof options.valueResolver === 'function'
+        ? options.valueResolver
+        : row => row?.profitValueLcy;
+    const requireComplete = options.requireComplete !== false;
+    const knownValues = safeRows.map(row => toOptionalFiniteNumber(valueResolver(row)));
+    const knownCount = knownValues.filter(value => value !== null).length;
+    if (knownCount === 0) {
+        return {
+            isComplete: false,
+            knownCount,
+            missingCount: safeRows.length,
+            totalProfitValue: null,
+            totalProfitPercent: null,
+            profitClass: getFsmProfitClass(null)
+        };
+    }
+    if (requireComplete && knownCount !== safeRows.length) {
+        return {
+            isComplete: false,
+            knownCount,
+            missingCount: safeRows.length - knownCount,
+            totalProfitValue: null,
+            totalProfitPercent: null,
+            profitClass: getFsmProfitClass(null)
+        };
+    }
+    const totalProfitValue = knownValues.reduce((sum, value) => sum + (value === null ? 0 : value), 0);
+    const totalProfitPercent = calculateProfitPercentFromValue(total, totalProfitValue);
+    return {
+        isComplete: knownCount === safeRows.length,
+        knownCount,
+        missingCount: safeRows.length - knownCount,
+        totalProfitValue,
+        totalProfitPercent,
+        profitClass: getFsmProfitClass(totalProfitPercent)
+    };
+}
+
+function buildAllocationScopePlanningModel(rows, options = {}) {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const diffResolver = typeof options.diffResolver === 'function'
+        ? options.diffResolver
+        : row => row?.driftAmount;
+    const scenarioMapper = typeof options.scenarioMapper === 'function'
+        ? options.scenarioMapper
+        : row => ({
+            goalId: row?.holdingId || row?.code,
+            goalName: row?.displayTicker || row?.name || row?.code,
+            isFixed: row?.fixed === true,
+            diffAmount: diffResolver(row)
+        });
+    const underweightCandidates = safeRows
+        .filter(row => Number.isFinite(diffResolver(row)) && diffResolver(row) < 0)
+        .sort((left, right) => Math.abs(diffResolver(right)) - Math.abs(diffResolver(left)));
+    const overweightCandidates = safeRows
+        .filter(row => Number.isFinite(diffResolver(row)) && diffResolver(row) > 0)
+        .sort((left, right) => Math.abs(diffResolver(right)) - Math.abs(diffResolver(left)));
+    const planningRecommendations = buildPlanningRecommendations({
+        buys: underweightCandidates,
+        sells: overweightCandidates
+    });
+    const projectedAmount = toFiniteNumber(options?.projectedAmount, 0);
+    const scenarioAmount = projectedAmount > 0 ? projectedAmount : 0;
+    const scenarioSplit = calculateRecommendedContributionSplit(safeRows.map(scenarioMapper), scenarioAmount);
+    return {
+        scenarioAmount,
+        scenarioSplit,
+        planningRecommendations,
+        underweightCandidates,
+        overweightCandidates
+    };
+}
+
 function buildPlanningModel(goalTypeModel) {
     const goalModels = Array.isArray(goalTypeModel?.goals) ? goalTypeModel.goals : [];
     const adjustedTotal = toFiniteNumber(goalTypeModel?.adjustedTotal, null);
@@ -2002,27 +2158,24 @@ function buildPlanningModel(goalTypeModel) {
         ? buildTargetCoverageLabel(targetCoveragePercent)
         : null;
 
-    const underweightCandidates = goalModels
-        .filter(goal => Number.isFinite(goal?.diffAmount) && goal.diffAmount < 0)
-        .sort((left, right) => Math.abs(right.diffAmount) - Math.abs(left.diffAmount));
-    const overweightCandidates = goalModels
-        .filter(goal => Number.isFinite(goal?.diffAmount) && goal.diffAmount > 0)
-        .sort((left, right) => Math.abs(right.diffAmount) - Math.abs(left.diffAmount));
-    const planningRecommendations = buildPlanningRecommendations({
-        buys: underweightCandidates,
-        sells: overweightCandidates
+    const scopedPlanning = buildAllocationScopePlanningModel(goalModels, {
+        projectedAmount: goalTypeModel?.projectedAmount,
+        diffResolver: goal => goal?.diffAmount,
+        scenarioMapper: goal => ({
+            goalId: goal?.goalId,
+            goalName: goal?.goalName,
+            isFixed: goal?.isFixed === true,
+            diffAmount: goal?.diffAmount
+        })
     });
-
-    const projectedAmount = toFiniteNumber(goalTypeModel?.projectedAmount, 0);
-    const scenarioAmount = projectedAmount > 0 ? projectedAmount : 0;
-    const scenarioSplit = calculateRecommendedContributionSplit(goalModels, scenarioAmount);
+    const planningRecommendations = scopedPlanning.planningRecommendations;
 
     return {
         adjustedTotal,
         targetCoveragePercent,
         targetCoverageLabel: coverageLabel,
-        scenarioAmount,
-        scenarioSplit,
+        scenarioAmount: scopedPlanning.scenarioAmount,
+        scenarioSplit: scopedPlanning.scenarioSplit,
         suggestedBuys: planningRecommendations.suggestedBuys,
         suggestedSells: planningRecommendations.suggestedSells,
         triggerBuys: planningRecommendations.triggerBuys,
@@ -13868,41 +14021,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function buildFsmScopedSummary(rows) {
-        const total = rows.reduce((sum, row) => sum + (Number(row.currentValueLcy) || 0), 0);
-        const activeRows = rows.filter(row => row.fixed !== true);
-        const activeTargetPercent = activeRows.reduce((sum, row) => sum + (Number(row.targetPercent) || 0), 0);
-        const fixedCoveragePercent = rows.reduce((sum, row) => {
-            if (row.fixed !== true) {
-                return sum;
-            }
-            const allocation = calculateFsmCurrentAllocation(total, row);
-            if (!Number.isFinite(allocation)) {
-                return sum;
-            }
-            return sum + (allocation * 100);
-        }, 0);
-        const targetPercentTotal = activeTargetPercent + fixedCoveragePercent;
-        const fixedCount = rows.filter(row => row.fixed === true).length;
-        const unassignedCount = rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
-        const configuredIntent = hasConfiguredAllocationIntent({
-            targetValues: activeRows.map(row => toFiniteNumber(row?.targetPercent, null)),
-            fixedCount
+        const scopeRows = splitAllocationScopeRows(rows);
+        const total = summarizeAllocationScopeValue(scopeRows.rows);
+        const coverage = summarizeAllocationScopeTargetCoverage({
+            activeRows: scopeRows.activeRows,
+            fixedRows: scopeRows.fixedRows,
+            total,
+            targetResolver: row => toFiniteNumber(row?.targetPercent, null),
+            allocationResolver: calculateFsmCurrentAllocation
         });
-        const hasCompleteProfit = rows.length > 0 && rows.every(row => toOptionalFiniteNumber(row?.profitValueLcy) !== null);
-        const totalProfitValue = hasCompleteProfit
-            ? rows.reduce((sum, row) => {
-                const value = toOptionalFiniteNumber(row?.profitValueLcy);
-                return sum + (value === null ? 0 : value);
-            }, 0)
-            : null;
-        const totalProfitPercent = hasCompleteProfit
-            ? calculateProfitPercentFromValue(total, totalProfitValue)
-            : null;
-        const totalDrift = activeRows.reduce((sum, row) => {
-            const rowDrift = calculateFsmRowDrift(total, row);
-            return sum + (Number.isFinite(rowDrift?.driftPercent) ? Math.abs(rowDrift.driftPercent) : 0);
-        }, 0);
-        const coverageLabel = configuredIntent ? buildTargetCoverageLabel(targetPercentTotal) : null;
+        const unassignedCount = scopeRows.rows.filter(row => row.portfolioId === FSM_UNASSIGNED_PORTFOLIO_ID).length;
+        const profit = summarizeAllocationScopeProfit(scopeRows.rows, total);
+        const totalDrift = calculateAllocationScopeTotalAbsoluteDrift(scopeRows.activeRows, {
+            driftResolver: row => calculateFsmRowDrift(total, row)?.driftPercent
+        });
+        const coverageLabel = coverage.targetCoverageLabel;
         const driftClass = getDriftSeverityClass(totalDrift);
         const healthReasons = [];
         if (coverageLabel) {
@@ -13918,16 +14051,16 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
         return {
             total,
-            targetAssignedDisplay: formatPercent(targetPercentTotal / 100, { multiplier: 100, showSign: false }),
+            targetAssignedDisplay: formatPercent(coverage.targetCoveragePercent / 100, { multiplier: 100, showSign: false }),
             driftDisplay: formatPercent(totalDrift, { multiplier: 100, showSign: false }),
             driftClass,
-            holdingsCount: rows.length,
-            fixedCount,
+            holdingsCount: scopeRows.rows.length,
+            fixedCount: scopeRows.fixedRows.length,
             unassignedCount,
-            totalProfitValue,
-            totalProfitPercent,
-            profitDisplay: formatFsmProfitDisplay(totalProfitValue, totalProfitPercent),
-            profitClass: getFsmProfitClass(totalProfitPercent),
+            totalProfitValue: profit.totalProfitValue,
+            totalProfitPercent: profit.totalProfitPercent,
+            profitDisplay: formatFsmProfitDisplay(profit.totalProfitValue, profit.totalProfitPercent),
+            profitClass: profit.profitClass,
             targetCoverageLabel: coverageLabel,
             health: buildHealthStatus({
                 reasons: healthReasons,
@@ -13939,31 +14072,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     function buildFsmPlanningModel(rows, summary, options = {}) {
         const safeRows = Array.isArray(rows) ? rows : [];
         const safeSummary = summary || {};
-        const underweightCandidates = safeRows
-            .filter(row => Number.isFinite(row?.driftAmount) && row.driftAmount < 0)
-            .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount));
-        const overweightCandidates = safeRows
-            .filter(row => Number.isFinite(row?.driftAmount) && row.driftAmount > 0)
-            .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount));
-        const planningRecommendations = buildPlanningRecommendations({
-            buys: underweightCandidates,
-            sells: overweightCandidates
-        });
-        const projectedAmount = toFiniteNumber(options?.projectedAmount, 0);
-        const scenarioAmount = projectedAmount > 0 ? projectedAmount : 0;
-        const scenarioSplit = calculateRecommendedContributionSplit(
-            safeRows.map(row => ({
+        const scopedPlanning = buildAllocationScopePlanningModel(safeRows, {
+            projectedAmount: options?.projectedAmount,
+            diffResolver: row => row?.driftAmount,
+            scenarioMapper: row => ({
                 goalId: row?.holdingId || row?.code,
                 goalName: row?.displayTicker || row?.name || row?.code,
                 isFixed: row?.fixed === true,
                 diffAmount: row?.driftAmount
-            })),
-            scenarioAmount
-        );
+            })
+        });
+        const planningRecommendations = scopedPlanning.planningRecommendations;
         return {
             targetCoverageLabel: safeSummary.targetCoverageLabel || null,
-            scenarioAmount,
-            scenarioSplit,
+            scenarioAmount: scopedPlanning.scenarioAmount,
+            scenarioSplit: scopedPlanning.scenarioSplit,
             suggestedBuys: planningRecommendations.suggestedBuys,
             suggestedSells: planningRecommendations.suggestedSells,
             triggerBuys: planningRecommendations.triggerBuys,
@@ -15220,21 +15343,17 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             targetPercent: null,
             fixed: false
         })));
-        const knownProfitRows = safeRows.filter(row => Number.isFinite(toOptionalFiniteNumber(row?.profitValueLcy)));
-        const missingProfitCount = Math.max(0, safeRows.length - knownProfitRows.length);
-        if (knownProfitRows.length === 0) {
+        const profit = summarizeAllocationScopeProfit(safeRows, summary.total, { requireComplete: false });
+        if (profit.knownCount === 0) {
             return summary;
         }
-        const profitValue = knownProfitRows.reduce((sum, row) => sum + toFiniteNumber(row.profitValueLcy, 0), 0);
-        const total = toFiniteNumber(summary.total, 0);
-        const profitPercent = calculateProfitPercentFromValue(total, profitValue);
-        const partialSuffix = missingProfitCount > 0 ? ` · partial (${missingProfitCount} missing)` : '';
+        const partialSuffix = profit.missingCount > 0 ? ` · partial (${profit.missingCount} missing)` : '';
         return {
             ...summary,
-            profitValue,
-            profitPercent,
-            profitDisplay: `${formatFsmProfitDisplay(profitValue, profitPercent)}${partialSuffix}`,
-            profitClass: getFsmProfitClass(profitPercent)
+            profitValue: profit.totalProfitValue,
+            profitPercent: profit.totalProfitPercent,
+            profitDisplay: `${formatFsmProfitDisplay(profit.totalProfitValue, profit.totalProfitPercent)}${partialSuffix}`,
+            profitClass: profit.profitClass
         };
     }
 
