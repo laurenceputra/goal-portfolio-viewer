@@ -14965,14 +14965,17 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const config = loadFsmPortfolioConfig(fsmHoldings);
         let portfolios = config.portfolios;
         let assignmentByCode = { ...config.assignmentByCode };
-        let selectedScope = FSM_ALL_PORTFOLIO_ID;
+        const overviewDetail = createOverviewDetailController({
+            initialMode: 'overview',
+            initialSelection: FSM_ALL_PORTFOLIO_ID,
+            overviewMode: 'overview',
+            overviewSelection: FSM_ALL_PORTFOLIO_ID
+        });
         let filterTerm = '';
         let bulkPortfolioId = FSM_UNASSIGNED_PORTFOLIO_ID;
         let selectedHoldingIds = new Set();
         let isPortfolioManagerExpanded = false;
         let editingPortfolioId = null;
-        let viewMode = 'overview';
-        let nextFocusTarget = null;
         const targetErrorsByHoldingId = {};
         const fsmCodeCounts = buildFsmCodeCounts(fsmHoldings);
 
@@ -15012,11 +15015,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         contentDiv.appendChild(bodySection);
 
         const handleBackToOverview = () => {
-            viewMode = 'overview';
+            overviewDetail.toOverview('overview');
             filterTerm = '';
-            selectedScope = FSM_ALL_PORTFOLIO_ID;
             selectedHoldingIds = new Set();
-            nextFocusTarget = 'overview';
             rerender();
         };
 
@@ -15038,6 +15039,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const detailToolbarControls = [detailToolbar.searchInput];
 
         const focusAfterRender = () => {
+            const nextFocusTarget = overviewDetail.getNextFocusTarget();
             if (nextFocusTarget === 'overview') {
                 const firstOverviewCard = bodySection.querySelector('.gpv-fsm-overview-card');
                 if (firstOverviewCard && typeof firstOverviewCard.focus === 'function') {
@@ -15061,7 +15063,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     }
                 }
             }
-            nextFocusTarget = null;
+            overviewDetail.clearNextFocusTarget();
         };
 
         const buildViewState = () => {
@@ -15090,9 +15092,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 ...activePortfolios().map(item => ({ id: item.id, label: item.name })),
                 { id: FSM_UNASSIGNED_PORTFOLIO_ID, label: `Unassigned (${unassignedCount})` }
             ];
-            if (!scopeOptions.find(option => option.id === selectedScope)) {
-                selectedScope = FSM_ALL_PORTFOLIO_ID;
-            }
+            overviewDetail.ensureSelectionAvailable(selection => scopeOptions.some(option => option.id === selection));
+
+            const selectedScope = overviewDetail.getSelection();
 
             const normalizedFilter = filterTerm.trim().toLowerCase();
             const scopedRows = rows.filter(row => {
@@ -15208,8 +15210,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             }
                         });
                         saveFsmPortfolioConfig(portfolios, assignmentByCode);
-                        if (selectedScope === id) {
-                            selectedScope = FSM_UNASSIGNED_PORTFOLIO_ID;
+                        if (overviewDetail.getSelection() === id) {
+                            overviewDetail.toDetail(FSM_UNASSIGNED_PORTFOLIO_ID, null);
                         }
                         rerender();
                     }
@@ -15220,7 +15222,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             summarySection.innerHTML = '';
             bodySection.innerHTML = '';
 
-            if (viewMode === 'overview') {
+            if (overviewDetail.getMode() === 'overview') {
                 headerBackBtn.hidden = true;
                 headerBackBtn.disabled = true;
                 toolbarSection.hidden = true;
@@ -15233,19 +15235,15 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 bodySection.appendChild(buildFsmOverviewPanel({
                     overviewModel: viewState.overviewModel,
                     onSelectScope: scopeId => {
-                        selectedScope = scopeId;
+                        overviewDetail.toDetail(scopeId, 'detail');
                         filterTerm = '';
                         selectedHoldingIds = new Set();
-                        viewMode = 'detail';
-                        nextFocusTarget = 'detail';
                         rerender();
                     },
                     onOpenAll: () => {
-                        selectedScope = FSM_ALL_PORTFOLIO_ID;
+                        overviewDetail.toDetail(FSM_ALL_PORTFOLIO_ID, 'detail');
                         filterTerm = '';
                         selectedHoldingIds = new Set();
-                        viewMode = 'detail';
-                        nextFocusTarget = 'detail';
                         rerender();
                     }
                 }));
@@ -15267,9 +15265,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     projectedAmount: viewState.projectedAmount,
                     onInput: input => {
                         const value = input.value;
+                        const selectedScope = overviewDetail.getSelection();
                         if (value === '') {
                             clearProjectedInvestment(state.projectedInvestments, FSM_PROJECTION_BUCKET, selectedScope);
-                            nextFocusTarget = 'projection';
+                            overviewDetail.setNextFocusTarget('projection');
                             rerender();
                             return;
                         }
@@ -15280,13 +15279,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         }
                         if (amount === 0) {
                             clearProjectedInvestment(state.projectedInvestments, FSM_PROJECTION_BUCKET, selectedScope);
-                            nextFocusTarget = 'projection';
+                            overviewDetail.setNextFocusTarget('projection');
                             rerender();
                             return;
                         }
                         setProjectedInvestment(state.projectedInvestments, FSM_PROJECTION_BUCKET, selectedScope, amount);
                         flashInputBorder(input, 'success');
-                        nextFocusTarget = 'projection';
+                        overviewDetail.setNextFocusTarget('projection');
                         rerender();
                     }
                 }));
@@ -16103,6 +16102,61 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         };
     }
 
+    function createOverviewDetailController({
+        initialMode = 'overview',
+        initialSelection,
+        overviewMode = 'overview',
+        overviewSelection,
+        onStateChange
+    } = {}) {
+        let mode = initialMode;
+        let selection = initialSelection;
+        let nextFocusTarget = null;
+
+        function commit() {
+            if (typeof onStateChange === 'function') {
+                onStateChange({ mode, selection, nextFocusTarget });
+            }
+        }
+
+        return {
+            getMode: () => mode,
+            getSelection: () => selection,
+            getNextFocusTarget: () => nextFocusTarget,
+            clearNextFocusTarget: () => {
+                nextFocusTarget = null;
+                commit();
+            },
+            setNextFocusTarget: target => {
+                nextFocusTarget = target || null;
+                commit();
+            },
+            toDetail: (nextSelection, focusTarget = 'detail') => {
+                mode = 'detail';
+                selection = nextSelection;
+                nextFocusTarget = focusTarget;
+                commit();
+            },
+            toOverview: (focusTarget = 'overview') => {
+                mode = overviewMode;
+                selection = overviewSelection;
+                nextFocusTarget = focusTarget;
+                commit();
+            },
+            ensureSelectionAvailable: (isAvailable, { returnToOverviewMode = false } = {}) => {
+                if (typeof isAvailable !== 'function' || isAvailable(selection)) {
+                    return false;
+                }
+                selection = overviewSelection;
+                if (returnToOverviewMode) {
+                    mode = overviewMode;
+                }
+                commit();
+                return true;
+            }
+        };
+    }
+
     function renderOcbcOverlay(ocbcHoldings, options = {}) {
         const shell = createPortfolioOverlayShell({
             title: 'Portfolio Viewer (OCBC)',
@@ -16135,8 +16189,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const liabilities = Array.isArray(safeHoldings.liabilities) ? safeHoldings.liabilities : [];
         const holdingsByPortfolio = normalizeOcbcHoldingsByPortfolioForStore(options.holdingsByPortfolio);
         const latestPortfolioNos = new Set(Array.isArray(options.latestPortfolioNos) ? options.latestPortfolioNos : []);
-        let viewMode = 'overview';
-        let selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
+        const overviewDetail = createOverviewDetailController({
+            initialMode: 'overview',
+            initialSelection: FSM_ALL_PORTFOLIO_ID,
+            overviewMode: 'overview',
+            overviewSelection: FSM_ALL_PORTFOLIO_ID
+        });
 
         const allocationConfig = loadOcbcAllocationConfig();
         const bucketsByView = allocationConfig.bucketsByView;
@@ -16600,8 +16658,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         ariaLabel: `Open portfolio ${cardModel.portfolioNo} ${sectionView}`,
                         onSelect: () => {
                             viewSelect.value = sectionView;
-                            selectedPortfolioNo = cardModel.portfolioNo;
-                            viewMode = 'detail';
+                            overviewDetail.toDetail(cardModel.portfolioNo, null);
                             rerender();
                         }
                     });
@@ -16643,7 +16700,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             let rows = activeView === 'liabilities' ? liabilities : assets;
             contentDiv.innerHTML = '';
 
-            if (viewMode === 'overview') {
+            if (overviewDetail.getMode() === 'overview') {
                 controls.hidden = true;
                 setElementsDisabled(detailToolbarControls, true);
                 renderOverview();
@@ -16653,6 +16710,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             controls.hidden = false;
             setElementsDisabled(detailToolbarControls, false);
 
+            const selectedPortfolioNo = overviewDetail.getSelection();
             if (selectedPortfolioNo !== FSM_ALL_PORTFOLIO_ID) {
                 rows = rows.filter(row => utils.normalizeString(row?.portfolioNo, '-') === selectedPortfolioNo);
             }
@@ -16661,8 +16719,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const backBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
             backBtn.type = 'button';
             backBtn.onclick = () => {
-                viewMode = 'overview';
-                selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
+                overviewDetail.toOverview(null);
                 rerender();
             };
             detailToolbar.appendChild(backBtn);
