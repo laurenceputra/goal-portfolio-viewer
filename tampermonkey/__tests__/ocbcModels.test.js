@@ -98,4 +98,29 @@ describe('OCBC model helpers', () => {
             '1 sub-portfolio scope(s) show high drift'
         ]));
     });
+
+    test('groupOcbcRowsBySubPortfolio assigns rows exactly once', () => {
+        const { groupOcbcRowsBySubPortfolio } = exportsModule;
+        expect(typeof groupOcbcRowsBySubPortfolio).toBe('function');
+
+        const rows = [
+            { portfolioNo: 'P1', code: 'A', productType: 'UNIT_TRUST', currentValueLcy: 100 },
+            { portfolioNo: 'P1', code: 'B', productType: 'UNIT_TRUST', currentValueLcy: 250 }
+        ];
+        const grouped = groupOcbcRowsBySubPortfolio(
+            rows,
+            [{ id: 's1', name: 'Sub 1', archived: false }],
+            { A: 's1' }
+        );
+
+        const totalGroupedValue = grouped.reduce((sum, subPortfolio) => (
+            sum + subPortfolio.rows.reduce((inner, row) => inner + Number(row.currentValueLcy || 0), 0)
+        ), 0);
+        const groupedHoldingsCount = grouped.reduce((sum, subPortfolio) => sum + subPortfolio.rows.length, 0);
+
+        expect(totalGroupedValue).toBe(350);
+        expect(groupedHoldingsCount).toBe(rows.length);
+        expect(grouped.find(item => item.id === 's1')?.rows).toHaveLength(1);
+        expect(grouped[0].rows).toHaveLength(1);
+    });
 });

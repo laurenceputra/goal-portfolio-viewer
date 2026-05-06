@@ -16309,17 +16309,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
                 }, 0);
 
-                portfolioRows.forEach(row => {
-                    const code = utils.normalizeString(row?.code, '');
-                    const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
-                    const matchedSubPortfolio = subPortfolioRowsData.find(item => item.id === assignment.subPortfolioId);
-                    (matchedSubPortfolio || subPortfolioRowsData[0]).rows.push(row);
-                    if (code && assignment.subPortfolioId && assignmentByCode[code] !== assignment.subPortfolioId) {
-                        assignmentByCode[code] = assignment.subPortfolioId;
-                        assignmentConfigChanged = true;
-                    }
-                });
-
                 subPortfolioRowsData.forEach(subPortfolio => {
                     const tr = createElement('tr');
                     const subPortfolioSummary = buildOcbcSummary(subPortfolio.rows);
@@ -17438,7 +17427,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             buildFsmDisplayRows,
             buildNeedsAttentionItemsFromHealth,
             buildOcbcOverviewModel,
-            buildOcbcPlanningModel
+            buildOcbcPlanningModel,
+            groupOcbcRowsBySubPortfolio
         };
     }
 
@@ -17508,6 +17498,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             buildNeedsAttentionItemsFromHealth,
             buildOcbcOverviewModel: testingHooks?.buildOcbcOverviewModel,
             buildOcbcPlanningModel: testingHooks?.buildOcbcPlanningModel,
+            groupOcbcRowsBySubPortfolio: testingHooks?.groupOcbcRowsBySubPortfolio,
             collectGoalIds,
             collectAllGoalIds,
             buildGoalTargetById,
