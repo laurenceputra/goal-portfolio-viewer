@@ -8604,7 +8604,6 @@ let GoalTargetStore;
         input.addEventListener('keydown', event => {
             if (event.key === 'Enter') {
                 event.preventDefault();
-                commit();
                 input.blur();
             }
         });
