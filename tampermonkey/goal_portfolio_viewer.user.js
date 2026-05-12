@@ -7912,6 +7912,16 @@ let GoalTargetStore;
         return element;
     }
 
+    function createHealthReasonList(reasons, options = {}) {
+        const safeReasons = Array.isArray(reasons) ? reasons : [];
+        const limit = Number.isInteger(options.limit) ? options.limit : safeReasons.length;
+        const reasonList = createElement('ul', 'gpv-health-reasons');
+        safeReasons.slice(0, limit).forEach(reason => {
+            reasonList.appendChild(createElement('li', 'gpv-health-reason', reason));
+        });
+        return reasonList;
+    }
+
     function appendTextSpan(container, className, textContent) {
         const span = createElement('span', className, textContent);
         container.appendChild(span);
@@ -8806,11 +8816,7 @@ let GoalTargetStore;
             bucketCard.appendChild(bucketHeader);
 
             if (Array.isArray(bucketModel.health?.reasons) && bucketModel.health.reasons.length > 0) {
-                const reasonList = createElement('ul', 'gpv-health-reasons');
-                bucketModel.health.reasons.slice(0, 2).forEach(reason => {
-                    reasonList.appendChild(createElement('li', 'gpv-health-reason', reason));
-                });
-                bucketCard.appendChild(reasonList);
+                bucketCard.appendChild(createHealthReasonList(bucketModel.health.reasons, { limit: 2 }));
             }
 
             bucketModel.goalTypes.forEach(goalTypeModel => {
@@ -14349,11 +14355,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 </div>
             `;
             if (Array.isArray(card.health?.reasons) && card.health.reasons.length > 0) {
-                const reasonList = createElement('ul', 'gpv-health-reasons');
-                card.health.reasons.slice(0, 2).forEach(reason => {
-                    reasonList.appendChild(createElement('li', 'gpv-health-reason', reason));
-                });
-                buttonCard.appendChild(reasonList);
+                buttonCard.appendChild(createHealthReasonList(card.health.reasons, { limit: 2 }));
             }
             grid.appendChild(buttonCard);
         });
@@ -15796,11 +15798,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
             if (planningStatusItems.length > 0) {
                 planningPanel.appendChild(createWorkspaceTitle({ title: 'Needs attention', level: 3, className: 'gpv-planning-subtitle' }));
-                const statusList = createElement('ul', 'gpv-health-reasons');
-                planningStatusItems.forEach(item => {
-                    statusList.appendChild(createElement('li', 'gpv-health-reason', item));
-                });
-                planningPanel.appendChild(statusList);
+                planningPanel.appendChild(createHealthReasonList(planningStatusItems));
             }
             contentDiv.appendChild(planningPanel);
 
