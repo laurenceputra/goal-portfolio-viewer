@@ -2104,12 +2104,17 @@ function buildBucketPlanningModel(goalTypeModels) {
     };
 }
 
-function buildNeedsAttentionItemsForSummary(summaryViewModel) {
-    if (!summaryViewModel || !Array.isArray(summaryViewModel.buckets)) {
+function buildNeedsAttentionItems(sources, appendSourceItems, limit = 6) {
+    if (!Array.isArray(sources) || typeof appendSourceItems !== 'function') {
         return [];
     }
     const items = [];
-    summaryViewModel.buckets.forEach(bucket => {
+    sources.forEach(source => appendSourceItems(source, items));
+    return items.slice(0, limit);
+}
+
+function buildNeedsAttentionItemsForSummary(summaryViewModel) {
+    return buildNeedsAttentionItems(summaryViewModel?.buckets, (bucket, items) => {
         const goalTypes = Array.isArray(bucket.goalTypes) ? bucket.goalTypes : [];
         goalTypes.forEach(goalType => {
             if (goalType.targetCoverageIssue) {
@@ -2132,15 +2137,10 @@ function buildNeedsAttentionItemsForSummary(summaryViewModel) {
             });
         });
     });
-    return items.slice(0, 6);
 }
 
 function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
-    if (!overviewModel || !Array.isArray(overviewModel.cards)) {
-        return [];
-    }
-    const items = [];
-    overviewModel.cards.forEach(card => {
+    return buildNeedsAttentionItems(overviewModel?.cards, (card, items) => {
         const reasons = Array.isArray(card.health?.reasons) ? card.health.reasons : [];
         reasons.forEach(reason => {
             items.push({
@@ -2150,7 +2150,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             });
         });
     });
-    return items.slice(0, 6);
 }
 
     function collectGoalIds(bucketObj) {
