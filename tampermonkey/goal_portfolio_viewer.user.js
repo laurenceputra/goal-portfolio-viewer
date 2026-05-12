@@ -7922,6 +7922,43 @@ let GoalTargetStore;
         return reasonList;
     }
 
+    function prependOverlayHeaderButtons(header, buttons) {
+        const headerButtons = header?.querySelector?.('.gpv-header-buttons');
+        if (!headerButtons || !Array.isArray(buttons)) {
+            return;
+        }
+        buttons.filter(Boolean).forEach(button => {
+            headerButtons.prepend(button);
+        });
+    }
+
+    function createOverlaySyncButton(returnTo, options = {}) {
+        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
+        syncBtn.type = 'button';
+        syncBtn.title = 'Configure cross-device sync';
+        syncBtn.onclick = () => {
+            if (typeof showSyncSettings === 'function') {
+                showSyncSettings({ returnTo });
+                return;
+            }
+            if (typeof options.onUnavailable === 'function') {
+                options.onUnavailable();
+            }
+        };
+        return syncBtn;
+    }
+
+    function createBackToOverviewButton(onClick) {
+        const backBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
+        backBtn.type = 'button';
+        backBtn.onclick = () => {
+            if (typeof onClick === 'function') {
+                onClick();
+            }
+        };
+        return backBtn;
+    }
+
     function appendTextSpan(container, className, textContent) {
         const span = createElement('span', className, textContent);
         container.appendChild(span);
@@ -14240,6 +14277,22 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return summaryRow;
     }
 
+    function buildOverviewStatsHtml(stats) {
+        const safeStats = Array.isArray(stats) ? stats : [];
+        return `
+                <div class="gpv-fsm-overview-stats">
+                    ${safeStats.map(stat => {
+                        const valueClass = stat?.valueClass ? ` ${escapeHtml(stat.valueClass)}` : '';
+                        return `
+                    <div class="gpv-fsm-overview-stat">
+                        <span class="gpv-fsm-overview-stat-label">${escapeHtml(stat?.label ?? '')}</span>
+                        <span class="gpv-fsm-overview-stat-value${valueClass}">${escapeHtml(stat?.value ?? '')}</span>
+                    </div>`;
+                    }).join('')}
+                </div>
+        `;
+    }
+
     function buildFsmPortfolioOverviewModel(rows, activePortfolios) {
         const safeRows = Array.isArray(rows) ? rows : [];
         const safePortfolios = Array.isArray(activePortfolios) ? activePortfolios : [];
@@ -14335,24 +14388,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     </div>
                     <span class="gpv-health-badge ${escapeHtml(card.health?.className || 'gpv-health--healthy')}">${escapeHtml(card.health?.label || 'Healthy')}</span>
                 </div>
-                <div class="gpv-fsm-overview-stats">
-                    <div class="gpv-fsm-overview-stat">
-                        <span class="gpv-fsm-overview-stat-label">Total value</span>
-                        <span class="gpv-fsm-overview-stat-value">${escapeHtml(card.totalDisplay)}</span>
-                    </div>
-                    <div class="gpv-fsm-overview-stat">
-                        <span class="gpv-fsm-overview-stat-label">Target assigned</span>
-                        <span class="gpv-fsm-overview-stat-value">${escapeHtml(card.targetAssignedDisplay)}</span>
-                    </div>
-                    <div class="gpv-fsm-overview-stat">
-                        <span class="gpv-fsm-overview-stat-label">Drift</span>
-                        <span class="gpv-fsm-overview-stat-value ${escapeHtml(card.driftClass || '')}">${escapeHtml(card.driftDisplay)}</span>
-                    </div>
-                    <div class="gpv-fsm-overview-stat">
-                        <span class="gpv-fsm-overview-stat-label">Profit</span>
-                        <span class="gpv-fsm-overview-stat-value ${escapeHtml(card.profitClass || '')}">${escapeHtml(card.profitDisplay || '-')}</span>
-                    </div>
-                </div>
+                ${buildOverviewStatsHtml([
+                    { label: 'Total value', value: card.totalDisplay },
+                    { label: 'Target assigned', value: card.targetAssignedDisplay },
+                    { label: 'Drift', value: card.driftDisplay, valueClass: card.driftClass || '' },
+                    { label: 'Profit', value: card.profitDisplay || '-', valueClass: card.profitClass || '' }
+                ])}
             `;
             if (Array.isArray(card.health?.reasons) && card.health.reasons.length > 0) {
                 buttonCard.appendChild(createHealthReasonList(card.health.reasons, { limit: 2 }));
@@ -14616,18 +14657,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const { overlay, container, cleanupCallbacks, header, contentDiv } = shell;
 
         const expandBtn = createOverlayExpandToggleButton(container);
-        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
-        syncBtn.title = 'Configure cross-device sync';
-        syncBtn.onclick = () => {
-            if (typeof showSyncSettings === 'function') {
-                showSyncSettings({ returnTo: 'fsm' });
-            }
-        };
-        const headerButtons = header.querySelector('.gpv-header-buttons');
-        if (headerButtons) {
-            headerButtons.prepend(expandBtn);
-            headerButtons.prepend(syncBtn);
-        }
+        const syncBtn = createOverlaySyncButton('fsm');
+        prependOverlayHeaderButtons(header, [expandBtn, syncBtn]);
 
         const config = loadFsmPortfolioConfig(fsmHoldings);
         let portfolios = config.portfolios;
@@ -14691,9 +14722,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         headerBackBtn.type = 'button';
         headerBackBtn.onclick = handleBackToOverview;
         headerBackBtn.hidden = true;
-        if (headerButtons) {
-            headerButtons.prepend(headerBackBtn);
-        }
+        prependOverlayHeaderButtons(header, [headerBackBtn]);
 
         const detailToolbar = createFsmDetailToolbar({
             onFilterChange: value => {
@@ -15599,18 +15628,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const { container, contentDiv, header } = shell;
 
         const expandBtn = createOverlayExpandToggleButton(container);
-        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
-        syncBtn.title = 'Configure cross-device sync';
-        syncBtn.onclick = () => {
-            if (typeof showSyncSettings === 'function') {
-                showSyncSettings({ returnTo: 'ocbc' });
-            }
-        };
-        const headerButtons = header.querySelector('.gpv-header-buttons');
-        if (headerButtons) {
-            headerButtons.prepend(expandBtn);
-            headerButtons.prepend(syncBtn);
-        }
+        const syncBtn = createOverlaySyncButton('ocbc');
+        prependOverlayHeaderButtons(header, [expandBtn, syncBtn]);
 
         const controls = createElement('div', 'gpv-controls gpv-control-bar');
         const viewSelectId = 'gpv-ocbc-view-select';
@@ -16238,20 +16257,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             </div>
                             <span class="gpv-fsm-overview-card-tag">${escapeHtml(sectionTitle)}</span>
                         </div>
-                        <div class="gpv-fsm-overview-stats">
-                            <div class="gpv-fsm-overview-stat">
-                                <span class="gpv-fsm-overview-stat-label">Total value</span>
-                                <span class="gpv-fsm-overview-stat-value">${escapeHtml(formatMoney(summary.total))}</span>
-                            </div>
-                            <div class="gpv-fsm-overview-stat">
-                                <span class="gpv-fsm-overview-stat-label">Profit</span>
-                                <span class="gpv-fsm-overview-stat-value ${escapeHtml(summary.profitClass || '')}">${escapeHtml(summary.profitDisplay || '-')}</span>
-                            </div>
-                            <div class="gpv-fsm-overview-stat">
-                                <span class="gpv-fsm-overview-stat-label">Status</span>
-                                <span class="gpv-fsm-overview-stat-value">${escapeHtml(statusText)}</span>
-                            </div>
-                        </div>
+                        ${buildOverviewStatsHtml([
+                            { label: 'Total value', value: formatMoney(summary.total) },
+                            { label: 'Profit', value: summary.profitDisplay || '-', valueClass: summary.profitClass || '' },
+                            { label: 'Status', value: statusText }
+                        ])}
                     `;
                     grid.appendChild(card);
                 });
@@ -16284,13 +16294,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
 
             const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
-            const backBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
-            backBtn.type = 'button';
-            backBtn.onclick = () => {
+            const backBtn = createBackToOverviewButton(() => {
                 viewMode = 'overview';
                 selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
                 rerender();
-            };
+            });
             detailToolbar.appendChild(backBtn);
             contentDiv.appendChild(detailToolbar);
 
@@ -16429,16 +16437,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
         
         // Add sync settings button
-        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
-        syncBtn.title = 'Configure cross-device sync';
-        syncBtn.onclick = () => {
-            if (typeof showSyncSettings === 'function') {
-                showSyncSettings({ returnTo: 'endowus' });
-            } else {
+        const syncBtn = createOverlaySyncButton('endowus', {
+            onUnavailable: () => {
                 console.error('[Goal Portfolio Viewer] showSyncSettings is not a function!');
                 alert('Sync settings are not available. Please ensure the sync module is loaded.');
             }
-        };
+        });
 
         const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary gpv-bucket-manage-btn', '🗂️ Manage assignments');
         bucketManageBtn.type = 'button';
@@ -16453,12 +16457,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         const expandBtn = createOverlayExpandToggleButton(container);
 
-        const headerButtons = header.querySelector('.gpv-header-buttons');
-        if (headerButtons) {
-            headerButtons.prepend(expandBtn);
-            headerButtons.prepend(syncBtn);
-            headerButtons.prepend(bucketManageBtn);
-        }
+        prependOverlayHeaderButtons(header, [expandBtn, syncBtn, bucketManageBtn]);
         const controls = createElement('div', 'gpv-controls gpv-control-bar');
 
         const modeToggle = createElement('div', 'gpv-mode-toggle');
@@ -16480,8 +16479,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const detailToolbarControls = [allocationButton, performanceButton];
 
         const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
-        const backToOverviewBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
-        backToOverviewBtn.type = 'button';
+        const backToOverviewBtn = createBackToOverviewButton();
         detailToolbar.appendChild(backToOverviewBtn);
 
         let currentBucketMode = getBucketViewModePreference();
