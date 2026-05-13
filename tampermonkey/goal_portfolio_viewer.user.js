@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.14
+// @version      2.14.15
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -36,6 +36,7 @@
     const FSM_UNASSIGNED_PORTFOLIO_ID = 'unassigned';
     const FSM_ALL_PORTFOLIO_ID = 'all';
     const FSM_MAX_PORTFOLIO_NAME_LENGTH = 64;
+    const CANONICAL_ALLOCATION_MODEL_VERSION = 1;
     const DEBUG_AUTH = false;
 
     const UNKNOWN_GOAL_TYPE = 'UNKNOWN_GOAL_TYPE';
@@ -396,6 +397,10 @@
         }
         const numericValue = Number(value);
         return Number.isFinite(numericValue) ? numericValue : null;
+    }
+
+    function isPlainObject(value) {
+        return Boolean(value && typeof value === 'object' && !Array.isArray(value));
     }
 
     function normalizePercentTargetValue(rawValue) {
@@ -2104,12 +2109,17 @@ function buildBucketPlanningModel(goalTypeModels) {
     };
 }
 
-function buildNeedsAttentionItemsForSummary(summaryViewModel) {
-    if (!summaryViewModel || !Array.isArray(summaryViewModel.buckets)) {
+function buildNeedsAttentionItems(sources, appendSourceItems, limit = 6) {
+    if (!Array.isArray(sources) || typeof appendSourceItems !== 'function') {
         return [];
     }
     const items = [];
-    summaryViewModel.buckets.forEach(bucket => {
+    sources.forEach(source => appendSourceItems(source, items));
+    return items.slice(0, limit);
+}
+
+function buildNeedsAttentionItemsForSummary(summaryViewModel) {
+    return buildNeedsAttentionItems(summaryViewModel?.buckets, (bucket, items) => {
         const goalTypes = Array.isArray(bucket.goalTypes) ? bucket.goalTypes : [];
         goalTypes.forEach(goalType => {
             if (goalType.targetCoverageIssue) {
@@ -2132,15 +2142,10 @@ function buildNeedsAttentionItemsForSummary(summaryViewModel) {
             });
         });
     });
-    return items.slice(0, 6);
 }
 
 function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
-    if (!overviewModel || !Array.isArray(overviewModel.cards)) {
-        return [];
-    }
-    const items = [];
-    overviewModel.cards.forEach(card => {
+    return buildNeedsAttentionItems(overviewModel?.cards, (card, items) => {
         const reasons = Array.isArray(card.health?.reasons) ? card.health.reasons : [];
         reasons.forEach(reason => {
             items.push({
@@ -2150,7 +2155,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             });
         });
     });
-    return items.slice(0, 6);
 }
 
     function collectGoalIds(bucketObj) {
@@ -3108,8 +3112,352 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         }
     };
 
+    function normalizeCanonicalScope(scope) {
+        if (!isPlainObject(scope)) {
+            return null;
+        }
+        const id = utils.normalizeString(scope.id, '');
+        if (!id) {
+            return null;
+        }
+        return {
+            id,
+            label: utils.normalizeString(scope.label, id),
+            kind: utils.normalizeString(scope.kind, 'scope'),
+            parentId: utils.normalizeString(scope.parentId, ''),
+            archived: scope.archived === true,
+            metadata: isPlainObject(scope.metadata) ? { ...scope.metadata } : {}
+        };
+    }
+
+    function normalizeCanonicalAssignment(value) {
+        const source = isPlainObject(value) ? value : { scopeId: value };
+        const scopeId = utils.normalizeString(source.scopeId, '');
+        if (!scopeId) {
+            return null;
+        }
+        return {
+            scopeId,
+            metadata: isPlainObject(source.metadata) ? { ...source.metadata } : {}
+        };
+    }
+
+    function normalizeCanonicalTarget(value) {
+        const source = isPlainObject(value) ? value : { targetPercent: value };
+        const targetPercent = source.fixed === true ? null : toOptionalFiniteNumber(source.targetPercent);
+        return {
+            targetPercent,
+            fixed: source.fixed === true,
+            scopeId: utils.normalizeString(source.scopeId, ''),
+            positionId: utils.normalizeString(source.positionId, ''),
+            metadata: isPlainObject(source.metadata) ? { ...source.metadata } : {}
+        };
+    }
+
+    function normalizeCanonicalAllocationModel(data) {
+        const source = isPlainObject(data) ? data : {};
+        const scopes = [];
+        const seenScopeIds = new Set();
+        (Array.isArray(source.scopes) ? source.scopes : []).forEach(scope => {
+            const normalized = normalizeCanonicalScope(scope);
+            if (!normalized || seenScopeIds.has(normalized.id)) {
+                return;
+            }
+            seenScopeIds.add(normalized.id);
+            scopes.push(normalized);
+        });
+
+        const assignments = {};
+        Object.entries(isPlainObject(source.assignments) ? source.assignments : {}).forEach(([positionId, assignment]) => {
+            const normalizedPositionId = utils.normalizeString(positionId, '');
+            const normalizedAssignment = normalizeCanonicalAssignment(assignment);
+            if (normalizedPositionId && normalizedAssignment) {
+                assignments[normalizedPositionId] = normalizedAssignment;
+            }
+        });
+
+        const targets = {};
+        Object.entries(isPlainObject(source.targets) ? source.targets : {}).forEach(([targetId, target]) => {
+            const normalizedTargetId = utils.normalizeString(targetId, '');
+            const normalizedTarget = normalizeCanonicalTarget(target);
+            if (normalizedTargetId && (normalizedTarget.fixed || normalizedTarget.targetPercent !== null)) {
+                targets[normalizedTargetId] = normalizedTarget;
+            }
+        });
+
+        const ordering = {};
+        Object.entries(isPlainObject(source.ordering) ? source.ordering : {}).forEach(([scopeId, value]) => {
+            const normalizedScopeId = utils.normalizeString(scopeId, '');
+            if (!normalizedScopeId || !Array.isArray(value)) {
+                return;
+            }
+            const seen = new Set();
+            const orderedIds = [];
+            value.forEach(positionId => {
+                const normalizedPositionId = utils.normalizeString(positionId, '');
+                if (!normalizedPositionId || seen.has(normalizedPositionId)) {
+                    return;
+                }
+                seen.add(normalizedPositionId);
+                orderedIds.push(normalizedPositionId);
+            });
+            if (orderedIds.length) {
+                ordering[normalizedScopeId] = orderedIds;
+            }
+        });
+
+        return {
+            version: CANONICAL_ALLOCATION_MODEL_VERSION,
+            scopes,
+            assignments,
+            targets,
+            ordering,
+            metadata: isPlainObject(source.metadata) ? { ...source.metadata } : {}
+        };
+    }
+
+    function buildCanonicalTargetsFromMaps(targetsById, fixedById) {
+        const targets = {};
+        const ids = new Set([
+            ...Object.keys(isPlainObject(targetsById) ? targetsById : {}),
+            ...Object.keys(isPlainObject(fixedById) ? fixedById : {})
+        ]);
+        ids.forEach(id => {
+            const normalizedId = utils.normalizeString(id, '');
+            if (!normalizedId) {
+                return;
+            }
+            const isFixed = fixedById?.[id] === true;
+            const targetPercent = isFixed ? null : toOptionalFiniteNumber(targetsById?.[id]);
+            if (!isFixed && targetPercent === null) {
+                return;
+            }
+            targets[normalizedId] = { targetPercent, fixed: isFixed, positionId: normalizedId };
+        });
+        return targets;
+    }
+
+    function buildTargetMapsFromCanonicalAllocationModel(allocationModel) {
+        const model = normalizeCanonicalAllocationModel(allocationModel);
+        const targets = {};
+        const fixed = {};
+        Object.entries(model.targets).forEach(([targetId, target]) => {
+            if (target.fixed === true) {
+                fixed[targetId] = true;
+                return;
+            }
+            if (Number.isFinite(target.targetPercent)) {
+                targets[targetId] = target.targetPercent;
+            }
+        });
+        return { targets, fixed };
+    }
+
+    function buildEndowusAllocationModelFromConfig(config = {}) {
+        const source = isPlainObject(config) ? config : {};
+        const goalBuckets = isPlainObject(source.goalBuckets) ? source.goalBuckets : {};
+        const scopeById = {};
+        const assignments = {};
+        Object.entries(goalBuckets).forEach(([goalId, bucketName]) => {
+            const normalizedGoalId = utils.normalizeString(goalId, '');
+            const normalizedBucketName = utils.normalizeString(bucketName, '');
+            if (!normalizedGoalId || !normalizedBucketName) {
+                return;
+            }
+            scopeById[normalizedBucketName] = {
+                id: normalizedBucketName,
+                label: normalizedBucketName,
+                kind: 'bucket'
+            };
+            assignments[normalizedGoalId] = { scopeId: normalizedBucketName };
+        });
+        return normalizeCanonicalAllocationModel({
+            scopes: Object.values(scopeById),
+            assignments,
+            targets: buildCanonicalTargetsFromMaps(source.goalTargets, source.goalFixed),
+            metadata: { platformId: 'endowus' }
+        });
+    }
+
+    function buildEndowusConfigFromAllocationModel(allocationModel) {
+        const model = normalizeCanonicalAllocationModel(allocationModel);
+        const { targets: goalTargets, fixed: goalFixed } = buildTargetMapsFromCanonicalAllocationModel(model);
+        const scopeLabelById = model.scopes.reduce((acc, scope) => {
+            acc[scope.id] = scope.label || scope.id;
+            return acc;
+        }, {});
+        const goalBuckets = {};
+        Object.entries(model.assignments).forEach(([goalId, assignment]) => {
+            const bucketName = scopeLabelById[assignment.scopeId] || assignment.scopeId;
+            if (bucketName) {
+                goalBuckets[goalId] = bucketName;
+            }
+        });
+        return { goalTargets, goalFixed, goalBuckets };
+    }
+
+    function buildFsmAllocationModelFromConfig(config = {}) {
+        const source = isPlainObject(config) ? config : {};
+        const scopes = normalizeFsmPortfolios(Array.isArray(source.portfolios) ? source.portfolios : [])
+            .map(portfolio => ({
+                id: portfolio.id,
+                label: portfolio.name,
+                kind: 'portfolio',
+                archived: portfolio.archived === true
+            }));
+        const assignments = {};
+        Object.entries(isPlainObject(source.assignmentByCode) ? source.assignmentByCode : {}).forEach(([code, portfolioId]) => {
+            const normalizedCode = utils.normalizeString(code, '');
+            const normalizedPortfolioId = utils.normalizeString(portfolioId, '');
+            if (normalizedCode && normalizedPortfolioId) {
+                assignments[normalizedCode] = { scopeId: normalizedPortfolioId };
+            }
+        });
+        return normalizeCanonicalAllocationModel({
+            scopes,
+            assignments,
+            targets: buildCanonicalTargetsFromMaps(source.targetsByCode, source.fixedByCode),
+            metadata: { platformId: 'fsm' }
+        });
+    }
+
+    function buildFsmConfigFromAllocationModel(allocationModel) {
+        const model = normalizeCanonicalAllocationModel(allocationModel);
+        const { targets: targetsByCode, fixed: fixedByCode } = buildTargetMapsFromCanonicalAllocationModel(model);
+        const portfolios = normalizeFsmPortfolios(model.scopes
+            .filter(scope => scope.kind === 'portfolio')
+            .map(scope => ({
+                id: scope.id,
+                name: scope.label,
+                archived: scope.archived === true
+            })));
+        const assignmentByCode = {};
+        Object.entries(model.assignments).forEach(([code, assignment]) => {
+            if (assignment.scopeId) {
+                assignmentByCode[code] = assignment.scopeId;
+            }
+        });
+        return { targetsByCode, fixedByCode, portfolios, assignmentByCode };
+    }
+
+    function buildOcbcScopeId(viewKey, portfolioNo, subPortfolioId) {
+        return [
+            utils.normalizeString(viewKey, 'assets'),
+            utils.normalizeString(portfolioNo, '-'),
+            utils.normalizeString(subPortfolioId, '')
+        ].join(PROJECTED_KEY_SEPARATOR);
+    }
+
+    function buildOcbcAllocationModelFromConfig(config = {}) {
+        const source = isPlainObject(config) ? config : {};
+        const subPortfolios = normalizeOcbcSubPortfolios(source.subPortfolios);
+        const scopes = [];
+        Object.entries(subPortfolios).forEach(([viewKey, portfolios]) => {
+            Object.entries(portfolios).forEach(([portfolioNo, items]) => {
+                (Array.isArray(items) ? items : []).forEach(item => {
+                    scopes.push({
+                        id: buildOcbcScopeId(viewKey, portfolioNo, item.id),
+                        label: item.name,
+                        kind: 'subPortfolio',
+                        parentId: buildOcbcScopeId(viewKey, portfolioNo, ''),
+                        archived: item.archived === true,
+                        metadata: {
+                            viewKey,
+                            portfolioNo,
+                            subPortfolioId: item.id,
+                            legacyProductType: item.legacyProductType || '',
+                            legacyBucketId: item.legacyBucketId || ''
+                        }
+                    });
+                });
+            });
+        });
+        const assignments = {};
+        Object.entries(normalizeOcbcAssignmentByCode(source.assignmentByCode)).forEach(([code, subPortfolioId]) => {
+            assignments[code] = {
+                scopeId: subPortfolioId,
+                metadata: { legacyScopeId: subPortfolioId }
+            };
+        });
+        const targets = {};
+        Object.entries(isPlainObject(source.targetsByScope) ? source.targetsByScope : {}).forEach(([scope, value]) => {
+            const normalizedScope = utils.normalizeString(scope, '');
+            const targetPercent = toOptionalFiniteNumber(value);
+            if (normalizedScope && targetPercent !== null) {
+                targets[normalizedScope] = { targetPercent, fixed: false, scopeId: normalizedScope };
+            }
+        });
+        return normalizeCanonicalAllocationModel({
+            scopes,
+            assignments,
+            targets,
+            ordering: normalizeOcbcOrderByScope(source.orderByScope),
+            metadata: { platformId: 'ocbc' }
+        });
+    }
+
+    function buildOcbcConfigFromAllocationModel(allocationModel) {
+        const model = normalizeCanonicalAllocationModel(allocationModel);
+        const subPortfolios = {};
+        model.scopes
+            .filter(scope => scope.kind === 'subPortfolio')
+            .forEach(scope => {
+                const metadata = isPlainObject(scope.metadata) ? scope.metadata : {};
+                const viewKey = utils.normalizeString(metadata.viewKey, '');
+                const portfolioNo = utils.normalizeString(metadata.portfolioNo, '');
+                const subPortfolioId = utils.normalizeString(metadata.subPortfolioId, scope.id);
+                if (!viewKey || !portfolioNo || !subPortfolioId) {
+                    return;
+                }
+                if (!subPortfolios[viewKey]) {
+                    subPortfolios[viewKey] = {};
+                }
+                if (!Array.isArray(subPortfolios[viewKey][portfolioNo])) {
+                    subPortfolios[viewKey][portfolioNo] = [];
+                }
+                subPortfolios[viewKey][portfolioNo].push({
+                    id: subPortfolioId,
+                    name: scope.label || subPortfolioId,
+                    archived: scope.archived === true,
+                    legacyProductType: utils.normalizeString(metadata.legacyProductType, ''),
+                    legacyBucketId: utils.normalizeString(metadata.legacyBucketId, '')
+                });
+            });
+        const assignmentByCode = {};
+        const scopeMetadataById = model.scopes.reduce((acc, scope) => {
+            acc[scope.id] = isPlainObject(scope.metadata) ? scope.metadata : {};
+            return acc;
+        }, {});
+        Object.entries(model.assignments).forEach(([code, assignment]) => {
+            const assignmentScopeMetadata = scopeMetadataById[assignment.scopeId] || {};
+            const scopeId = utils.normalizeString(
+                assignment.metadata?.legacyScopeId || assignmentScopeMetadata.subPortfolioId || assignment.scopeId,
+                ''
+            );
+            if (scopeId) {
+                assignmentByCode[code] = scopeId;
+            }
+        });
+        const targetsByScope = {};
+        Object.entries(model.targets).forEach(([scope, target]) => {
+            if (!target.fixed && Number.isFinite(target.targetPercent)) {
+                targetsByScope[scope] = target.targetPercent;
+            }
+        });
+        return {
+            subPortfolios: normalizeOcbcSubPortfolios(subPortfolios),
+            assignmentByCode,
+            orderByScope: normalizeOcbcOrderByScope(model.ordering),
+            targetsByScope
+        };
+    }
+
     function normalizeEndowusStore(data) {
         const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const allocationDerived = buildEndowusConfigFromAllocationModel(source.allocationModel);
+        const goalTargets = isPlainObject(source.goalTargets) ? source.goalTargets : allocationDerived.goalTargets;
+        const goalFixed = isPlainObject(source.goalFixed) ? source.goalFixed : allocationDerived.goalFixed;
+        const goalBuckets = isPlainObject(source.goalBuckets) ? source.goalBuckets : allocationDerived.goalBuckets;
         const uiPreferencesSource = source.uiPreferences && typeof source.uiPreferences === 'object' && !Array.isArray(source.uiPreferences)
             ? source.uiPreferences
             : {};
@@ -3128,10 +3476,15 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             performance: Array.isArray(source.performance) ? source.performance : null,
             investible: Array.isArray(source.investible) ? source.investible : null,
             summary: Array.isArray(source.summary) ? source.summary : null,
-            goalTargets: source.goalTargets && typeof source.goalTargets === 'object' ? source.goalTargets : {},
-            goalFixed: source.goalFixed && typeof source.goalFixed === 'object' ? source.goalFixed : {},
-            goalBuckets: source.goalBuckets && typeof source.goalBuckets === 'object' ? source.goalBuckets : {},
+            goalTargets,
+            goalFixed,
+            goalBuckets,
             clearedGoalBuckets: source.clearedGoalBuckets && typeof source.clearedGoalBuckets === 'object' ? source.clearedGoalBuckets : {},
+            allocationModel: buildEndowusAllocationModelFromConfig({
+                goalTargets,
+                goalFixed,
+                goalBuckets
+            }),
             performanceCache: source.performanceCache && typeof source.performanceCache === 'object' && !Array.isArray(source.performanceCache)
                 ? source.performanceCache
                 : {},
@@ -3144,12 +3497,23 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
     function normalizeFsmStore(data) {
         const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const allocationDerived = buildFsmConfigFromAllocationModel(source.allocationModel);
+        const targetsByCode = isPlainObject(source.targetsByCode) ? source.targetsByCode : allocationDerived.targetsByCode;
+        const fixedByCode = isPlainObject(source.fixedByCode) ? source.fixedByCode : allocationDerived.fixedByCode;
+        const portfolios = normalizeFsmPortfolios(Array.isArray(source.portfolios) ? source.portfolios : allocationDerived.portfolios);
+        const assignmentByCode = isPlainObject(source.assignmentByCode) ? source.assignmentByCode : allocationDerived.assignmentByCode;
         return {
             holdings: Array.isArray(source.holdings) ? source.holdings : null,
-            targetsByCode: source.targetsByCode && typeof source.targetsByCode === 'object' ? source.targetsByCode : {},
-            fixedByCode: source.fixedByCode && typeof source.fixedByCode === 'object' ? source.fixedByCode : {},
-            portfolios: normalizeFsmPortfolios(Array.isArray(source.portfolios) ? source.portfolios : []),
-            assignmentByCode: source.assignmentByCode && typeof source.assignmentByCode === 'object' ? source.assignmentByCode : {}
+            targetsByCode,
+            fixedByCode,
+            portfolios,
+            assignmentByCode,
+            allocationModel: buildFsmAllocationModelFromConfig({
+                targetsByCode,
+                fixedByCode,
+                portfolios,
+                assignmentByCode
+            })
         };
     }
 
@@ -3255,16 +3619,35 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
     function normalizeOcbcStore(data) {
         const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const allocationDerived = buildOcbcConfigFromAllocationModel(source.allocationModel);
         const holdingsByPortfolio = normalizeOcbcHoldingsByPortfolioForStore(source.holdingsByPortfolio);
         const normalizedHoldings = source.holdings && typeof source.holdings === 'object' ? source.holdings : null;
+        const subPortfolios = isPlainObject(source.subPortfolios)
+            ? normalizeOcbcSubPortfoliosForStore(source.subPortfolios)
+            : allocationDerived.subPortfolios;
+        const assignmentByCode = isPlainObject(source.assignmentByCode)
+            ? normalizeOcbcAssignmentByCodeForStore(source.assignmentByCode)
+            : allocationDerived.assignmentByCode;
+        const orderByScope = isPlainObject(source.orderByScope)
+            ? normalizeOcbcOrderByScopeForStore(source.orderByScope)
+            : allocationDerived.orderByScope;
+        const targetsByScope = isPlainObject(source.targetsByScope)
+            ? source.targetsByScope
+            : allocationDerived.targetsByScope;
         return {
             holdingsByPortfolio,
             holdings: normalizedHoldings || (Object.keys(holdingsByPortfolio).length ? flattenOcbcHoldingsByPortfolio(holdingsByPortfolio) : null),
             allocationBuckets: source.allocationBuckets && typeof source.allocationBuckets === 'object' ? source.allocationBuckets : {},
-            subPortfolios: normalizeOcbcSubPortfoliosForStore(source.subPortfolios),
-            assignmentByCode: normalizeOcbcAssignmentByCodeForStore(source.assignmentByCode),
-            orderByScope: normalizeOcbcOrderByScopeForStore(source.orderByScope),
-            targetsByScope: source.targetsByScope && typeof source.targetsByScope === 'object' ? source.targetsByScope : {}
+            subPortfolios,
+            assignmentByCode,
+            orderByScope,
+            targetsByScope,
+            allocationModel: buildOcbcAllocationModelFromConfig({
+                subPortfolios,
+                assignmentByCode,
+                orderByScope,
+                targetsByScope
+            })
         };
     }
 
@@ -3884,7 +4267,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 legacyCleanupSessionState.endowus = true;
             }
             const { value: cleanedNormalized, didMutate } = cleanupEndowusLocalStore(normalized);
-            if (didMutate) {
+            if (didMutate || !hasOwnField(rawStored, 'allocationModel')) {
                 writePlatformStore(STORAGE_KEYS.endowus, cleanedNormalized, 'Error writing cleaned Endowus store');
             }
             return cleanedNormalized;
@@ -3934,6 +4317,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 cleanupLegacyFsmKeys();
                 legacyCleanupSessionState.fsm = true;
             }
+            if (!hasOwnField(rawStored, 'allocationModel')) {
+                writePlatformStore(STORAGE_KEYS.fsm, normalized, 'Error writing migrated FSM allocation model');
+            }
             return normalized;
         }
         const migrated = collectLegacyFsmStore();
@@ -3971,6 +4357,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             if (shouldCleanupLegacyOcbcKeysOnRead()) {
                 cleanupLegacyOcbcKeys();
                 legacyCleanupSessionState.ocbc = true;
+            }
+            if (!hasOwnField(rawStored, 'allocationModel')) {
+                writePlatformStore(STORAGE_KEYS.ocbc, normalized, 'Error writing migrated OCBC allocation model');
             }
             return normalized;
         }
@@ -4697,29 +5086,35 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             const ocbc = config.platforms.ocbc && typeof config.platforms.ocbc === 'object'
                 ? config.platforms.ocbc
                 : { allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, targetsByScope: {}, timestamp: config.timestamp || Date.now() };
+            const normalizedEndowus = normalizeEndowusStore(endowus);
+            const normalizedFsm = normalizeFsmStore(fsm);
+            const normalizedOcbc = normalizeOcbcStore(ocbc);
             return {
-                version: 2,
+                version: 3,
                 platforms: {
                     endowus: {
-                        goalTargets: endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {},
-                        goalFixed: endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {},
-                        goalBuckets: endowus.goalBuckets && typeof endowus.goalBuckets === 'object' ? endowus.goalBuckets : {},
+                        goalTargets: normalizedEndowus.goalTargets,
+                        goalFixed: normalizedEndowus.goalFixed,
+                        goalBuckets: normalizedEndowus.goalBuckets,
                         clearedGoalBuckets: endowus.clearedGoalBuckets && typeof endowus.clearedGoalBuckets === 'object' ? endowus.clearedGoalBuckets : {},
+                        allocationModel: normalizedEndowus.allocationModel,
                         timestamp: typeof endowus.timestamp === 'number' ? endowus.timestamp : (config.timestamp || Date.now())
                     },
                     fsm: {
-                        targetsByCode: fsm.targetsByCode && typeof fsm.targetsByCode === 'object' ? fsm.targetsByCode : {},
-                        fixedByCode: fsm.fixedByCode && typeof fsm.fixedByCode === 'object' ? fsm.fixedByCode : {},
-                        portfolios: normalizeFsmPortfolios(Array.isArray(fsm.portfolios) ? fsm.portfolios : []),
-                        assignmentByCode: fsm.assignmentByCode && typeof fsm.assignmentByCode === 'object' ? fsm.assignmentByCode : {},
+                        targetsByCode: normalizedFsm.targetsByCode,
+                        fixedByCode: normalizedFsm.fixedByCode,
+                        portfolios: normalizedFsm.portfolios,
+                        assignmentByCode: normalizedFsm.assignmentByCode,
+                        allocationModel: normalizedFsm.allocationModel,
                         timestamp: typeof fsm.timestamp === 'number' ? fsm.timestamp : (config.timestamp || Date.now())
                     },
                     ocbc: {
-                        allocationBuckets: ocbc.allocationBuckets && typeof ocbc.allocationBuckets === 'object' ? ocbc.allocationBuckets : {},
-                        subPortfolios: normalizeOcbcSubPortfoliosConfig(ocbc.subPortfolios),
-                        assignmentByCode: normalizeOcbcAssignmentByCodeConfig(ocbc.assignmentByCode),
-                        orderByScope: normalizeOcbcOrderByScopeEntries(ocbc.orderByScope),
-                        targetsByScope: ocbc.targetsByScope && typeof ocbc.targetsByScope === 'object' ? ocbc.targetsByScope : {},
+                        allocationBuckets: normalizedOcbc.allocationBuckets,
+                        subPortfolios: normalizedOcbc.subPortfolios,
+                        assignmentByCode: normalizedOcbc.assignmentByCode,
+                        orderByScope: normalizedOcbc.orderByScope,
+                        targetsByScope: normalizedOcbc.targetsByScope,
+                        allocationModel: normalizedOcbc.allocationModel,
                         timestamp: typeof ocbc.timestamp === 'number' ? ocbc.timestamp : (config.timestamp || Date.now())
                     }
                 },
@@ -4728,13 +5123,14 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             };
         }
         return {
-            version: 2,
+            version: 3,
             platforms: {
                 endowus: {
                     goalTargets: config.goalTargets && typeof config.goalTargets === 'object' ? config.goalTargets : {},
                     goalFixed: config.goalFixed && typeof config.goalFixed === 'object' ? config.goalFixed : {},
                     goalBuckets: config.goalBuckets && typeof config.goalBuckets === 'object' ? config.goalBuckets : {},
                     clearedGoalBuckets: config.clearedGoalBuckets && typeof config.clearedGoalBuckets === 'object' ? config.clearedGoalBuckets : {},
+                    allocationModel: buildEndowusAllocationModelFromConfig(config),
                     timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
                 },
                 fsm: {
@@ -4742,6 +5138,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     fixedByCode: {},
                     portfolios: [],
                     assignmentByCode: {},
+                    allocationModel: normalizeCanonicalAllocationModel(),
                     timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
                 },
                 ocbc: {
@@ -4750,6 +5147,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     assignmentByCode: {},
                     orderByScope: {},
                     targetsByScope: {},
+                    allocationModel: normalizeCanonicalAllocationModel(),
                     timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
                 }
             },
@@ -4767,13 +5165,14 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const fsm = readFsmStore();
         const ocbc = readOcbcStore();
         return {
-            version: 2,
+            version: 3,
             platforms: {
                 endowus: {
                     goalTargets: endowus.goalTargets,
                     goalFixed: endowus.goalFixed,
                     goalBuckets: endowus.goalBuckets,
                     clearedGoalBuckets: endowus.clearedGoalBuckets,
+                    allocationModel: endowus.allocationModel,
                     timestamp
                 },
                 fsm: {
@@ -4781,6 +5180,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     fixedByCode: fsm.fixedByCode,
                     portfolios: fsm.portfolios,
                     assignmentByCode: fsm.assignmentByCode,
+                    allocationModel: fsm.allocationModel,
                     timestamp
                 },
                 ocbc: {
@@ -4789,6 +5189,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     assignmentByCode: ocbc.assignmentByCode,
                     orderByScope: ocbc.orderByScope,
                     targetsByScope: ocbc.targetsByScope,
+                    allocationModel: ocbc.allocationModel,
                     timestamp
                 }
             },
@@ -4885,7 +5286,12 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     acc[goalId] = true;
                 }
                 return acc;
-            }, {})
+            }, {}),
+            allocationModel: endowus.allocationModel || buildEndowusAllocationModelFromConfig({
+                goalTargets: sanitizedEndowusTargets,
+                goalFixed: endowusFixed,
+                goalBuckets: endowusBuckets
+            })
         });
 
         const fsm = normalized.platforms.fsm || {};
@@ -4922,7 +5328,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 return acc;
             }, {}),
             portfolios: fsmPortfolios,
-            assignmentByCode: sanitizedAssignments
+            assignmentByCode: sanitizedAssignments,
+            allocationModel: fsm.allocationModel || buildFsmAllocationModelFromConfig({
+                targetsByCode: sanitizedFsmTargets,
+                fixedByCode: fsmFixed,
+                portfolios: fsmPortfolios,
+                assignmentByCode: sanitizedAssignments
+            })
         });
 
         const ocbc = normalized.platforms.ocbc || {};
@@ -4938,7 +5350,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             subPortfolios: ocbcSubPortfolios,
             assignmentByCode: ocbcAssignmentByCode,
             orderByScope: ocbcOrderByScope,
-            targetsByScope: ocbcTargetsByScope
+            targetsByScope: ocbcTargetsByScope,
+            allocationModel: ocbc.allocationModel || buildOcbcAllocationModelFromConfig({
+                subPortfolios: ocbcSubPortfolios,
+                assignmentByCode: ocbcAssignmentByCode,
+                orderByScope: ocbcOrderByScope,
+                targetsByScope: ocbcTargetsByScope
+            })
         });
 
         const restoreNamespacedSnapshots = () => {
@@ -6053,10 +6471,11 @@ function getEndowusSyncView(config) {
         const endowus = config.platforms.endowus && typeof config.platforms.endowus === 'object'
             ? config.platforms.endowus
             : {};
+        const normalized = normalizeEndowusStore(endowus);
         return {
-            goalTargets: endowus.goalTargets && typeof endowus.goalTargets === 'object' ? endowus.goalTargets : {},
-            goalFixed: endowus.goalFixed && typeof endowus.goalFixed === 'object' ? endowus.goalFixed : {},
-            goalBuckets: endowus.goalBuckets && typeof endowus.goalBuckets === 'object' ? endowus.goalBuckets : {},
+            goalTargets: normalized.goalTargets,
+            goalFixed: normalized.goalFixed,
+            goalBuckets: normalized.goalBuckets,
             clearedGoalBuckets: endowus.clearedGoalBuckets && typeof endowus.clearedGoalBuckets === 'object' ? endowus.clearedGoalBuckets : {}
         };
     }
@@ -6076,11 +6495,12 @@ function getFsmSyncView(config) {
         const fsm = config.platforms.fsm && typeof config.platforms.fsm === 'object'
             ? config.platforms.fsm
             : {};
+        const normalized = normalizeFsmStore(fsm);
         return {
-            targetsByCode: fsm.targetsByCode && typeof fsm.targetsByCode === 'object' ? fsm.targetsByCode : {},
-            fixedByCode: fsm.fixedByCode && typeof fsm.fixedByCode === 'object' ? fsm.fixedByCode : {},
-            portfolios: normalizeFsmPortfolios(Array.isArray(fsm.portfolios) ? fsm.portfolios : []),
-            assignmentByCode: fsm.assignmentByCode && typeof fsm.assignmentByCode === 'object' ? fsm.assignmentByCode : {}
+            targetsByCode: normalized.targetsByCode,
+            fixedByCode: normalized.fixedByCode,
+            portfolios: normalized.portfolios,
+            assignmentByCode: normalized.assignmentByCode
         };
     }
     return { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} };
@@ -6093,12 +6513,13 @@ function getOcbcSyncView(config) {
     const source = config.platforms && typeof config.platforms === 'object'
         ? (config.platforms.ocbc && typeof config.platforms.ocbc === 'object' ? config.platforms.ocbc : {})
         : config;
+    const normalized = normalizeOcbcStore(source);
     return {
-        allocationBuckets: source.allocationBuckets && typeof source.allocationBuckets === 'object' ? source.allocationBuckets : {},
-        subPortfolios: normalizeOcbcSubPortfolios(source.subPortfolios),
-        assignmentByCode: normalizeOcbcAssignmentByCode(source.assignmentByCode),
-        orderByScope: normalizeOcbcOrderByScope(source.orderByScope),
-        targetsByScope: source.targetsByScope && typeof source.targetsByScope === 'object' ? source.targetsByScope : {}
+        allocationBuckets: normalized.allocationBuckets,
+        subPortfolios: normalized.subPortfolios,
+        assignmentByCode: normalized.assignmentByCode,
+        orderByScope: normalized.orderByScope,
+        targetsByScope: normalized.targetsByScope
     };
 }
 
@@ -7913,6 +8334,53 @@ let GoalTargetStore;
         return element;
     }
 
+    function createHealthReasonList(reasons, options = {}) {
+        const safeReasons = Array.isArray(reasons) ? reasons : [];
+        const limit = Number.isInteger(options.limit) ? options.limit : safeReasons.length;
+        const reasonList = createElement('ul', 'gpv-health-reasons');
+        safeReasons.slice(0, limit).forEach(reason => {
+            reasonList.appendChild(createElement('li', 'gpv-health-reason', reason));
+        });
+        return reasonList;
+    }
+
+    function prependOverlayHeaderButtons(header, buttons) {
+        const headerButtons = header?.querySelector?.('.gpv-header-buttons');
+        if (!headerButtons || !Array.isArray(buttons)) {
+            return;
+        }
+        buttons.filter(Boolean).forEach(button => {
+            headerButtons.prepend(button);
+        });
+    }
+
+    function createOverlaySyncButton(returnTo, options = {}) {
+        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
+        syncBtn.type = 'button';
+        syncBtn.title = 'Configure cross-device sync';
+        syncBtn.onclick = () => {
+            if (typeof showSyncSettings === 'function') {
+                showSyncSettings({ returnTo });
+                return;
+            }
+            if (typeof options.onUnavailable === 'function') {
+                options.onUnavailable();
+            }
+        };
+        return syncBtn;
+    }
+
+    function createBackToOverviewButton(onClick) {
+        const backBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
+        backBtn.type = 'button';
+        backBtn.onclick = () => {
+            if (typeof onClick === 'function') {
+                onClick();
+            }
+        };
+        return backBtn;
+    }
+
     function appendTextSpan(container, className, textContent) {
         const span = createElement('span', className, textContent);
         container.appendChild(span);
@@ -8807,11 +9275,7 @@ let GoalTargetStore;
             bucketCard.appendChild(bucketHeader);
 
             if (Array.isArray(bucketModel.health?.reasons) && bucketModel.health.reasons.length > 0) {
-                const reasonList = createElement('ul', 'gpv-health-reasons');
-                bucketModel.health.reasons.slice(0, 2).forEach(reason => {
-                    reasonList.appendChild(createElement('li', 'gpv-health-reason', reason));
-                });
-                bucketCard.appendChild(reasonList);
+                bucketCard.appendChild(createHealthReasonList(bucketModel.health.reasons, { limit: 2 }));
             }
 
             bucketModel.goalTypes.forEach(goalTypeModel => {
@@ -14235,6 +14699,22 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return summaryRow;
     }
 
+    function buildOverviewStatsHtml(stats) {
+        const safeStats = Array.isArray(stats) ? stats : [];
+        return `
+                <div class="gpv-fsm-overview-stats">
+                    ${safeStats.map(stat => {
+                        const valueClass = stat?.valueClass ? ` ${escapeHtml(stat.valueClass)}` : '';
+                        return `
+                    <div class="gpv-fsm-overview-stat">
+                        <span class="gpv-fsm-overview-stat-label">${escapeHtml(stat?.label ?? '')}</span>
+                        <span class="gpv-fsm-overview-stat-value${valueClass}">${escapeHtml(stat?.value ?? '')}</span>
+                    </div>`;
+                    }).join('')}
+                </div>
+        `;
+    }
+
     function buildFsmPortfolioOverviewModel(rows, activePortfolios) {
         const safeRows = Array.isArray(rows) ? rows : [];
         const safePortfolios = Array.isArray(activePortfolios) ? activePortfolios : [];
@@ -14330,31 +14810,15 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     </div>
                     <span class="gpv-health-badge ${escapeHtml(card.health?.className || 'gpv-health--healthy')}">${escapeHtml(card.health?.label || 'Healthy')}</span>
                 </div>
-                <div class="gpv-fsm-overview-stats">
-                    <div class="gpv-fsm-overview-stat">
-                        <span class="gpv-fsm-overview-stat-label">Total value</span>
-                        <span class="gpv-fsm-overview-stat-value">${escapeHtml(card.totalDisplay)}</span>
-                    </div>
-                    <div class="gpv-fsm-overview-stat">
-                        <span class="gpv-fsm-overview-stat-label">Target assigned</span>
-                        <span class="gpv-fsm-overview-stat-value">${escapeHtml(card.targetAssignedDisplay)}</span>
-                    </div>
-                    <div class="gpv-fsm-overview-stat">
-                        <span class="gpv-fsm-overview-stat-label">Drift</span>
-                        <span class="gpv-fsm-overview-stat-value ${escapeHtml(card.driftClass || '')}">${escapeHtml(card.driftDisplay)}</span>
-                    </div>
-                    <div class="gpv-fsm-overview-stat">
-                        <span class="gpv-fsm-overview-stat-label">Profit</span>
-                        <span class="gpv-fsm-overview-stat-value ${escapeHtml(card.profitClass || '')}">${escapeHtml(card.profitDisplay || '-')}</span>
-                    </div>
-                </div>
+                ${buildOverviewStatsHtml([
+                    { label: 'Total value', value: card.totalDisplay },
+                    { label: 'Target assigned', value: card.targetAssignedDisplay },
+                    { label: 'Drift', value: card.driftDisplay, valueClass: card.driftClass || '' },
+                    { label: 'Profit', value: card.profitDisplay || '-', valueClass: card.profitClass || '' }
+                ])}
             `;
             if (Array.isArray(card.health?.reasons) && card.health.reasons.length > 0) {
-                const reasonList = createElement('ul', 'gpv-health-reasons');
-                card.health.reasons.slice(0, 2).forEach(reason => {
-                    reasonList.appendChild(createElement('li', 'gpv-health-reason', reason));
-                });
-                buttonCard.appendChild(reasonList);
+                buttonCard.appendChild(createHealthReasonList(card.health.reasons, { limit: 2 }));
             }
             grid.appendChild(buttonCard);
         });
@@ -14615,18 +15079,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const { overlay, container, cleanupCallbacks, header, contentDiv } = shell;
 
         const expandBtn = createOverlayExpandToggleButton(container);
-        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
-        syncBtn.title = 'Configure cross-device sync';
-        syncBtn.onclick = () => {
-            if (typeof showSyncSettings === 'function') {
-                showSyncSettings({ returnTo: 'fsm' });
-            }
-        };
-        const headerButtons = header.querySelector('.gpv-header-buttons');
-        if (headerButtons) {
-            headerButtons.prepend(expandBtn);
-            headerButtons.prepend(syncBtn);
-        }
+        const syncBtn = createOverlaySyncButton('fsm');
+        prependOverlayHeaderButtons(header, [expandBtn, syncBtn]);
 
         const config = loadFsmPortfolioConfig(fsmHoldings);
         let portfolios = config.portfolios;
@@ -14690,9 +15144,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         headerBackBtn.type = 'button';
         headerBackBtn.onclick = handleBackToOverview;
         headerBackBtn.hidden = true;
-        if (headerButtons) {
-            headerButtons.prepend(headerBackBtn);
-        }
+        prependOverlayHeaderButtons(header, [headerBackBtn]);
 
         const detailToolbar = createFsmDetailToolbar({
             onFilterChange: value => {
@@ -15598,18 +16050,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const { container, contentDiv, header } = shell;
 
         const expandBtn = createOverlayExpandToggleButton(container);
-        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
-        syncBtn.title = 'Configure cross-device sync';
-        syncBtn.onclick = () => {
-            if (typeof showSyncSettings === 'function') {
-                showSyncSettings({ returnTo: 'ocbc' });
-            }
-        };
-        const headerButtons = header.querySelector('.gpv-header-buttons');
-        if (headerButtons) {
-            headerButtons.prepend(expandBtn);
-            headerButtons.prepend(syncBtn);
-        }
+        const syncBtn = createOverlaySyncButton('ocbc');
+        prependOverlayHeaderButtons(header, [expandBtn, syncBtn]);
 
         const controls = createElement('div', 'gpv-controls gpv-control-bar');
         const viewSelectId = 'gpv-ocbc-view-select';
@@ -15797,11 +16239,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
             if (planningStatusItems.length > 0) {
                 planningPanel.appendChild(createWorkspaceTitle({ title: 'Needs attention', level: 3, className: 'gpv-planning-subtitle' }));
-                const statusList = createElement('ul', 'gpv-health-reasons');
-                planningStatusItems.forEach(item => {
-                    statusList.appendChild(createElement('li', 'gpv-health-reason', item));
-                });
-                planningPanel.appendChild(statusList);
+                planningPanel.appendChild(createHealthReasonList(planningStatusItems));
             }
             contentDiv.appendChild(planningPanel);
 
@@ -16241,20 +16679,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             </div>
                             <span class="gpv-fsm-overview-card-tag">${escapeHtml(sectionTitle)}</span>
                         </div>
-                        <div class="gpv-fsm-overview-stats">
-                            <div class="gpv-fsm-overview-stat">
-                                <span class="gpv-fsm-overview-stat-label">Total value</span>
-                                <span class="gpv-fsm-overview-stat-value">${escapeHtml(formatMoney(summary.total))}</span>
-                            </div>
-                            <div class="gpv-fsm-overview-stat">
-                                <span class="gpv-fsm-overview-stat-label">Profit</span>
-                                <span class="gpv-fsm-overview-stat-value ${escapeHtml(summary.profitClass || '')}">${escapeHtml(summary.profitDisplay || '-')}</span>
-                            </div>
-                            <div class="gpv-fsm-overview-stat">
-                                <span class="gpv-fsm-overview-stat-label">Status</span>
-                                <span class="gpv-fsm-overview-stat-value">${escapeHtml(statusText)}</span>
-                            </div>
-                        </div>
+                        ${buildOverviewStatsHtml([
+                            { label: 'Total value', value: formatMoney(summary.total) },
+                            { label: 'Profit', value: summary.profitDisplay || '-', valueClass: summary.profitClass || '' },
+                            { label: 'Status', value: statusText }
+                        ])}
                     `;
                     grid.appendChild(card);
                 });
@@ -16287,13 +16716,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
 
             const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
-            const backBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
-            backBtn.type = 'button';
-            backBtn.onclick = () => {
+            const backBtn = createBackToOverviewButton(() => {
                 viewMode = 'overview';
                 selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
                 rerender();
-            };
+            });
             detailToolbar.appendChild(backBtn);
             contentDiv.appendChild(detailToolbar);
 
@@ -16432,16 +16859,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         }
         
         // Add sync settings button
-        const syncBtn = createElement('button', 'gpv-sync-btn', '⚙️ Sync');
-        syncBtn.title = 'Configure cross-device sync';
-        syncBtn.onclick = () => {
-            if (typeof showSyncSettings === 'function') {
-                showSyncSettings({ returnTo: 'endowus' });
-            } else {
+        const syncBtn = createOverlaySyncButton('endowus', {
+            onUnavailable: () => {
                 console.error('[Goal Portfolio Viewer] showSyncSettings is not a function!');
                 alert('Sync settings are not available. Please ensure the sync module is loaded.');
             }
-        };
+        });
 
         const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary gpv-bucket-manage-btn', '🗂️ Manage assignments');
         bucketManageBtn.type = 'button';
@@ -16456,12 +16879,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         const expandBtn = createOverlayExpandToggleButton(container);
 
-        const headerButtons = header.querySelector('.gpv-header-buttons');
-        if (headerButtons) {
-            headerButtons.prepend(expandBtn);
-            headerButtons.prepend(syncBtn);
-            headerButtons.prepend(bucketManageBtn);
-        }
+        prependOverlayHeaderButtons(header, [expandBtn, syncBtn, bucketManageBtn]);
         const controls = createElement('div', 'gpv-controls gpv-control-bar');
 
         const modeToggle = createElement('div', 'gpv-mode-toggle');
@@ -16483,8 +16901,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const detailToolbarControls = [allocationButton, performanceButton];
 
         const detailToolbar = createElement('div', 'gpv-fsm-toolbar');
-        const backToOverviewBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary', 'Back to overview');
-        backToOverviewBtn.type = 'button';
+        const backToOverviewBtn = createBackToOverviewButton();
         detailToolbar.appendChild(backToOverviewBtn);
 
         let currentBucketMode = getBucketViewModePreference();
@@ -17102,6 +17519,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             getTimeSeriesWindow,
             extractAmount,
             parseJsonSafely,
+            normalizeCanonicalAllocationModel,
+            buildEndowusAllocationModelFromConfig,
+            buildEndowusConfigFromAllocationModel,
+            buildFsmAllocationModelFromConfig,
+            buildFsmConfigFromAllocationModel,
+            buildOcbcAllocationModelFromConfig,
+            buildOcbcConfigFromAllocationModel,
             calculateWeightedAverage,
             calculateWeightedWindowReturns,
             summarizePerformanceMetrics,

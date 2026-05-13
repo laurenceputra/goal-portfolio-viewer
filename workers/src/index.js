@@ -342,7 +342,7 @@ async function handleSyncUpload(request, env, { authenticatedUserId }) {
 	return handleSync(body, env);
 }
 
-async function handleSyncDownload(_request, env, { userId, authenticatedUserId }) {
+function buildScopedSyncUserError(userId, authenticatedUserId, forbiddenMessage, env) {
 	if (!userId) {
 		return jsonResponseWithCors({
 			success: false,
@@ -354,27 +354,35 @@ async function handleSyncDownload(_request, env, { userId, authenticatedUserId }
 		return jsonResponseWithCors({
 			success: false,
 			error: 'FORBIDDEN',
-			message: 'Cannot access another user\'s data'
+			message: forbiddenMessage
 		}, 403, {}, env);
+	}
+	return null;
+}
+
+async function handleSyncDownload(_request, env, { userId, authenticatedUserId }) {
+	const accessError = buildScopedSyncUserError(
+		userId,
+		authenticatedUserId,
+		'Cannot access another user\'s data',
+		env
+	);
+	if (accessError) {
+		return accessError;
 	}
 
 	return handleGetSync(userId, env);
 }
 
 async function handleSyncDelete(_request, env, { userId, authenticatedUserId }) {
-	if (!userId) {
-		return jsonResponseWithCors({
-			success: false,
-			error: 'BAD_REQUEST',
-			message: 'userId required'
-		}, 400, {}, env);
-	}
-	if (authenticatedUserId && userId !== authenticatedUserId) {
-		return jsonResponseWithCors({
-			success: false,
-			error: 'FORBIDDEN',
-			message: 'Cannot delete another user\'s data'
-		}, 403, {}, env);
+	const accessError = buildScopedSyncUserError(
+		userId,
+		authenticatedUserId,
+		'Cannot delete another user\'s data',
+		env
+	);
+	if (accessError) {
+		return accessError;
 	}
 
 	return handleDeleteSync(userId, env);
