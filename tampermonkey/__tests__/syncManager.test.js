@@ -453,7 +453,7 @@ describe('SyncManager', () => {
         expect(JSON.parse(storage.get('endowus')).clearedGoalBuckets['goal-1']).toBe(true);
     });
 
-    test('collectConfigData emits v2 payload and excludes Endowus targets for fixed goals', () => {
+    test('collectConfigData emits v3 payload and excludes Endowus targets for fixed goals', () => {
         const { SyncManager, storageKeys } = loadModule();
         const targetKey = storageKeys.goalTarget('goal-1');
         const fixedKey = storageKeys.goalFixed('goal-1');
@@ -464,9 +464,15 @@ describe('SyncManager', () => {
 
         const config = SyncManager.collectConfigData();
 
-        expect(config.version).toBe(2);
+        expect(config.version).toBe(3);
         expect(config.platforms.endowus.goalTargets).toEqual({});
         expect(config.platforms.endowus.goalFixed).toEqual({ 'goal-1': true });
+        expect(config.platforms.endowus.allocationModel).toEqual(expect.objectContaining({
+            version: 1,
+            targets: {
+                'goal-1': expect.objectContaining({ fixed: true, targetPercent: null })
+            }
+        }));
         expect(config.platforms.fsm.targetsByCode).toEqual({});
     });
 
@@ -496,6 +502,70 @@ describe('SyncManager', () => {
 
         expect(storage.has(targetKey)).toBe(false);
         expect(JSON.parse(storage.get('endowus')).goalFixed['goal-1']).toBe(true);
+    });
+
+    test('applyConfigData migrates canonical allocationModel-only payloads into legacy-compatible stores', () => {
+        const { SyncManager } = loadModule();
+
+        SyncManager.applyConfigData({
+            version: 3,
+            platforms: {
+                endowus: {
+                    allocationModel: {
+                        version: 1,
+                        scopes: [{ id: 'Core Bucket', label: 'Core Bucket', kind: 'bucket' }],
+                        assignments: { 'goal-1': { scopeId: 'Core Bucket' } },
+                        targets: { 'goal-1': { targetPercent: 45, fixed: false } }
+                    }
+                },
+                fsm: {
+                    allocationModel: {
+                        version: 1,
+                        scopes: [{ id: 'core', label: 'Core Portfolio', kind: 'portfolio' }],
+                        assignments: { AAA: { scopeId: 'core' } },
+                        targets: {
+                            AAA: { targetPercent: 25, fixed: false },
+                            BBB: { targetPercent: null, fixed: true }
+                        }
+                    }
+                },
+                ocbc: {
+                    allocationModel: {
+                        version: 1,
+                        scopes: [{
+                            id: 'assets|P-1|core',
+                            label: 'Core',
+                            kind: 'subPortfolio',
+                            parentId: 'assets|P-1|',
+                            metadata: { viewKey: 'assets', portfolioNo: 'P-1', subPortfolioId: 'core' }
+                        }],
+                        assignments: { 'P-1:EQ1': { scopeId: 'assets|P-1|core' } },
+                        targets: { 'assets|P-1|core|P-1%3AEQ1': { targetPercent: 55, fixed: false } },
+                        ordering: { 'assets|P-1|core': ['P-1:EQ1'] }
+                    }
+                }
+            },
+            timestamp: Date.now()
+        });
+
+        const endowus = JSON.parse(storage.get('endowus'));
+        expect(endowus.goalTargets).toEqual({ 'goal-1': 45 });
+        expect(endowus.goalBuckets).toEqual({ 'goal-1': 'Core Bucket' });
+        expect(endowus.allocationModel.targets['goal-1']).toEqual(expect.objectContaining({ targetPercent: 45, fixed: false }));
+
+        const fsm = JSON.parse(storage.get('fsm'));
+        expect(fsm.targetsByCode).toEqual({ AAA: 25 });
+        expect(fsm.fixedByCode).toEqual({ BBB: true });
+        expect(fsm.portfolios).toEqual([{ id: 'core', name: 'Core Portfolio', archived: false }]);
+        expect(fsm.assignmentByCode).toEqual({ AAA: 'core' });
+        expect(fsm.allocationModel.scopes[0]).toEqual(expect.objectContaining({ id: 'core', kind: 'portfolio' }));
+
+        const ocbc = JSON.parse(storage.get('ocbc'));
+        expect(ocbc.subPortfolios.assets['P-1']).toEqual([expect.objectContaining({ id: 'core', name: 'Core' })]);
+        expect(ocbc.assignmentByCode).toEqual({ 'P-1:EQ1': 'core' });
+        expect(ocbc.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 55 });
+        expect(ocbc.orderByScope).toEqual({ 'assets|P-1|core': ['P-1:EQ1'] });
+        expect(ocbc.allocationModel.scopes[0]).toEqual(expect.objectContaining({ id: 'assets|P-1|core', kind: 'subPortfolio' }));
     });
 
     test('applyConfigData removes stale local keys absent from remote config', () => {
@@ -1140,6 +1210,9 @@ describe('SyncManager', () => {
         SyncManager.collectConfigData();
 
         expect(deleteSpy).not.toHaveBeenCalled();
+        expect(JSON.parse(storage.get('endowus')).allocationModel.version).toBe(1);
+        expect(JSON.parse(storage.get('fsm')).allocationModel.version).toBe(1);
+        expect(JSON.parse(storage.get('ocbc')).allocationModel.version).toBe(1);
     });
 
     test('hashConfigData ignores OCBC timestamp-only differences', async () => {
