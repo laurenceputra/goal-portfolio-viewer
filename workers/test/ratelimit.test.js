@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { rateLimit, getRateLimitStatus, resetRateLimit } from '../src/ratelimit.js';
+import { rateLimit } from '../src/ratelimit.js';
 
 function createKvMock() {
   const store = new Map();
@@ -17,12 +17,6 @@ function createKvMock() {
       if (options) {
         optionsByKey.set(key, options);
       }
-    },
-    async delete(key) {
-      store.delete(key);
-    },
-    async list() {
-      return { keys: [] };
     }
   };
 }
@@ -90,25 +84,4 @@ test('rateLimit uses minimum KV TTL when remaining window is short', async () =>
   const options = kv.optionsByKey.get('ratelimit:1.2.3.4:/sync:POST');
   assert.ok(options);
   assert.equal(options.expirationTtl, 60);
-});
-
-test('getRateLimitStatus returns default when key does not exist', async () => {
-  const kv = createKvMock();
-  const env = { SYNC_KV: kv };
-
-  const status = await getRateLimitStatus(env, 'api-key', '/sync/alice', 'GET');
-
-  assert.equal(status.requests, 0);
-  assert.equal(status.limit, 60);
-  assert.equal(status.resetAt, null);
-});
-
-test('resetRateLimit deletes existing key', async () => {
-  const kv = createKvMock();
-  const env = { SYNC_KV: kv };
-  kv.store.set('ratelimit:api-key:/sync/:userId:DELETE', JSON.stringify({ count: 1, resetAt: 1 }));
-
-  await resetRateLimit(env, 'api-key', '/sync/user-1', 'DELETE');
-
-  assert.equal(kv.store.has('ratelimit:api-key:/sync/:userId:DELETE'), false);
 });
