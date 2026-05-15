@@ -316,15 +316,6 @@ async function handleRefresh(request, env) {
 }
 
 async function handleSyncUpload(request, env, { authenticatedUserId }) {
-	const contentLength = request.headers.get('Content-Length');
-	if (contentLength && parseInt(contentLength, 10) > CONFIG.MAX_PAYLOAD_SIZE) {
-		return jsonResponseWithCors({
-			success: false,
-			error: 'PAYLOAD_TOO_LARGE',
-			maxSize: CONFIG.MAX_PAYLOAD_SIZE
-		}, 413, {}, env);
-	}
-
 	const parsed = await readJsonBody(request, env);
 	if (!parsed.ok) {
 		return parsed.response;

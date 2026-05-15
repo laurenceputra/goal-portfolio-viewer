@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.15
+// @version      2.14.16
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -10059,16 +10059,6 @@ let GoalTargetStore;
         setSyncMessage(message, 'info');
     }
 
-    /**
-     * Format timestamp for display
-     */
-    function _formatTimestamp(timestamp) {
-        if (!timestamp) return 'Never';
-        const date = new Date(timestamp);
-        return date.toLocaleString();
-    }
-
-
     // ============================================
     // UI: Sync Functions
     // ============================================
@@ -13318,31 +13308,6 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-btn-danger:hover:not(:disabled) {
-                    background-color: #c82333;
-                }
-
-                /* Backward-compatible aliases for legacy class names */
-                .gpv-sync-action {
-                    padding: 10px 20px;
-                    border: none;
-                    border-radius: 4px;
-                    font-size: 14px;
-                    font-weight: 600;
-                    cursor: pointer;
-                    transition: all 0.2s;
-                }
-
-                .gpv-sync-action:disabled {
-                    opacity: 0.6;
-                    cursor: not-allowed;
-                }
-
-                .gpv-sync-danger {
-                    background-color: #dc3545;
-                    color: white;
-                }
-
-                .gpv-sync-danger:hover:not(:disabled) {
                     background-color: #c82333;
                 }
 
