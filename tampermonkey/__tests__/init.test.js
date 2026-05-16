@@ -1854,6 +1854,10 @@ describe('initialization and URL monitoring', () => {
         const liabilityCard = overviewCards.find(card => card.textContent.includes('Liabilities'));
         expect(assetCard).toBeTruthy();
         expect(liabilityCard).toBeTruthy();
+        expect(assetCard.tagName).toBe('BUTTON');
+        expect(assetCard.type).toBe('button');
+        expect(assetCard.hasAttribute('role')).toBe(false);
+        expect(assetCard.hasAttribute('tabindex')).toBe(false);
         expect(assetCard.textContent).toContain('2 holding');
         expect(assetCard.textContent).not.toContain('OCBC Liability');
         expect(liabilityCard.textContent).toContain('1 holding');

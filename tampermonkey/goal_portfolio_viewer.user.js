@@ -8728,23 +8728,25 @@ let GoalTargetStore;
         if (!element) {
             return element;
         }
-        element.setAttribute('role', 'button');
-        element.setAttribute('tabindex', '0');
+        const isNativeButton = element.tagName === 'BUTTON';
+        if (!isNativeButton) {
+            element.setAttribute('role', 'button');
+            element.setAttribute('tabindex', '0');
+        }
         if (ariaLabel) {
             element.setAttribute('aria-label', ariaLabel);
         }
         if (typeof onSelect === 'function') {
-            const handleSelect = event => {
-                if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') {
-                    return;
-                }
-                if (event.type === 'keydown') {
+            element.addEventListener('click', onSelect);
+            if (!isNativeButton) {
+                element.addEventListener('keydown', event => {
+                    if (event.key !== 'Enter' && event.key !== ' ') {
+                        return;
+                    }
                     event.preventDefault();
-                }
-                onSelect(event);
-            };
-            element.addEventListener('click', handleSelect);
-            element.addEventListener('keydown', handleSelect);
+                    onSelect(event);
+                });
+            }
         }
         return element;
     }
@@ -14716,6 +14718,22 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         `;
     }
 
+    function createOverviewScopeCard({ elementTag = 'div', className = 'gpv-fsm-overview-card', scopeId, ariaLabel, onSelect, cardHtml, healthReasons = [], healthReasonLimit }) {
+        const card = createElement(elementTag, className);
+        if (elementTag === 'button') {
+            card.type = 'button';
+        }
+        if (scopeId) {
+            card.dataset.scope = scopeId;
+        }
+        createKeyboardSelectableCard(card, { ariaLabel, onSelect });
+        card.innerHTML = buildOverviewCardHtml(cardHtml || {});
+        if (Array.isArray(healthReasons) && healthReasons.length > 0) {
+            card.appendChild(createHealthReasonList(healthReasons, { limit: healthReasonLimit }));
+        }
+        return card;
+    }
+
     function buildFsmPortfolioOverviewModel(rows, activePortfolios) {
         const safeRows = Array.isArray(rows) ? rows : [];
         const safePortfolios = Array.isArray(activePortfolios) ? activePortfolios : [];
@@ -14790,33 +14808,26 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const grid = createElement('div', 'gpv-fsm-overview-grid');
         const cards = Array.isArray(overviewModel?.cards) ? overviewModel.cards : [];
         cards.forEach(card => {
-            const className = card.isUnassigned === true
-                ? 'gpv-fsm-overview-card gpv-fsm-overview-card--unassigned'
-                : 'gpv-fsm-overview-card';
-            const buttonCard = createElement('div', className);
-            buttonCard.dataset.scope = card.id;
-            createKeyboardSelectableCard(buttonCard, {
+            const className = card.isUnassigned === true ? 'gpv-fsm-overview-card gpv-fsm-overview-card--unassigned' : 'gpv-fsm-overview-card';
+            const buttonCard = createOverviewScopeCard({
+                className,
+                scopeId: card.id,
                 ariaLabel: `Open ${card.label} holdings`,
-                onSelect: () => {
-                    if (typeof onSelectScope === 'function') {
-                        onSelectScope(card.id);
-                    }
-                }
+                onSelect: () => onSelectScope?.(card.id),
+                cardHtml: {
+                    title: card.label,
+                    subtitle: `${card.holdingsCount} holding${card.holdingsCount === 1 ? '' : 's'}`,
+                    badgeHtml: `<span class="gpv-health-badge ${escapeHtml(card.health?.className || 'gpv-health--healthy')}">${escapeHtml(card.health?.label || 'Healthy')}</span>`,
+                    stats: [
+                        { label: 'Total value', value: card.totalDisplay },
+                        { label: 'Target assigned', value: card.targetAssignedDisplay },
+                        { label: 'Drift', value: card.driftDisplay, valueClass: card.driftClass || '' },
+                        { label: 'Profit', value: card.profitDisplay || '-', valueClass: card.profitClass || '' }
+                    ]
+                },
+                healthReasons: card.health?.reasons,
+                healthReasonLimit: 2
             });
-            buttonCard.innerHTML = buildOverviewCardHtml({
-                title: card.label,
-                subtitle: `${card.holdingsCount} holding${card.holdingsCount === 1 ? '' : 's'}`,
-                badgeHtml: `<span class="gpv-health-badge ${escapeHtml(card.health?.className || 'gpv-health--healthy')}">${escapeHtml(card.health?.label || 'Healthy')}</span>`,
-                stats: [
-                    { label: 'Total value', value: card.totalDisplay },
-                    { label: 'Target assigned', value: card.targetAssignedDisplay },
-                    { label: 'Drift', value: card.driftDisplay, valueClass: card.driftClass || '' },
-                    { label: 'Profit', value: card.profitDisplay || '-', valueClass: card.profitClass || '' }
-                ]
-            });
-            if (Array.isArray(card.health?.reasons) && card.health.reasons.length > 0) {
-                buttonCard.appendChild(createHealthReasonList(card.health.reasons, { limit: 2 }));
-            }
             grid.appendChild(buttonCard);
         });
         wrapper.appendChild(grid);
@@ -15152,6 +15163,29 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         toolbarSection.appendChild(detailToolbar.element);
         const detailToolbarControls = [detailToolbar.searchInput];
 
+        const setFilteredSelection = (rows, selected) => {
+            rows.forEach(row => {
+                const holdingId = row.holdingId || row.code;
+                if (!holdingId) {
+                    return;
+                }
+                if (selected) {
+                    selectedHoldingIds.add(holdingId);
+                } else {
+                    selectedHoldingIds.delete(holdingId);
+                }
+            });
+        };
+
+        const openFsmDetail = scopeId => {
+            selectedScope = scopeId;
+            filterTerm = '';
+            selectedHoldingIds = new Set();
+            viewMode = 'detail';
+            nextFocusTarget = 'detail';
+            rerender();
+        };
+
         const focusAfterRender = () => {
             if (nextFocusTarget === 'overview') {
                 const firstOverviewCard = bodySection.querySelector('.gpv-fsm-overview-card');
@@ -15347,22 +15381,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 }));
                 bodySection.appendChild(buildFsmOverviewPanel({
                     overviewModel: viewState.overviewModel,
-                    onSelectScope: scopeId => {
-                        selectedScope = scopeId;
-                        filterTerm = '';
-                        selectedHoldingIds = new Set();
-                        viewMode = 'detail';
-                        nextFocusTarget = 'detail';
-                        rerender();
-                    },
-                    onOpenAll: () => {
-                        selectedScope = FSM_ALL_PORTFOLIO_ID;
-                        filterTerm = '';
-                        selectedHoldingIds = new Set();
-                        viewMode = 'detail';
-                        nextFocusTarget = 'detail';
-                        rerender();
-                    }
+                    onSelectScope: openFsmDetail,
+                    onOpenAll: () => openFsmDetail(FSM_ALL_PORTFOLIO_ID)
                 }));
                 focusAfterRender();
                 return;
@@ -15421,17 +15441,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 bulkPortfolioId,
                 filteredCount: viewState.filteredRows.length,
                 onSelectAllChange: value => {
-                    viewState.filteredRows.forEach(row => {
-                        const holdingId = row.holdingId || row.code;
-                        if (!holdingId) {
-                            return;
-                        }
-                        if (value) {
-                            selectedHoldingIds.add(holdingId);
-                            return;
-                        }
-                        selectedHoldingIds.delete(holdingId);
-                    });
+                    setFilteredSelection(viewState.filteredRows, value);
                     rerender();
                 },
                 onBulkPortfolioChange: value => {
@@ -15455,17 +15465,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 targetErrorsByHoldingId,
                 showDrift: viewState.showDrift,
                 onSelectAllChange: value => {
-                    viewState.filteredRows.forEach(row => {
-                        const holdingId = row.holdingId || row.code;
-                        if (!holdingId) {
-                            return;
-                        }
-                        if (value) {
-                            selectedHoldingIds.add(holdingId);
-                            return;
-                        }
-                        selectedHoldingIds.delete(holdingId);
-                    });
+                    setFilteredSelection(viewState.filteredRows, value);
                     rerender();
                 },
                 onRowSelectChange: (holdingId, checked) => {
@@ -16653,30 +16653,29 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 portfolioNos.forEach(portfolioNo => {
                     const portfolioRows = grouped[portfolioNo] || [];
                     const summary = buildOcbcSummary(portfolioRows);
-                    const card = createElement('button', 'gpv-fsm-overview-card');
-                    card.type = 'button';
                     const meta = holdingsByPortfolio[portfolioNo] || {};
                     const statusText = latestPortfolioNos.has(portfolioNo)
                         ? 'Current session'
                         : (meta.lastSeenAt ? `Cached · ${new Date(meta.lastSeenAt).toLocaleString()}` : 'Cached');
-                    createKeyboardSelectableCard(card, {
+                    const card = createOverviewScopeCard({
+                        elementTag: 'button',
                         ariaLabel: `Open portfolio ${portfolioNo} ${sectionView}`,
                         onSelect: () => {
                             viewSelect.value = sectionView;
                             selectedPortfolioNo = portfolioNo;
                             viewMode = 'detail';
                             rerender();
+                        },
+                        cardHtml: {
+                            title: `Portfolio ${portfolioNo}`,
+                            subtitle: `${portfolioRows.length} holding${portfolioRows.length === 1 ? '' : 's'}`,
+                            tagHtml: `<span class="gpv-fsm-overview-card-tag">${escapeHtml(sectionTitle)}</span>`,
+                            stats: [
+                                { label: 'Total value', value: formatMoney(summary.total) },
+                                { label: 'Profit', value: summary.profitDisplay || '-', valueClass: summary.profitClass || '' },
+                                { label: 'Status', value: statusText }
+                            ]
                         }
-                    });
-                    card.innerHTML = buildOverviewCardHtml({
-                        title: `Portfolio ${portfolioNo}`,
-                        subtitle: `${portfolioRows.length} holding${portfolioRows.length === 1 ? '' : 's'}`,
-                        tagHtml: `<span class="gpv-fsm-overview-card-tag">${escapeHtml(sectionTitle)}</span>`,
-                        stats: [
-                            { label: 'Total value', value: formatMoney(summary.total) },
-                            { label: 'Profit', value: summary.profitDisplay || '-', valueClass: summary.profitClass || '' },
-                            { label: 'Status', value: statusText }
-                        ]
                     });
                     grid.appendChild(card);
                 });
