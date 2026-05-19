@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.17
+// @version      2.14.18
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -9732,6 +9732,55 @@ let GoalTargetStore;
         input.addEventListener('animationend', onAnimationEnd);
     }
 
+    const PROJECTION_REFRESH_DEBOUNCE_MS = 250;
+    const projectionRefreshTimersBySection = new WeakMap();
+
+    function clearProjectionRefreshTimer(typeSection) {
+        if (!typeSection) {
+            return;
+        }
+        const timerId = projectionRefreshTimersBySection.get(typeSection);
+        if (!timerId) {
+            return;
+        }
+        clearTimeout(timerId);
+        projectionRefreshTimersBySection.delete(typeSection);
+    }
+
+    function scheduleProjectionRefresh({
+        typeSection,
+        bucket,
+        goalType,
+        mergedInvestmentDataState,
+        projectedInvestmentsState
+    }) {
+        if (!typeSection) {
+            return;
+        }
+        clearProjectionRefreshTimer(typeSection);
+        const timerId = setTimeout(() => {
+            projectionRefreshTimersBySection.delete(typeSection);
+            const tbody = typeSection.querySelector(`.${CLASS_NAMES.goalTable} tbody`);
+            if (!tbody) {
+                return;
+            }
+            refreshGoalTypeSection({
+                typeSection,
+                bucket,
+                goalType,
+                mergedInvestmentDataState,
+                projectedInvestmentsState
+            });
+            refreshBucketPlanningPanel({
+                typeSection,
+                bucket,
+                mergedInvestmentDataState,
+                projectedInvestmentsState
+            });
+        }, PROJECTION_REFRESH_DEBOUNCE_MS);
+        projectionRefreshTimersBySection.set(typeSection, timerId);
+    }
+
     /**
      * Handle changes to goal target percentage input
      * @param {HTMLInputElement} input - Input element
@@ -9875,6 +9924,7 @@ let GoalTargetStore;
             
             // Validate input
             if (isNaN(amount)) {
+                clearProjectionRefreshTimer(typeSection);
                 // Invalid number - show error feedback
                 flashInputBorder(input, 'error');
                 return;
@@ -9886,24 +9936,14 @@ let GoalTargetStore;
             // Show success feedback
             flashInputBorder(input, 'success');
         }
-        
-        // Recalculate all diffs in this goal type section
-        const tbody = typeSection.querySelector(`.${CLASS_NAMES.goalTable} tbody`);
-        if (tbody) {
-            refreshGoalTypeSection({
-                typeSection,
-                bucket,
-                goalType,
-                mergedInvestmentDataState,
-                projectedInvestmentsState
-            });
-            refreshBucketPlanningPanel({
-                typeSection,
-                bucket,
-                mergedInvestmentDataState,
-                projectedInvestmentsState
-            });
-        }
+
+        scheduleProjectionRefresh({
+            typeSection,
+            bucket,
+            goalType,
+            mergedInvestmentDataState,
+            projectedInvestmentsState
+        });
     }
 
     const EventHandlers = {
@@ -9913,6 +9953,7 @@ let GoalTargetStore;
     };
 
     const FSM_PROJECTION_BUCKET = '__fsm__';
+    const FSM_PROJECTION_REFRESH_DEBOUNCE_MS = PROJECTION_REFRESH_DEBOUNCE_MS;
 
     function isFsmProjectedScope(selectedScope, activePortfolioIds) {
         if (!selectedScope || selectedScope === FSM_ALL_PORTFOLIO_ID || selectedScope === FSM_UNASSIGNED_PORTFOLIO_ID) {
@@ -15213,7 +15254,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             nextFocusTarget = null;
         };
 
-        const buildViewState = () => {
+        const buildViewState = (options = {}) => {
+            const includeOverviewModel = options.includeOverviewModel !== false;
             const rows = buildFsmRowsWithAssignment(fsmHoldings, assignmentByCode);
             const activePortfolioIds = activePortfolios().map(item => item.id);
             const activePortfolioSet = new Set(activePortfolioIds);
@@ -15300,98 +15342,24 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 projectedAmount,
                 planning,
                 selectedScopeLabel: selectedScopeOption?.label || 'All',
-                overviewModel: buildFsmPortfolioOverviewModel(rows, activePortfolios())
+                overviewModel: includeOverviewModel ? buildFsmPortfolioOverviewModel(rows, activePortfolios()) : null
             };
         };
 
-        const rerender = () => {
-            const viewState = buildViewState();
+        let fsmProjectionRefreshTimer = null;
 
-            managerSection.innerHTML = '';
-
-            const managerSummary = buildFsmManagerSummary({
-                activePortfolioCount: viewState.activePortfolioIds.length,
-                unassignedCount: viewState.unassignedCount,
-                isExpanded: isPortfolioManagerExpanded,
-                onToggle: () => {
-                    isPortfolioManagerExpanded = !isPortfolioManagerExpanded;
-                    rerender();
-                }
-            });
-            managerSection.appendChild(managerSummary);
-
-            if (isPortfolioManagerExpanded) {
-                const manager = buildFsmManagerPanel({
-                    activePortfolios: activePortfolios(),
-                    editingPortfolioId,
-                    onCreate: name => {
-                        const id = buildPortfolioId(name, portfolios.map(item => item.id));
-                        portfolios = [...portfolios, { id, name, archived: false }];
-                        bulkPortfolioId = id;
-                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
-                        rerender();
-                    },
-                    onStartRename: id => {
-                        editingPortfolioId = id;
-                        rerender();
-                    },
-                    onSaveRename: (id, nextName) => {
-                        portfolios = portfolios.map(portfolio => portfolio.id === id
-                            ? { ...portfolio, name: nextName }
-                            : portfolio);
-                        editingPortfolioId = null;
-                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
-                        rerender();
-                    },
-                    onCancelRename: () => {
-                        editingPortfolioId = null;
-                        rerender();
-                    },
-                    onArchive: id => {
-                        portfolios = portfolios.map(portfolio => portfolio.id === id
-                            ? { ...portfolio, archived: true }
-                            : portfolio);
-                        Object.keys(assignmentByCode).forEach(code => {
-                            if (assignmentByCode[code] === id) {
-                                assignmentByCode[code] = FSM_UNASSIGNED_PORTFOLIO_ID;
-                            }
-                        });
-                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
-                        if (selectedScope === id) {
-                            selectedScope = FSM_UNASSIGNED_PORTFOLIO_ID;
-                        }
-                        rerender();
-                    }
-                });
-                managerSection.appendChild(manager);
+        const clearFsmProjectionRefreshTimer = () => {
+            if (!fsmProjectionRefreshTimer) {
+                return;
             }
+            clearTimeout(fsmProjectionRefreshTimer);
+            fsmProjectionRefreshTimer = null;
+        };
 
+        const renderFsmDetailSections = viewState => {
             summarySection.innerHTML = '';
             bodySection.innerHTML = '';
 
-            if (viewMode === 'overview') {
-                headerBackBtn.hidden = true;
-                headerBackBtn.disabled = true;
-                toolbarSection.hidden = true;
-                setElementsDisabled(detailToolbarControls, true);
-                summarySection.appendChild(buildFsmSummaryRow(viewState.overviewModel.allSummary, {
-                    showDrift: false,
-                    showProfit: true,
-                    showFixed: false
-                }));
-                bodySection.appendChild(buildFsmOverviewPanel({
-                    overviewModel: viewState.overviewModel,
-                    onSelectScope: openFsmDetail,
-                    onOpenAll: () => openFsmDetail(FSM_ALL_PORTFOLIO_ID)
-                }));
-                focusAfterRender();
-                return;
-            }
-
-            headerBackBtn.hidden = false;
-            headerBackBtn.disabled = false;
-            toolbarSection.hidden = false;
-            setElementsDisabled(detailToolbarControls, false);
             summarySection.appendChild(buildFsmSummaryRow(viewState.summary, {
                 showDrift: viewState.showDrift,
                 showProfit: true
@@ -15405,7 +15373,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         if (value === '') {
                             clearProjectedInvestment(state.projectedInvestments, FSM_PROJECTION_BUCKET, selectedScope);
                             nextFocusTarget = 'projection';
-                            rerender();
+                            scheduleFsmProjectionRefresh();
                             return;
                         }
                         const amount = parseFloat(value);
@@ -15416,13 +15384,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         if (amount === 0) {
                             clearProjectedInvestment(state.projectedInvestments, FSM_PROJECTION_BUCKET, selectedScope);
                             nextFocusTarget = 'projection';
-                            rerender();
+                            scheduleFsmProjectionRefresh();
                             return;
                         }
                         setProjectedInvestment(state.projectedInvestments, FSM_PROJECTION_BUCKET, selectedScope, amount);
                         flashInputBorder(input, 'success');
                         nextFocusTarget = 'projection';
-                        rerender();
+                        scheduleFsmProjectionRefresh();
                     }
                 }));
             }
@@ -15541,6 +15509,114 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             focusAfterRender();
         };
 
+        const refreshFsmProjectionDetail = () => {
+            if (viewMode !== 'detail') {
+                return;
+            }
+            const viewState = buildViewState({ includeOverviewModel: false });
+            renderFsmDetailSections(viewState);
+        };
+
+        const scheduleFsmProjectionRefresh = () => {
+            clearFsmProjectionRefreshTimer();
+            fsmProjectionRefreshTimer = setTimeout(() => {
+                fsmProjectionRefreshTimer = null;
+                refreshFsmProjectionDetail();
+            }, FSM_PROJECTION_REFRESH_DEBOUNCE_MS);
+        };
+
+        const rerender = () => {
+            clearFsmProjectionRefreshTimer();
+            const viewState = buildViewState();
+
+            managerSection.innerHTML = '';
+
+            const managerSummary = buildFsmManagerSummary({
+                activePortfolioCount: viewState.activePortfolioIds.length,
+                unassignedCount: viewState.unassignedCount,
+                isExpanded: isPortfolioManagerExpanded,
+                onToggle: () => {
+                    isPortfolioManagerExpanded = !isPortfolioManagerExpanded;
+                    rerender();
+                }
+            });
+            managerSection.appendChild(managerSummary);
+
+            if (isPortfolioManagerExpanded) {
+                const manager = buildFsmManagerPanel({
+                    activePortfolios: activePortfolios(),
+                    editingPortfolioId,
+                    onCreate: name => {
+                        const id = buildPortfolioId(name, portfolios.map(item => item.id));
+                        portfolios = [...portfolios, { id, name, archived: false }];
+                        bulkPortfolioId = id;
+                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
+                        rerender();
+                    },
+                    onStartRename: id => {
+                        editingPortfolioId = id;
+                        rerender();
+                    },
+                    onSaveRename: (id, nextName) => {
+                        portfolios = portfolios.map(portfolio => portfolio.id === id
+                            ? { ...portfolio, name: nextName }
+                            : portfolio);
+                        editingPortfolioId = null;
+                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
+                        rerender();
+                    },
+                    onCancelRename: () => {
+                        editingPortfolioId = null;
+                        rerender();
+                    },
+                    onArchive: id => {
+                        portfolios = portfolios.map(portfolio => portfolio.id === id
+                            ? { ...portfolio, archived: true }
+                            : portfolio);
+                        Object.keys(assignmentByCode).forEach(code => {
+                            if (assignmentByCode[code] === id) {
+                                assignmentByCode[code] = FSM_UNASSIGNED_PORTFOLIO_ID;
+                            }
+                        });
+                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
+                        if (selectedScope === id) {
+                            selectedScope = FSM_UNASSIGNED_PORTFOLIO_ID;
+                        }
+                        rerender();
+                    }
+                });
+                managerSection.appendChild(manager);
+            }
+
+            summarySection.innerHTML = '';
+            bodySection.innerHTML = '';
+
+            if (viewMode === 'overview') {
+                headerBackBtn.hidden = true;
+                headerBackBtn.disabled = true;
+                toolbarSection.hidden = true;
+                setElementsDisabled(detailToolbarControls, true);
+                summarySection.appendChild(buildFsmSummaryRow(viewState.overviewModel.allSummary, {
+                    showDrift: false,
+                    showProfit: true,
+                    showFixed: false
+                }));
+                bodySection.appendChild(buildFsmOverviewPanel({
+                    overviewModel: viewState.overviewModel,
+                    onSelectScope: openFsmDetail,
+                    onOpenAll: () => openFsmDetail(FSM_ALL_PORTFOLIO_ID)
+                }));
+                focusAfterRender();
+                return;
+            }
+
+            headerBackBtn.hidden = false;
+            headerBackBtn.disabled = false;
+            toolbarSection.hidden = false;
+            setElementsDisabled(detailToolbarControls, false);
+            renderFsmDetailSections(viewState);
+        };
+
         const unsubscribeOverlayUpdates = subscribeDataUpdates(() => {
             if (!overlay.isConnected) {
                 return;
@@ -15553,6 +15629,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             rerender();
         });
         cleanupCallbacks.push(unsubscribeOverlayUpdates);
+        cleanupCallbacks.push(clearFsmProjectionRefreshTimer);
 
         rerender();
 
