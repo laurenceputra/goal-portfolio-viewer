@@ -34,6 +34,7 @@ describe('FSM profit models', () => {
     });
 
     afterEach(() => {
+        jest.useRealTimers();
         teardownDom();
     });
 
@@ -420,6 +421,7 @@ describe('FSM profit models', () => {
     });
 
     test('FSM projected amount updates planning split and is isolated per portfolio', () => {
+        jest.useFakeTimers();
         const { init, showOverlay, getFsmHoldingIdentity } = require('../goal_portfolio_viewer.user.js');
         const holdings = [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1000 },
@@ -459,6 +461,7 @@ describe('FSM profit models', () => {
         projectionInput.focus();
         projectionInput.value = '1000';
         projectionInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+        jest.advanceTimersByTime(250);
 
         overlay = document.querySelector('#gpv-overlay');
         expect(document.activeElement).toBe(getProjectionInput(overlay));
@@ -494,6 +497,7 @@ describe('FSM profit models', () => {
     });
 
     test('FSM negative projected amount is rejected and not persisted', () => {
+        jest.useFakeTimers();
         const { init, showOverlay, getFsmHoldingIdentity } = require('../goal_portfolio_viewer.user.js');
         const holdings = [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1000 },
@@ -531,6 +535,7 @@ describe('FSM profit models', () => {
         const projectionInput = getProjectionInput(overlay);
         projectionInput.value = '-100';
         projectionInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+        jest.advanceTimersByTime(250);
 
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).not.toContain('Projected Investment:');
@@ -559,5 +564,57 @@ describe('FSM profit models', () => {
         overlay = document.querySelector('#gpv-overlay');
         expect(getProjectionInput(overlay).value).toBe('');
         expect(overlay.textContent).not.toContain('Projected Investment:');
+    });
+
+    test('FSM projected amount refresh is debounced while typing', () => {
+        jest.useFakeTimers();
+        const { init, showOverlay, getFsmHoldingIdentity } = require('../goal_portfolio_viewer.user.js');
+        const holdings = [
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1000 },
+            { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 1000 }
+        ];
+        const portfolioId = 'income';
+        const firstHoldingId = getFsmHoldingIdentity(holdings[0]);
+        const secondHoldingId = getFsmHoldingIdentity(holdings[1]);
+        mockStorageWithFsmConfig({
+            holdings,
+            portfolios: [{ id: portfolioId, name: 'Income', archived: false }],
+            assignments: {
+                [firstHoldingId]: portfolioId,
+                [secondHoldingId]: portfolioId
+            },
+            extra: {
+                [`fsm_target_pct_${firstHoldingId}`]: 50,
+                [`fsm_target_pct_${secondHoldingId}`]: 50
+            }
+        });
+
+        init();
+        showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const portfolioCard = Array.from(overlay.querySelectorAll('.gpv-fsm-overview-card')).find(card => (
+            card.querySelector('.gpv-fsm-overview-card-title')?.textContent.trim() === 'Income'
+        ));
+        portfolioCard.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const projectionInput = getProjectionInput(overlay);
+
+        projectionInput.value = '1';
+        projectionInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+        jest.advanceTimersByTime(200);
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).not.toContain('Projected Investment: SGD\u00A01.00');
+
+        projectionInput.value = '1000';
+        projectionInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+        jest.advanceTimersByTime(249);
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).not.toContain('Projected Investment: SGD\u00A01,000.00');
+
+        jest.advanceTimersByTime(1);
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Projected Investment: SGD\u00A01,000.00');
     });
 });

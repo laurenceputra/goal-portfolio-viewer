@@ -9913,6 +9913,7 @@ let GoalTargetStore;
     };
 
     const FSM_PROJECTION_BUCKET = '__fsm__';
+    const FSM_PROJECTION_REFRESH_DEBOUNCE_MS = 250;
 
     function isFsmProjectedScope(selectedScope, activePortfolioIds) {
         if (!selectedScope || selectedScope === FSM_ALL_PORTFOLIO_ID || selectedScope === FSM_UNASSIGNED_PORTFOLIO_ID) {
@@ -15213,7 +15214,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             nextFocusTarget = null;
         };
 
-        const buildViewState = () => {
+        const buildViewState = (options = {}) => {
+            const includeOverviewModel = options.includeOverviewModel !== false;
             const rows = buildFsmRowsWithAssignment(fsmHoldings, assignmentByCode);
             const activePortfolioIds = activePortfolios().map(item => item.id);
             const activePortfolioSet = new Set(activePortfolioIds);
@@ -15300,98 +15302,24 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 projectedAmount,
                 planning,
                 selectedScopeLabel: selectedScopeOption?.label || 'All',
-                overviewModel: buildFsmPortfolioOverviewModel(rows, activePortfolios())
+                overviewModel: includeOverviewModel ? buildFsmPortfolioOverviewModel(rows, activePortfolios()) : null
             };
         };
 
-        const rerender = () => {
-            const viewState = buildViewState();
+        let fsmProjectionRefreshTimer = null;
 
-            managerSection.innerHTML = '';
-
-            const managerSummary = buildFsmManagerSummary({
-                activePortfolioCount: viewState.activePortfolioIds.length,
-                unassignedCount: viewState.unassignedCount,
-                isExpanded: isPortfolioManagerExpanded,
-                onToggle: () => {
-                    isPortfolioManagerExpanded = !isPortfolioManagerExpanded;
-                    rerender();
-                }
-            });
-            managerSection.appendChild(managerSummary);
-
-            if (isPortfolioManagerExpanded) {
-                const manager = buildFsmManagerPanel({
-                    activePortfolios: activePortfolios(),
-                    editingPortfolioId,
-                    onCreate: name => {
-                        const id = buildPortfolioId(name, portfolios.map(item => item.id));
-                        portfolios = [...portfolios, { id, name, archived: false }];
-                        bulkPortfolioId = id;
-                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
-                        rerender();
-                    },
-                    onStartRename: id => {
-                        editingPortfolioId = id;
-                        rerender();
-                    },
-                    onSaveRename: (id, nextName) => {
-                        portfolios = portfolios.map(portfolio => portfolio.id === id
-                            ? { ...portfolio, name: nextName }
-                            : portfolio);
-                        editingPortfolioId = null;
-                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
-                        rerender();
-                    },
-                    onCancelRename: () => {
-                        editingPortfolioId = null;
-                        rerender();
-                    },
-                    onArchive: id => {
-                        portfolios = portfolios.map(portfolio => portfolio.id === id
-                            ? { ...portfolio, archived: true }
-                            : portfolio);
-                        Object.keys(assignmentByCode).forEach(code => {
-                            if (assignmentByCode[code] === id) {
-                                assignmentByCode[code] = FSM_UNASSIGNED_PORTFOLIO_ID;
-                            }
-                        });
-                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
-                        if (selectedScope === id) {
-                            selectedScope = FSM_UNASSIGNED_PORTFOLIO_ID;
-                        }
-                        rerender();
-                    }
-                });
-                managerSection.appendChild(manager);
+        const clearFsmProjectionRefreshTimer = () => {
+            if (!fsmProjectionRefreshTimer) {
+                return;
             }
+            clearTimeout(fsmProjectionRefreshTimer);
+            fsmProjectionRefreshTimer = null;
+        };
 
+        const renderFsmDetailSections = viewState => {
             summarySection.innerHTML = '';
             bodySection.innerHTML = '';
 
-            if (viewMode === 'overview') {
-                headerBackBtn.hidden = true;
-                headerBackBtn.disabled = true;
-                toolbarSection.hidden = true;
-                setElementsDisabled(detailToolbarControls, true);
-                summarySection.appendChild(buildFsmSummaryRow(viewState.overviewModel.allSummary, {
-                    showDrift: false,
-                    showProfit: true,
-                    showFixed: false
-                }));
-                bodySection.appendChild(buildFsmOverviewPanel({
-                    overviewModel: viewState.overviewModel,
-                    onSelectScope: openFsmDetail,
-                    onOpenAll: () => openFsmDetail(FSM_ALL_PORTFOLIO_ID)
-                }));
-                focusAfterRender();
-                return;
-            }
-
-            headerBackBtn.hidden = false;
-            headerBackBtn.disabled = false;
-            toolbarSection.hidden = false;
-            setElementsDisabled(detailToolbarControls, false);
             summarySection.appendChild(buildFsmSummaryRow(viewState.summary, {
                 showDrift: viewState.showDrift,
                 showProfit: true
@@ -15405,7 +15333,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         if (value === '') {
                             clearProjectedInvestment(state.projectedInvestments, FSM_PROJECTION_BUCKET, selectedScope);
                             nextFocusTarget = 'projection';
-                            rerender();
+                            scheduleFsmProjectionRefresh();
                             return;
                         }
                         const amount = parseFloat(value);
@@ -15416,13 +15344,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         if (amount === 0) {
                             clearProjectedInvestment(state.projectedInvestments, FSM_PROJECTION_BUCKET, selectedScope);
                             nextFocusTarget = 'projection';
-                            rerender();
+                            scheduleFsmProjectionRefresh();
                             return;
                         }
                         setProjectedInvestment(state.projectedInvestments, FSM_PROJECTION_BUCKET, selectedScope, amount);
                         flashInputBorder(input, 'success');
                         nextFocusTarget = 'projection';
-                        rerender();
+                        scheduleFsmProjectionRefresh();
                     }
                 }));
             }
@@ -15541,6 +15469,114 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             focusAfterRender();
         };
 
+        const refreshFsmProjectionDetail = () => {
+            if (viewMode !== 'detail') {
+                return;
+            }
+            const viewState = buildViewState({ includeOverviewModel: false });
+            renderFsmDetailSections(viewState);
+        };
+
+        const scheduleFsmProjectionRefresh = () => {
+            clearFsmProjectionRefreshTimer();
+            fsmProjectionRefreshTimer = setTimeout(() => {
+                fsmProjectionRefreshTimer = null;
+                refreshFsmProjectionDetail();
+            }, FSM_PROJECTION_REFRESH_DEBOUNCE_MS);
+        };
+
+        const rerender = () => {
+            clearFsmProjectionRefreshTimer();
+            const viewState = buildViewState();
+
+            managerSection.innerHTML = '';
+
+            const managerSummary = buildFsmManagerSummary({
+                activePortfolioCount: viewState.activePortfolioIds.length,
+                unassignedCount: viewState.unassignedCount,
+                isExpanded: isPortfolioManagerExpanded,
+                onToggle: () => {
+                    isPortfolioManagerExpanded = !isPortfolioManagerExpanded;
+                    rerender();
+                }
+            });
+            managerSection.appendChild(managerSummary);
+
+            if (isPortfolioManagerExpanded) {
+                const manager = buildFsmManagerPanel({
+                    activePortfolios: activePortfolios(),
+                    editingPortfolioId,
+                    onCreate: name => {
+                        const id = buildPortfolioId(name, portfolios.map(item => item.id));
+                        portfolios = [...portfolios, { id, name, archived: false }];
+                        bulkPortfolioId = id;
+                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
+                        rerender();
+                    },
+                    onStartRename: id => {
+                        editingPortfolioId = id;
+                        rerender();
+                    },
+                    onSaveRename: (id, nextName) => {
+                        portfolios = portfolios.map(portfolio => portfolio.id === id
+                            ? { ...portfolio, name: nextName }
+                            : portfolio);
+                        editingPortfolioId = null;
+                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
+                        rerender();
+                    },
+                    onCancelRename: () => {
+                        editingPortfolioId = null;
+                        rerender();
+                    },
+                    onArchive: id => {
+                        portfolios = portfolios.map(portfolio => portfolio.id === id
+                            ? { ...portfolio, archived: true }
+                            : portfolio);
+                        Object.keys(assignmentByCode).forEach(code => {
+                            if (assignmentByCode[code] === id) {
+                                assignmentByCode[code] = FSM_UNASSIGNED_PORTFOLIO_ID;
+                            }
+                        });
+                        saveFsmPortfolioConfig(portfolios, assignmentByCode);
+                        if (selectedScope === id) {
+                            selectedScope = FSM_UNASSIGNED_PORTFOLIO_ID;
+                        }
+                        rerender();
+                    }
+                });
+                managerSection.appendChild(manager);
+            }
+
+            summarySection.innerHTML = '';
+            bodySection.innerHTML = '';
+
+            if (viewMode === 'overview') {
+                headerBackBtn.hidden = true;
+                headerBackBtn.disabled = true;
+                toolbarSection.hidden = true;
+                setElementsDisabled(detailToolbarControls, true);
+                summarySection.appendChild(buildFsmSummaryRow(viewState.overviewModel.allSummary, {
+                    showDrift: false,
+                    showProfit: true,
+                    showFixed: false
+                }));
+                bodySection.appendChild(buildFsmOverviewPanel({
+                    overviewModel: viewState.overviewModel,
+                    onSelectScope: openFsmDetail,
+                    onOpenAll: () => openFsmDetail(FSM_ALL_PORTFOLIO_ID)
+                }));
+                focusAfterRender();
+                return;
+            }
+
+            headerBackBtn.hidden = false;
+            headerBackBtn.disabled = false;
+            toolbarSection.hidden = false;
+            setElementsDisabled(detailToolbarControls, false);
+            renderFsmDetailSections(viewState);
+        };
+
         const unsubscribeOverlayUpdates = subscribeDataUpdates(() => {
             if (!overlay.isConnected) {
                 return;
@@ -15553,6 +15589,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             rerender();
         });
         cleanupCallbacks.push(unsubscribeOverlayUpdates);
+        cleanupCallbacks.push(clearFsmProjectionRefreshTimer);
 
         rerender();
 
