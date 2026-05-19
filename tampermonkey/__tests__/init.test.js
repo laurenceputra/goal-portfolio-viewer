@@ -35,6 +35,49 @@ describe('initialization and URL monitoring', () => {
         return overlay;
     };
 
+    const loadModuleForUrl = (url) => {
+        jest.resetModules();
+        teardownDom();
+        setupDom({ url });
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+
+        global.fetch = jest.fn(() => Promise.resolve(responseFactory({})));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, requestUrl) {
+                this._url = requestUrl;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+        return require('../goal_portfolio_viewer.user.js');
+    };
+
     beforeEach(() => {
         jest.resetModules();
         setupDom();
@@ -128,6 +171,30 @@ describe('initialization and URL monitoring', () => {
 
         window.history.pushState({}, '', 'https://app.sg.endowus.com/settings');
         expect(document.querySelector('.gpv-trigger-btn')).toBeNull();
+    });
+
+    test('overlay platform descriptor resolves FSM, OCBC, then Endowus fallback by route', () => {
+        let exportsModule = loadModuleForUrl('https://app.sg.endowus.com/goals');
+        expect(exportsModule.getOverlayPlatformDescriptor().id).toBe('endowus');
+        const endowusReadiness = exportsModule.getOverlayPlatformDescriptor().getReadinessOverlayConfig();
+        expect(endowusReadiness.title).toBe('Portfolio Viewer');
+        expect(endowusReadiness.getItems().map(item => item.label)).toEqual([
+            'Goal performance',
+            'Investible balances',
+            'Goal summaries'
+        ]);
+
+        exportsModule = loadModuleForUrl('https://secure.fundsupermart.com/fsmone/holdings/investments');
+        expect(exportsModule.getOverlayPlatformDescriptor().id).toBe('fsm');
+        const fsmReadiness = exportsModule.getOverlayPlatformDescriptor().getReadinessOverlayConfig();
+        expect(fsmReadiness.title).toBe('Portfolio Viewer (FSM)');
+        expect(fsmReadiness.getItems().map(item => item.label)).toEqual(['FSM holdings data']);
+
+        exportsModule = loadModuleForUrl('https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/dashboard?menuId=e62c3103-da60-4e8a-8717-72f11ebaaebe');
+        expect(exportsModule.getOverlayPlatformDescriptor().id).toBe('ocbc');
+        const ocbcReadiness = exportsModule.getOverlayPlatformDescriptor().getReadinessOverlayConfig();
+        expect(ocbcReadiness.title).toBe('Portfolio Viewer (OCBC)');
+        expect(ocbcReadiness.getItems().map(item => item.label)).toEqual(['OCBC portfolio holdings data']);
     });
 
 
@@ -1787,6 +1854,10 @@ describe('initialization and URL monitoring', () => {
         const liabilityCard = overviewCards.find(card => card.textContent.includes('Liabilities'));
         expect(assetCard).toBeTruthy();
         expect(liabilityCard).toBeTruthy();
+        expect(assetCard.tagName).toBe('BUTTON');
+        expect(assetCard.type).toBe('button');
+        expect(assetCard.hasAttribute('role')).toBe(false);
+        expect(assetCard.hasAttribute('tabindex')).toBe(false);
         expect(assetCard.textContent).toContain('2 holding');
         expect(assetCard.textContent).not.toContain('OCBC Liability');
         expect(liabilityCard.textContent).toContain('1 holding');

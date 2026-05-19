@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.16
+// @version      2.14.17
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -4313,13 +4313,17 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 }
                 return merged;
             }
-            if (shouldCleanupLegacyFsmKeysOnRead()) {
-                cleanupLegacyFsmKeys();
-                legacyCleanupSessionState.fsm = true;
-            }
-            if (!hasOwnField(rawStored, 'allocationModel')) {
-                writePlatformStore(STORAGE_KEYS.fsm, normalized, 'Error writing migrated FSM allocation model');
-            }
+            cleanupLegacySessionOnRead({
+                shouldCleanup: shouldCleanupLegacyFsmKeysOnRead(),
+                cleanupLegacyKeys: cleanupLegacyFsmKeys,
+                platform: 'fsm'
+            });
+            persistAllocationModelMigration(
+                rawStored,
+                normalized,
+                STORAGE_KEYS.fsm,
+                'Error writing migrated FSM allocation model'
+            );
             return normalized;
         }
         const migrated = collectLegacyFsmStore();
@@ -4354,13 +4358,17 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 }
                 return merged;
             }
-            if (shouldCleanupLegacyOcbcKeysOnRead()) {
-                cleanupLegacyOcbcKeys();
-                legacyCleanupSessionState.ocbc = true;
-            }
-            if (!hasOwnField(rawStored, 'allocationModel')) {
-                writePlatformStore(STORAGE_KEYS.ocbc, normalized, 'Error writing migrated OCBC allocation model');
-            }
+            cleanupLegacySessionOnRead({
+                shouldCleanup: shouldCleanupLegacyOcbcKeysOnRead(),
+                cleanupLegacyKeys: cleanupLegacyOcbcKeys,
+                platform: 'ocbc'
+            });
+            persistAllocationModelMigration(
+                rawStored,
+                normalized,
+                STORAGE_KEYS.ocbc,
+                'Error writing migrated OCBC allocation model'
+            );
             return normalized;
         }
         const migrated = collectLegacyOcbcStore();
@@ -4370,6 +4378,20 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             legacyCleanupSessionState.ocbc = true;
         }
         return migrated;
+    }
+
+    function cleanupLegacySessionOnRead({ shouldCleanup, cleanupLegacyKeys, platform }) {
+        if (!shouldCleanup) {
+            return;
+        }
+        cleanupLegacyKeys();
+        legacyCleanupSessionState[platform] = true;
+    }
+
+    function persistAllocationModelMigration(rawStored, normalized, storageKey, context) {
+        if (!hasOwnField(rawStored, 'allocationModel')) {
+            writePlatformStore(storageKey, normalized, context);
+        }
     }
 
     function updatePlatformStore({ readStore, normalizeStore, storageKey, cleanupLegacyKeys, updater, context }) {
@@ -8706,23 +8728,25 @@ let GoalTargetStore;
         if (!element) {
             return element;
         }
-        element.setAttribute('role', 'button');
-        element.setAttribute('tabindex', '0');
+        const isNativeButton = element.tagName === 'BUTTON';
+        if (!isNativeButton) {
+            element.setAttribute('role', 'button');
+            element.setAttribute('tabindex', '0');
+        }
         if (ariaLabel) {
             element.setAttribute('aria-label', ariaLabel);
         }
         if (typeof onSelect === 'function') {
-            const handleSelect = event => {
-                if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') {
-                    return;
-                }
-                if (event.type === 'keydown') {
+            element.addEventListener('click', onSelect);
+            if (!isNativeButton) {
+                element.addEventListener('keydown', event => {
+                    if (event.key !== 'Enter' && event.key !== ' ') {
+                        return;
+                    }
                     event.preventDefault();
-                }
-                onSelect(event);
-            };
-            element.addEventListener('click', handleSelect);
-            element.addEventListener('keydown', handleSelect);
+                    onSelect(event);
+                });
+            }
         }
         return element;
     }
@@ -14680,6 +14704,36 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         `;
     }
 
+    function buildOverviewCardHtml({ title, subtitle, tagHtml = '', badgeHtml = '', stats = [] }) {
+        const metadataHtml = `${badgeHtml || ''}${tagHtml || ''}`;
+        return `
+                <div class="gpv-fsm-overview-card-header">
+                    <div>
+                        <h2 class="gpv-fsm-overview-card-title">${escapeHtml(title || '')}</h2>
+                        <p class="gpv-fsm-overview-card-subtitle">${escapeHtml(subtitle || '')}</p>
+                    </div>
+                    ${metadataHtml}
+                </div>
+                ${buildOverviewStatsHtml(stats)}
+        `;
+    }
+
+    function createOverviewScopeCard({ elementTag = 'div', className = 'gpv-fsm-overview-card', scopeId, ariaLabel, onSelect, cardHtml, healthReasons = [], healthReasonLimit }) {
+        const card = createElement(elementTag, className);
+        if (elementTag === 'button') {
+            card.type = 'button';
+        }
+        if (scopeId) {
+            card.dataset.scope = scopeId;
+        }
+        createKeyboardSelectableCard(card, { ariaLabel, onSelect });
+        card.innerHTML = buildOverviewCardHtml(cardHtml || {});
+        if (Array.isArray(healthReasons) && healthReasons.length > 0) {
+            card.appendChild(createHealthReasonList(healthReasons, { limit: healthReasonLimit }));
+        }
+        return card;
+    }
+
     function buildFsmPortfolioOverviewModel(rows, activePortfolios) {
         const safeRows = Array.isArray(rows) ? rows : [];
         const safePortfolios = Array.isArray(activePortfolios) ? activePortfolios : [];
@@ -14754,37 +14808,26 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const grid = createElement('div', 'gpv-fsm-overview-grid');
         const cards = Array.isArray(overviewModel?.cards) ? overviewModel.cards : [];
         cards.forEach(card => {
-            const className = card.isUnassigned === true
-                ? 'gpv-fsm-overview-card gpv-fsm-overview-card--unassigned'
-                : 'gpv-fsm-overview-card';
-            const buttonCard = createElement('div', className);
-            buttonCard.dataset.scope = card.id;
-            createKeyboardSelectableCard(buttonCard, {
+            const className = card.isUnassigned === true ? 'gpv-fsm-overview-card gpv-fsm-overview-card--unassigned' : 'gpv-fsm-overview-card';
+            const buttonCard = createOverviewScopeCard({
+                className,
+                scopeId: card.id,
                 ariaLabel: `Open ${card.label} holdings`,
-                onSelect: () => {
-                    if (typeof onSelectScope === 'function') {
-                        onSelectScope(card.id);
-                    }
-                }
+                onSelect: () => onSelectScope?.(card.id),
+                cardHtml: {
+                    title: card.label,
+                    subtitle: `${card.holdingsCount} holding${card.holdingsCount === 1 ? '' : 's'}`,
+                    badgeHtml: `<span class="gpv-health-badge ${escapeHtml(card.health?.className || 'gpv-health--healthy')}">${escapeHtml(card.health?.label || 'Healthy')}</span>`,
+                    stats: [
+                        { label: 'Total value', value: card.totalDisplay },
+                        { label: 'Target assigned', value: card.targetAssignedDisplay },
+                        { label: 'Drift', value: card.driftDisplay, valueClass: card.driftClass || '' },
+                        { label: 'Profit', value: card.profitDisplay || '-', valueClass: card.profitClass || '' }
+                    ]
+                },
+                healthReasons: card.health?.reasons,
+                healthReasonLimit: 2
             });
-            buttonCard.innerHTML = `
-                <div class="gpv-fsm-overview-card-header">
-                    <div>
-                        <h2 class="gpv-fsm-overview-card-title">${escapeHtml(card.label)}</h2>
-                        <p class="gpv-fsm-overview-card-subtitle">${escapeHtml(`${card.holdingsCount} holding${card.holdingsCount === 1 ? '' : 's'}`)}</p>
-                    </div>
-                    <span class="gpv-health-badge ${escapeHtml(card.health?.className || 'gpv-health--healthy')}">${escapeHtml(card.health?.label || 'Healthy')}</span>
-                </div>
-                ${buildOverviewStatsHtml([
-                    { label: 'Total value', value: card.totalDisplay },
-                    { label: 'Target assigned', value: card.targetAssignedDisplay },
-                    { label: 'Drift', value: card.driftDisplay, valueClass: card.driftClass || '' },
-                    { label: 'Profit', value: card.profitDisplay || '-', valueClass: card.profitClass || '' }
-                ])}
-            `;
-            if (Array.isArray(card.health?.reasons) && card.health.reasons.length > 0) {
-                buttonCard.appendChild(createHealthReasonList(card.health.reasons, { limit: 2 }));
-            }
             grid.appendChild(buttonCard);
         });
         wrapper.appendChild(grid);
@@ -15120,6 +15163,29 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         toolbarSection.appendChild(detailToolbar.element);
         const detailToolbarControls = [detailToolbar.searchInput];
 
+        const setFilteredSelection = (rows, selected) => {
+            rows.forEach(row => {
+                const holdingId = row.holdingId || row.code;
+                if (!holdingId) {
+                    return;
+                }
+                if (selected) {
+                    selectedHoldingIds.add(holdingId);
+                } else {
+                    selectedHoldingIds.delete(holdingId);
+                }
+            });
+        };
+
+        const openFsmDetail = scopeId => {
+            selectedScope = scopeId;
+            filterTerm = '';
+            selectedHoldingIds = new Set();
+            viewMode = 'detail';
+            nextFocusTarget = 'detail';
+            rerender();
+        };
+
         const focusAfterRender = () => {
             if (nextFocusTarget === 'overview') {
                 const firstOverviewCard = bodySection.querySelector('.gpv-fsm-overview-card');
@@ -15315,22 +15381,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 }));
                 bodySection.appendChild(buildFsmOverviewPanel({
                     overviewModel: viewState.overviewModel,
-                    onSelectScope: scopeId => {
-                        selectedScope = scopeId;
-                        filterTerm = '';
-                        selectedHoldingIds = new Set();
-                        viewMode = 'detail';
-                        nextFocusTarget = 'detail';
-                        rerender();
-                    },
-                    onOpenAll: () => {
-                        selectedScope = FSM_ALL_PORTFOLIO_ID;
-                        filterTerm = '';
-                        selectedHoldingIds = new Set();
-                        viewMode = 'detail';
-                        nextFocusTarget = 'detail';
-                        rerender();
-                    }
+                    onSelectScope: openFsmDetail,
+                    onOpenAll: () => openFsmDetail(FSM_ALL_PORTFOLIO_ID)
                 }));
                 focusAfterRender();
                 return;
@@ -15389,17 +15441,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 bulkPortfolioId,
                 filteredCount: viewState.filteredRows.length,
                 onSelectAllChange: value => {
-                    viewState.filteredRows.forEach(row => {
-                        const holdingId = row.holdingId || row.code;
-                        if (!holdingId) {
-                            return;
-                        }
-                        if (value) {
-                            selectedHoldingIds.add(holdingId);
-                            return;
-                        }
-                        selectedHoldingIds.delete(holdingId);
-                    });
+                    setFilteredSelection(viewState.filteredRows, value);
                     rerender();
                 },
                 onBulkPortfolioChange: value => {
@@ -15423,17 +15465,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 targetErrorsByHoldingId,
                 showDrift: viewState.showDrift,
                 onSelectAllChange: value => {
-                    viewState.filteredRows.forEach(row => {
-                        const holdingId = row.holdingId || row.code;
-                        if (!holdingId) {
-                            return;
-                        }
-                        if (value) {
-                            selectedHoldingIds.add(holdingId);
-                            return;
-                        }
-                        selectedHoldingIds.delete(holdingId);
-                    });
+                    setFilteredSelection(viewState.filteredRows, value);
                     rerender();
                 },
                 onRowSelectChange: (holdingId, checked) => {
@@ -16007,6 +16039,39 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return Array.from(mergedMap.values());
     }
 
+    function buildPersistedOcbcSubPortfoliosForPortfolio(activeView, portfolioNo, portfolioRows, subPortfoliosByView, bucketsByView, assignmentByCode) {
+        const safePortfolioRows = Array.isArray(portfolioRows) ? portfolioRows : [];
+        const scopedSubPortfolios = getActiveOcbcSubPortfolios(subPortfoliosByView, activeView, portfolioNo);
+        const legacySubPortfolios = buildLegacyOcbcSubPortfolios(activeView, bucketsByView);
+        const persistedSubPortfolios = mergeOcbcSubPortfolios(scopedSubPortfolios, legacySubPortfolios);
+        const assignmentReferencedProductTypeById = new Map();
+        safePortfolioRows.forEach(row => {
+            const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
+            const assignmentId = utils.normalizeString(assignment?.subPortfolioId, '');
+            if (!assignmentId || assignmentReferencedProductTypeById.has(assignmentId)) {
+                return;
+            }
+            assignmentReferencedProductTypeById.set(assignmentId, utils.normalizeString(row?.productType, ''));
+        });
+        const assignmentReferencedIds = Array.from(new Set(safePortfolioRows
+            .map(row => resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios).subPortfolioId)
+            .filter(Boolean)));
+        assignmentReferencedIds.forEach(id => {
+            const referencedProductType = assignmentReferencedProductTypeById.get(id) || '';
+            const ambiguousLegacyMatches = persistedSubPortfolios.filter(item => (
+                utils.normalizeString(item?.legacyBucketId, '') === id
+                && utils.normalizeString(item?.legacyProductType, '') === referencedProductType
+            ));
+            if (ambiguousLegacyMatches.length > 1) {
+                return;
+            }
+            if (!persistedSubPortfolios.some(item => item.id === id)) {
+                persistedSubPortfolios.push({ id, name: id, archived: false });
+            }
+        });
+        return persistedSubPortfolios;
+    }
+
     function renderOcbcOverlay(ocbcHoldings, options = {}) {
         const shell = createOverlayShell({
             title: 'Portfolio Viewer (OCBC)',
@@ -16084,34 +16149,14 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 const portfolioRows = groupedByPortfolio[portfolioNo] || [];
                 const portfolioSummary = buildOcbcSummary(portfolioRows);
                 const portfolioTotal = toFiniteNumber(portfolioSummary.total, 0);
-                const scopedSubPortfolios = getActiveOcbcSubPortfolios(subPortfoliosByView, activeView, portfolioNo);
-                const legacySubPortfolios = buildLegacyOcbcSubPortfolios(activeView, bucketsByView);
-                const persistedSubPortfolios = mergeOcbcSubPortfolios(scopedSubPortfolios, legacySubPortfolios);
-                const assignmentReferencedProductTypeById = new Map();
-                portfolioRows.forEach(row => {
-                    const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
-                    const assignmentId = utils.normalizeString(assignment?.subPortfolioId, '');
-                    if (!assignmentId || assignmentReferencedProductTypeById.has(assignmentId)) {
-                        return;
-                    }
-                    assignmentReferencedProductTypeById.set(assignmentId, utils.normalizeString(row?.productType, ''));
-                });
-                const assignmentReferencedIds = Array.from(new Set(portfolioRows
-                    .map(row => resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios).subPortfolioId)
-                    .filter(Boolean)));
-                assignmentReferencedIds.forEach(id => {
-                    const referencedProductType = assignmentReferencedProductTypeById.get(id) || '';
-                    const ambiguousLegacyMatches = persistedSubPortfolios.filter(item => (
-                        utils.normalizeString(item?.legacyBucketId, '') === id
-                        && utils.normalizeString(item?.legacyProductType, '') === referencedProductType
-                    ));
-                    if (ambiguousLegacyMatches.length > 1) {
-                        return;
-                    }
-                    if (!persistedSubPortfolios.some(item => item.id === id)) {
-                        persistedSubPortfolios.push({ id, name: id, archived: false });
-                    }
-                });
+                const persistedSubPortfolios = buildPersistedOcbcSubPortfoliosForPortfolio(
+                    activeView,
+                    portfolioNo,
+                    portfolioRows,
+                    subPortfoliosByView,
+                    bucketsByView,
+                    assignmentByCode
+                );
 
                 persistedSubPortfolios.forEach(subPortfolio => {
                     if (subPortfolio?.id) {
@@ -16215,34 +16260,14 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 const section = createElement('section', 'gpv-bucket-detail-section');
                 section.appendChild(buildOcbcPortfolioHeader(portfolioNo, portfolioSummary));
 
-                const scopedSubPortfolios = getActiveOcbcSubPortfolios(subPortfoliosByView, activeView, portfolioNo);
-                const legacySubPortfolios = buildLegacyOcbcSubPortfolios(activeView, bucketsByView);
-                const persistedSubPortfolios = mergeOcbcSubPortfolios(scopedSubPortfolios, legacySubPortfolios);
-                const assignmentReferencedProductTypeById = new Map();
-                portfolioRows.forEach(row => {
-                    const assignment = resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios);
-                    const assignmentId = utils.normalizeString(assignment?.subPortfolioId, '');
-                    if (!assignmentId || assignmentReferencedProductTypeById.has(assignmentId)) {
-                        return;
-                    }
-                    assignmentReferencedProductTypeById.set(assignmentId, utils.normalizeString(row?.productType, ''));
-                });
-                const assignmentReferencedIds = Array.from(new Set(portfolioRows
-                    .map(row => resolveOcbcAssignmentByRow(assignmentByCode, row, persistedSubPortfolios).subPortfolioId)
-                    .filter(Boolean)));
-                assignmentReferencedIds.forEach(id => {
-                    const referencedProductType = assignmentReferencedProductTypeById.get(id) || '';
-                    const ambiguousLegacyMatches = persistedSubPortfolios.filter(item => (
-                        utils.normalizeString(item?.legacyBucketId, '') === id
-                        && utils.normalizeString(item?.legacyProductType, '') === referencedProductType
-                    ));
-                    if (ambiguousLegacyMatches.length > 1) {
-                        return;
-                    }
-                    if (!persistedSubPortfolios.some(item => item.id === id)) {
-                        persistedSubPortfolios.push({ id, name: id, archived: false });
-                    }
-                });
+                const persistedSubPortfolios = buildPersistedOcbcSubPortfoliosForPortfolio(
+                    activeView,
+                    portfolioNo,
+                    portfolioRows,
+                    subPortfoliosByView,
+                    bucketsByView,
+                    assignmentByCode
+                );
 
                 const createSubPortfolioId = `gpv-ocbc-sub-portfolio-create-${activeView}-${encodeURIComponent(portfolioNo)}`;
                 const { row: managerRow } = createManagerCreateRow({
@@ -16621,35 +16646,30 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 portfolioNos.forEach(portfolioNo => {
                     const portfolioRows = grouped[portfolioNo] || [];
                     const summary = buildOcbcSummary(portfolioRows);
-                    const card = createElement('button', 'gpv-fsm-overview-card');
-                    card.type = 'button';
                     const meta = holdingsByPortfolio[portfolioNo] || {};
                     const statusText = latestPortfolioNos.has(portfolioNo)
                         ? 'Current session'
                         : (meta.lastSeenAt ? `Cached · ${new Date(meta.lastSeenAt).toLocaleString()}` : 'Cached');
-                    createKeyboardSelectableCard(card, {
+                    const card = createOverviewScopeCard({
+                        elementTag: 'button',
                         ariaLabel: `Open portfolio ${portfolioNo} ${sectionView}`,
                         onSelect: () => {
                             viewSelect.value = sectionView;
                             selectedPortfolioNo = portfolioNo;
                             viewMode = 'detail';
                             rerender();
+                        },
+                        cardHtml: {
+                            title: `Portfolio ${portfolioNo}`,
+                            subtitle: `${portfolioRows.length} holding${portfolioRows.length === 1 ? '' : 's'}`,
+                            tagHtml: `<span class="gpv-fsm-overview-card-tag">${escapeHtml(sectionTitle)}</span>`,
+                            stats: [
+                                { label: 'Total value', value: formatMoney(summary.total) },
+                                { label: 'Profit', value: summary.profitDisplay || '-', valueClass: summary.profitClass || '' },
+                                { label: 'Status', value: statusText }
+                            ]
                         }
                     });
-                    card.innerHTML = `
-                        <div class="gpv-fsm-overview-card-header">
-                            <div>
-                                <h2 class="gpv-fsm-overview-card-title">${escapeHtml(`Portfolio ${portfolioNo}`)}</h2>
-                                <p class="gpv-fsm-overview-card-subtitle">${escapeHtml(`${portfolioRows.length} holding${portfolioRows.length === 1 ? '' : 's'}`)}</p>
-                            </div>
-                            <span class="gpv-fsm-overview-card-tag">${escapeHtml(sectionTitle)}</span>
-                        </div>
-                        ${buildOverviewStatsHtml([
-                            { label: 'Total value', value: formatMoney(summary.total) },
-                            { label: 'Profit', value: summary.profitDisplay || '-', valueClass: summary.profitClass || '' },
-                            { label: 'Status', value: statusText }
-                        ])}
-                    `;
                     grid.appendChild(card);
                 });
                 section.appendChild(grid);
@@ -16741,72 +16761,97 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         updateReadinessView();
     }
 
-    function showOverlay() {
-
-        const isFsmRoute = isFsmInvestmentsRoute(window.location.href, window.location.origin);
-        if (isFsmRoute) {
-            const readinessState = getFsmReadinessState();
-            if (!readinessState.ready) {
-                logDebug('[Goal Portfolio Viewer] FSM holdings not available yet');
-                renderDataReadinessOverlay({
+    function getOverlayPlatformDescriptor() {
+        const href = window.location.href;
+        const origin = window.location.origin;
+        const descriptors = [
+            {
+                id: 'fsm',
+                matchesRoute: () => isFsmInvestmentsRoute(href, origin),
+                getReadinessState: getFsmReadinessState,
+                getPendingLogMessage: () => '[Goal Portfolio Viewer] FSM holdings not available yet',
+                getReadinessOverlayConfig: () => ({
                     title: 'Portfolio Viewer (FSM)',
                     description: 'Waiting for FSM holdings response. This updates automatically when data arrives.',
                     getItems: () => [{
                         label: 'FSM holdings data',
                         ready: getFsmReadinessState().ready
-                    }],
-                    isReady: () => getFsmReadinessState().ready,
-                    onReady: () => showOverlay()
-                });
-                return;
-            }
-            renderFsmOverlay(readinessState.fsmHoldings);
-            return;
-        }
-
-        const isOcbcRoute = isOcbcDashboardRoute(window.location.href, window.location.origin)
-            || isOcbcPortfolioHoldingsRoute(window.location.href, window.location.origin);
-        if (isOcbcRoute) {
-            const readinessState = getOcbcReadinessState();
-            if (!readinessState.ready) {
-                renderDataReadinessOverlay({
+                    }]
+                }),
+                render: readinessState => {
+                    renderFsmOverlay(readinessState.fsmHoldings);
+                }
+            },
+            {
+                id: 'ocbc',
+                matchesRoute: () => (
+                    isOcbcDashboardRoute(href, origin)
+                    || isOcbcPortfolioHoldingsRoute(href, origin)
+                ),
+                getReadinessState: getOcbcReadinessState,
+                getReadinessOverlayConfig: () => ({
                     title: 'Portfolio Viewer (OCBC)',
                     description: 'Waiting for OCBC portfolio holdings response. This updates automatically when data arrives.',
                     getItems: () => [{
                         label: 'OCBC portfolio holdings data',
                         ready: getOcbcReadinessState().ready
-                    }],
-                    isReady: () => getOcbcReadinessState().ready,
-                    onReady: () => showOverlay()
-                });
-                return;
+                    }]
+                }),
+                render: readinessState => {
+                    renderOcbcOverlay(readinessState.ocbcHoldings, {
+                        holdingsByPortfolio: readinessState.holdingsByPortfolio,
+                        latestPortfolioNos: readinessState.latestPortfolioNos
+                    });
+                }
+            },
+            {
+                id: 'endowus',
+                matchesRoute: () => true,
+                getReadinessState: getEndowusReadinessState,
+                getPendingLogMessage: () => '[Goal Portfolio Viewer] Not all API data available yet',
+                getReadinessOverlayConfig: () => ({
+                    title: 'Portfolio Viewer',
+                    description: 'Fetching Endowus portfolio data. This view updates automatically as data arrives.',
+                    getItems: () => {
+                        const current = getEndowusReadinessState();
+                        return [
+                            { label: 'Goal performance', ready: current.hasPerformance },
+                            { label: 'Investible balances', ready: current.hasInvestible },
+                            { label: 'Goal summaries', ready: current.hasSummary }
+                        ];
+                    }
+                }),
+                render: readinessState => {
+                    renderEndowusOverlay(readinessState);
+                }
             }
-            renderOcbcOverlay(readinessState.ocbcHoldings, {
-                holdingsByPortfolio: readinessState.holdingsByPortfolio,
-                latestPortfolioNos: readinessState.latestPortfolioNos
-            });
-            return;
-        }
+        ];
 
-        const readinessState = getEndowusReadinessState();
+        return descriptors.find(descriptor => descriptor.matchesRoute()) || descriptors[descriptors.length - 1];
+    }
+
+    function showOverlay() {
+        const platform = getOverlayPlatformDescriptor();
+        const readinessState = platform.getReadinessState();
         if (!readinessState.ready) {
-            logDebug('[Goal Portfolio Viewer] Not all API data available yet');
+            const pendingLogMessage = typeof platform.getPendingLogMessage === 'function'
+                ? platform.getPendingLogMessage()
+                : '';
+            if (pendingLogMessage) {
+                logDebug(pendingLogMessage);
+            }
+            const readinessOverlayConfig = platform.getReadinessOverlayConfig();
             renderDataReadinessOverlay({
-                title: 'Portfolio Viewer',
-                description: 'Fetching Endowus portfolio data. This view updates automatically as data arrives.',
-                getItems: () => {
-                    const current = getEndowusReadinessState();
-                    return [
-                        { label: 'Goal performance', ready: current.hasPerformance },
-                        { label: 'Investible balances', ready: current.hasInvestible },
-                        { label: 'Goal summaries', ready: current.hasSummary }
-                    ];
-                },
-                isReady: () => getEndowusReadinessState().ready,
+                ...readinessOverlayConfig,
+                isReady: () => platform.getReadinessState().ready,
                 onReady: () => showOverlay()
             });
             return;
         }
+        platform.render(readinessState);
+    }
+
+    function renderEndowusOverlay(readinessState) {
         let mergedInvestmentDataState = readinessState.mergedInvestmentDataState;
         logDebug('[Goal Portfolio Viewer] Data merged successfully');
 
@@ -16822,7 +16867,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 }
             }
         }
-        
+
         // Add sync settings button
         const syncBtn = createOverlaySyncButton('endowus', {
             onUnavailable: () => {
@@ -17382,6 +17427,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         window.__gpvTestingHooks = {
             injectStyles,
             showOverlay,
+            getOverlayPlatformDescriptor,
             startUrlMonitoring,
             init,
             getEndowusBucketConfigSignature,
@@ -17431,6 +17477,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             isFsmInvestmentsRoute,
             isOcbcDashboardRoute,
             isOcbcPortfolioHoldingsRoute,
+            getOverlayPlatformDescriptor: testingHooks?.getOverlayPlatformDescriptor,
             normalizeOcbcHoldingsPayload,
             calculateFixedTargetPercent,
             calculateRemainingTargetPercent,
