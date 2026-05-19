@@ -9732,6 +9732,55 @@ let GoalTargetStore;
         input.addEventListener('animationend', onAnimationEnd);
     }
 
+    const PROJECTION_REFRESH_DEBOUNCE_MS = 250;
+    const projectionRefreshTimersBySection = new WeakMap();
+
+    function clearProjectionRefreshTimer(typeSection) {
+        if (!typeSection) {
+            return;
+        }
+        const timerId = projectionRefreshTimersBySection.get(typeSection);
+        if (!timerId) {
+            return;
+        }
+        clearTimeout(timerId);
+        projectionRefreshTimersBySection.delete(typeSection);
+    }
+
+    function scheduleProjectionRefresh({
+        typeSection,
+        bucket,
+        goalType,
+        mergedInvestmentDataState,
+        projectedInvestmentsState
+    }) {
+        if (!typeSection) {
+            return;
+        }
+        clearProjectionRefreshTimer(typeSection);
+        const timerId = setTimeout(() => {
+            projectionRefreshTimersBySection.delete(typeSection);
+            const tbody = typeSection.querySelector(`.${CLASS_NAMES.goalTable} tbody`);
+            if (!tbody) {
+                return;
+            }
+            refreshGoalTypeSection({
+                typeSection,
+                bucket,
+                goalType,
+                mergedInvestmentDataState,
+                projectedInvestmentsState
+            });
+            refreshBucketPlanningPanel({
+                typeSection,
+                bucket,
+                mergedInvestmentDataState,
+                projectedInvestmentsState
+            });
+        }, PROJECTION_REFRESH_DEBOUNCE_MS);
+        projectionRefreshTimersBySection.set(typeSection, timerId);
+    }
+
     /**
      * Handle changes to goal target percentage input
      * @param {HTMLInputElement} input - Input element
@@ -9875,6 +9924,7 @@ let GoalTargetStore;
             
             // Validate input
             if (isNaN(amount)) {
+                clearProjectionRefreshTimer(typeSection);
                 // Invalid number - show error feedback
                 flashInputBorder(input, 'error');
                 return;
@@ -9886,24 +9936,14 @@ let GoalTargetStore;
             // Show success feedback
             flashInputBorder(input, 'success');
         }
-        
-        // Recalculate all diffs in this goal type section
-        const tbody = typeSection.querySelector(`.${CLASS_NAMES.goalTable} tbody`);
-        if (tbody) {
-            refreshGoalTypeSection({
-                typeSection,
-                bucket,
-                goalType,
-                mergedInvestmentDataState,
-                projectedInvestmentsState
-            });
-            refreshBucketPlanningPanel({
-                typeSection,
-                bucket,
-                mergedInvestmentDataState,
-                projectedInvestmentsState
-            });
-        }
+
+        scheduleProjectionRefresh({
+            typeSection,
+            bucket,
+            goalType,
+            mergedInvestmentDataState,
+            projectedInvestmentsState
+        });
     }
 
     const EventHandlers = {
@@ -9913,7 +9953,7 @@ let GoalTargetStore;
     };
 
     const FSM_PROJECTION_BUCKET = '__fsm__';
-    const FSM_PROJECTION_REFRESH_DEBOUNCE_MS = 250;
+    const FSM_PROJECTION_REFRESH_DEBOUNCE_MS = PROJECTION_REFRESH_DEBOUNCE_MS;
 
     function isFsmProjectedScope(selectedScope, activePortfolioIds) {
         if (!selectedScope || selectedScope === FSM_ALL_PORTFOLIO_ID || selectedScope === FSM_UNASSIGNED_PORTFOLIO_ID) {

@@ -5198,6 +5198,81 @@ describe('initialization and URL monitoring', () => {
         expect(detailHeader?.nextElementSibling).toBe(planningPanel);
     });
 
+    test('Endowus projected investment refresh is debounced while typing', () => {
+        jest.useFakeTimers();
+        teardownDom();
+        setupDom({ url: 'https://app.sg.endowus.com/dashboard' });
+
+        storage = new Map();
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (
+            storage.has(key) ? storage.get(key) : fallback
+        ));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        storage.set('api_summary', JSON.stringify([
+            { goalId: 'g1', goalName: 'Investment - Core', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }
+        ]));
+        storage.set('api_investible', JSON.stringify([
+            { goalId: 'g1', goalName: 'Investment - Core', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 1000 } } }
+        ]));
+        storage.set('api_performance', JSON.stringify([
+            { goalId: 'g1', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 }
+        ]));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const bucketCard = Array.from(overlay.querySelectorAll('.gpv-bucket-card')).find(card =>
+            card.textContent.includes('Investment')
+        );
+        bucketCard.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const projectionInput = overlay.querySelector('input.gpv-projected-input');
+        projectionInput.value = '1';
+        projectionInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+        jest.advanceTimersByTime(200);
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).not.toContain('Projected Investment: SGD\u00A01.00');
+
+        projectionInput.value = '1000';
+        projectionInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+        jest.advanceTimersByTime(249);
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).not.toContain('Projected Investment: SGD\u00A01.00');
+        expect(overlay.textContent).not.toContain('Projected Investment: SGD\u00A01,000.00');
+
+        jest.advanceTimersByTime(1);
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).not.toContain('Projected Investment: SGD\u00A01.00');
+        expect(overlay.textContent).toContain('Projected Investment: SGD\u00A01,000.00');
+    });
+
     test('FSM row allocation and drift use selected scope totals', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
