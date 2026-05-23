@@ -512,6 +512,18 @@ describe('handlers and cache', () => {
         });
         expect(projectedInvestmentsState[`${bucket}|${goalType}`]).toBeUndefined();
 
+        input.value = '200';
+        handleProjectedInvestmentChange({
+            input,
+            bucket,
+            goalType,
+            typeSection,
+            mergedInvestmentDataState,
+            projectedInvestmentsState
+        });
+        expect(projectedInvestmentsState[`${bucket}|${goalType}`]).toBe(200);
+        expect(jest.getTimerCount()).toBe(1);
+
         projectedInvestmentsState[`${bucket}|${goalType}`] = 300;
         input.value = 'invalid';
         handleProjectedInvestmentChange({
@@ -524,6 +536,7 @@ describe('handlers and cache', () => {
         });
         expect(projectedInvestmentsState[`${bucket}|${goalType}`]).toBe(300);
         expect(input.classList.contains('gpv-input-flash--error')).toBe(true);
+        expect(jest.getTimerCount()).toBe(0);
 
         jest.runOnlyPendingTimers();
         jest.useRealTimers();
