@@ -3030,21 +3030,50 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 return false;
             }
         },
+        readSyncStore(context) {
+            return Storage.readJson(
+                STORAGE_KEYS.sync,
+                data => data && typeof data === 'object' && !Array.isArray(data),
+                context || 'Error reading sync store'
+            ) || {};
+        },
+        writeSyncStore(store, context) {
+            return Storage.writeJson(STORAGE_KEYS.sync, store, context || 'Error writing sync store');
+        },
+        getSyncField(key, fallback, context) {
+            const syncField = SYNC_STORAGE_FIELDS_BY_KEY[key];
+            if (!syncField) {
+                return fallback;
+            }
+            const syncStore = Storage.readSyncStore(context);
+            if (Object.prototype.hasOwnProperty.call(syncStore, syncField)) {
+                return syncStore[syncField];
+            }
+            if (Storage.hasRaw(key)) {
+                return Storage.getRaw(key, fallback, context);
+            }
+            return fallback;
+        },
+        mutateSyncField(key, context, mutateFn) {
+            const syncField = SYNC_STORAGE_FIELDS_BY_KEY[key];
+            if (!syncField || typeof mutateFn !== 'function') {
+                return null;
+            }
+            const syncStore = Storage.readSyncStore(context);
+            const result = mutateFn(syncStore, syncField);
+            if (result && result.skipWrite) {
+                return result.didWrite !== false;
+            }
+            const didWrite = Storage.writeSyncStore(syncStore, context || 'Error writing sync store');
+            if (didWrite && Storage.hasRaw(key)) {
+                Storage.removeRaw(key, context || `Error deleting legacy sync key: ${key}`);
+            }
+            return didWrite;
+        },
         get(key, fallback, context) {
             const syncField = SYNC_STORAGE_FIELDS_BY_KEY[key];
             if (syncField) {
-                const syncStore = Storage.readJson(
-                    STORAGE_KEYS.sync,
-                    data => data && typeof data === 'object' && !Array.isArray(data),
-                    context || 'Error reading sync store'
-                ) || {};
-                if (Object.prototype.hasOwnProperty.call(syncStore, syncField)) {
-                    return syncStore[syncField];
-                }
-                if (Storage.hasRaw(key)) {
-                    return Storage.getRaw(key, fallback, context);
-                }
-                return fallback;
+                return Storage.getSyncField(key, fallback, context);
             }
             return Storage.getRaw(key, fallback, context);
         },
@@ -3057,40 +3086,28 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         set(key, value, context) {
             const syncField = SYNC_STORAGE_FIELDS_BY_KEY[key];
             if (syncField) {
-                const syncStore = Storage.readJson(
-                    STORAGE_KEYS.sync,
-                    data => data && typeof data === 'object' && !Array.isArray(data),
-                    context || 'Error reading sync store'
-                ) || {};
-                syncStore[syncField] = value;
-                const didWrite = Storage.writeJson(STORAGE_KEYS.sync, syncStore, context || 'Error writing sync store');
-                if (didWrite && Storage.hasRaw(key)) {
-                    Storage.removeRaw(key, context || `Error deleting legacy sync key: ${key}`);
-                }
-                return didWrite;
+                return Storage.mutateSyncField(key, context, (syncStore, field) => {
+                    syncStore[field] = value;
+                });
             }
             return Storage.setRaw(key, value, context);
         },
         remove(key, context) {
             const syncField = SYNC_STORAGE_FIELDS_BY_KEY[key];
             if (syncField) {
-                const syncStore = Storage.readJson(
-                    STORAGE_KEYS.sync,
-                    data => data && typeof data === 'object' && !Array.isArray(data),
-                    context || 'Error reading sync store'
-                ) || {};
-                if (!Object.prototype.hasOwnProperty.call(syncStore, syncField)) {
-                    if (Storage.hasRaw(key)) {
-                        return Storage.removeRaw(key, context || `Error deleting legacy sync key: ${key}`);
+                return Storage.mutateSyncField(key, context, (syncStore, field) => {
+                    if (!Object.prototype.hasOwnProperty.call(syncStore, field)) {
+                        if (Storage.hasRaw(key)) {
+                            return {
+                                skipWrite: true,
+                                didWrite: Storage.removeRaw(key, context || `Error deleting legacy sync key: ${key}`)
+                            };
+                        }
+                        return { skipWrite: true, didWrite: true };
                     }
-                    return true;
-                }
-                delete syncStore[syncField];
-                const didWrite = Storage.writeJson(STORAGE_KEYS.sync, syncStore, context || 'Error writing sync store');
-                if (didWrite && Storage.hasRaw(key)) {
-                    Storage.removeRaw(key, context || `Error deleting legacy sync key: ${key}`);
-                }
-                return didWrite;
+                    delete syncStore[field];
+                    return null;
+                });
             }
             return Storage.removeRaw(key, context);
         },
@@ -3664,24 +3681,68 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         });
     }
 
+    function removeLegacyKeysByDescriptor(descriptor) {
+        const exactKeys = Array.isArray(descriptor?.exactKeys) ? descriptor.exactKeys : [];
+        const exactError = descriptor?.exactError || 'Error deleting legacy key';
+        exactKeys.forEach(key => {
+            Storage.remove(key, exactError);
+        });
+        const prefixes = Array.isArray(descriptor?.prefixes) ? descriptor.prefixes : [];
+        const prefixError = descriptor?.prefixError || 'Error deleting legacy prefixed key';
+        prefixes.forEach(prefix => {
+            removeLegacyPrefixedKeys(prefix, prefixError);
+        });
+    }
+
+    function shouldCleanupLegacyKeysOnRead(kind, descriptor) {
+        if (legacyCleanupSessionState[kind]) {
+            return false;
+        }
+        const hasLegacyKeys = hasAnyLegacyStoreKeys(descriptor?.exactKeys, descriptor?.prefixes);
+        if (!hasLegacyKeys) {
+            legacyCleanupSessionState[kind] = true;
+        }
+        return hasLegacyKeys;
+    }
+
+    const LEGACY_CLEANUP_DESCRIPTORS = {
+        endowus: {
+            exactKeys: [...LEGACY_ENDOWUS_EXACT_KEYS, ...LEGACY_ENDOWUS_LOCAL_EXACT_KEYS],
+            prefixes: [...LEGACY_ENDOWUS_PREFIXES, ...LEGACY_ENDOWUS_LOCAL_PREFIXES],
+            exactError: 'Error deleting legacy Endowus key',
+            prefixError: 'Error deleting legacy Endowus key'
+        },
+        fsm: {
+            exactKeys: [STORAGE_KEYS.fsmHoldings, STORAGE_KEYS.fsmPortfolios, STORAGE_KEYS.fsmAssignmentByCode],
+            prefixes: [STORAGE_KEY_PREFIXES.fsmTarget, STORAGE_KEY_PREFIXES.fsmFixed],
+            exactError: 'Error deleting legacy FSM key',
+            prefixError: 'Error deleting legacy FSM key'
+        },
+        ocbc: {
+            exactKeys: [
+                STORAGE_KEYS.ocbcAllocationBuckets,
+                STORAGE_KEYS.ocbcHoldings,
+                STORAGE_KEYS.ocbcSubPortfolios,
+                STORAGE_KEYS.ocbcAllocationAssignmentByCode,
+                STORAGE_KEYS.ocbcAllocationOrderByScope
+            ],
+            prefixes: [STORAGE_KEY_PREFIXES.ocbcTarget],
+            exactError: 'Error deleting legacy OCBC key',
+            prefixError: 'Error deleting legacy OCBC key'
+        }
+    };
+    const LEGACY_ON_READ_DESCRIPTORS = {
+        endowus: LEGACY_CLEANUP_DESCRIPTORS.endowus,
+        fsm: LEGACY_CLEANUP_DESCRIPTORS.fsm,
+        ocbc: LEGACY_CLEANUP_DESCRIPTORS.ocbc
+    };
+
     function cleanupLegacyEndowusKeys() {
-        Storage.remove(STORAGE_KEYS.performance, 'Error deleting legacy Endowus performance data');
-        Storage.remove(STORAGE_KEYS.investible, 'Error deleting legacy Endowus investible data');
-        Storage.remove(STORAGE_KEYS.summary, 'Error deleting legacy Endowus summary data');
-        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.goalTarget, 'Error deleting legacy Endowus target key');
-        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.goalFixed, 'Error deleting legacy Endowus fixed key');
-        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.goalBucket, 'Error deleting legacy Endowus bucket key');
-        Storage.remove(VIEW_STATE_KEYS.bucketMode, 'Error deleting legacy bucket mode key');
-        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.performanceCache, 'Error deleting legacy performance cache key');
-        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.collapseState, 'Error deleting legacy collapse state key');
+        removeLegacyKeysByDescriptor(LEGACY_CLEANUP_DESCRIPTORS.endowus);
     }
 
     function cleanupLegacyFsmKeys() {
-        Storage.remove(STORAGE_KEYS.fsmHoldings, 'Error deleting legacy FSM holdings data');
-        Storage.remove(STORAGE_KEYS.fsmPortfolios, 'Error deleting legacy FSM portfolios data');
-        Storage.remove(STORAGE_KEYS.fsmAssignmentByCode, 'Error deleting legacy FSM assignment data');
-        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.fsmTarget, 'Error deleting legacy FSM target key');
-        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.fsmFixed, 'Error deleting legacy FSM fixed key');
+        removeLegacyKeysByDescriptor(LEGACY_CLEANUP_DESCRIPTORS.fsm);
     }
 
     function cleanupLegacyFsmKeysForCodes(codes) {
@@ -3696,12 +3757,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     }
 
     function cleanupLegacyOcbcKeys() {
-        Storage.remove(STORAGE_KEYS.ocbcAllocationBuckets, 'Error deleting legacy OCBC allocation buckets data');
-        Storage.remove(STORAGE_KEYS.ocbcHoldings, 'Error deleting legacy OCBC holdings data');
-        Storage.remove(STORAGE_KEYS.ocbcSubPortfolios, 'Error deleting legacy OCBC sub-portfolios data');
-        Storage.remove(STORAGE_KEYS.ocbcAllocationAssignmentByCode, 'Error deleting legacy OCBC assignment data');
-        Storage.remove(STORAGE_KEYS.ocbcAllocationOrderByScope, 'Error deleting legacy OCBC order data');
-        removeLegacyPrefixedKeys(STORAGE_KEY_PREFIXES.ocbcTarget, 'Error deleting legacy OCBC target key');
+        removeLegacyKeysByDescriptor(LEGACY_CLEANUP_DESCRIPTORS.ocbc);
     }
 
     function normalizeSyncStore(data) {
@@ -3811,61 +3867,15 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     }
 
     function shouldCleanupLegacyEndowusKeysOnRead() {
-        if (legacyCleanupSessionState.endowus) {
-            return false;
-        }
-        const hasLegacyKeys = hasAnyLegacyStoreKeys(
-            [
-                STORAGE_KEYS.performance,
-                STORAGE_KEYS.investible,
-                STORAGE_KEYS.summary,
-                ...LEGACY_ENDOWUS_LOCAL_EXACT_KEYS
-            ],
-            [
-                STORAGE_KEY_PREFIXES.goalTarget,
-                STORAGE_KEY_PREFIXES.goalFixed,
-                STORAGE_KEY_PREFIXES.goalBucket,
-                ...LEGACY_ENDOWUS_LOCAL_PREFIXES
-            ]
-        );
-        if (!hasLegacyKeys) {
-            legacyCleanupSessionState.endowus = true;
-        }
-        return hasLegacyKeys;
+        return shouldCleanupLegacyKeysOnRead('endowus', LEGACY_ON_READ_DESCRIPTORS.endowus);
     }
 
     function shouldCleanupLegacyFsmKeysOnRead() {
-        if (legacyCleanupSessionState.fsm) {
-            return false;
-        }
-        const hasLegacyKeys = hasAnyLegacyStoreKeys(
-            [STORAGE_KEYS.fsmHoldings, STORAGE_KEYS.fsmPortfolios, STORAGE_KEYS.fsmAssignmentByCode],
-            [STORAGE_KEY_PREFIXES.fsmTarget, STORAGE_KEY_PREFIXES.fsmFixed]
-        );
-        if (!hasLegacyKeys) {
-            legacyCleanupSessionState.fsm = true;
-        }
-        return hasLegacyKeys;
+        return shouldCleanupLegacyKeysOnRead('fsm', LEGACY_ON_READ_DESCRIPTORS.fsm);
     }
 
     function shouldCleanupLegacyOcbcKeysOnRead() {
-        if (legacyCleanupSessionState.ocbc) {
-            return false;
-        }
-        const hasLegacyKeys = hasAnyLegacyStoreKeys(
-            [
-                STORAGE_KEYS.ocbcAllocationBuckets,
-                STORAGE_KEYS.ocbcHoldings,
-                STORAGE_KEYS.ocbcSubPortfolios,
-                STORAGE_KEYS.ocbcAllocationAssignmentByCode,
-                STORAGE_KEYS.ocbcAllocationOrderByScope
-            ],
-            [STORAGE_KEY_PREFIXES.ocbcTarget]
-        );
-        if (!hasLegacyKeys) {
-            legacyCleanupSessionState.ocbc = true;
-        }
-        return hasLegacyKeys;
+        return shouldCleanupLegacyKeysOnRead('ocbc', LEGACY_ON_READ_DESCRIPTORS.ocbc);
     }
 
     function collectLegacyEndowusConfigForStore() {
@@ -8191,13 +8201,53 @@ let GoalTargetStore;
         return grid;
     }
 
+    function registerPublicApiSection(sectionKey, value) {
+        if (typeof globalThis === 'undefined') {
+            return value;
+        }
+        const api = globalThis.__gpvPublicApi && typeof globalThis.__gpvPublicApi === 'object'
+            ? globalThis.__gpvPublicApi
+            : {};
+        api[sectionKey] = value;
+        globalThis.__gpvPublicApi = api;
+        return value;
+    }
+
+    function appendLabeledValueItems(container, wrapperClass, items) {
+        (Array.isArray(items) ? items : []).forEach(item => {
+            if (!item) {
+                return;
+            }
+            appendLabeledValue(container, wrapperClass, item.label, item.value, item.options || {});
+        });
+    }
+
+    function buildWindowMetricItems(windowReturnDisplays, windowReturns) {
+        const metricsContainer = createElement('div', 'gpv-goal-metrics');
+        Object.values(PERFORMANCE_WINDOWS).forEach(window => {
+            const item = createElement('div', 'gpv-goal-metrics-item');
+            const label = createElement('span', 'gpv-goal-metrics-label', `${window.label} TWR:`);
+            const displayValue = windowReturnDisplays?.[window.key] ?? '-';
+            const value = createElement('span', 'gpv-goal-metrics-value', displayValue);
+            value.dataset.windowKey = window.key;
+            const numericValue = windowReturns?.[window.key];
+            if (typeof numericValue === 'number' && Number.isFinite(numericValue)) {
+                value.classList.add(numericValue >= 0 ? 'positive' : 'negative');
+            }
+            item.appendChild(label);
+            item.appendChild(value);
+            metricsContainer.appendChild(item);
+        });
+        return metricsContainer;
+    }
+
     if (typeof globalThis !== 'undefined') {
-        globalThis.__gpvChartHelpers = {
+        globalThis.__gpvChartHelpers = registerPublicApiSection('chartHelpers', {
             getChartHeightForWidth,
             getChartDimensions,
             createLineChartSvg,
             buildPerformanceWindowGrid
-        };
+        });
     }
 
     function buildPerformanceMetricsTable(metrics) {
@@ -8599,17 +8649,34 @@ let GoalTargetStore;
         if (!indicator) {
             return;
         }
-        indicator.setAttribute('role', 'button');
-        indicator.setAttribute('tabindex', '0');
-        if (typeof onActivate === 'function') {
-            indicator.addEventListener('click', onActivate);
-            indicator.addEventListener('keydown', event => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    onActivate();
-                }
-            });
+        wireAccessibleActivation(indicator, { onActivate, forceButtonRole: true });
+    }
+
+    function wireAccessibleActivation(element, { onActivate, ariaLabel, forceButtonRole = false } = {}) {
+        if (!element) {
+            return element;
         }
+        const isNativeButton = element.tagName === 'BUTTON';
+        if ((forceButtonRole || !isNativeButton) && !isNativeButton) {
+            element.setAttribute('role', 'button');
+            element.setAttribute('tabindex', '0');
+        }
+        if (ariaLabel) {
+            element.setAttribute('aria-label', ariaLabel);
+        }
+        if (typeof onActivate === 'function') {
+            element.addEventListener('click', onActivate);
+            if (!isNativeButton) {
+                element.addEventListener('keydown', event => {
+                    if (event.key !== 'Enter' && event.key !== ' ') {
+                        return;
+                    }
+                    event.preventDefault();
+                    onActivate(event);
+                });
+            }
+        }
+        return element;
     }
 
     function buildSafeCollapseId(prefix, ...parts) {
@@ -8725,30 +8792,7 @@ let GoalTargetStore;
     }
 
     function createKeyboardSelectableCard(element, { ariaLabel, onSelect }) {
-        if (!element) {
-            return element;
-        }
-        const isNativeButton = element.tagName === 'BUTTON';
-        if (!isNativeButton) {
-            element.setAttribute('role', 'button');
-            element.setAttribute('tabindex', '0');
-        }
-        if (ariaLabel) {
-            element.setAttribute('aria-label', ariaLabel);
-        }
-        if (typeof onSelect === 'function') {
-            element.addEventListener('click', onSelect);
-            if (!isNativeButton) {
-                element.addEventListener('keydown', event => {
-                    if (event.key !== 'Enter' && event.key !== ' ') {
-                        return;
-                    }
-                    event.preventDefault();
-                    onSelect(event);
-                });
-            }
-        }
-        return element;
+        return wireAccessibleActivation(element, { ariaLabel, onActivate: onSelect });
     }
 
     function createTableCell(value, className = null) {
@@ -9171,24 +9215,7 @@ let GoalTargetStore;
             metricsRow.dataset.goalId = goalModel.goalId || '';
             const metricsCell = createElement('td', 'gpv-goal-metrics-cell');
             metricsCell.colSpan = metricsColSpan;
-            const metricsContainer = createElement('div', 'gpv-goal-metrics');
-            const windowReturnDisplays = goalModel.windowReturnDisplays || {};
-            const windowReturns = goalModel.windowReturns || {};
-
-            Object.values(PERFORMANCE_WINDOWS).forEach(window => {
-                const item = createElement('div', 'gpv-goal-metrics-item');
-                const label = createElement('span', 'gpv-goal-metrics-label', `${window.label} TWR:`);
-                const displayValue = windowReturnDisplays[window.key] ?? '-';
-                const value = createElement('span', 'gpv-goal-metrics-value', displayValue);
-                value.dataset.windowKey = window.key;
-                const numericValue = windowReturns[window.key];
-                if (typeof numericValue === 'number' && Number.isFinite(numericValue)) {
-                    value.classList.add(numericValue >= 0 ? 'positive' : 'negative');
-                }
-                item.appendChild(label);
-                item.appendChild(value);
-                metricsContainer.appendChild(item);
-            });
+            const metricsContainer = buildWindowMetricItems(goalModel.windowReturnDisplays || {}, goalModel.windowReturns || {});
 
             metricsCell.appendChild(metricsContainer);
             metricsRow.appendChild(metricsCell);
@@ -9305,31 +9332,16 @@ let GoalTargetStore;
             bucketModel.goalTypes.forEach(goalTypeModel => {
                 const typeRow = createElement('div', 'gpv-goal-type-row');
                 appendTextSpan(typeRow, 'gpv-goal-type-name', goalTypeModel.displayName);
-                appendLabeledValue(
-                    typeRow,
-                    'gpv-goal-type-stat',
-                    'Current value:',
-                    goalTypeModel.endingBalanceDisplay
-                );
-                appendLabeledValue(
-                    typeRow,
-                    'gpv-goal-type-stat',
-                    'Return:',
-                    goalTypeModel.returnDisplay
-                );
-                appendLabeledValue(
-                    typeRow,
-                    'gpv-goal-type-stat',
-                    'Growth:',
-                    goalTypeModel.growthDisplay
-                );
-                appendLabeledValue(
-                    typeRow,
-                    'gpv-goal-type-stat',
-                    'Allocation Drift:',
-                    goalTypeModel.allocationDriftDisplay,
-                    { valueClass: goalTypeModel.allocationDriftClass || null }
-                );
+                appendLabeledValueItems(typeRow, 'gpv-goal-type-stat', [
+                    { label: 'Current value:', value: goalTypeModel.endingBalanceDisplay },
+                    { label: 'Return:', value: goalTypeModel.returnDisplay },
+                    { label: 'Growth:', value: goalTypeModel.growthDisplay },
+                    {
+                        label: 'Allocation Drift:',
+                        value: goalTypeModel.allocationDriftDisplay,
+                        options: { valueClass: goalTypeModel.allocationDriftClass || null }
+                    }
+                ]);
                 bucketCard.appendChild(typeRow);
             });
 
@@ -9512,16 +9524,16 @@ let GoalTargetStore;
                 level: 3
             });
             const typeSummary = createElement('div', 'gpv-type-summary');
-            appendLabeledValue(typeSummary, null, 'Current value:', goalTypeModel.endingBalanceDisplay);
-            appendLabeledValue(typeSummary, null, 'Return:', goalTypeModel.returnDisplay);
-            appendLabeledValue(typeSummary, null, 'Growth:', typeGrowth);
-            appendLabeledValue(
-                typeSummary,
-                null,
-                'Allocation Drift:',
-                goalTypeModel.allocationDriftDisplay,
-                { valueClass: goalTypeModel.allocationDriftClass || null }
-            );
+            appendLabeledValueItems(typeSummary, null, [
+                { label: 'Current value:', value: goalTypeModel.endingBalanceDisplay },
+                { label: 'Return:', value: goalTypeModel.returnDisplay },
+                { label: 'Growth:', value: typeGrowth },
+                {
+                    label: 'Allocation Drift:',
+                    value: goalTypeModel.allocationDriftDisplay,
+                    options: { valueClass: goalTypeModel.allocationDriftClass || null }
+                }
+            ]);
             typeHeader.appendChild(typeTitle);
             typeHeader.appendChild(typeSummary);
 
@@ -9754,35 +9766,27 @@ let GoalTargetStore;
         mergedInvestmentDataState,
         projectedInvestmentsState
     }) {
+        const refresh = () => refreshAllocationViews({
+            typeSection,
+            bucket,
+            goalType,
+            mergedInvestmentDataState,
+            projectedInvestmentsState
+        });
         if (input.dataset.fixed === 'true') {
             return;
         }
         const value = input.value;
         
         if (value === '') {
-            // Clear the target if input is empty
             GoalTargetStore.clearTarget(goalId);
-            refreshGoalTypeSection({
-                typeSection,
-                bucket,
-                goalType,
-                mergedInvestmentDataState,
-                projectedInvestmentsState
-            });
-            refreshBucketPlanningPanel({
-                typeSection,
-                bucket,
-                mergedInvestmentDataState,
-                projectedInvestmentsState
-            });
+            refresh();
             return;
         }
         
         const targetPercent = parseFloat(value);
         
-        // Validate input
         if (!Number.isFinite(targetPercent)) {
-            // Invalid number - show error feedback
             flashInputBorder(input, 'error');
             return;
         }
@@ -9794,14 +9798,20 @@ let GoalTargetStore;
             return;
         }
         
-        // Check if value was clamped and provide feedback
         if (savedValue !== targetPercent) {
-            // Value was clamped - update input to show actual stored value
             input.value = savedValue.toFixed(2);
-            // Show warning briefly
             flashInputBorder(input, 'warning');
         }
-        
+        refresh();
+    }
+
+    function refreshAllocationViews({
+        typeSection,
+        bucket,
+        goalType,
+        mergedInvestmentDataState,
+        projectedInvestmentsState
+    }) {
         refreshGoalTypeSection({
             typeSection,
             bucket,
@@ -9868,38 +9878,25 @@ let GoalTargetStore;
         const value = input.value;
         
         if (value === '' || value === '0') {
-            // Clear the projected investment if input is empty or zero
             clearProjectedInvestment(projectedInvestmentsState, bucket, goalType);
         } else {
             const amount = parseFloat(value);
             
-            // Validate input
             if (isNaN(amount)) {
-                // Invalid number - show error feedback
                 flashInputBorder(input, 'error');
                 return;
             }
-            
-            // Save the projected investment
+
             setProjectedInvestment(projectedInvestmentsState, bucket, goalType, amount);
-            
-            // Show success feedback
             flashInputBorder(input, 'success');
         }
         
-        // Recalculate all diffs in this goal type section
         const tbody = typeSection.querySelector(`.${CLASS_NAMES.goalTable} tbody`);
         if (tbody) {
-            refreshGoalTypeSection({
+            refreshAllocationViews({
                 typeSection,
                 bucket,
                 goalType,
-                mergedInvestmentDataState,
-                projectedInvestmentsState
-            });
-            refreshBucketPlanningPanel({
-                typeSection,
-                bucket,
                 mergedInvestmentDataState,
                 projectedInvestmentsState
             });
@@ -10221,6 +10218,16 @@ function withButtonState(button, busyText, action) {
     });
 }
 
+function bindSyncActionButton(buttonId, busyText, action) {
+    const button = document.getElementById(buttonId);
+    if (!button) {
+        return;
+    }
+    button.addEventListener('click', () => {
+        withButtonState(button, busyText, action);
+    });
+}
+
     function buildSyncSettingsState() {
         const syncStatus = SyncManager.getStatus();
         const isEnabled = syncStatus.isEnabled;
@@ -10332,16 +10339,17 @@ function withButtonState(button, busyText, action) {
     }
 
     function renderServerUrlField({ serverUrl, isEnabled, cryptoSupported }) {
+        const disabled = !isEnabled || !cryptoSupported ? 'disabled' : '';
         return `
             <div class="gpv-sync-form-group">
                 <label for="gpv-sync-server-url">Server URL</label>
-                <input 
-                    type="text" 
+                <input
+                    type="text"
                     id="gpv-sync-server-url"
                     class="gpv-sync-input"
                     value="${escapeHtml(serverUrl)}"
                     placeholder="${SYNC_DEFAULTS.serverUrl}"
-                    ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
+                    ${disabled}
                 />
                 <p class="gpv-sync-help">
                     Default: ${SYNC_DEFAULTS.serverUrl} (or use your self-hosted instance)
@@ -10351,16 +10359,17 @@ function withButtonState(button, busyText, action) {
     }
 
     function renderUserIdField({ userId, isEnabled, cryptoSupported }) {
+        const disabled = !isEnabled || !cryptoSupported ? 'disabled' : '';
         return `
             <div class="gpv-sync-form-group">
                 <label for="gpv-sync-user-id">User ID / Email</label>
-                <input 
-                    type="text" 
+                <input
+                    type="text"
                     id="gpv-sync-user-id"
                     class="gpv-sync-input"
                     value="${escapeHtml(userId)}"
                     placeholder="user@example.com"
-                    ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
+                    ${disabled}
                 />
                 <p class="gpv-sync-help">Use an email or short username.</p>
             </div>
@@ -10368,15 +10377,16 @@ function withButtonState(button, busyText, action) {
     }
 
     function renderPasswordField({ isEnabled, cryptoSupported }) {
+        const disabled = !isEnabled || !cryptoSupported ? 'disabled' : '';
         return `
             <div class="gpv-sync-form-group">
                 <label for="gpv-sync-password">Password</label>
-                <input 
-                    type="password" 
+                <input
+                    type="password"
                     id="gpv-sync-password"
                     class="gpv-sync-input"
                     placeholder="••••••••"
-                    ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
+                    ${disabled}
                 />
                 <p class="gpv-sync-help">Minimum 8 characters. Your password never leaves your device.</p>
             </div>
@@ -10384,6 +10394,7 @@ function withButtonState(button, busyText, action) {
     }
 
     function renderRememberKeySection({ isEnabled, cryptoSupported, rememberKey }) {
+        const disabled = !isEnabled || !cryptoSupported ? 'disabled' : '';
         return `
             <div class="gpv-sync-form-group">
                 <label class="gpv-sync-toggle">
@@ -10391,7 +10402,7 @@ function withButtonState(button, busyText, action) {
                         type="checkbox"
                         id="gpv-sync-remember-key"
                         ${rememberKey ? 'checked' : ''}
-                        ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
+                        ${disabled}
                     />
                     <span>Remember encryption key on this device</span>
                 </label>
@@ -10401,6 +10412,8 @@ function withButtonState(button, busyText, action) {
     }
 
     function renderAutoSyncSection({ autoSync, syncInterval, isEnabled, cryptoSupported }) {
+        const toggleDisabled = !isEnabled || !cryptoSupported ? 'disabled' : '';
+        const intervalDisabled = !autoSync || !isEnabled || !cryptoSupported ? 'disabled' : '';
         return `
             <div class="gpv-sync-form-group">
                 <label class="gpv-sync-toggle">
@@ -10408,7 +10421,7 @@ function withButtonState(button, busyText, action) {
                         type="checkbox"
                         id="gpv-sync-auto"
                         ${autoSync ? 'checked' : ''}
-                        ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
+                        ${toggleDisabled}
                     />
                     <span>Enable Auto-Sync</span>
                 </label>
@@ -10421,7 +10434,7 @@ function withButtonState(button, busyText, action) {
                         min="5"
                         max="1440"
                         value="${syncInterval}"
-                        ${!autoSync || !isEnabled || !cryptoSupported ? 'disabled' : ''}
+                        ${intervalDisabled}
                     />
                     <p class="gpv-sync-help">Background sync interval (5-1440 minutes). Changes are also batched and synced automatically.</p>
                 </div>
@@ -10433,12 +10446,13 @@ function withButtonState(button, busyText, action) {
         if (syncStatus.isConfigured) {
             return '';
         }
+        const disabled = !isEnabled || !cryptoSupported ? 'disabled' : '';
         return `
             <div class="gpv-sync-auth-buttons">
-                <button type="button" class="gpv-sync-btn-primary" id="gpv-sync-register-btn" ${!isEnabled || !cryptoSupported ? 'disabled' : ''}>
+                <button type="button" class="gpv-sync-btn-primary" id="gpv-sync-register-btn" ${disabled}>
                     📝 Sign Up
                 </button>
-                <button type="button" class="gpv-sync-btn-secondary" id="gpv-sync-login-btn" ${!isEnabled || !cryptoSupported ? 'disabled' : ''}>
+                <button type="button" class="gpv-sync-btn-secondary" id="gpv-sync-login-btn" ${disabled}>
                     🔑 Login
                 </button>
             </div>
@@ -10450,12 +10464,14 @@ function withButtonState(button, busyText, action) {
     }
 
     function renderSyncActionButtons({ isEnabled, cryptoSupported }) {
+        const testDisabled = !isEnabled || !cryptoSupported ? 'disabled' : '';
+        const clearDisabled = !cryptoSupported ? 'disabled' : '';
         return `
             <div class="gpv-sync-actions">
-                <button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-test-btn" ${!isEnabled || !cryptoSupported ? 'disabled' : ''}>
+                <button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-test-btn" ${testDisabled}>
                     Test Connection
                 </button>
-                <button class="gpv-sync-btn gpv-sync-btn-danger" id="gpv-sync-clear-btn" ${!cryptoSupported ? 'disabled' : ''}>
+                <button class="gpv-sync-btn gpv-sync-btn-danger" id="gpv-sync-clear-btn" ${clearDisabled}>
                     Logout
                 </button>
             </div>
@@ -10463,12 +10479,14 @@ function withButtonState(button, busyText, action) {
     }
 
     function renderSyncPrimaryAction({ isEnabled, cryptoSupported, syncStatus }) {
+        const saveDisabled = !cryptoSupported ? 'disabled' : '';
+        const syncNowDisabled = !isEnabled || !syncStatus.isConfigured || !syncStatus.hasSessionKey || !cryptoSupported ? 'disabled' : '';
         return `
             <div class="gpv-sync-actions">
-                <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-sync-save-btn" ${!cryptoSupported ? 'disabled' : ''}>
+                <button class="gpv-sync-btn gpv-sync-btn-primary" id="gpv-sync-save-btn" ${saveDisabled}>
                     Save Settings
                 </button>
-                <button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-now-btn" ${!isEnabled || !syncStatus.isConfigured || !syncStatus.hasSessionKey || !cryptoSupported ? 'disabled' : ''}>
+                <button class="gpv-sync-btn gpv-sync-btn-secondary" id="gpv-sync-now-btn" ${syncNowDisabled}>
                     Sync Now
                 </button>
             </div>
@@ -10588,10 +10606,7 @@ function withButtonState(button, busyText, action) {
     updateSyncActivationControls(enabledCheckbox?.checked === true);
 
     // Save settings
-    const saveBtn = document.getElementById('gpv-sync-save-btn');
-    if (saveBtn) {
-        saveBtn.addEventListener('click', () => {
-            withButtonState(saveBtn, 'Saving...', async () => {
+    bindSyncActionButton('gpv-sync-save-btn', 'Saving...', async () => {
                 try {
                     clearSyncMessage();
                     const {
@@ -10644,14 +10659,9 @@ function withButtonState(button, busyText, action) {
                     showErrorMessage(`Failed to save settings: ${error.message}`);
                 }
             });
-        });
-    }
 
     // Register button
-    const registerBtn = document.getElementById('gpv-sync-register-btn');
-    if (registerBtn) {
-        registerBtn.addEventListener('click', () => {
-            withButtonState(registerBtn, 'Signing up...', async () => {
+    bindSyncActionButton('gpv-sync-register-btn', 'Signing up...', async () => {
                 try {
                     clearSyncMessage();
                     const {
@@ -10694,14 +10704,9 @@ function withButtonState(button, busyText, action) {
                     showErrorMessage(`Registration failed: ${error.message}`);
                 }
             });
-        });
-    }
 
     // Login button
-    const loginBtn = document.getElementById('gpv-sync-login-btn');
-    if (loginBtn) {
-        loginBtn.addEventListener('click', () => {
-            withButtonState(loginBtn, 'Logging in...', async () => {
+    bindSyncActionButton('gpv-sync-login-btn', 'Logging in...', async () => {
                 try {
                     clearSyncMessage();
                     const {
@@ -10744,14 +10749,9 @@ function withButtonState(button, busyText, action) {
                     showErrorMessage(`Login failed: ${error.message}`);
                 }
             });
-        });
-    }
 
     // Test connection
-    const testBtn = document.getElementById('gpv-sync-test-btn');
-    if (testBtn) {
-        testBtn.addEventListener('click', () => {
-            withButtonState(testBtn, 'Testing...', async () => {
+    bindSyncActionButton('gpv-sync-test-btn', 'Testing...', async () => {
                 try {
                     clearSyncMessage();
                     const serverUrl = resolveSyncServerUrl(true);
@@ -10776,14 +10776,9 @@ function withButtonState(button, busyText, action) {
                     showErrorMessage(`Connection failed: ${error.message}`);
                 }
             });
-        });
-    }
 
     // Sync now
-    const syncNowBtn = document.getElementById('gpv-sync-now-btn');
-    if (syncNowBtn) {
-        syncNowBtn.addEventListener('click', () => {
-            withButtonState(syncNowBtn, 'Syncing...', async () => {
+    bindSyncActionButton('gpv-sync-now-btn', 'Syncing...', async () => {
                 try {
                     clearSyncMessage();
 
@@ -10813,8 +10808,6 @@ function withButtonState(button, busyText, action) {
                     }
                 }
             });
-        });
-    }
 
     // Clear configuration
     const clearBtn = document.getElementById('gpv-sync-clear-btn');
@@ -10832,12 +10825,12 @@ function withButtonState(button, busyText, action) {
 }
 
     if (typeof window !== 'undefined') {
-        window.__gpvSyncUi = {
+        window.__gpvSyncUi = registerPublicApiSection('syncUi', {
             createSyncSettingsHTML,
             setupSyncSettingsListeners,
             createConflictDialogHTML,
             renderSyncOverlayView
-        };
+        });
     }
 
 function renderSyncOverlayView({
@@ -10978,10 +10971,6 @@ function createConflictDialogHTML(conflict) {
     const localFixed = Object.keys(localEndowus.goalFixed || {}).length;
     const remoteFixed = Object.keys(remoteEndowus.goalFixed || {}).length;
     const diffSections = _buildConflictDiffItems(conflict);
-    const sectionRows = (rows, label) => rows.length > 0
-        ? `<table class="gpv-conflict-diff-table"><thead><tr><th>${label}</th><th>Local</th><th>Remote</th></tr></thead><tbody>${rows}</tbody></table>`
-        : '<div class="gpv-conflict-diff-empty">No differences detected.</div>';
-
     const endowusRows = diffSections.endowus.map(item => `
         <tr>
             <td class="gpv-conflict-goal-name">${escapeHtml(item.goalName)}</td>
@@ -10989,64 +10978,15 @@ function createConflictDialogHTML(conflict) {
             <td>${escapeHtml(item.remoteTargetDisplay)} / ${escapeHtml(item.remoteFixedDisplay)} / ${escapeHtml(item.remoteBucketDisplay)}</td>
         </tr>
     `).join('');
-
-    const fsmDefinitionRows = diffSections.fsm
-        .filter(item => item.section === 'definition')
-        .map(item => `
-            <tr>
-                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
-                <td>${escapeHtml(item.localDisplay)}</td>
-                <td>${escapeHtml(item.remoteDisplay)}</td>
-            </tr>
-        `).join('');
-    const ocbcDefinitionRows = diffSections.ocbc
-        .filter(item => item.section === 'definition')
-        .map(item => `
-            <tr>
-                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
-                <td>${escapeHtml(item.localDisplay)}</td>
-                <td>${escapeHtml(item.remoteDisplay)}</td>
-            </tr>
-        `).join('');
-    const fsmAssignmentRows = diffSections.fsm
-        .filter(item => item.section === 'assignment')
-        .map(item => `
-            <tr>
-                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
-                <td>${escapeHtml(item.localDisplay)}</td>
-                <td>${escapeHtml(item.remoteDisplay)}</td>
-            </tr>
-        `).join('');
-    const ocbcAssignmentRows = diffSections.ocbc
-        .filter(item => item.section === 'assignment')
-        .map(item => `
-            <tr>
-                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
-                <td>${escapeHtml(item.localDisplay)}</td>
-                <td>${escapeHtml(item.remoteDisplay)}</td>
-            </tr>
-        `).join('');
-    const fsmInstrumentRows = diffSections.fsm
-        .filter(item => item.section === 'instrument')
-        .map(item => `
-            <tr>
-                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
-                <td>${escapeHtml(item.localDisplay)}</td>
-                <td>${escapeHtml(item.remoteDisplay)}</td>
-            </tr>
-        `).join('');
-    const ocbcTargetRows = diffSections.ocbc
-        .filter(item => item.section === 'target')
-        .map(item => `
-            <tr>
-                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
-                <td>${escapeHtml(item.localDisplay)}</td>
-                <td>${escapeHtml(item.remoteDisplay)}</td>
-            </tr>
-        `).join('');
+    const fsmDefinitionRows = buildConflictSettingRows(diffSections.fsm, 'definition');
+    const ocbcDefinitionRows = buildConflictSettingRows(diffSections.ocbc, 'definition');
+    const fsmAssignmentRows = buildConflictSettingRows(diffSections.fsm, 'assignment');
+    const ocbcAssignmentRows = buildConflictSettingRows(diffSections.ocbc, 'assignment');
+    const fsmInstrumentRows = buildConflictSettingRows(diffSections.fsm, 'instrument');
+    const ocbcTargetRows = buildConflictSettingRows(diffSections.ocbc, 'target');
     const hasTargetRows = endowusRows.length > 0 || fsmInstrumentRows.length > 0 || ocbcTargetRows.length > 0;
     const targetRowsHtml = hasTargetRows
-        ? `${endowusRows.length > 0 ? sectionRows(endowusRows, 'Goal') : ''}${fsmInstrumentRows.length > 0 ? sectionRows(fsmInstrumentRows, 'Instrument') : ''}${ocbcTargetRows.length > 0 ? sectionRows(ocbcTargetRows, 'Setting') : ''}`
+        ? `${endowusRows.length > 0 ? renderConflictSectionRows(endowusRows, 'Goal') : ''}${fsmInstrumentRows.length > 0 ? renderConflictSectionRows(fsmInstrumentRows, 'Instrument') : ''}${ocbcTargetRows.length > 0 ? renderConflictSectionRows(ocbcTargetRows, 'Setting') : ''}`
         : '<div class="gpv-conflict-diff-empty">No differences detected.</div>';
 
     return `
@@ -11071,11 +11011,11 @@ function createConflictDialogHTML(conflict) {
             </div>
             <div class="gpv-conflict-step-panel" data-step-panel="2" hidden>
                 <h4>Portfolio definition changes</h4>
-                ${sectionRows(`${fsmDefinitionRows}${ocbcDefinitionRows}`, 'Setting')}
+                ${renderConflictSectionRows(`${fsmDefinitionRows}${ocbcDefinitionRows}`, 'Setting')}
             </div>
             <div class="gpv-conflict-step-panel" data-step-panel="3" hidden>
                 <h4>Assignment changes</h4>
-                ${sectionRows(`${fsmAssignmentRows}${ocbcAssignmentRows}`, 'Setting')}
+                ${renderConflictSectionRows(`${fsmAssignmentRows}${ocbcAssignmentRows}`, 'Setting')}
             </div>
             <div class="gpv-conflict-step-panel" data-step-panel="4" hidden>
                 <h4>Targets and drift changes</h4>
@@ -11096,6 +11036,24 @@ function createConflictDialogHTML(conflict) {
             </div>
         </div>
     `;
+}
+
+function renderConflictSectionRows(rows, label) {
+    return rows.length > 0
+        ? `<table class="gpv-conflict-diff-table"><thead><tr><th>${label}</th><th>Local</th><th>Remote</th></tr></thead><tbody>${rows}</tbody></table>`
+        : '<div class="gpv-conflict-diff-empty">No differences detected.</div>';
+}
+
+function buildConflictSettingRows(items, section) {
+    return items
+        .filter(item => item.section === section)
+        .map(item => `
+            <tr>
+                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
+                <td>${escapeHtml(item.localDisplay)}</td>
+                <td>${escapeHtml(item.remoteDisplay)}</td>
+            </tr>
+        `).join('');
 }
 
 function buildGoalNameMap() {
@@ -17424,7 +17382,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     if (typeof module !== 'undefined' && module.exports) {
-        window.__gpvTestingHooks = {
+        window.__gpvTestingHooks = registerPublicApiSection('testingHooks', {
             injectStyles,
             showOverlay,
             getOverlayPlatformDescriptor,
@@ -17435,7 +17393,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             isEndowusAuthContext,
             listCookieByQuery,
             buildPerformanceRequestHeaders
-        };
+        });
     }
 
     } // End of browser-only code
@@ -17448,11 +17406,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     // In Node.js (test/CI), these functions are programmatically accessible.
     // Pattern: Keep all logic in ONE place (this file), test the real implementation.
         if (typeof module !== 'undefined' && module.exports) {
-        const chartHelpers = typeof globalThis !== 'undefined' ? globalThis.__gpvChartHelpers : null;
-        const syncUiExports = typeof window !== 'undefined'
-            ? window.__gpvSyncUi
-            : (typeof globalThis !== 'undefined' ? globalThis.__gpvSyncUi : null);
-        const testingHooks = typeof window !== 'undefined' ? window.__gpvTestingHooks : null;
+        const publicApi = typeof globalThis !== 'undefined' ? globalThis.__gpvPublicApi : null;
+        const chartHelpers = publicApi?.chartHelpers || (typeof globalThis !== 'undefined' ? globalThis.__gpvChartHelpers : null);
+        const syncUiExports = publicApi?.syncUi || (typeof globalThis !== 'undefined' ? globalThis.__gpvSyncUi : null);
+        const testingHooks = publicApi?.testingHooks || (typeof globalThis !== 'undefined' ? globalThis.__gpvTestingHooks : null);
         const baseExports = {
             utils,
             storageKeys,

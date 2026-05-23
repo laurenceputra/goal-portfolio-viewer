@@ -608,6 +608,35 @@ describe('handlers and cache', () => {
         });
     });
 
+    test('readEndowusStore on-read cleanup removes legacy local Endowus keys when namespaced store exists', () => {
+        const { readPerformanceCache } = exportsModule;
+        if (!readPerformanceCache) return;
+
+        global.GM_listValues = () => Array.from(storage.keys());
+
+        storage.set('endowus', JSON.stringify({
+            performance: [{ goalId: 'goal-1', totalInvestmentValue: {} }],
+            investible: [{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            summary: [{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }],
+            goalTargets: {},
+            goalFixed: {},
+            goalBuckets: {},
+            clearedGoalBuckets: {},
+            performanceCache: {
+                'goal-1': { fetchedAt: Date.now(), response: { goalId: 'goal-1' } }
+            },
+            uiPreferences: { bucketMode: 'allocation', collapseState: {} }
+        }));
+        storage.set('gpv_bucket_mode', 'performance');
+        storage.set('gpv_performance_goal-legacy', JSON.stringify({ fetchedAt: Date.now(), response: { legacy: true } }));
+        storage.set('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance', '1');
+
+        expect(readPerformanceCache('goal-1')).not.toBeNull();
+        expect(storage.has('gpv_bucket_mode')).toBe(false);
+        expect(storage.has('gpv_performance_goal-legacy')).toBe(false);
+        expect(storage.has('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance')).toBe(false);
+    });
+
     test('performance cache removes invalid payloads', () => {
         const { readPerformanceCache } = exportsModule;
         if (!readPerformanceCache) return;
