@@ -924,3 +924,21 @@ When contributing to the technical implementation:
 ---
 
 *Last updated: November 2024*
+## Userscript Platform Adapter Registry (v4)
+
+The userscript now uses a central in-file adapter registry (`PLATFORM_ADAPTERS`) for Endowus, FSM, and OCBC. Each adapter owns:
+
+- route matching and button visibility logic,
+- readiness state and readiness overlay content,
+- overlay rendering dispatch,
+- endpoint interception matching.
+
+This replaces scattered three-platform conditional branches with a single dispatch table while preserving single-file Tampermonkey delivery.
+
+## Platform Store Shape (v4)
+
+Persisted platform stores (`endowus`, `fsm`, `ocbc`) now write only this top-level shape:
+
+`{ version: 4, datasets, allocation, ui, localCache }`
+
+Compatibility aliases may still exist in-memory for older call sites, but serialized JSON remains v4-only.

@@ -79,7 +79,9 @@ describe('API interception', () => {
         const endowusCalls = global.GM_setValue.mock.calls.filter(([key]) => key === 'endowus');
         const endowusCall = endowusCalls[endowusCalls.length - 1];
         expect(endowusCall).toBeDefined();
-        expect(JSON.parse(endowusCall[1]).performance).toEqual(performanceData);
+        const parsed = JSON.parse(endowusCall[1]);
+        expect(parsed.version).toBe(4);
+        expect(parsed.datasets.performance).toEqual(performanceData);
     });
 
 
@@ -115,7 +117,9 @@ describe('API interception', () => {
         const fsmCalls = global.GM_setValue.mock.calls.filter(([key]) => key === 'fsm');
         const fsmCall = fsmCalls[fsmCalls.length - 1];
         expect(fsmCall).toBeDefined();
-        expect(JSON.parse(fsmCall[1]).holdings).toEqual([
+        const parsed = JSON.parse(fsmCall[1]);
+        expect(parsed.version).toBe(4);
+        expect(parsed.datasets.holdings).toEqual([
             {
                 code: 'AAA',
                 productType: 'STOCK',
@@ -200,7 +204,9 @@ describe('API interception', () => {
         const ocbcStorageCall = ocbcCalls[ocbcCalls.length - 1];
         expect(ocbcStorageCall).toBeDefined();
 
-        const normalized = JSON.parse(ocbcStorageCall[1]).holdings;
+        const ocbcStore = JSON.parse(ocbcStorageCall[1]);
+        expect(ocbcStore.version).toBe(4);
+        const normalized = ocbcStore.datasets.holdings;
         expect(normalized).toMatchObject({
             assets: [
                 {
@@ -305,9 +311,9 @@ describe('API interception', () => {
         await flushPromises();
 
         const savedOcbc = JSON.parse(storage.get('ocbc'));
-        expect(savedOcbc.holdingsByPortfolio['P-OLD']).toBeTruthy();
-        expect(savedOcbc.holdingsByPortfolio['P-NEW']).toBeTruthy();
-        expect(savedOcbc.holdings.assets.map(item => item.portfolioNo)).toEqual(expect.arrayContaining(['P-OLD', 'P-NEW']));
+        expect(savedOcbc.datasets.holdingsByPortfolio['P-OLD']).toBeTruthy();
+        expect(savedOcbc.datasets.holdingsByPortfolio['P-NEW']).toBeTruthy();
+        expect(savedOcbc.datasets.holdings.assets.map(item => item.portfolioNo)).toEqual(expect.arrayContaining(['P-OLD', 'P-NEW']));
     });
 
     test('fetch interception preserves disjoint OCBC portfolios across consecutive updates', async () => {
@@ -383,17 +389,17 @@ describe('API interception', () => {
         await flushPromises();
 
         const savedOcbc = JSON.parse(storage.get('ocbc'));
-        expect(savedOcbc.holdingsByPortfolio['P-A']).toBeTruthy();
-        expect(savedOcbc.holdingsByPortfolio['P-B']).toBeTruthy();
-        const flattenedPortfolioNos = savedOcbc.holdings.assets.map(item => item.portfolioNo);
+        expect(savedOcbc.datasets.holdingsByPortfolio['P-A']).toBeTruthy();
+        expect(savedOcbc.datasets.holdingsByPortfolio['P-B']).toBeTruthy();
+        const flattenedPortfolioNos = savedOcbc.datasets.holdings.assets.map(item => item.portfolioNo);
         expect(flattenedPortfolioNos).toEqual(expect.arrayContaining(['P-A', 'P-B']));
 
         const combinedByPortfolioAssets = [
-            ...(savedOcbc.holdingsByPortfolio['P-A']?.assets || []),
-            ...(savedOcbc.holdingsByPortfolio['P-B']?.assets || [])
+            ...(savedOcbc.datasets.holdingsByPortfolio['P-A']?.assets || []),
+            ...(savedOcbc.datasets.holdingsByPortfolio['P-B']?.assets || [])
         ];
-        expect(savedOcbc.holdings.assets).toHaveLength(combinedByPortfolioAssets.length);
-        expect(savedOcbc.holdings.assets.map(item => item.code)).toEqual(
+        expect(savedOcbc.datasets.holdings.assets).toHaveLength(combinedByPortfolioAssets.length);
+        expect(savedOcbc.datasets.holdings.assets.map(item => item.code)).toEqual(
             expect.arrayContaining(combinedByPortfolioAssets.map(item => item.code))
         );
     });
@@ -490,7 +496,7 @@ describe('API interception', () => {
         const endowusCalls = global.GM_setValue.mock.calls.filter(([key]) => key === 'endowus');
         const endowusCall = endowusCalls[endowusCalls.length - 1];
         expect(endowusCall).toBeDefined();
-        expect(JSON.parse(endowusCall[1]).summary).toEqual(summaryData);
+        expect(JSON.parse(endowusCall[1]).datasets.summary).toEqual(summaryData);
     });
 
     test('XMLHttpRequest interception ignores non-2xx responses', async () => {

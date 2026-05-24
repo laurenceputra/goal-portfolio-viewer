@@ -55,17 +55,15 @@ const {
 describe('storage key helpers', () => {
     test('should generate consistent storage keys', () => {
         const cases = [
-            { name: 'goal target', actual: storageKeys.goalTarget('goal123'), expected: 'goal_target_pct_goal123' },
-            { name: 'goal target empty', actual: storageKeys.goalTarget(''), expected: 'goal_target_pct_' },
-            { name: 'goal target special', actual: storageKeys.goalTarget('goal-123-abc'), expected: 'goal_target_pct_goal-123-abc' },
-            { name: 'goal fixed', actual: storageKeys.goalFixed('goal123'), expected: 'goal_fixed_goal123' },
-            { name: 'goal fixed empty', actual: storageKeys.goalFixed(''), expected: 'goal_fixed_' },
-            { name: 'fsm target', actual: storageKeys.fsmTarget('AAA'), expected: 'fsm_target_pct_AAA' },
-            { name: 'fsm fixed', actual: storageKeys.fsmFixed('AAA'), expected: 'fsm_fixed_AAA' },
             {
                 name: 'projected investment empty',
                 actual: storageKeys.projectedInvestment('', ''),
                 expected: '|'
+            },
+            {
+                name: 'collapse state',
+                actual: storageKeys.collapseState('Retirement', 'GENERAL_WEALTH_ACCUMULATION', 'performance'),
+                expected: 'gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance'
             },
             {
                 name: 'performance cache',

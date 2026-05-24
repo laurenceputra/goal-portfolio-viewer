@@ -439,46 +439,43 @@ describe('SyncManager', () => {
     });
 
     test('collectConfigData and applyConfigData preserve cleared Endowus bucket markers', () => {
-        const { SyncManager, GoalTargetStore, storageKeys } = loadModule();
+        const { SyncManager, GoalTargetStore } = loadModule();
         GoalTargetStore.clearBucket('goal-1', { suppressSync: true });
-        global.GM_listValues = () => [storageKeys.goalBucketCleared('goal-1')];
 
         const config = SyncManager.collectConfigData();
-        expect(config.platforms.endowus.clearedGoalBuckets).toEqual({ 'goal-1': true });
+        expect(config.platforms.endowus.allocation.clearedGoalBuckets).toEqual({ 'goal-1': true });
 
         storage.clear();
         SyncManager.applyConfigData(config);
 
-        expect(storage.has(storageKeys.goalBucket('goal-1'))).toBe(false);
-        expect(JSON.parse(storage.get('endowus')).clearedGoalBuckets['goal-1']).toBe(true);
+        expect(JSON.parse(storage.get('endowus')).allocation.clearedGoalBuckets['goal-1']).toBe(true);
     });
 
-    test('collectConfigData emits v3 payload and excludes Endowus targets for fixed goals', () => {
-        const { SyncManager, storageKeys } = loadModule();
-        const targetKey = storageKeys.goalTarget('goal-1');
-        const fixedKey = storageKeys.goalFixed('goal-1');
-
-        storage.set(targetKey, 25);
-        storage.set(fixedKey, true);
-        global.GM_listValues = () => [targetKey, fixedKey];
+    test('collectConfigData emits v4 payload and excludes Endowus targets for fixed goals', () => {
+        const { SyncManager } = loadModule();
+        storage.set('endowus', JSON.stringify({
+            goalTargets: { 'goal-1': 25 },
+            goalFixed: { 'goal-1': true },
+            goalBuckets: {},
+            clearedGoalBuckets: {}
+        }));
 
         const config = SyncManager.collectConfigData();
 
-        expect(config.version).toBe(3);
-        expect(config.platforms.endowus.goalTargets).toEqual({});
-        expect(config.platforms.endowus.goalFixed).toEqual({ 'goal-1': true });
-        expect(config.platforms.endowus.allocationModel).toEqual(expect.objectContaining({
+        expect(config.version).toBe(4);
+        expect(config.platforms.endowus.allocation.goalTargets).toEqual({});
+        expect(config.platforms.endowus.allocation.goalFixed).toEqual({ 'goal-1': true });
+        expect(config.platforms.endowus.allocation.allocationModel).toEqual(expect.objectContaining({
             version: 1,
             targets: {
                 'goal-1': expect.objectContaining({ fixed: true, targetPercent: null })
             }
         }));
-        expect(config.platforms.fsm.targetsByCode).toEqual({});
+        expect(config.platforms.fsm.allocation.targetsByCode).toEqual({});
     });
 
     test('applyConfigData skips Endowus targets when goal is fixed for v2 payload', () => {
-        const { SyncManager, storageKeys } = loadModule();
-        const targetKey = storageKeys.goalTarget('goal-1');
+        const { SyncManager } = loadModule();
 
         SyncManager.applyConfigData({
             version: 2,
@@ -500,8 +497,8 @@ describe('SyncManager', () => {
             timestamp: Date.now()
         });
 
-        expect(storage.has(targetKey)).toBe(false);
-        expect(JSON.parse(storage.get('endowus')).goalFixed['goal-1']).toBe(true);
+        expect(JSON.parse(storage.get('endowus')).allocation.goalFixed['goal-1']).toBe(true);
+        expect(JSON.parse(storage.get('endowus')).allocation.goalTargets['goal-1']).toBeUndefined();
     });
 
     test('applyConfigData migrates canonical allocationModel-only payloads into legacy-compatible stores', () => {
@@ -549,48 +546,29 @@ describe('SyncManager', () => {
         });
 
         const endowus = JSON.parse(storage.get('endowus'));
-        expect(endowus.goalTargets).toEqual({ 'goal-1': 45 });
-        expect(endowus.goalBuckets).toEqual({ 'goal-1': 'Core Bucket' });
-        expect(endowus.allocationModel.targets['goal-1']).toEqual(expect.objectContaining({ targetPercent: 45, fixed: false }));
+        expect(endowus.allocation.goalTargets).toEqual({ 'goal-1': 45 });
+        expect(endowus.allocation.goalBuckets).toEqual({ 'goal-1': 'Core Bucket' });
+        expect(endowus.allocation.allocationModel.targets['goal-1']).toEqual(expect.objectContaining({ targetPercent: 45, fixed: false }));
 
         const fsm = JSON.parse(storage.get('fsm'));
-        expect(fsm.targetsByCode).toEqual({ AAA: 25 });
-        expect(fsm.fixedByCode).toEqual({ BBB: true });
-        expect(fsm.portfolios).toEqual([{ id: 'core', name: 'Core Portfolio', archived: false }]);
-        expect(fsm.assignmentByCode).toEqual({ AAA: 'core' });
-        expect(fsm.allocationModel.scopes[0]).toEqual(expect.objectContaining({ id: 'core', kind: 'portfolio' }));
+        expect(fsm.allocation.targetsByCode).toEqual({ AAA: 25 });
+        expect(fsm.allocation.fixedByCode).toEqual({ BBB: true });
+        expect(fsm.allocation.portfolios).toEqual([{ id: 'core', name: 'Core Portfolio', archived: false }]);
+        expect(fsm.allocation.assignmentByCode).toEqual({ AAA: 'core' });
+        expect(fsm.allocation.allocationModel.scopes[0]).toEqual(expect.objectContaining({ id: 'core', kind: 'portfolio' }));
 
         const ocbc = JSON.parse(storage.get('ocbc'));
-        expect(ocbc.subPortfolios.assets['P-1']).toEqual([expect.objectContaining({ id: 'core', name: 'Core' })]);
-        expect(ocbc.assignmentByCode).toEqual({ 'P-1:EQ1': 'core' });
-        expect(ocbc.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 55 });
-        expect(ocbc.orderByScope).toEqual({ 'assets|P-1|core': ['P-1:EQ1'] });
-        expect(ocbc.allocationModel.scopes[0]).toEqual(expect.objectContaining({ id: 'assets|P-1|core', kind: 'subPortfolio' }));
+        expect(ocbc.allocation.subPortfolios.assets['P-1']).toEqual([expect.objectContaining({ id: 'core', name: 'Core' })]);
+        expect(ocbc.allocation.assignmentByCode).toEqual({ 'P-1:EQ1': 'core' });
+        expect(ocbc.allocation.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 55 });
+        expect(ocbc.allocation.orderByScope).toEqual({ 'assets|P-1|core': ['P-1:EQ1'] });
+        expect(ocbc.allocation.allocationModel.scopes[0]).toEqual(expect.objectContaining({ id: 'assets|P-1|core', kind: 'subPortfolio' }));
     });
 
-    test('applyConfigData removes stale local keys absent from remote config', () => {
-        const { SyncManager, storageKeys } = loadModule();
-        const staleEndowusTarget = storageKeys.goalTarget('old-goal');
-        const keptEndowusTarget = storageKeys.goalTarget('kept-goal');
-        const staleBucket = storageKeys.goalBucket('old-goal');
-        const staleFsmTarget = storageKeys.fsmTarget('OLD');
-        const keptFsmTarget = storageKeys.fsmTarget('AAA');
-        const staleFsmFixed = storageKeys.fsmFixed('OLD');
-
-        storage.set(staleEndowusTarget, 20);
-        storage.set(keptEndowusTarget, 30);
-        storage.set(staleBucket, 'Old Bucket');
-        storage.set(staleFsmTarget, 10);
-        storage.set(keptFsmTarget, 15);
-        storage.set(staleFsmFixed, true);
-        global.GM_listValues = () => [
-            staleEndowusTarget,
-            keptEndowusTarget,
-            staleBucket,
-            staleFsmTarget,
-            keptFsmTarget,
-            staleFsmFixed
-        ];
+    test('applyConfigData updates namespaced stores and ignores flat platform keys', () => {
+        const { SyncManager } = loadModule();
+        storage.set('goal_target_pct_old-goal', 20);
+        storage.set('fsm_target_pct_OLD', 10);
 
         SyncManager.applyConfigData({
             version: 2,
@@ -616,12 +594,10 @@ describe('SyncManager', () => {
             timestamp: Date.now()
         });
 
-        expect(storage.has(staleEndowusTarget)).toBe(false);
-        expect(storage.has(staleBucket)).toBe(false);
-        expect(storage.has(staleFsmTarget)).toBe(false);
-        expect(storage.has(staleFsmFixed)).toBe(false);
-        expect(JSON.parse(storage.get('endowus')).goalTargets['kept-goal']).toBe(35);
-        expect(JSON.parse(storage.get('fsm')).targetsByCode.AAA).toBe(25);
+        expect(storage.get('goal_target_pct_old-goal')).toBe(20);
+        expect(storage.get('fsm_target_pct_OLD')).toBe(10);
+        expect(JSON.parse(storage.get('endowus')).allocation.goalTargets['kept-goal']).toBe(35);
+        expect(JSON.parse(storage.get('fsm')).allocation.targetsByCode.AAA).toBe(25);
     });
 
     test('enable persists remembered master key when remember-key is enabled', async () => {
@@ -772,124 +748,55 @@ describe('SyncManager', () => {
     });
 
 
-    test('applyConfigData migrates legacy v1 payload to Endowus keys', () => {
+    test('applyConfigData rejects legacy v1 payload', () => {
         const { SyncManager } = loadModule();
-        SyncManager.applyConfigData({
+        expect(() => SyncManager.applyConfigData({
             version: 1,
             goalTargets: { 'goal-2': 33 },
             goalFixed: { 'goal-3': true },
             timestamp: Date.now()
-        });
-
-        const endowus = JSON.parse(storage.get('endowus'));
-        expect(endowus.goalTargets).toEqual({ 'goal-2': 33 });
-        expect(endowus.goalFixed).toEqual({ 'goal-3': true });
+        })).toThrow('Invalid config data');
     });
 
-    test('collectConfigData migrates legacy platform keys and removes them', () => {
-        const { SyncManager, storageKeys } = loadModule();
-        const freshFetchedAt = Date.now();
-        const collapseKey = storageKeys.collapseState('Retirement', 'GENERAL_WEALTH_ACCUMULATION', 'performance');
-        storage.set('api_performance', JSON.stringify([{ goalId: 'goal-1' }]));
-        storage.set('api_investible', JSON.stringify([{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }]));
-        storage.set('api_summary', JSON.stringify([{ goalId: 'goal-1', goalName: 'Retirement - Goal 1', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }]));
-        storage.set('gpv_performance_goal-1', JSON.stringify({ fetchedAt: freshFetchedAt, response: { goalId: 'goal-1' } }));
-        storage.set('gpv_bucket_mode', 'performance');
-        storage.set(collapseKey, 'false');
-        storage.set('goal_target_pct_goal-1', 25);
-        storage.set('goal_fixed_goal-2', true);
-        storage.set('fsm_portfolios', JSON.stringify([{ id: 'core', name: 'Core', archived: false }]));
-        storage.set('fsm_assignment_by_code', JSON.stringify({ AAA: 'core' }));
-        storage.set('fsm_target_pct_AAA', 20);
-        storage.set('api_fsm_holdings', JSON.stringify([{ code: 'AAA' }]));
-        storage.set('ocbc_sub_portfolios', JSON.stringify({ assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false }] } }));
-        storage.set('ocbc_allocation_assignment_by_code', JSON.stringify({ 'P-1:EQ1': 'core' }));
-        storage.set('ocbc_allocation_order_by_scope', JSON.stringify({ 'assets|P-1|core': ['P-1:EQ1'] }));
-        storage.set('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1', 50);
-        storage.set('api_ocbc_holdings', JSON.stringify({ assets: [{ code: 'P-1:EQ1' }], liabilities: [] }));
-        global.GM_listValues = () => Array.from(storage.keys());
-
-        const config = SyncManager.collectConfigData();
-
-        expect(config.platforms.endowus.goalTargets).toEqual({ 'goal-1': 25 });
-        expect(config.platforms.fsm.targetsByCode).toEqual({ AAA: 20 });
-        expect(config.platforms.ocbc.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 50 });
-        expect(storage.has('endowus')).toBe(true);
-        expect(storage.has('fsm')).toBe(true);
-        expect(storage.has('ocbc')).toBe(true);
-        expect(storage.has('api_performance')).toBe(false);
-        expect(storage.has('goal_target_pct_goal-1')).toBe(false);
-        expect(storage.has('fsm_portfolios')).toBe(false);
-        expect(storage.has('api_fsm_holdings')).toBe(false);
-        expect(storage.has('ocbc_sub_portfolios')).toBe(false);
-        expect(storage.has('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(false);
-        expect(storage.has('gpv_performance_goal-1')).toBe(false);
-        expect(storage.has('gpv_bucket_mode')).toBe(false);
-        expect(storage.has(collapseKey)).toBe(false);
-
-        const endowusStore = JSON.parse(storage.get('endowus'));
-        expect(endowusStore.performanceCache?.['goal-1']).toEqual({ fetchedAt: freshFetchedAt, response: { goalId: 'goal-1' } });
-        expect(endowusStore.uiPreferences).toEqual(expect.objectContaining({
-            bucketMode: 'performance'
-        }));
-        expect(endowusStore.uiPreferences.collapseState?.[collapseKey]).toBe(false);
-    });
-
-    test('collectConfigData preserves existing top-level store over legacy values while cleaning legacy keys', () => {
+    test('collectConfigData ignores legacy flat platform keys', () => {
         const { SyncManager } = loadModule();
-        storage.set('endowus', JSON.stringify({
-            performance: null,
-            investible: null,
-            summary: null,
-            goalTargets: { 'goal-new': 77 },
-            goalFixed: {},
-            goalBuckets: {},
-            clearedGoalBuckets: {}
-        }));
-        storage.set('goal_target_pct_goal-old', 10);
-        global.GM_listValues = () => Array.from(storage.keys());
+        storage.set('goal_target_pct_goal-1', 25);
+        storage.set('fsm_target_pct_AAA', 20);
+        storage.set('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1', 50);
 
         const config = SyncManager.collectConfigData();
 
-        expect(config.platforms.endowus.goalTargets).toEqual({ 'goal-new': 77 });
-        expect(storage.has('goal_target_pct_goal-old')).toBe(false);
+        expect(config.platforms.endowus.allocation.goalTargets).toEqual({});
+        expect(config.platforms.fsm.allocation.targetsByCode).toEqual({});
+        expect(config.platforms.ocbc.allocation.targetsByScope).toEqual({});
     });
 
-    test('collectConfigData merges missing fields from legacy when top-level store is partial', () => {
+    test('collectConfigData persists and exports namespaced Endowus data only', () => {
         const { SyncManager } = loadModule();
         storage.set('endowus', JSON.stringify({ goalTargets: { 'goal-existing': 22 } }));
-        storage.set('goal_fixed_goal-legacy', true);
-        storage.set('goal_bucket_name_goal-legacy', 'Legacy Bucket');
-        global.GM_listValues = () => Array.from(storage.keys());
 
         const config = SyncManager.collectConfigData();
         const endowusStore = JSON.parse(storage.get('endowus'));
 
-        expect(config.platforms.endowus.goalTargets).toEqual({ 'goal-existing': 22 });
-        expect(config.platforms.endowus.goalFixed).toEqual({ 'goal-legacy': true });
-        expect(config.platforms.endowus.goalBuckets).toEqual({ 'goal-legacy': 'Legacy Bucket' });
-        expect(endowusStore.goalFixed).toEqual({ 'goal-legacy': true });
-        expect(storage.has('goal_fixed_goal-legacy')).toBe(false);
+        expect(config.platforms.endowus.allocation.goalTargets).toEqual({ 'goal-existing': 22 });
+        expect(endowusStore.version).toBe(4);
     });
 
     test('collectConfigData includes FSM namespaced sync keys', () => {
-        const { SyncManager, storageKeys } = loadModule();
-        const fsmTarget = storageKeys.fsmTarget('AAA');
-        const fsmFixed = storageKeys.fsmFixed('BBB');
-
-        storage.set(fsmTarget, 12);
-        storage.set(fsmFixed, true);
-        storage.set('fsm_portfolios', JSON.stringify([{ id: 'core', name: 'Core', archived: false }]));
-        storage.set('fsm_assignment_by_code', JSON.stringify({ AAA: 'core', BBB: 'unknown' }));
-        global.GM_listValues = () => [fsmTarget, fsmFixed, 'fsm_portfolios', 'fsm_assignment_by_code'];
+        const { SyncManager } = loadModule();
+        storage.set('fsm', JSON.stringify({
+            targetsByCode: { AAA: 12 },
+            fixedByCode: { BBB: true },
+            portfolios: [{ id: 'core', name: 'Core', archived: false }],
+            assignmentByCode: { AAA: 'core', BBB: 'unknown' }
+        }));
 
         const config = SyncManager.collectConfigData();
 
-        expect(config.platforms.fsm.targetsByCode).toEqual({ AAA: 12 });
-        expect(config.platforms.fsm.fixedByCode).toEqual({ BBB: true });
-        expect(config.platforms.fsm.portfolios).toEqual([{ id: 'core', name: 'Core', archived: false }]);
-        expect(config.platforms.fsm.assignmentByCode).toEqual({ AAA: 'core', BBB: 'unassigned' });
-        expect(config.platforms.fsm.holdings).toBeUndefined();
+        expect(config.platforms.fsm.allocation.targetsByCode).toEqual({ AAA: 12 });
+        expect(config.platforms.fsm.allocation.fixedByCode).toEqual({ BBB: true });
+        expect(config.platforms.fsm.allocation.portfolios).toEqual([{ id: 'core', name: 'Core', archived: false }]);
+        expect(config.platforms.fsm.allocation.assignmentByCode).toEqual({ AAA: 'core', BBB: 'unassigned' });
     });
 
     test('applyConfigData stores FSM portfolio definitions and assignments', () => {
@@ -910,8 +817,8 @@ describe('SyncManager', () => {
         });
 
         const fsm = JSON.parse(storage.get('fsm'));
-        expect(fsm.portfolios).toEqual([{ id: 'income', name: 'Income', archived: false }]);
-        expect(fsm.assignmentByCode).toEqual({ AAPL: 'income', BOND: 'unassigned' });
+        expect(fsm.allocation.portfolios).toEqual([{ id: 'income', name: 'Income', archived: false }]);
+        expect(fsm.allocation.assignmentByCode).toEqual({ AAPL: 'income', BOND: 'unassigned' });
     });
 
     test('applyConfigData throws when namespaced store write fails', () => {
@@ -983,27 +890,11 @@ describe('SyncManager', () => {
         }
     });
 
-    test('applyConfigData rollback restores legacy keys removed during pre-write store reads', () => {
+    test('applyConfigData rollback restores only namespaced platform stores', () => {
         const { SyncManager } = loadModule();
         const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        storage.set('endowus', JSON.stringify({
-            goalTargets: { keep: 25 },
-            goalFixed: {},
-            goalBuckets: {},
-            clearedGoalBuckets: {}
-        }));
-        storage.set('fsm', JSON.stringify({
-            targetsByCode: {},
-            fixedByCode: {},
-            portfolios: [],
-            assignmentByCode: {}
-        }));
-        storage.set('goal_target_pct_legacy-goal', 42);
-        const rollbackPerformancePayload = JSON.stringify({ fetchedAt: Date.now(), response: { goalId: 'goal-rollback' } });
-        storage.set('gpv_bucket_mode', 'target');
-        storage.set('gpv_performance_goal-rollback', rollbackPerformancePayload);
-        storage.set('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance', 'true');
-        global.GM_listValues = () => Array.from(storage.keys());
+        storage.set('endowus', JSON.stringify({ goalTargets: { keep: 25 }, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} }));
+        storage.set('fsm', JSON.stringify({ targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} }));
 
         global.GM_setValue = jest.fn((key, value) => {
             if (key === 'ocbc') {
@@ -1023,11 +914,6 @@ describe('SyncManager', () => {
                 timestamp: Date.now()
             })).toThrow('Failed to save OCBC sync config data');
             expect(errorSpy).toHaveBeenCalledWith('[Goal Portfolio Viewer] Error saving OCBC store:', expect.any(Error));
-
-            expect(storage.get('goal_target_pct_legacy-goal')).toBe(42);
-            expect(storage.get('gpv_bucket_mode')).toBe('target');
-            expect(storage.get('gpv_performance_goal-rollback')).toBe(rollbackPerformancePayload);
-            expect(storage.get('gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance')).toBe('true');
             expect(JSON.parse(storage.get('endowus')).goalTargets).toEqual({ keep: 25 });
             expect(storage.has('ocbc')).toBe(false);
         } finally {
@@ -1037,46 +923,37 @@ describe('SyncManager', () => {
 
     test('collectConfigData includes OCBC config and excludes raw holdings', () => {
         const { SyncManager } = loadModule();
-        storage.set('ocbc_allocation_buckets', JSON.stringify({ assets: [{ id: 'legacy', name: 'Legacy' }] }));
-        storage.set('ocbc_sub_portfolios', JSON.stringify({ assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false, buckets: [{ id: 'legacy' }] }] } }));
-        storage.set('ocbc_allocation_assignment_by_code', JSON.stringify({ 'P-1:EQ1': { subPortfolioId: 'core', bucketId: 'legacy' } }));
-        storage.set('ocbc_allocation_order_by_scope', JSON.stringify({
-            'assets|P-1|core': ['P-1:EQ2', ' P-1:EQ1 ', 'P-1:EQ2', '', null]
+        storage.set('ocbc', JSON.stringify({
+            allocationBuckets: { assets: [{ id: 'legacy', name: 'Legacy' }] },
+            subPortfolios: { assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false, buckets: [{ id: 'legacy' }] }] } },
+            assignmentByCode: { 'P-1:EQ1': { subPortfolioId: 'core', bucketId: 'legacy' } },
+            orderByScope: { 'assets|P-1|core': ['P-1:EQ2', ' P-1:EQ1 ', 'P-1:EQ2', '', null] },
+            targetsByScope: { 'assets|P-1|core|P-1%3AEQ1': 55 },
+            holdings: { assets: [{ code: 'P-1:EQ1' }], liabilities: [] }
         }));
-        storage.set('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1', 55);
-        storage.set('api_ocbc_holdings', JSON.stringify({ assets: [{ code: 'P-1:EQ1' }], liabilities: [] }));
-        global.GM_listValues = () => [
-            'ocbc_sub_portfolios',
-            'ocbc_allocation_buckets',
-            'ocbc_allocation_assignment_by_code',
-            'ocbc_allocation_order_by_scope',
-            'ocbc_target_pct_assets|P-1|core|P-1%3AEQ1',
-            'api_ocbc_holdings'
-        ];
 
         const config = SyncManager.collectConfigData();
-        expect(config.platforms.ocbc.subPortfolios.assets['P-1'][0]).toEqual(expect.objectContaining({ id: 'core', name: 'Core' }));
-        expect(config.platforms.ocbc.subPortfolios.assets['P-1'][0].buckets).toBeUndefined();
-        expect(config.platforms.ocbc.assignmentByCode).toEqual({ 'P-1:EQ1': 'core' });
-        expect(config.platforms.ocbc.orderByScope).toEqual({
+        expect(config.platforms.ocbc.allocation.subPortfolios.assets['P-1'][0]).toEqual(expect.objectContaining({ id: 'core', name: 'Core' }));
+        expect(config.platforms.ocbc.allocation.subPortfolios.assets['P-1'][0].buckets).toBeUndefined();
+        expect(config.platforms.ocbc.allocation.assignmentByCode).toEqual({ 'P-1:EQ1': 'core' });
+        expect(config.platforms.ocbc.allocation.orderByScope).toEqual({
             'assets|P-1|core': ['P-1:EQ2', 'P-1:EQ1']
         });
-        expect(config.platforms.ocbc.allocationBuckets).toEqual({ assets: [{ id: 'legacy', name: 'Legacy' }] });
-        expect(config.platforms.ocbc.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 55 });
+        expect(config.platforms.ocbc.allocation.allocationBuckets).toEqual({ assets: [{ id: 'legacy', name: 'Legacy' }] });
+        expect(config.platforms.ocbc.allocation.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 55 });
         expect(JSON.stringify(config)).not.toContain('api_ocbc_holdings');
         expect(JSON.stringify(config)).not.toContain('marketValueReferenceCcy');
         expect(config.platforms.ocbc.holdings).toBeUndefined();
-        expect(storage.has('ocbc_allocation_buckets')).toBe(false);
 
         storage.clear();
         global.GM_listValues = () => [];
         SyncManager.applyConfigData(config);
 
-        expect(JSON.parse(storage.get('ocbc')).orderByScope).toEqual({
+        expect(JSON.parse(storage.get('ocbc')).allocation.orderByScope).toEqual({
             'assets|P-1|core': ['P-1:EQ2', 'P-1:EQ1']
         });
-        expect(JSON.parse(storage.get('ocbc')).allocationBuckets).toEqual({ assets: [{ id: 'legacy', name: 'Legacy' }] });
-        expect(JSON.parse(storage.get('ocbc')).holdings).toBeNull();
+        expect(JSON.parse(storage.get('ocbc')).allocation.allocationBuckets).toEqual({ assets: [{ id: 'legacy', name: 'Legacy' }] });
+        expect(JSON.parse(storage.get('ocbc')).datasets.holdings).toBeNull();
     });
 
     test('collectConfigData excludes Endowus raw API payload fields', () => {
@@ -1094,10 +971,8 @@ describe('SyncManager', () => {
 
         const config = SyncManager.collectConfigData();
 
-        expect(config.platforms.endowus.goalTargets).toEqual({ 'goal-1': 50 });
-        expect(config.platforms.endowus.performance).toBeUndefined();
-        expect(config.platforms.endowus.investible).toBeUndefined();
-        expect(config.platforms.endowus.summary).toBeUndefined();
+        expect(config.platforms.endowus.allocation.goalTargets).toEqual({ 'goal-1': 50 });
+        expect(config.platforms.endowus.datasets).toBeUndefined();
     });
 
     test('collectConfigData excludes Endowus local-only fields', () => {
@@ -1122,9 +997,9 @@ describe('SyncManager', () => {
         }));
 
         const config = SyncManager.collectConfigData();
-        expect(config.platforms.endowus.goalTargets).toEqual({ 'goal-1': 42 });
-        expect(config.platforms.endowus.performanceCache).toBeUndefined();
-        expect(config.platforms.endowus.uiPreferences).toBeUndefined();
+        expect(config.platforms.endowus.allocation.goalTargets).toEqual({ 'goal-1': 42 });
+        expect(config.platforms.endowus.localCache).toBeUndefined();
+        expect(config.platforms.endowus.ui).toBeUndefined();
     });
 
     test('collectConfigData prunes stale Endowus performance cache on store read', () => {
@@ -1151,7 +1026,7 @@ describe('SyncManager', () => {
         SyncManager.collectConfigData();
 
         const endowusStore = JSON.parse(storage.get('endowus'));
-        expect(endowusStore.performanceCache?.['goal-1']).toBeUndefined();
+        expect(endowusStore.localCache.performanceCache?.['goal-1']).toBeUndefined();
     });
 
     test('applyConfigData preserves Endowus local-only fields', () => {
@@ -1190,12 +1065,12 @@ describe('SyncManager', () => {
         });
 
         const endowusStore = JSON.parse(storage.get('endowus'));
-        expect(endowusStore.goalTargets).toEqual({ 'goal-new': 55 });
-        expect(endowusStore.performanceCache?.['goal-1']).toEqual({ fetchedAt: freshFetchedAt, response: { goalId: 'goal-1' } });
-        expect(endowusStore.uiPreferences).toEqual(expect.objectContaining({
+        expect(endowusStore.allocation.goalTargets).toEqual({ 'goal-new': 55 });
+        expect(endowusStore.localCache.performanceCache?.['goal-1']).toEqual({ fetchedAt: freshFetchedAt, response: { goalId: 'goal-1' } });
+        expect(endowusStore.ui.uiPreferences).toEqual(expect.objectContaining({
             bucketMode: 'performance'
         }));
-        expect(endowusStore.uiPreferences.collapseState?.['gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance']).toBe(false);
+        expect(endowusStore.ui.uiPreferences.collapseState?.['gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance']).toBe(false);
     });
 
     test('collectConfigData does not run legacy cleanup repeatedly without legacy keys', () => {
@@ -1210,9 +1085,9 @@ describe('SyncManager', () => {
         SyncManager.collectConfigData();
 
         expect(deleteSpy).not.toHaveBeenCalled();
-        expect(JSON.parse(storage.get('endowus')).allocationModel.version).toBe(1);
-        expect(JSON.parse(storage.get('fsm')).allocationModel.version).toBe(1);
-        expect(JSON.parse(storage.get('ocbc')).allocationModel.version).toBe(1);
+        expect(JSON.parse(storage.get('endowus')).allocation.allocationModel.version).toBe(1);
+        expect(JSON.parse(storage.get('fsm')).allocation.allocationModel.version).toBe(1);
+        expect(JSON.parse(storage.get('ocbc')).allocation.allocationModel.version).toBe(1);
     });
 
     test('hashConfigData ignores OCBC timestamp-only differences', async () => {
@@ -1272,24 +1147,21 @@ describe('SyncManager', () => {
         });
 
         const ocbc = JSON.parse(storage.get('ocbc'));
-        expect(ocbc.subPortfolios.assets['P-1'][0].buckets).toBeUndefined();
-        expect(ocbc.assignmentByCode).toEqual({ 'P-1:EQ1': 'core' });
-        expect(ocbc.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 60 });
-        expect(ocbc.allocationBuckets).toEqual({});
+        expect(ocbc.allocation.subPortfolios.assets['P-1'][0].buckets).toBeUndefined();
+        expect(ocbc.allocation.assignmentByCode).toEqual({ 'P-1:EQ1': 'core' });
+        expect(ocbc.allocation.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 60 });
+        expect(ocbc.allocation.allocationBuckets).toEqual({});
     });
 
-    test('collectConfigData merges legacy OCBC allocation buckets into namespaced store and cleans legacy key', () => {
+    test('collectConfigData uses namespaced OCBC allocation buckets', () => {
         const { SyncManager } = loadModule();
-        storage.set('ocbc', JSON.stringify({ subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {} }));
-        storage.set('ocbc_allocation_buckets', JSON.stringify({ assets: [{ id: 'legacy', name: 'Legacy' }] }));
-        global.GM_listValues = () => ['ocbc', 'ocbc_allocation_buckets'];
+        storage.set('ocbc', JSON.stringify({ allocationBuckets: { assets: [{ id: 'legacy', name: 'Legacy' }] }, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {} }));
 
         const config = SyncManager.collectConfigData();
 
-        expect(config.platforms.ocbc.allocationBuckets).toEqual({ assets: [{ id: 'legacy', name: 'Legacy' }] });
+        expect(config.platforms.ocbc.allocation.allocationBuckets).toEqual({ assets: [{ id: 'legacy', name: 'Legacy' }] });
         const ocbc = JSON.parse(storage.get('ocbc'));
-        expect(ocbc.allocationBuckets).toEqual({ assets: [{ id: 'legacy', name: 'Legacy' }] });
-        expect(storage.has('ocbc_allocation_buckets')).toBe(false);
+        expect(ocbc.allocation.allocationBuckets).toEqual({ assets: [{ id: 'legacy', name: 'Legacy' }] });
     });
 
     describe('multi-device reconciliation', () => {
@@ -1417,7 +1289,7 @@ describe('SyncManager', () => {
             await expect(SyncManager.resolveConflict('remote', conflict)).resolves.toBeUndefined();
 
             expect(document.dispatchEvent).toHaveBeenCalled();
-            expect(JSON.parse(storage.get('endowus')).goalTargets['goal-1']).toBe(50);
+            expect(JSON.parse(storage.get('endowus')).allocation.goalTargets['goal-1']).toBe(50);
             const syncStore = getSyncStore();
             expect(syncStore.lastSync).toBe(now);
             expect(syncStore.lastSyncMetadataVersion).toBe(2);
@@ -1429,12 +1301,9 @@ describe('SyncManager', () => {
             seedConfiguredState();
             storage.set('sync_access_token_expiry', Date.now() - 1_000);
             global.GM_xmlhttpRequest = undefined;
-            const { SyncManager, SyncEncryption, storageKeys } = loadModule();
+            const { SyncManager, SyncEncryption } = loadModule();
             unlockSync(SyncManager);
-
-            const targetKey = storageKeys.goalTarget('goal-1');
-            storage.set(targetKey, 25);
-            global.GM_listValues = () => [targetKey];
+            storage.set('endowus', JSON.stringify({ goalTargets: { 'goal-1': 25 }, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} }));
 
             const serverTimestamp = Date.now() + 60_000;
             Date.now = jest.fn(() => serverTimestamp + 1);
@@ -1560,12 +1429,9 @@ describe('SyncManager', () => {
             storage.delete('sync_last_hash');
             storage.set('sync_access_token_expiry', Date.now() - 1_000);
             global.GM_xmlhttpRequest = undefined;
-            const { SyncManager, SyncEncryption, storageKeys } = loadModule();
+            const { SyncManager, SyncEncryption } = loadModule();
             unlockSync(SyncManager);
-
-            const localTargetKey = storageKeys.goalTarget('local-goal');
-            storage.set(localTargetKey, 25);
-            global.GM_listValues = () => [localTargetKey];
+            storage.set('endowus', JSON.stringify({ goalTargets: { 'local-goal': 25 }, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} }));
 
             const serverTimestamp = Date.now() + 60_000;
             Date.now = jest.fn(() => serverTimestamp + 1);
@@ -1679,8 +1545,8 @@ describe('SyncManager', () => {
 
             const syncPostCalls = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth'));
             expect(syncPostCalls).toHaveLength(0);
-            expect(storage.has(localTargetKey)).toBe(false);
-            expect(JSON.parse(storage.get('endowus')).goalTargets['remote-goal']).toBe(45);
+            expect(JSON.parse(storage.get('endowus')).allocation.goalTargets['local-goal']).toBeUndefined();
+            expect(JSON.parse(storage.get('endowus')).allocation.goalTargets['remote-goal']).toBe(45);
             const syncStore = getSyncStore();
             expect(syncStore.lastSync).toBe(serverTimestamp + 1);
             expect(syncStore.lastDataTimestamp).toBe(serverTimestamp);
@@ -1690,12 +1556,9 @@ describe('SyncManager', () => {
         test('attempt-only sync after partial migration metadata does not become data freshness', async () => {
             seedConfiguredState();
             global.GM_xmlhttpRequest = undefined;
-            const { SyncManager, SyncEncryption, storageKeys } = loadModule();
+            const { SyncManager, SyncEncryption } = loadModule();
             unlockSync(SyncManager);
-
-            const localTargetKey = storageKeys.goalTarget('goal-1');
-            storage.set(localTargetKey, 25);
-            global.GM_listValues = () => [localTargetKey];
+            storage.set('endowus', JSON.stringify({ goalTargets: { 'goal-1': 25 }, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} }));
 
             const initialTimestamp = 2_000_000_000_000;
             const attemptTimestamp = initialTimestamp + 60_000;
@@ -1831,7 +1694,7 @@ describe('SyncManager', () => {
 
             const postCountAfterRemoteSync = fetchMock.mock.calls.filter(([url, options = {}]) => options.method === 'POST' && url.includes('/sync') && !url.includes('/auth')).length;
             expect(postCountAfterRemoteSync).toBe(postCountBeforeRemoteSync);
-            expect(JSON.parse(storage.get('endowus')).goalTargets['goal-1']).toBe(50);
+            expect(JSON.parse(storage.get('endowus')).allocation.goalTargets['goal-1']).toBe(50);
             const syncStoreAfterRemote = getSyncStore();
             expect(syncStoreAfterRemote.lastSync).toBe(attemptTimestamp);
             expect(syncStoreAfterRemote.lastDataTimestamp).toBe(serverTimestamp);
@@ -1850,9 +1713,21 @@ describe('SyncManager', () => {
             Date.now = jest.fn(() => serverTimestamp + 1);
             storage.set('sync_refresh_token_expiry', serverTimestamp + 120_000);
             const serverConfig = {
-                version: 1,
-                goalTargets: { 'goal-2': 40 },
-                goalFixed: {},
+                version: 2,
+                platforms: {
+                    endowus: {
+                        goalTargets: { 'goal-2': 40 },
+                        goalFixed: {},
+                        timestamp: serverTimestamp
+                    },
+                    fsm: {
+                        targetsByCode: {},
+                        fixedByCode: {},
+                        portfolios: [],
+                        assignmentByCode: {},
+                        timestamp: serverTimestamp
+                    }
+                },
                 timestamp: serverTimestamp
             };
             const encryptedData = await SyncEncryption.encryptWithMasterKey(
@@ -1937,7 +1812,7 @@ describe('SyncManager', () => {
             expect(syncStore.lastSync).toBe(serverTimestamp + 1);
             expect(syncStore.lastDataTimestamp).toBe(serverTimestamp);
             expect(syncStore.lastSyncHash).toEqual(expect.any(String));
-            expect(JSON.parse(storage.get('endowus')).goalTargets['goal-2']).toBe(40);
+            expect(JSON.parse(storage.get('endowus')).allocation.goalTargets['goal-2']).toBe(40);
         });
     });
 

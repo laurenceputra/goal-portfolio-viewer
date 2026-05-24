@@ -362,3 +362,13 @@ Suggested commit message after implementing Track A:
 - [ ] CI path filters/conditions implemented.
 - [ ] Selective execution behavior validated on PR.
 - [ ] Integration tests intentionally deferred to a future track.
+## Tampermonkey Architecture Rewrite Test Focus
+
+When validating the userscript architecture rewrite:
+
+1. Assert persisted platform stores serialize as v4 (`version: 4`, `datasets`, `allocation`, `ui`, `localCache`).
+2. Assert v2/v3 namespaced config payloads normalize into v4-compatible apply behavior.
+3. Assert sync payload collection excludes raw datasets and local cache.
+4. Assert adapter-registry-based route and endpoint dispatch still works for Endowus/FSM/OCBC interception and overlay readiness.
+5. Do not retain v1 flat platform migration/cleanup assertions for deprecated flat keys.
+6. Keep sync auth-key migration coverage (`sync_*` flat keys -> `sync` store) separate; this is sync-settings migration, not platform data/config migration.

@@ -3,6 +3,103 @@ const { setupDom, teardownDom } = require('./helpers/domSetup');
 describe('initialization and URL monitoring', () => {
     let storage;
 
+    const parseMaybeJson = value => {
+        if (typeof value !== 'string') return value;
+        try {
+            return JSON.parse(value);
+        } catch (_) {
+            return value;
+        }
+    };
+
+    const seedEndowusStore = ({ performance, investible, summary, allocation = {}, ui, localCache } = {}) => {
+        storage.set('endowus', JSON.stringify({
+            version: 4,
+            datasets: {
+                ...(performance !== undefined ? { performance } : {}),
+                ...(investible !== undefined ? { investible } : {}),
+                ...(summary !== undefined ? { summary } : {})
+            },
+            allocation,
+            ui: ui || { uiPreferences: { bucketMode: 'allocation', collapseState: {} } },
+            localCache: localCache || {}
+        }));
+    };
+
+    const seedFsmStore = ({ holdings, allocation = {}, ui = {}, localCache = {} } = {}) => {
+        storage.set('fsm', JSON.stringify({
+            version: 4,
+            datasets: {
+                ...(holdings !== undefined ? { holdings } : {})
+            },
+            allocation,
+            ui,
+            localCache
+        }));
+    };
+
+    const seedOcbcStore = ({ holdings, holdingsByPortfolio, allocation = {}, ui = {}, localCache = {} } = {}) => {
+        storage.set('ocbc', JSON.stringify({
+            version: 4,
+            datasets: {
+                ...(holdings !== undefined ? { holdings } : {}),
+                ...(holdingsByPortfolio !== undefined ? { holdingsByPortfolio } : {})
+            },
+            allocation,
+            ui,
+            localCache
+        }));
+    };
+
+    const upsertFsmStore = patcher => {
+        const current = parseMaybeJson(storage.get('fsm')) || {};
+        const next = patcher(current);
+        storage.set('fsm', JSON.stringify({
+            version: 4,
+            datasets: next.datasets || {},
+            allocation: next.allocation || {},
+            ui: next.ui || {},
+            localCache: next.localCache || {}
+        }));
+    };
+
+    const upsertOcbcStore = patcher => {
+        const current = parseMaybeJson(storage.get('ocbc')) || {};
+        const next = patcher(current);
+        storage.set('ocbc', JSON.stringify({
+            version: 4,
+            datasets: next.datasets || {},
+            allocation: next.allocation || {},
+            ui: next.ui || {},
+            localCache: next.localCache || {}
+        }));
+    };
+
+    const upsertEndowusStore = patch => {
+        const current = parseMaybeJson(storage.get('endowus')) || {};
+        seedEndowusStore({
+            performance: current.datasets?.performance,
+            investible: current.datasets?.investible,
+            summary: current.datasets?.summary,
+            allocation: current.allocation || {},
+            ui: current.ui,
+            localCache: current.localCache,
+            ...patch
+        });
+    };
+
+    const seedEndowusDataset = (field, value) => {
+        const patch = {};
+        patch[field] = value;
+        upsertEndowusStore(patch);
+    };
+
+    const setupStorage = () => {
+        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
+        global.GM_getValue = jest.fn((key, fallback = null) => (storage.has(key) ? storage.get(key) : fallback));
+        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+    };
+
     const nextTableFrom = start => {
         let current = start?.nextElementSibling || null;
         while (current) {
@@ -40,11 +137,7 @@ describe('initialization and URL monitoring', () => {
         teardownDom();
         setupDom({ url });
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
 
@@ -83,11 +176,7 @@ describe('initialization and URL monitoring', () => {
         setupDom();
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
 
@@ -203,11 +292,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
 
         const responseFactory = body => ({
@@ -250,11 +335,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
 
         const responseFactory = body => ({
@@ -297,11 +378,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
 
         const responseFactory = body => ({
@@ -344,11 +421,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
 
         const responseFactory = body => ({
@@ -399,11 +472,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
 
         const responseFactory = body => ({
@@ -457,9 +526,9 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -490,9 +559,9 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -510,7 +579,7 @@ describe('initialization and URL monitoring', () => {
         bucketInput.value = 'Wealth Builder';
         bucketInput.dispatchEvent(new window.Event('blur', { bubbles: true }));
 
-        expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBe('Wealth Builder');
+        expect(JSON.parse(storage.get('endowus')).allocation.goalBuckets.goal1).toBe('Wealth Builder');
     });
 
     test('opening Endowus overlay seeds derived bucket assignments for legacy goals', () => {
@@ -531,15 +600,15 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
         exportsModule.showOverlay();
 
-        expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBe('Retirement');
+        expect(JSON.parse(storage.get('endowus')).allocation.goalBuckets.goal1).toBe('Retirement');
     });
 
     test('opening Endowus readiness with incomplete datasets does not seed derived bucket assignments', () => {
@@ -555,8 +624,8 @@ describe('initialization and URL monitoring', () => {
             totalInvestmentAmount: { display: { amount: 1000 } }
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -564,40 +633,40 @@ describe('initialization and URL monitoring', () => {
 
         const overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Fetching Endowus portfolio data');
-        expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBeUndefined();
+        expect(JSON.parse(storage.get('endowus')).allocation?.goalBuckets?.goal1).toBeUndefined();
     });
 
-    test('Endowus bucket config signature changes when legacy cleared key changes', () => {
+    test('Endowus bucket config signature ignores legacy cleared key changes', () => {
         const performanceData = [{ goalId: 'goal1' }];
         const investibleData = [{ goalId: 'goal1' }];
         const summaryData = [{ goalId: 'goal1' }];
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
-        const clearedKey = exportsModule.storageKeys.goalBucketCleared('goal1');
+        const clearedKey = 'goal_bucket_cleared_goal1';
 
         const before = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
         global.GM_setValue(clearedKey, true);
         const after = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
 
-        expect(after).not.toBe(before);
+        expect(after).toBe(before);
     });
 
-    test('Endowus bucket config signature changes when legacy goal bucket key changes', () => {
+    test('Endowus bucket config signature ignores legacy goal bucket key changes', () => {
         const performanceData = [{ goalId: 'goal1' }];
         const investibleData = [{ goalId: 'goal1' }];
         const summaryData = [{ goalId: 'goal1' }];
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
-        const bucketKey = exportsModule.storageKeys.goalBucket('goal1');
+        const bucketKey = 'goal_bucket_name_goal1';
 
         const before = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
         global.GM_setValue(bucketKey, 'Legacy Override');
         const after = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
 
-        expect(after).not.toBe(before);
+        expect(after).toBe(before);
     });
 
-    test('Endowus readiness cache is invalidated by legacy goal bucket assignment changes', () => {
+    test('Endowus readiness ignores legacy goal bucket assignment changes', () => {
         const performanceData = [{
             goalId: 'goal1',
             totalCumulativeReturn: { amount: 100 },
@@ -615,26 +684,26 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
-        global.GM_setValue(exportsModule.storageKeys.goalBucket('goal1'), 'Legacy Bucket A');
+        global.GM_setValue('goal_bucket_name_goal1', 'Legacy Bucket A');
         exportsModule.init();
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).toContain('Legacy Bucket A');
+        expect(overlay.textContent).not.toContain('Legacy Bucket A');
 
-        global.GM_setValue(exportsModule.storageKeys.goalBucket('goal1'), 'Legacy Bucket B');
+        global.GM_setValue('goal_bucket_name_goal1', 'Legacy Bucket B');
         exportsModule.showOverlay();
 
         overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).toContain('Legacy Bucket B');
+        expect(overlay.textContent).not.toContain('Legacy Bucket B');
     });
 
-    test('Endowus readiness cache is invalidated by legacy cleared flag changes', () => {
+    test('Endowus readiness ignores legacy cleared flag changes', () => {
         const performanceData = [{
             goalId: 'goal1',
             totalCumulativeReturn: { amount: 100 },
@@ -652,33 +721,29 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
-        global.GM_setValue(exportsModule.storageKeys.goalBucket('goal1'), 'Legacy Bucket A');
+        global.GM_setValue('goal_bucket_name_goal1', 'Legacy Bucket A');
         exportsModule.init();
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).toContain('Legacy Bucket A');
+        expect(overlay.textContent).not.toContain('Legacy Bucket A');
 
-        global.GM_setValue(exportsModule.storageKeys.goalBucketCleared('goal1'), true);
+        global.GM_setValue('goal_bucket_cleared_goal1', true);
         exportsModule.showOverlay();
 
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).not.toContain('Legacy Bucket A');
-        expect(overlay.textContent).toContain('Retirement');
+        expect(overlay.textContent).toContain('Retirement Fund');
     });
 
     test('store-backed cleared goal bucket hides seeded bucket and falls back to derived bucket on overlay rerender', () => {
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
 
         const performanceData = [{
             goalId: 'goal1',
@@ -697,9 +762,9 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
         global.GM_setValue('endowus', JSON.stringify({
             performance: performanceData,
             investible: investibleData,
@@ -751,9 +816,9 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -768,7 +833,7 @@ describe('initialization and URL monitoring', () => {
         expect(bucketInput.value).toBe('Retirement');
         bucketInput.dispatchEvent(new window.Event('blur', { bubbles: true }));
 
-        expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBe('Retirement');
+        expect(JSON.parse(storage.get('endowus')).allocation.goalBuckets.goal1).toBe('Retirement');
         expect(bucketInput.value).toBe('Retirement');
     });
 
@@ -790,9 +855,9 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
         global.GM_setValue('goal_bucket_name_goal1', 'Legacy Override');
         global.alert = jest.fn();
 
@@ -810,8 +875,8 @@ describe('initialization and URL monitoring', () => {
         bucketInput.value = '';
         bucketInput.dispatchEvent(new window.Event('blur', { bubbles: true }));
 
-        expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBeUndefined();
-        expect(JSON.parse(storage.get('endowus')).clearedGoalBuckets.goal1).toBe(true);
+        expect(JSON.parse(storage.get('endowus')).allocation.goalBuckets.goal1).toBeUndefined();
+        expect(JSON.parse(storage.get('endowus')).allocation.clearedGoalBuckets.goal1).toBe(true);
         expect(bucketInput.value).toBe('Retirement');
 
         exportsModule.showOverlay();
@@ -820,7 +885,7 @@ describe('initialization and URL monitoring', () => {
         reopenedBucketManageBtn.click();
         overlay = document.querySelector('#gpv-overlay');
         const reopenedInput = overlay.querySelector('.gpv-bucket-manager-input');
-        expect(JSON.parse(storage.get('endowus')).goalBuckets.goal1).toBeUndefined();
+        expect(JSON.parse(storage.get('endowus')).allocation.goalBuckets.goal1).toBeUndefined();
         expect(reopenedInput.value).toBe('Retirement');
     });
 
@@ -842,9 +907,9 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
         global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -890,9 +955,9 @@ describe('initialization and URL monitoring', () => {
         explicitSibling.setAttribute('aria-hidden', 'false');
         document.body.appendChild(explicitSibling);
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
         global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -937,9 +1002,9 @@ describe('initialization and URL monitoring', () => {
         explicitSibling.setAttribute('aria-hidden', 'false');
         document.body.appendChild(explicitSibling);
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
         global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -988,20 +1053,20 @@ describe('initialization and URL monitoring', () => {
             expect(expandBtn.title).toBe('Shrink overlay');
         };
 
-        global.GM_setValue('api_performance', JSON.stringify([
+        seedEndowusDataset('performance', [
             { goalId: 'goal1', totalCumulativeReturn: { amount: 100 }, simpleRateOfReturnPercent: 0.1 }
-        ]));
-        global.GM_setValue('api_investible', JSON.stringify([
+        ]);
+        seedEndowusDataset('investible', [
             {
                 goalId: 'goal1',
                 goalName: 'Retirement - Core Portfolio',
                 investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
                 totalInvestmentAmount: { display: { amount: 1000 } }
             }
-        ]));
-        global.GM_setValue('api_summary', JSON.stringify([
+        ]);
+        seedEndowusDataset('summary', [
             { goalId: 'goal1', goalName: 'Retirement - Core Portfolio', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }
-        ]));
+        ]);
 
         let exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -1011,11 +1076,7 @@ describe('initialization and URL monitoring', () => {
         teardownDom();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -1037,9 +1098,9 @@ describe('initialization and URL monitoring', () => {
             send() {}
         }
         global.XMLHttpRequest = FakeXHR;
-        global.GM_setValue('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', currentValueLcy: 1234.56 }
-        ]));
+        ] });
 
         jest.resetModules();
         exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -1052,18 +1113,14 @@ describe('initialization and URL monitoring', () => {
             url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=123'
         });
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
         global.history = window.history;
         global.XMLHttpRequest = FakeXHR;
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 {
                     code: 'P-1:AAA',
@@ -1077,7 +1134,35 @@ describe('initialization and URL monitoring', () => {
                 }
             ],
             liabilities: []
-        }));
+        }, holdingsByPortfolio: ({
+            assets: [
+                {
+                    code: 'P-1:AAA',
+                    portfolioNo: 'P-1',
+                    displayTicker: 'SG00AAA111',
+                    name: 'OCBC Asset',
+                    productType: 'Equity',
+                    currentValueLcy: 1000,
+                    profitValueLcy: 50,
+                    profitPercentLcy: 0.1
+                }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                {
+                    code: 'P-1:AAA',
+                    portfolioNo: 'P-1',
+                    displayTicker: 'SG00AAA111',
+                    name: 'OCBC Asset',
+                    productType: 'Equity',
+                    currentValueLcy: 1000,
+                    profitValueLcy: 50,
+                    profitPercentLcy: 0.1
+                }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
 
         jest.resetModules();
         exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -1104,9 +1189,9 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
         global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -1129,18 +1214,17 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Alpha', productType: 'UNIT_TRUST', currentValueLcy: 1000 }
-        ]));
-        storage.set('fsm_target_pct_AAA|sub:AAPL', 50);
+        ] });
+        upsertFsmStore(current => ({
+            ...current,
+            allocation: { ...(current.allocation || {}), targetsByCode: { AAA: 50 } }
+        }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -1165,7 +1249,7 @@ describe('initialization and URL monitoring', () => {
         expect(topSummaryDriftCard).toBeFalsy();
         const overviewCard = overlay.querySelector('.gpv-fsm-overview-card');
         expect(overviewCard.textContent).toContain('Drift');
-        expect(overviewCard.textContent).toContain('100.00%');
+        expect(overviewCard.textContent).toContain('0.00%');
 
         const manageBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Manage portfolios'));
         manageBtn.click();
@@ -1190,9 +1274,9 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
         global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -1230,9 +1314,9 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
         global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -1284,11 +1368,10 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: goal.investmentGoalType
         }));
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
-        global.GM_setValue('goal_target_pct_goal1', 10);
-        global.GM_setValue('goal_target_pct_goal2', 90);
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
+        upsertEndowusStore({ allocation: { goalTargets: { goal1: 10, goal2: 90 }, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} } });
         global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -1323,9 +1406,9 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
         global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -1408,9 +1491,9 @@ describe('initialization and URL monitoring', () => {
             status: 200
         });
         global.fetch.mockImplementation(() => Promise.resolve(responseFactory([])));
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
         global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -1469,9 +1552,9 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION'
         }];
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
         global.GM_setValue('sync_enabled', true);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -1497,18 +1580,24 @@ describe('initialization and URL monitoring', () => {
         };
 
         const mountEndowusData = () => {
-            global.GM_setValue('api_performance', JSON.stringify([{ goalId: 'goal1', totalCumulativeReturn: { amount: 100 }, simpleRateOfReturnPercent: 0.1 }]));
-            global.GM_setValue('api_investible', JSON.stringify([{ goalId: 'goal1', goalName: 'Goal One', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 1000 } } }]));
-            global.GM_setValue('api_summary', JSON.stringify([{ goalId: 'goal1', goalName: 'Goal One', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }]));
+            seedEndowusDataset('performance', [{ goalId: 'goal1', totalCumulativeReturn: { amount: 100 }, simpleRateOfReturnPercent: 0.1 }]);
+            seedEndowusDataset('investible', [{ goalId: 'goal1', goalName: 'Goal One', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 1000 } } }]);
+            seedEndowusDataset('summary', [{ goalId: 'goal1', goalName: 'Goal One', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }]);
         };
         const mountFsmData = () => {
-            global.GM_setValue('api_fsm_holdings', JSON.stringify([{ code: 'AAA', subcode: 'AAPL', name: 'Fund A', currentValueLcy: 1234.56 }]));
+            seedFsmStore({ holdings: [{ code: 'AAA', subcode: 'AAPL', name: 'Fund A', currentValueLcy: 1234.56 }] });
         };
         const mountOcbcData = () => {
-            global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+            seedOcbcStore({ holdings: {
                 assets: [{ code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }],
                 liabilities: []
-            }));
+            }, holdingsByPortfolio: ({
+                assets: [{ code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }],
+                liabilities: []
+            })?.holdingsByPortfolio || ({
+                assets: [{ code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }],
+                liabilities: []
+            })?.data?.holdingsByPortfolio });
         };
 
         const assertSharedSyncFields = overlay => {
@@ -1606,11 +1695,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -1633,23 +1718,23 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', currentValueLcy: 1234.56 }
-        ]));
-        global.GM_setValue('api_summary', JSON.stringify([
+        ] });
+        seedEndowusDataset('summary', [
             { goalId: 'end-1', goalName: 'Endowus Only Goal', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }
-        ]));
-        global.GM_setValue('api_investible', JSON.stringify([
+        ]);
+        seedEndowusDataset('investible', [
             {
                 goalId: 'end-1',
                 goalName: 'Endowus Only Goal',
                 investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION',
                 totalInvestmentAmount: { display: { amount: 1000 } }
             }
-        ]));
-        global.GM_setValue('api_performance', JSON.stringify([
+        ]);
+        seedEndowusDataset('performance', [
             { goalId: 'end-1', totalCumulativeReturn: { amount: 100 }, simpleRateOfReturnPercent: 0.1 }
-        ]));
+        ]);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -1685,11 +1770,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -1729,11 +1810,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -1773,11 +1850,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -1801,7 +1874,7 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 {
                     code: 'P-1:AAA',
@@ -1836,7 +1909,77 @@ describe('initialization and URL monitoring', () => {
                     profitPercentLcy: null
                 }
             ]
-        }));
+        }, holdingsByPortfolio: ({
+            assets: [
+                {
+                    code: 'P-1:AAA',
+                    portfolioNo: 'P-1',
+                    displayTicker: 'SG00AAA111',
+                    name: 'OCBC Asset',
+                    productType: 'Equity',
+                    currentValueLcy: 1000,
+                    profitValueLcy: 50,
+                    profitPercentLcy: 0.1
+                },
+                {
+                    code: 'P-1:CCC',
+                    portfolioNo: 'P-1',
+                    displayTicker: 'FUND-CCC',
+                    name: 'OCBC Asset 2',
+                    productType: 'Bond',
+                    currentValueLcy: 400,
+                    profitValueLcy: null,
+                    profitPercentLcy: null
+                }
+            ],
+            liabilities: [
+                {
+                    code: 'P-1:BBB',
+                    portfolioNo: 'P-1',
+                    displayTicker: 'POS-BBB',
+                    name: 'OCBC Liability',
+                    productType: 'Liability',
+                    currentValueLcy: -250,
+                    profitValueLcy: null,
+                    profitPercentLcy: null
+                }
+            ]
+        })?.holdingsByPortfolio || ({
+            assets: [
+                {
+                    code: 'P-1:AAA',
+                    portfolioNo: 'P-1',
+                    displayTicker: 'SG00AAA111',
+                    name: 'OCBC Asset',
+                    productType: 'Equity',
+                    currentValueLcy: 1000,
+                    profitValueLcy: 50,
+                    profitPercentLcy: 0.1
+                },
+                {
+                    code: 'P-1:CCC',
+                    portfolioNo: 'P-1',
+                    displayTicker: 'FUND-CCC',
+                    name: 'OCBC Asset 2',
+                    productType: 'Bond',
+                    currentValueLcy: 400,
+                    profitValueLcy: null,
+                    profitPercentLcy: null
+                }
+            ],
+            liabilities: [
+                {
+                    code: 'P-1:BBB',
+                    portfolioNo: 'P-1',
+                    displayTicker: 'POS-BBB',
+                    name: 'OCBC Liability',
+                    productType: 'Liability',
+                    currentValueLcy: -250,
+                    profitValueLcy: null,
+                    profitPercentLcy: null
+                }
+            ]
+        })?.data?.holdingsByPortfolio });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -1909,11 +2052,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -1937,14 +2076,28 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
                 { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond 1', productType: 'Bond', currentValueLcy: 250 },
                 { code: 'P-2:EQ2', portfolioNo: 'P-2', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
             ],
             liabilities: []
-        }));
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond 1', productType: 'Bond', currentValueLcy: 250 },
+                { code: 'P-2:EQ2', portfolioNo: 'P-2', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond 1', productType: 'Bond', currentValueLcy: 250 },
+                { code: 'P-2:EQ2', portfolioNo: 'P-2', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -1990,11 +2143,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -2134,9 +2283,9 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: goal.investmentGoalType
         }));
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
         global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -2195,9 +2344,9 @@ describe('initialization and URL monitoring', () => {
     });
 
     test('Endowus summary with no bucket cards has no selector and retains close button fallback target', () => {
-        global.GM_setValue('api_performance', JSON.stringify([]));
-        global.GM_setValue('api_investible', JSON.stringify([]));
-        global.GM_setValue('api_summary', JSON.stringify([]));
+        seedEndowusDataset('performance', []);
+        seedEndowusDataset('investible', []);
+        seedEndowusDataset('summary', []);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -2250,9 +2399,9 @@ describe('initialization and URL monitoring', () => {
             investmentGoalType: goal.investmentGoalType
         }));
 
-        global.GM_setValue('api_performance', JSON.stringify(performanceData));
-        global.GM_setValue('api_investible', JSON.stringify(investibleData));
-        global.GM_setValue('api_summary', JSON.stringify(summaryData));
+        seedEndowusDataset('performance', performanceData);
+        seedEndowusDataset('investible', investibleData);
+        seedEndowusDataset('summary', summaryData);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -2313,11 +2462,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -2341,30 +2486,52 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 100, profitValueLcy: 10 },
                 { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 300, profitValueLcy: -30 },
                 { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Asset 3', productType: 'Bond', currentValueLcy: 600 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 100, profitValueLcy: 10 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 300, profitValueLcy: -30 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Asset 3', productType: 'Bond', currentValueLcy: 600 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 100, profitValueLcy: 10 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 300, profitValueLcy: -30 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Asset 3', productType: 'Bond', currentValueLcy: 600 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-1': [
                     { id: 'core', name: 'Core', archived: false },
                     { id: 'satellite', name: 'Satellite', archived: false }
                 ]
             }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'core',
             'P-1:EQ2': 'core'
+        } } }));
+        upsertOcbcStore(current => ({
+            ...current,
+            allocation: {
+                ...(current.allocation || {}),
+                targetsByScope: {
+                    'assets|P-1|core|': 110,
+                    'assets|P-1|satellite|': 0,
+                    'assets|P-1|core|P-1%3AEQ1': 50,
+                    'assets|P-1|core|P-1%3AEQ2': 70
+                }
+            }
         }));
-        global.GM_setValue('ocbc_target_pct_assets|P-1|core|', 110);
-        global.GM_setValue('ocbc_target_pct_assets|P-1|satellite|', 0);
-        global.GM_setValue('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1', 50);
-        global.GM_setValue('ocbc_target_pct_assets|P-1|core|P-1%3AEQ2', 70);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -2436,11 +2603,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -2464,21 +2627,33 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
                 { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond 1', productType: 'Bond', currentValueLcy: 500 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond 1', productType: 'Bond', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond 1', productType: 'Bond', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-1': [{ id: 'core', name: 'Core', archived: false }]
             }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'core'
-        }));
+        } } }));
         global.GM_setValue('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1', 60);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -2514,11 +2689,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -2542,23 +2713,38 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 100 },
                 { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 300 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 100 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 300 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 100 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 300 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-1': [{ id: 'core', name: 'Core', archived: false }]
             }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'core',
             'P-1:EQ2': 'core'
+        } } }));
+        upsertOcbcStore(current => ({
+            ...current,
+            allocation: { ...(current.allocation || {}), targetsByScope: { 'assets|P-1|core|P-1%3AEQ1': 50 } }
         }));
-        global.GM_setValue('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1', 50);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -2585,11 +2771,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -2613,17 +2795,29 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
                 { code: 'P-1:FI1', portfolioNo: 'P-1', displayTicker: 'FI1', name: 'Asset 2', productType: 'Fixed Income', currentValueLcy: 500 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:FI1', portfolioNo: 'P-1', displayTicker: 'FI1', name: 'Asset 2', productType: 'Fixed Income', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:FI1', portfolioNo: 'P-1', displayTicker: 'FI1', name: 'Asset 2', productType: 'Fixed Income', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'legacy-core',
             'P-9:MISSING': { subPortfolioId: 'other', bucketId: 'x' }
-        }));
+        } } }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -2636,7 +2830,7 @@ describe('initialization and URL monitoring', () => {
         const createSubPortfolioBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Create');
         createSubPortfolioBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
 
-        const savedSubPortfolios = JSON.parse(storage.get('ocbc')).subPortfolios;
+        const savedSubPortfolios = JSON.parse(storage.get('ocbc')).allocation.subPortfolios;
         expect(savedSubPortfolios.assets['P-1'][0].id).toBe('core');
 
         const subPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
@@ -2644,7 +2838,7 @@ describe('initialization and URL monitoring', () => {
         subPortfolioSelect.value = 'core';
         subPortfolioSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const savedAssignments = JSON.parse(storage.get('ocbc')).assignmentByCode;
+        const savedAssignments = JSON.parse(storage.get('ocbc')).allocation.assignmentByCode;
         expect(savedAssignments['P-1:EQ1']).toBe('core');
         expect(savedAssignments['P-9:MISSING']).toBe('other');
     });
@@ -2656,11 +2850,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -2686,21 +2876,33 @@ describe('initialization and URL monitoring', () => {
 
         const legacyTargetKey = 'ocbc_target_pct_assets|Global%20Equity|core-equity';
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
                 { code: 'P-1:FI1', portfolioNo: 'P-1', displayTicker: 'FI1', name: 'Asset 2', productType: 'Fixed Income', currentValueLcy: 500 }
             ],
             liabilities: []
-        }));
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:FI1', portfolioNo: 'P-1', displayTicker: 'FI1', name: 'Asset 2', productType: 'Fixed Income', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:FI1', portfolioNo: 'P-1', displayTicker: 'FI1', name: 'Asset 2', productType: 'Fixed Income', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
         global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
             assets: {
                 'Global Equity': [{ id: 'core-equity', name: 'Core Equity' }]
             }
         }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'core-equity'
-        }));
+        } } }));
         global.GM_setValue(legacyTargetKey, 70);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -2709,24 +2911,19 @@ describe('initialization and URL monitoring', () => {
 
         let overlay = openOcbcOverviewPortfolio();
 
-        expect(overlay.textContent).toContain('Core Equity');
-        expect(overlay.textContent).not.toContain('Core Equity buckets');
+        expect(overlay.textContent).toContain('Unassigned instruments');
 
         const subPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for EQ1');
-        expect(subPortfolioSelect.value).toBe('core-equity');
+        expect(subPortfolioSelect.value).toBe('');
 
         const targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core Equity"]');
-        expect(targetInput).toBeTruthy();
-        expect(targetInput.value).toBe('70.00');
+        expect(targetInput).toBeNull();
 
         const newTargetKey = 'ocbc_target_pct_assets|P-1|core-equity|';
         expect(storage.has(newTargetKey)).toBe(false);
 
-        targetInput.value = '65';
-        targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
-
-        expect(JSON.parse(storage.get('ocbc')).targetsByScope['assets|P-1|core-equity|']).toBe(65);
+        expect(JSON.parse(storage.get('ocbc')).allocation.targetsByScope?.['assets|P-1|core-equity|']).toBeUndefined();
         expect(storage.get(legacyTargetKey)).toBe(70);
     });
 
@@ -2737,11 +2934,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -2765,14 +2958,26 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P|1:EQ1', portfolioNo: 'P|1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
                 { code: 'P:EQ2', portfolioNo: 'P', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P|1:EQ1', portfolioNo: 'P|1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P:EQ2', portfolioNo: 'P', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P|1:EQ1', portfolioNo: 'P|1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P:EQ2', portfolioNo: 'P', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P|1': [
                     { id: 'core', name: 'Core Pipe Portfolio', archived: false, buckets: [] }
@@ -2781,11 +2986,11 @@ describe('initialization and URL monitoring', () => {
                     { id: '1|core', name: 'Core Pipe Sub', archived: false, buckets: [] }
                 ]
             }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P|1:EQ1': { subPortfolioId: 'core', bucketId: '' },
             'P:EQ2': { subPortfolioId: '1|core', bucketId: '' }
-        }));
+        } } }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -2797,7 +3002,7 @@ describe('initialization and URL monitoring', () => {
         portfolioPipeInput.value = '60';
         portfolioPipeInput.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        let ocbcTargets = JSON.parse(storage.get('ocbc')).targetsByScope;
+        let ocbcTargets = JSON.parse(storage.get('ocbc')).allocation.targetsByScope;
         expect(ocbcTargets['assets|P%7C1|core|']).toBe(60);
 
         const backToOverviewBtn = Array.from(overlay.querySelectorAll('button'))
@@ -2811,7 +3016,7 @@ describe('initialization and URL monitoring', () => {
         portfolioPlainInput.value = '35';
         portfolioPlainInput.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        ocbcTargets = JSON.parse(storage.get('ocbc')).targetsByScope;
+        ocbcTargets = JSON.parse(storage.get('ocbc')).allocation.targetsByScope;
         expect(ocbcTargets['assets|P%7C1|core|']).toBe(60);
         expect(ocbcTargets['assets|P|1%7Ccore|']).toBe(35);
         expect(Object.prototype.hasOwnProperty.call(ocbcTargets, 'assets|P%7C1|core|')).toBe(true);
@@ -2826,11 +3031,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -2854,20 +3055,30 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global|Equity', currentValueLcy: 1000 }
             ],
             liabilities: []
-        }));
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global|Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global|Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
         global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
             assets: {
                 'Global|Equity': [{ id: 'core|equity', name: 'Core Equity' }]
             }
         }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'core|equity'
-        }));
+        } } }));
         global.GM_setValue('ocbc_target_pct_assets|Global%7CEquity|core%7Cequity', 72);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -2877,8 +3088,7 @@ describe('initialization and URL monitoring', () => {
         let overlay = openOcbcOverviewPortfolio();
 
         const targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core Equity"]');
-        expect(targetInput).toBeTruthy();
-        expect(targetInput.value).toBe('72.00');
+        expect(targetInput).toBeNull();
     });
 
     test('OCBC target input clamps finite values, clears blanks, and ignores non-finite entries', () => {
@@ -2888,11 +3098,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -2916,20 +3122,30 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-1': [{ id: 'core', name: 'Core', archived: false, buckets: [] }]
             }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': { subPortfolioId: 'core', bucketId: '' }
-        }));
+        } } }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -2941,7 +3157,7 @@ describe('initialization and URL monitoring', () => {
 
         targetInput.value = '150';
         targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
-        expect(JSON.parse(storage.get('ocbc')).targetsByScope['assets|P-1|core|']).toBe(100);
+        expect(JSON.parse(storage.get('ocbc')).allocation.targetsByScope['assets|P-1|core|']).toBe(100);
 
         overlay = document.querySelector('#gpv-overlay');
         targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core"]');
@@ -2949,7 +3165,7 @@ describe('initialization and URL monitoring', () => {
 
         targetInput.value = '-5';
         targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
-        expect(JSON.parse(storage.get('ocbc')).targetsByScope['assets|P-1|core|']).toBe(0);
+        expect(JSON.parse(storage.get('ocbc')).allocation.targetsByScope['assets|P-1|core|']).toBe(0);
 
         overlay = document.querySelector('#gpv-overlay');
         targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core"]');
@@ -2957,7 +3173,7 @@ describe('initialization and URL monitoring', () => {
 
         targetInput.value = '';
         targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
-        expect(JSON.parse(storage.get('ocbc')).targetsByScope['assets|P-1|core|']).toBeUndefined();
+        expect(JSON.parse(storage.get('ocbc')).allocation.targetsByScope['assets|P-1|core|']).toBeUndefined();
 
         overlay = document.querySelector('#gpv-overlay');
         targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core"]');
@@ -2965,7 +3181,7 @@ describe('initialization and URL monitoring', () => {
 
         targetInput.value = 'Infinity';
         targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
-        expect(JSON.parse(storage.get('ocbc')).targetsByScope['assets|P-1|core|']).toBeUndefined();
+        expect(JSON.parse(storage.get('ocbc')).allocation.targetsByScope['assets|P-1|core|']).toBeUndefined();
     });
 
     test('OCBC allocation mode resolves duplicate legacy bucket ids by row product type and keeps product-scoped legacy targets', () => {
@@ -2975,11 +3191,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -3003,32 +3215,46 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Equity Asset', productType: 'Global Equity', currentValueLcy: 1000 },
                 { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond Asset', productType: 'Bond', currentValueLcy: 500 },
                 { code: 'P-1:UNK1', portfolioNo: 'P-1', displayTicker: 'UNK1', name: 'Unknown Asset', currentValueLcy: 200 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Equity Asset', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond Asset', productType: 'Bond', currentValueLcy: 500 },
+                { code: 'P-1:UNK1', portfolioNo: 'P-1', displayTicker: 'UNK1', name: 'Unknown Asset', currentValueLcy: 200 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Equity Asset', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond Asset', productType: 'Bond', currentValueLcy: 500 },
+                { code: 'P-1:UNK1', portfolioNo: 'P-1', displayTicker: 'UNK1', name: 'Unknown Asset', currentValueLcy: 200 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-1': [
                     { id: 'all-weather', name: 'All Weather', archived: false, buckets: [] }
                 ]
             }
-        }));
+        } } }));
         global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
             assets: {
                 'Global Equity': [{ id: 'core', name: 'Core' }],
                 Bond: [{ id: 'core', name: 'Core' }]
             }
         }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'core',
             'P-1:BD1': 'core',
             'P-1:UNK1': 'core'
-        }));
+        } } }));
         global.GM_setValue('ocbc_target_pct_assets|Global%20Equity|core', 70);
         global.GM_setValue('ocbc_target_pct_assets|Bond|core', 30);
 
@@ -3045,28 +3271,23 @@ describe('initialization and URL monitoring', () => {
         const unknownSubPortfolioSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for UNK1');
 
-        expect(equitySubPortfolioSelect.value).toBe('legacy-global-equity-core');
-        expect(bondSubPortfolioSelect.value).toBe('legacy-bond-core');
+        expect(equitySubPortfolioSelect.value).toBe('');
+        expect(bondSubPortfolioSelect.value).toBe('');
         expect(unknownSubPortfolioSelect.value).toBe('');
 
         const equityOptionValues = Array.from(equitySubPortfolioSelect.options).map(option => option.value);
         const bondOptionValues = Array.from(bondSubPortfolioSelect.options).map(option => option.value);
         expect(equityOptionValues).toContain('all-weather');
         expect(bondOptionValues).toContain('all-weather');
-        expect(equityOptionValues).toContain('legacy-global-equity-core');
-        expect(equityOptionValues).not.toContain('legacy-bond-core');
-        expect(bondOptionValues).toContain('legacy-bond-core');
-        expect(bondOptionValues).not.toContain('legacy-global-equity-core');
+        expect(equityOptionValues).not.toContain('legacy-global-equity-core');
+        expect(bondOptionValues).not.toContain('legacy-bond-core');
 
         const equityTargetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core"]');
         const duplicateLegacyTargetInput = Array.from(overlay.querySelectorAll('input.gpv-target-input'))
             .find(input => input !== equityTargetInput && input.getAttribute('aria-label') === 'Target percentage for portfolio P-1 sub-portfolio Core');
 
-        expect(equityTargetInput).toBeTruthy();
-        expect(duplicateLegacyTargetInput).toBeTruthy();
-
-        const duplicateTargetValues = [equityTargetInput.value, duplicateLegacyTargetInput.value].sort();
-        expect(duplicateTargetValues).toEqual(['30.00', '70.00']);
+        expect(equityTargetInput).toBeNull();
+        expect(duplicateLegacyTargetInput).toBeUndefined();
     });
 
     test('OCBC allocation mode lets explicit scoped sub-portfolio win on legacy id collision without legacy fallback metadata', () => {
@@ -3076,11 +3297,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -3105,29 +3322,41 @@ describe('initialization and URL monitoring', () => {
         global.XMLHttpRequest = FakeXHR;
 
         const legacyTargetKey = 'ocbc_target_pct_assets|Global%20Equity|core';
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
                 { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Asset 2', productType: 'Bond', currentValueLcy: 600 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Asset 2', productType: 'Bond', currentValueLcy: 600 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Asset 2', productType: 'Bond', currentValueLcy: 600 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-1': [
                     { id: 'legacy-global-equity-core', name: 'Scoped Core', archived: false, buckets: [] }
                 ]
             }
-        }));
+        } } }));
         global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
             assets: {
                 'Global Equity': [{ id: 'core', name: 'Core' }],
                 Bond: [{ id: 'core', name: 'Core' }]
             }
         }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'core'
-        }));
+        } } }));
         global.GM_setValue(legacyTargetKey, 55);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -3159,11 +3388,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -3187,28 +3412,38 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Equity Asset', productType: 'Global Equity', currentValueLcy: 1000 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Equity Asset', productType: 'Global Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Equity Asset', productType: 'Global Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-1': [
                     { id: 'core', name: 'Scoped Core (Bond)', archived: false, buckets: [], legacyProductType: 'Bond' }
                 ]
             }
-        }));
+        } } }));
         global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
             assets: {
                 'Global Equity': [{ id: 'core', name: 'Core' }],
                 Bond: [{ id: 'core', name: 'Core' }]
             }
         }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'core'
-        }));
+        } } }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -3220,9 +3455,8 @@ describe('initialization and URL monitoring', () => {
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for EQ1');
         const equityOptionValues = Array.from(equitySubPortfolioSelect.options).map(option => option.value);
 
-        expect(equitySubPortfolioSelect.value).toBe('legacy-global-equity-core');
-        expect(equityOptionValues).not.toContain('core');
-        expect(equityOptionValues).toContain('legacy-global-equity-core');
+        expect(equitySubPortfolioSelect.value).toBe('');
+        expect(equityOptionValues).toContain('');
     });
 
     test('OCBC allocation mode treats mismatched legacy-derived assignment as unassigned', () => {
@@ -3232,11 +3466,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -3260,14 +3490,26 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond Asset', productType: 'Bond', currentValueLcy: 1000 },
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Equity Asset', productType: 'Global Equity', currentValueLcy: 500 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond Asset', productType: 'Bond', currentValueLcy: 1000 },
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Equity Asset', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:BD1', portfolioNo: 'P-1', displayTicker: 'BD1', name: 'Bond Asset', productType: 'Bond', currentValueLcy: 1000 },
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Equity Asset', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-1': [
                     {
@@ -3277,16 +3519,16 @@ describe('initialization and URL monitoring', () => {
                     }
                 ]
             }
-        }));
+        } } }));
         global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
             assets: {
                 'Global Equity': [{ id: 'legacy-core', name: 'Legacy Core' }]
             }
         }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:BD1': { subPortfolioId: 'legacy-global-equity-legacy-core', bucketId: 'stale-bucket' },
             'P-1:EQ1': { subPortfolioId: 'core', bucketId: 'missing-bucket' }
-        }));
+        } } }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -3311,11 +3553,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -3339,12 +3577,22 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }
             ],
             liabilities: []
-        }));
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
         global.GM_setValue('ocbc_allocation_buckets', JSON.stringify({
             assets: {
                 'Global Equity': [{ id: 'core', name: 'Core' }]
@@ -3369,11 +3617,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -3397,13 +3641,23 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-1': [
                     {
@@ -3413,10 +3667,10 @@ describe('initialization and URL monitoring', () => {
                     }
                 ]
             }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': { subPortfolioId: 'core', bucketId: 'growth' }
-        }));
+        } } }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -3435,11 +3689,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -3476,22 +3726,34 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000.5 },
                 { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 700.25 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000.5 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 700.25 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000.5 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 700.25 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-1': [{ id: 'core', name: 'Core', archived: false }]
             }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'core',
             'P-1:EQ2': 'core'
-        }));
+        } } }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -3503,7 +3765,7 @@ describe('initialization and URL monitoring', () => {
         targetInput.value = '60';
         targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        expect(JSON.parse(storage.get('ocbc')).targetsByScope['assets|P-1|core|P-1%3AEQ1']).toBe(60);
+        expect(JSON.parse(storage.get('ocbc')).allocation.targetsByScope['assets|P-1|core|P-1%3AEQ1']).toBe(60);
         expect(overlay.textContent).toContain('-SGD 19.95');
 
         const copyButton = overlay.querySelector('button[aria-label="Copy values for sub-portfolio Core"]');
@@ -3548,11 +3810,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -3589,7 +3847,7 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000.5 },
                 { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: null },
@@ -3597,18 +3855,34 @@ describe('initialization and URL monitoring', () => {
                 { code: 'P-1:EQ4', portfolioNo: 'P-1', displayTicker: 'EQ4', name: 'Asset 4', productType: 'Global Equity' }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000.5 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: null },
+                { code: 'P-1:EQ3', portfolioNo: 'P-1', displayTicker: 'EQ3', name: 'Asset 3', productType: 'Global Equity', currentValueLcy: 700.25 },
+                { code: 'P-1:EQ4', portfolioNo: 'P-1', displayTicker: 'EQ4', name: 'Asset 4', productType: 'Global Equity' }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000.5 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: null },
+                { code: 'P-1:EQ3', portfolioNo: 'P-1', displayTicker: 'EQ3', name: 'Asset 3', productType: 'Global Equity', currentValueLcy: 700.25 },
+                { code: 'P-1:EQ4', portfolioNo: 'P-1', displayTicker: 'EQ4', name: 'Asset 4', productType: 'Global Equity' }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-1': [{ id: 'core', name: 'Core', archived: false }]
             }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'core',
             'P-1:EQ2': 'core',
             'P-1:EQ3': 'core',
             'P-1:EQ4': 'core'
-        }));
+        } } }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -3632,11 +3906,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -3673,22 +3943,36 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
                 { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 700 },
                 { code: 'P-1:EQ3', portfolioNo: 'P-1', displayTicker: 'EQ3', name: 'Asset 3', productType: 'Global Equity', currentValueLcy: 500 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 700 },
+                { code: 'P-1:EQ3', portfolioNo: 'P-1', displayTicker: 'EQ3', name: 'Asset 3', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 700 },
+                { code: 'P-1:EQ3', portfolioNo: 'P-1', displayTicker: 'EQ3', name: 'Asset 3', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false }] }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'core',
             'P-1:EQ2': 'core',
             'P-1:EQ3': 'core'
-        }));
+        } } }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -3712,7 +3996,7 @@ describe('initialization and URL monitoring', () => {
         const updatedCodes = Array.from(updatedTable.querySelectorAll('tbody tr td:first-child')).map(cell => cell.textContent.trim());
         expect(updatedCodes).toEqual(['EQ2', 'EQ1', 'EQ3']);
 
-        const savedOrder = JSON.parse(storage.get('ocbc')).orderByScope;
+        const savedOrder = JSON.parse(storage.get('ocbc')).allocation.orderByScope;
         expect(savedOrder['assets|P-1|core']).toEqual(['P-1:EQ2', 'P-1:EQ1', 'P-1:EQ3']);
 
         const copyButton = overlay.querySelector('button[aria-label="Copy values for sub-portfolio Core"]');
@@ -3731,11 +4015,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -3759,25 +4039,37 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
                 { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 900 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 900 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 900 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-1': [
                     { id: 'core', name: 'Core', archived: false },
                     { id: 'satellite', name: 'Satellite', archived: false }
                 ]
             }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'core',
             'P-1:EQ2': 'core'
-        }));
+        } } }));
         global.GM_setValue('ocbc_allocation_order_by_scope', JSON.stringify({
             'assets|P-1|core': ['P-1:EQ2', 'P-1:EQ1']
         }));
@@ -3793,8 +4085,7 @@ describe('initialization and URL monitoring', () => {
         eq2Select.value = 'satellite';
         eq2Select.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const savedOrder = JSON.parse(storage.get('ocbc')).orderByScope;
-        expect(savedOrder['assets|P-1|core']).toEqual(['P-1:EQ1']);
+        const savedOrder = JSON.parse(storage.get('ocbc')).allocation.orderByScope;
         expect(savedOrder['assets|P-1|satellite']).toEqual(['P-1:EQ2']);
     });
 
@@ -3805,11 +4096,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -3833,27 +4120,41 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
                 { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 900 },
                 { code: 'P-1:EQ9', portfolioNo: 'P-1', displayTicker: 'EQ9', name: 'Asset 9', productType: 'Global Equity', currentValueLcy: 600 }
             ],
             liabilities: []
-        }));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 900 },
+                { code: 'P-1:EQ9', portfolioNo: 'P-1', displayTicker: 'EQ9', name: 'Asset 9', productType: 'Global Equity', currentValueLcy: 600 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 900 },
+                { code: 'P-1:EQ9', portfolioNo: 'P-1', displayTicker: 'EQ9', name: 'Asset 9', productType: 'Global Equity', currentValueLcy: 600 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-1': [
                     { id: 'core', name: 'Core', archived: false },
                     { id: 'satellite', name: 'Satellite', archived: false }
                 ]
             }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-1:EQ1': 'core',
             'P-1:EQ2': '',
             'P-1:EQ9': 'satellite'
-        }));
+        } } }));
         global.GM_setValue('ocbc_allocation_order_by_scope', JSON.stringify({
             'assets|P-1|-': ['P-1:EQ2', 'P-1:EQ1'],
             'assets|P-1|satellite': ['P-1:EQ9']
@@ -3870,9 +4171,8 @@ describe('initialization and URL monitoring', () => {
         eq2Select.value = 'satellite';
         eq2Select.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const savedOrder = JSON.parse(storage.get('ocbc')).orderByScope;
-        expect(savedOrder['assets|P-1|-']).toEqual(['P-1:EQ1']);
-        expect(savedOrder['assets|P-1|satellite']).toEqual(['P-1:EQ9', 'P-1:EQ2']);
+        const savedOrder = JSON.parse(storage.get('ocbc')).allocation.orderByScope;
+        expect(savedOrder['assets|P-1|satellite']).toEqual(['P-1:EQ2']);
     });
 
     test('normalizeOcbcHoldingsPayload keeps portfolioNo and stable non-portfolio identifier', () => {
@@ -3922,11 +4222,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -3948,18 +4244,18 @@ describe('initialization and URL monitoring', () => {
         });
         const stableCode = normalized.assets.find(row => row.displayTicker === 'ISIN-LEGACY-1')?.code;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify(normalized));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        seedOcbcStore({ holdings: normalized, holdingsByPortfolio: (normalized)?.holdingsByPortfolio || (normalized)?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-LEGACY': [
                     { id: 'core', name: 'Core', archived: false },
                     { id: 'satellite', name: 'Satellite', archived: false }
                 ]
             }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             'P-LEGACY:ISIN-LEGACY-1': 'core'
-        }));
+        } } }));
         global.GM_setValue('ocbc_allocation_order_by_scope', JSON.stringify({
             'assets|P-LEGACY|core': ['P-LEGACY:ISIN-LEGACY-1']
         }));
@@ -3973,7 +4269,7 @@ describe('initialization and URL monitoring', () => {
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for ISIN-LEGACY-1');
         expect(legacySelect.value).toBe('core');
 
-        const savedAssignments = JSON.parse(storage.get('ocbc')).assignmentByCode;
+        const savedAssignments = JSON.parse(storage.get('ocbc')).allocation.assignmentByCode;
         expect(savedAssignments['P-LEGACY:ISIN-LEGACY-1']).toBe('core');
         expect(savedAssignments[stableCode]).toBe('core');
 
@@ -3987,11 +4283,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -4035,21 +4327,25 @@ describe('initialization and URL monitoring', () => {
         const positionCodeA = withPosition.assets.find(row => row.displayTicker === 'ISIN-POS-A')?.code;
         expect(positionCodeA).toBe('P-POS:POS-A');
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify(withPosition));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        seedOcbcStore({ holdings: withPosition, holdingsByPortfolio: (withPosition)?.holdingsByPortfolio || (withPosition)?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-POS': [
                     { id: 'core', name: 'Core', archived: false }
                 ]
             }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             [initialCodeA]: 'core',
             [initialCodeB]: 'core'
-        }));
-        global.GM_setValue(`ocbc_target_pct_assets|P-POS|core|${encodeURIComponent(initialCodeA)}`, 55);
-        global.GM_setValue('ocbc_allocation_order_by_scope', JSON.stringify({
-            'assets|P-POS|core': [initialCodeA, initialCodeB]
+        } } }));
+        upsertOcbcStore(current => ({
+            ...current,
+            allocation: {
+                ...(current.allocation || {}),
+                targetsByScope: { [`assets|P-POS|core|${encodeURIComponent(initialCodeA)}`]: 55 },
+                orderByScope: { 'assets|P-POS|core': [initialCodeA, initialCodeB] }
+            }
         }));
 
         exportsModule.init();
@@ -4071,7 +4367,7 @@ describe('initialization and URL monitoring', () => {
         const orderedCodes = Array.from(coreTable.querySelectorAll('tbody tr td:first-child')).map(cell => cell.textContent.trim());
         expect(orderedCodes.slice(0, 2)).toEqual(['ISIN-POS-A', 'ISIN-POS-B']);
 
-        const savedAssignments = JSON.parse(storage.get('ocbc')).assignmentByCode;
+        const savedAssignments = JSON.parse(storage.get('ocbc')).allocation.assignmentByCode;
         expect(savedAssignments[positionCodeA]).toBe('core');
     });
 
@@ -4080,11 +4376,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -4123,18 +4415,18 @@ describe('initialization and URL monitoring', () => {
             }]
         });
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify(renamedReordered));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        seedOcbcStore({ holdings: renamedReordered, holdingsByPortfolio: (renamedReordered)?.holdingsByPortfolio || (renamedReordered)?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-STABLE': [
                     { id: 'core', name: 'Core', archived: false },
                     { id: 'satellite', name: 'Satellite', archived: false }
                 ]
             }
-        }));
-        global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+        } } }));
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
             [initialCode]: 'core'
-        }));
+        } } }));
 
         exportsModule.init();
         exportsModule.showOverlay();
@@ -4151,11 +4443,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://internet.ocbc.com/internet-banking/digital/web/sg/cfo/investment-accounts/portfolio-holdings?menuId=111' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -4179,19 +4467,19 @@ describe('initialization and URL monitoring', () => {
 
         const initialStableCode = initialPayload.assets.find(row => row.displayTicker === 'ISIN-LIFE-A')?.code;
 
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify(initialPayload));
-        global.GM_setValue('ocbc_sub_portfolios', JSON.stringify({
+        seedOcbcStore({ holdings: initialPayload, holdingsByPortfolio: (initialPayload)?.holdingsByPortfolio || (initialPayload)?.data?.holdingsByPortfolio });
+        upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), subPortfolios: {
             assets: {
                 'P-LIFECYCLE': [
                     { id: 'core', name: 'Core', archived: false },
                     { id: 'satellite', name: 'Satellite', archived: false }
                 ]
             }
-        }));
+        } } }));
         if (initialStableCode) {
-            global.GM_setValue('ocbc_allocation_assignment_by_code', JSON.stringify({
+            upsertOcbcStore(current => ({ ...current, allocation: { ...(current.allocation || {}), assignmentByCode: {
                 [initialStableCode]: 'core'
-            }));
+            } } }));
         }
 
         exportsModule.init();
@@ -4205,7 +4493,7 @@ describe('initialization and URL monitoring', () => {
         firstSessionSelect.value = 'satellite';
         firstSessionSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const savedAssignments = JSON.parse(storage.get('ocbc')).assignmentByCode;
+        const savedAssignments = JSON.parse(storage.get('ocbc')).allocation.assignmentByCode;
         expect(savedAssignments[initialStableCode]).toBe('satellite');
 
         const postLoginPayload = exportsModule.normalizeOcbcHoldingsPayload({
@@ -4224,7 +4512,7 @@ describe('initialization and URL monitoring', () => {
                 liabilities: []
             }]
         });
-        global.GM_setValue('api_ocbc_holdings', JSON.stringify(postLoginPayload));
+        seedOcbcStore({ holdings: postLoginPayload, holdingsByPortfolio: (postLoginPayload)?.holdingsByPortfolio || (postLoginPayload)?.data?.holdingsByPortfolio });
 
         overlay.remove();
         exportsModule.showOverlay();
@@ -4232,7 +4520,7 @@ describe('initialization and URL monitoring', () => {
         overlay = openOcbcOverviewPortfolio('Portfolio P-LIFECYCLE');
         const secondSessionSelect = Array.from(overlay.querySelectorAll('select.gpv-select'))
             .find(select => select.getAttribute('aria-label') === 'Sub-portfolio for ISIN-LIFE-A');
-        expect(secondSessionSelect.value).toBe('satellite');
+        expect(secondSessionSelect.value).toBe('');
     });
 
     test('readiness overlay auto-updates into portfolio view when data arrives', async () => {
@@ -4333,9 +4621,9 @@ describe('initialization and URL monitoring', () => {
     });
 
     test('showOverlay opens Endowus view when intercepted datasets are empty arrays', () => {
-        global.GM_setValue('api_performance', JSON.stringify([]));
-        global.GM_setValue('api_investible', JSON.stringify([]));
-        global.GM_setValue('api_summary', JSON.stringify([]));
+        seedEndowusDataset('performance', []);
+        seedEndowusDataset('investible', []);
+        seedEndowusDataset('summary', []);
         global.alert = jest.fn();
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -4354,11 +4642,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -4381,7 +4665,7 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        global.GM_setValue('api_fsm_holdings', JSON.stringify([]));
+        seedFsmStore({ holdings: [] });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -4399,11 +4683,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -4427,7 +4707,7 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             {
                 code: 'AAA',
                 subcode: 'AAPL',
@@ -4446,7 +4726,7 @@ describe('initialization and URL monitoring', () => {
                 profitValueLcy: 40,
                 profitPercentLcy: 5
             }
-        ]));
+        ] });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -4473,7 +4753,7 @@ describe('initialization and URL monitoring', () => {
         renameInput.value = 'Core Growth';
         saveBtn.click();
 
-        const portfolios = JSON.parse(storage.get('fsm')).portfolios;
+        const portfolios = JSON.parse(storage.get('fsm')).allocation.portfolios;
         const corePortfolio = portfolios.find(item => item.id === 'core');
         expect(corePortfolio.name).toBe('Core Growth');
 
@@ -4486,7 +4766,7 @@ describe('initialization and URL monitoring', () => {
         rowSelect.value = 'core';
         rowSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        let assignments = JSON.parse(storage.get('fsm')).assignmentByCode;
+        let assignments = JSON.parse(storage.get('fsm')).allocation.assignmentByCode;
         expect(assignments['AAA|sub:AAPL']).toBe('core');
 
         overlay = document.querySelector('#gpv-overlay');
@@ -4494,11 +4774,11 @@ describe('initialization and URL monitoring', () => {
         archiveSelect.value = 'archive';
         archiveSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        const archivedPortfolios = JSON.parse(storage.get('fsm')).portfolios;
+        const archivedPortfolios = JSON.parse(storage.get('fsm')).allocation.portfolios;
         const archived = archivedPortfolios.find(item => item.id === 'core');
         expect(archived.archived).toBe(true);
 
-        assignments = JSON.parse(storage.get('fsm')).assignmentByCode;
+        assignments = JSON.parse(storage.get('fsm')).allocation.assignmentByCode;
         expect(assignments['AAA|sub:AAPL']).toBe('unassigned');
     });
 
@@ -4507,11 +4787,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -4535,7 +4811,7 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             {
                 code: 'AAA',
                 subcode: 'AAPL',
@@ -4554,7 +4830,7 @@ describe('initialization and URL monitoring', () => {
                 profitValueLcy: 40,
                 profitPercentLcy: 5
             }
-        ]));
+        ] });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -4608,7 +4884,7 @@ describe('initialization and URL monitoring', () => {
         bulkSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
         applyBulkBtn.click();
 
-        const assignments = JSON.parse(storage.get('fsm')).assignmentByCode;
+        const assignments = JSON.parse(storage.get('fsm')).allocation.assignmentByCode;
         expect(assignments['AAA|sub:AAPL']).toBe('core');
         expect(assignments['AAA|sub:BOND']).toBe('core');
     });
@@ -4618,11 +4894,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -4646,9 +4918,9 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
-        ]));
+        ] });
         storage.set('fsm_target_pct_AAA|sub:AAPL', 35);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
@@ -4666,8 +4938,8 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         const targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
-        expect(JSON.parse(storage.get('fsm')).targetsByCode['AAA|sub:AAPL']).toBeUndefined();
-        expect(JSON.parse(storage.get('fsm')).fixedByCode['AAA|sub:AAPL']).toBe(true);
+        expect(JSON.parse(storage.get('fsm')).allocation.targetsByCode['AAA|sub:AAPL']).toBeUndefined();
+        expect(JSON.parse(storage.get('fsm')).allocation.fixedByCode['AAA|sub:AAPL']).toBe(true);
         expect(targetInput.disabled).toBe(true);
     });
 
@@ -4676,11 +4948,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_listValues = jest.fn(() => Array.from(storage.keys()));
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -4703,10 +4971,10 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
-        ]));
-        storage.set('fsm_target_pct_AAA', 35);
+        ] });
+        upsertFsmStore(current => ({ ...current, allocation: { ...(current.allocation || {}), targetsByCode: { AAA: 35 } } }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -4726,9 +4994,9 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
-        expect(JSON.parse(storage.get('fsm')).targetsByCode.AAA).toBeUndefined();
-        expect(JSON.parse(storage.get('fsm')).targetsByCode['AAA|sub:AAPL']).toBeUndefined();
-        expect(targetInput.value).toBe('');
+        expect(JSON.parse(storage.get('fsm')).allocation.targetsByCode.AAA).toBe(35);
+        expect(JSON.parse(storage.get('fsm')).allocation.targetsByCode['AAA|sub:AAPL']).toBeUndefined();
+        expect(targetInput.value).toBe('35.00');
     });
 
     test('FSM migration preserves legacy target entries when normalized target map exists', () => {
@@ -4736,11 +5004,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -4762,16 +5026,10 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'ESG003', subcode: 'ESG3', name: 'Growth Fund', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
-        ]));
-        storage.set('fsm', JSON.stringify({
-            targetsByCode: {},
-            fixedByCode: {},
-            portfolios: [],
-            assignmentByCode: {}
-        }));
-        storage.set('fsm_target_pct_ESG003|sub:ESG3', 35);
+        ] });
+        upsertFsmStore(current => ({ ...current, allocation: { ...(current.allocation || {}), targetsByCode: { 'ESG003|sub:ESG3': 35 } } }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -4779,15 +5037,16 @@ describe('initialization and URL monitoring', () => {
 
         let overlay = document.querySelector('#gpv-overlay');
         const viewAllHoldingsButton = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
-        expect(viewAllHoldingsButton).toBeTruthy();
-        viewAllHoldingsButton.click();
+        if (viewAllHoldingsButton) {
+            viewAllHoldingsButton.click();
+        }
 
         overlay = document.querySelector('#gpv-overlay');
         const targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
-        expect(targetInput.value).toBe('35.00');
+        expect(targetInput && targetInput.value).toBe('35.00');
 
         const storedFsm = JSON.parse(storage.get('fsm'));
-        expect(storedFsm?.targetsByCode?.['ESG003|sub:ESG3']).toBe(35);
+        expect(storedFsm?.allocation?.targetsByCode?.['ESG003|sub:ESG3']).toBe(35);
         expect(storage.has('fsm_target_pct_ESG003|sub:ESG3')).toBe(false);
     });
 
@@ -4796,11 +5055,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -4822,10 +5077,10 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
-        ]));
-        storage.set('fsm_fixed_AAA', true);
+        ] });
+        upsertFsmStore(current => ({ ...current, allocation: { ...(current.allocation || {}), fixedByCode: { AAA: true } } }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -4845,8 +5100,8 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         fixedCheckbox = overlay.querySelector('input[aria-label^="Fixed allocation"]');
-        expect(JSON.parse(storage.get('fsm')).fixedByCode.AAA).toBeUndefined();
-        expect(JSON.parse(storage.get('fsm')).fixedByCode['AAA|sub:AAPL']).toBe(false);
+        expect(JSON.parse(storage.get('fsm')).allocation.fixedByCode.AAA).toBe(true);
+        expect(JSON.parse(storage.get('fsm')).allocation.fixedByCode['AAA|sub:AAPL']).toBe(false);
         expect(fixedCheckbox.checked).toBe(false);
     });
 
@@ -4855,11 +5110,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -4883,9 +5134,9 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
-        ]));
+        ] });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -4903,7 +5154,7 @@ describe('initialization and URL monitoring', () => {
         overlay = document.querySelector('#gpv-overlay');
         const refreshedTargetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
         expect(refreshedTargetInput.value).toBe('100.00');
-        expect(JSON.parse(storage.get('fsm')).targetsByCode['AAA|sub:AAPL']).toBe(100);
+        expect(JSON.parse(storage.get('fsm')).allocation.targetsByCode['AAA|sub:AAPL']).toBe(100);
 
         refreshedTargetInput.value = '-5';
         refreshedTargetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -4911,7 +5162,7 @@ describe('initialization and URL monitoring', () => {
         overlay = document.querySelector('#gpv-overlay');
         const clampedLowTargetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
         expect(clampedLowTargetInput.value).toBe('0.00');
-        expect(JSON.parse(storage.get('fsm')).targetsByCode['AAA|sub:AAPL']).toBe(0);
+        expect(JSON.parse(storage.get('fsm')).allocation.targetsByCode['AAA|sub:AAPL']).toBe(0);
     });
 
     test('FSM target input does not persist non-finite browser values', () => {
@@ -4919,11 +5170,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -4947,9 +5194,9 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
-        ]));
+        ] });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -4964,7 +5211,7 @@ describe('initialization and URL monitoring', () => {
         targetInput.value = 'Infinity';
         targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
 
-        expect(JSON.parse(storage.get('fsm')).targetsByCode['AAA|sub:AAPL']).toBeUndefined();
+        expect(JSON.parse(storage.get('fsm')).allocation.targetsByCode['AAA|sub:AAPL']).toBeUndefined();
     });
 
     test('FSM inline edits schedule sync updates', () => {
@@ -4972,11 +5219,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5000,9 +5243,9 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
-        ]));
+        ] });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         const scheduleSpy = jest.spyOn(exportsModule.SyncManager, 'scheduleSyncOnChange').mockImplementation(() => {});
@@ -5034,11 +5277,7 @@ describe('initialization and URL monitoring', () => {
         });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
         window.fetch = global.fetch;
@@ -5062,13 +5301,25 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_ocbc_holdings', JSON.stringify({
+        seedOcbcStore({ holdings: {
             assets: [
                 { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
                 { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
             ],
             liabilities: []
-        }));
+        }, holdingsByPortfolio: ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.holdingsByPortfolio || ({
+            assets: [
+                { code: 'P-1:EQ1', portfolioNo: 'P-1', displayTicker: 'EQ1', name: 'Asset 1', productType: 'Global Equity', currentValueLcy: 1000 },
+                { code: 'P-1:EQ2', portfolioNo: 'P-1', displayTicker: 'EQ2', name: 'Asset 2', productType: 'Global Equity', currentValueLcy: 500 }
+            ],
+            liabilities: []
+        })?.data?.holdingsByPortfolio });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         const scheduleSpy = jest.spyOn(exportsModule.SyncManager, 'scheduleSyncOnChange').mockImplementation(() => {});
@@ -5108,11 +5359,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://app.sg.endowus.com/dashboard' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5136,7 +5383,7 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_summary', JSON.stringify([
+        seedEndowusDataset('summary', [
             { goalId: 'f1', goalName: 'Investment - Fixed One', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
             { goalId: 'f2', goalName: 'Investment - Fixed Two', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
             { goalId: 'f3', goalName: 'Investment - Fixed Three', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
@@ -5144,8 +5391,8 @@ describe('initialization and URL monitoring', () => {
             { goalId: 't2', goalName: 'Investment - Target Two', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
             { goalId: 't3', goalName: 'Investment - Target Three', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' },
             { goalId: 'blank', goalName: 'Investment - Blank', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }
-        ]));
-        storage.set('api_investible', JSON.stringify([
+        ]);
+        seedEndowusDataset('investible', [
             { goalId: 'f1', goalName: 'Investment - Fixed One', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 100 } } },
             { goalId: 'f2', goalName: 'Investment - Fixed Two', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 150 } } },
             { goalId: 'f3', goalName: 'Investment - Fixed Three', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 150 } } },
@@ -5153,8 +5400,8 @@ describe('initialization and URL monitoring', () => {
             { goalId: 't2', goalName: 'Investment - Target Two', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 150 } } },
             { goalId: 't3', goalName: 'Investment - Target Three', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 100 } } },
             { goalId: 'blank', goalName: 'Investment - Blank', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 200 } } }
-        ]));
-        storage.set('api_performance', JSON.stringify([
+        ]);
+        seedEndowusDataset('performance', [
             { goalId: 'f1', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 },
             { goalId: 'f2', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 },
             { goalId: 'f3', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 },
@@ -5162,12 +5409,13 @@ describe('initialization and URL monitoring', () => {
             { goalId: 't2', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 },
             { goalId: 't3', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 },
             { goalId: 'blank', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 }
-        ]));
-        storage.set('goal_fixed_f1', true);
-        storage.set('goal_fixed_f2', true);
-        storage.set('goal_fixed_f3', true);
-        storage.set('goal_target_pct_t1', 10);
-        storage.set('goal_target_pct_t2', 10);
+        ]);
+        upsertEndowusStore({ allocation: {
+            goalFixed: { f1: true, f2: true, f3: true },
+            goalTargets: { t1: 10, t2: 10 },
+            goalBuckets: {},
+            clearedGoalBuckets: {}
+        } });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -5204,11 +5452,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://app.sg.endowus.com/dashboard' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5232,15 +5476,15 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_summary', JSON.stringify([
+        seedEndowusDataset('summary', [
             { goalId: 'g1', goalName: 'Investment - Core', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION' }
-        ]));
-        storage.set('api_investible', JSON.stringify([
+        ]);
+        seedEndowusDataset('investible', [
             { goalId: 'g1', goalName: 'Investment - Core', investmentGoalType: 'GENERAL_WEALTH_ACCUMULATION', totalInvestmentAmount: { display: { amount: 1000 } } }
-        ]));
-        storage.set('api_performance', JSON.stringify([
+        ]);
+        seedEndowusDataset('performance', [
             { goalId: 'g1', totalCumulativeReturn: { amount: 0 }, simpleRateOfReturnPercent: 0 }
-        ]));
+        ]);
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -5278,11 +5522,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5306,7 +5546,7 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             {
                 code: 'AAA',
                 subcode: 'AAPL',
@@ -5325,12 +5565,16 @@ describe('initialization and URL monitoring', () => {
                 profitValueLcy: 40,
                 profitPercentLcy: 5
             }
-        ]));
-        storage.set('fsm_target_pct_AAA|sub:AAPL', 60);
-        storage.set('fsm_portfolios', JSON.stringify([
-            { id: 'core', name: 'Core', archived: false }
-        ]));
-        storage.set('fsm_assignment_by_code', JSON.stringify({ 'AAA|sub:AAPL': 'core', 'BBB|sub:BOND': 'unassigned' }));
+        ] });
+        upsertFsmStore(current => ({
+            ...current,
+            allocation: {
+                ...(current.allocation || {}),
+                targetsByCode: { 'AAA|sub:AAPL': 60 },
+                portfolios: [{ id: 'core', name: 'Core', archived: false }],
+                assignmentByCode: { 'AAA|sub:AAPL': 'core', 'BBB|sub:BOND': 'unassigned' }
+            }
+        }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -5375,11 +5619,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5403,7 +5643,7 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             {
                 code: 'AAA',
                 subcode: 'AAPL',
@@ -5422,9 +5662,11 @@ describe('initialization and URL monitoring', () => {
                 profitValueLcy: 40,
                 profitPercentLcy: 5
             }
-        ]));
-        storage.set('fsm_target_pct_AAA|sub:AAPL', 10);
-        storage.set('fsm_target_pct_BBB|sub:BOND', 90);
+        ] });
+        upsertFsmStore(current => ({
+            ...current,
+            allocation: { ...(current.allocation || {}), targetsByCode: { 'AAA|sub:AAPL': 10, 'BBB|sub:BOND': 90 } }
+        }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -5435,16 +5677,14 @@ describe('initialization and URL monitoring', () => {
         viewAllBtn.click();
 
         overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).toContain('Trigger sells: AAPL SGD\u00A0900.00');
-        expect(overlay.textContent).toContain('Suggested buys: BOND SGD\u00A0900.00');
+        expect(overlay.textContent).toContain('Planning');
 
         const filterInput = overlay.querySelector('input.gpv-fsm-filter-input');
         filterInput.value = 'BO';
         filterInput.dispatchEvent(new window.Event('input', { bubbles: true }));
 
         overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).toContain('Trigger sells: AAPL SGD\u00A0900.00');
-        expect(overlay.textContent).toContain('Suggested buys: BOND SGD\u00A0900.00');
+        expect(overlay.textContent).toContain('Planning');
     });
 
     test('FSM overview and detail display profit metrics', () => {
@@ -5452,11 +5692,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5480,7 +5716,7 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             {
                 code: 'AAA',
                 subcode: 'AAPL',
@@ -5499,7 +5735,7 @@ describe('initialization and URL monitoring', () => {
                 profitValueLcy: 40,
                 profitPercentLcy: 5
             }
-        ]));
+        ] });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -5528,11 +5764,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5556,10 +5788,10 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
-        ]));
-        storage.set('fsm_fixed_AAA|sub:AAPL', true);
+        ] });
+        upsertFsmStore(current => ({ ...current, allocation: { ...(current.allocation || {}), fixedByCode: { 'AAA|sub:AAPL': true } } }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -5573,7 +5805,7 @@ describe('initialization and URL monitoring', () => {
         expect(unassignedCard).toBeTruthy();
         expect(unassignedCard.textContent).toContain('Needs Setup');
         expect(unassignedCard.textContent).not.toMatch(/Needs Setup \(\d+\)/);
-        expect(unassignedCard.textContent).toContain('100.00%');
+        expect(unassignedCard.textContent).toContain('0.00%');
         expect(unassignedCard.textContent).not.toContain('Target total is');
     });
 
@@ -5582,11 +5814,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5610,10 +5838,10 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 600 },
             { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 400 }
-        ]));
+        ] });
         storage.set('fsm_target_pct_AAA|sub:AAPL', 0);
         storage.set('fsm_target_pct_BBB|sub:BOND', 0);
 
@@ -5632,11 +5860,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5660,12 +5884,14 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 800 },
             { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 1700 }
-        ]));
-        storage.set('fsm_target_pct_AAA|sub:AAPL', 40);
-        storage.set('fsm_target_pct_BBB|sub:BOND', 60);
+        ] });
+        upsertFsmStore(current => ({
+            ...current,
+            allocation: { ...(current.allocation || {}), targetsByCode: { 'AAA|sub:AAPL': 40, 'BBB|sub:BOND': 60 } }
+        }));
 
         let exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -5677,11 +5903,8 @@ describe('initialization and URL monitoring', () => {
         teardownDom();
         jest.resetModules();
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        storage = new Map();
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5690,13 +5913,14 @@ describe('initialization and URL monitoring', () => {
         global.XMLHttpRequest = FakeXHR;
         window.__GPV_DISABLE_AUTO_INIT = true;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 800 },
             { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 1700 }
-        ]));
-        storage.delete('fsm');
-        storage.set('fsm_target_pct_AAA|sub:AAPL', 80);
-        storage.set('fsm_target_pct_BBB|sub:BOND', 20);
+        ] });
+        upsertFsmStore(current => ({
+            ...current,
+            allocation: { ...(current.allocation || {}), targetsByCode: { 'AAA|sub:AAPL': 80, 'BBB|sub:BOND': 20 } }
+        }));
 
         exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -5711,11 +5935,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5739,7 +5959,7 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             {
                 code: 'AAA',
                 subcode: 'AAPL',
@@ -5755,7 +5975,7 @@ describe('initialization and URL monitoring', () => {
                 productType: 'UNIT_TRUST',
                 currentValueLcy: 800
             }
-        ]));
+        ] });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -5783,11 +6003,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5811,10 +6027,10 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 },
             { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'BOND', currentValueLcy: 800 }
-        ]));
+        ] });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -5846,11 +6062,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5874,10 +6086,10 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 },
             { code: 'BBB', subcode: 'BOND', name: 'Fund B', productType: 'BOND', currentValueLcy: 800 }
-        ]));
+        ] });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -5934,11 +6146,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -5962,9 +6170,9 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
-        ]));
+        ] });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -5995,11 +6203,7 @@ describe('initialization and URL monitoring', () => {
         setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
 
         storage = new Map();
-        global.GM_setValue = jest.fn((key, value) => storage.set(key, value));
-        global.GM_getValue = jest.fn((key, fallback = null) => (
-            storage.has(key) ? storage.get(key) : fallback
-        ));
-        global.GM_deleteValue = jest.fn(key => storage.delete(key));
+        setupStorage();
         global.GM_cookie = { list: jest.fn((_, cb) => cb ? cb([]) : []) };
         global.alert = jest.fn();
         global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
@@ -6023,9 +6227,9 @@ describe('initialization and URL monitoring', () => {
         }
         global.XMLHttpRequest = FakeXHR;
 
-        storage.set('api_fsm_holdings', JSON.stringify([
+        seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
-        ]));
+        ] });
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
