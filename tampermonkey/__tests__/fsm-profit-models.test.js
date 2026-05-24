@@ -10,7 +10,14 @@ describe('FSM profit models', () => {
                 fixedByCode: {},
                 portfolios,
                 assignmentByCode: assignments,
-                allocationModel: 1,
+                allocationModel: {
+                    version: 1,
+                    scopes: [],
+                    assignments: {},
+                    targets: {},
+                    ordering: {},
+                    metadata: { platformId: 'fsm' }
+                },
                 ...extraAllocation
             },
             ui: {},

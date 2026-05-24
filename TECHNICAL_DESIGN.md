@@ -923,7 +923,6 @@ When contributing to the technical implementation:
 
 ---
 
-*Last updated: November 2024*
 ## Userscript Platform Adapter Registry (v4)
 
 The userscript now uses a central in-file adapter registry (`PLATFORM_ADAPTERS`) for Endowus, FSM, and OCBC. Each adapter owns:
@@ -942,3 +941,7 @@ Persisted platform stores (`endowus`, `fsm`, `ocbc`) now write only this top-lev
 `{ version: 4, datasets, allocation, ui, localCache }`
 
 Compatibility aliases may still exist in-memory for older call sites, but serialized JSON remains v4-only.
+
+---
+
+*Last updated: May 2026*
