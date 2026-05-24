@@ -793,20 +793,6 @@ describe('SyncManager', () => {
     });
 
 
-    test('applyConfigData migrates legacy v1 payload to Endowus keys', () => {
-        const { SyncManager } = loadModule();
-        SyncManager.applyConfigData({
-            version: 1,
-            goalTargets: { 'goal-2': 33 },
-            goalFixed: { 'goal-3': true },
-            timestamp: Date.now()
-        });
-
-        const endowus = JSON.parse(storage.get('endowus'));
-        expect(endowus.goalTargets).toEqual({ 'goal-2': 33 });
-        expect(endowus.goalFixed).toEqual({ 'goal-3': true });
-    });
-
     test('collectConfigData migrates legacy platform keys and removes them', () => {
         const { SyncManager, storageKeys } = loadModule();
         const freshFetchedAt = Date.now();
@@ -911,6 +897,19 @@ describe('SyncManager', () => {
         expect(config.platforms.fsm.portfolios).toEqual([{ id: 'core', name: 'Core', archived: false }]);
         expect(config.platforms.fsm.assignmentByCode).toEqual({ AAA: 'core', BBB: 'unassigned' });
         expect(config.platforms.fsm.holdings).toBeUndefined();
+    });
+
+    test('applyConfigData rejects legacy v1 top-level payloads and leaves namespaced stores unchanged', () => {
+        const { SyncManager } = loadModule();
+
+        expect(() => SyncManager.applyConfigData({
+            version: 1,
+            goalTargets: { 'goal-1': 25 },
+            goalFixed: { 'goal-2': true },
+            timestamp: Date.now()
+        })).toThrow('Invalid config data');
+
+        expect(storage.has('endowus')).toBe(false);
     });
 
     test('applyConfigData stores FSM portfolio definitions and assignments', () => {
@@ -1872,9 +1871,27 @@ describe('SyncManager', () => {
             Date.now = jest.fn(() => serverTimestamp + 1);
             storage.set('sync_refresh_token_expiry', serverTimestamp + 120_000);
             const serverConfig = {
-                version: 1,
-                goalTargets: { 'goal-2': 40 },
-                goalFixed: {},
+                version: 2,
+                platforms: {
+                    endowus: {
+                        goalTargets: { 'goal-2': 40 },
+                        goalFixed: {},
+                        timestamp: serverTimestamp
+                    },
+                    fsm: {
+                        targetsByCode: {},
+                        fixedByCode: {},
+                        timestamp: serverTimestamp
+                    },
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: {},
+                        targetsByScope: {},
+                        fixedByScope: {},
+                        timestamp: serverTimestamp
+                    }
+                },
                 timestamp: serverTimestamp
             };
             const encryptedData = await SyncEncryption.encryptWithMasterKey(

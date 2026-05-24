@@ -5181,39 +5181,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
             };
         }
-        return {
-            version: 4,
-            platforms: {
-                endowus: {
-                    goalTargets: config.goalTargets && typeof config.goalTargets === 'object' ? config.goalTargets : {},
-                    goalFixed: config.goalFixed && typeof config.goalFixed === 'object' ? config.goalFixed : {},
-                    goalBuckets: config.goalBuckets && typeof config.goalBuckets === 'object' ? config.goalBuckets : {},
-                    clearedGoalBuckets: config.clearedGoalBuckets && typeof config.clearedGoalBuckets === 'object' ? config.clearedGoalBuckets : {},
-                    allocationModel: buildEndowusAllocationModelFromConfig(config),
-                    timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
-                },
-                fsm: {
-                    targetsByCode: {},
-                    fixedByCode: {},
-                    portfolios: [],
-                    assignmentByCode: {},
-                    allocationModel: normalizeCanonicalAllocationModel(),
-                    timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
-                },
-                ocbc: {
-                    allocationBuckets: {},
-                    subPortfolios: {},
-                    assignmentByCode: {},
-                    orderByScope: {},
-                    targetsByScope: {},
-                    fixedByScope: {},
-                    allocationModel: normalizeCanonicalAllocationModel(),
-                    timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
-                }
-            },
-            metadata: {},
-            timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
-        };
+        return null;
     }
 
     /**
