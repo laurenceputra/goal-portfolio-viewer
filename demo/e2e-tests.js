@@ -577,13 +577,38 @@ async function captureScreenshot(page, summary, outputDir, flowName, { resetOver
     if (resetOverlayScroll) {
         await page.evaluate(() => {
             // Only normalize overlay scroll for flows whose baseline expects the
-            // top of a selected detail/overlay view.
-            const overlayContainer = document.querySelector('#gpv-overlay .gpv-container');
-            if (!overlayContainer) {
+            // top of a selected detail/overlay view; reset both container and
+            // scrollable overlay content descendants.
+            const overlayRoot = document.querySelector('#gpv-overlay');
+            if (!overlayRoot) {
                 return;
             }
-            overlayContainer.scrollTop = 0;
-            overlayContainer.scrollLeft = 0;
+
+            const elementsToReset = new Set();
+            const container = overlayRoot.querySelector('.gpv-container');
+            const content = overlayRoot.querySelector('.gpv-content');
+            if (container) {
+                elementsToReset.add(container);
+            }
+            if (content) {
+                elementsToReset.add(content);
+            }
+
+            for (const node of overlayRoot.querySelectorAll('*')) {
+                if (!(node instanceof HTMLElement)) {
+                    continue;
+                }
+                const isScrollableY = node.scrollHeight > node.clientHeight;
+                const isScrollableX = node.scrollWidth > node.clientWidth;
+                if (isScrollableY || isScrollableX) {
+                    elementsToReset.add(node);
+                }
+            }
+
+            for (const element of elementsToReset) {
+                element.scrollTop = 0;
+                element.scrollLeft = 0;
+            }
         });
     }
     await page.waitForFunction(
