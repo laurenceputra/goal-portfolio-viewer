@@ -82,6 +82,8 @@ This creates `mock-data.json` with randomized investment amounts and returns.
 
 The E2E smoke test uses Playwright to validate the demo flow and capture screenshots.
 
+Current smoke/regression coverage includes Endowus planner/fixed interactions, FSM projection/focus flow, OCBC fixed-by-scope (`Keep current allocation`) behavior and conflict diff visibility, and modal keyboard checks (Escape close/focus restore).
+
 ```bash
 pnpm --filter ./demo test:e2e:smoke
 ```

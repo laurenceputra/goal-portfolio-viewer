@@ -2382,6 +2382,8 @@ describe('initialization and URL monitoring', () => {
         expect(allocationText).toContain('Target coverage');
         expect(allocationText).toContain('Needs attention');
         expect(allocationText).toContain('1 instrument unassigned to a sub-portfolio');
+        expect(allocationText).toContain('Scenario contribution (SGD):');
+        expect(allocationText).toContain('Underweight sub-portfolios:');
         expect(allocationText).toContain('Sub-portfolio allocation within Portfolio P-1');
         expect(allocationText).toContain('Instrument allocation · Core');
         expect(allocationText).toContain('Sub-portfolio targets: 110.00% assigned, 10.00% overallocated');
@@ -2423,6 +2425,14 @@ describe('initialization and URL monitoring', () => {
         expect(unassignedProfitColumnIndex).toBeGreaterThanOrEqual(0);
         expect(bd1Row).toBeTruthy();
         expect(bd1Row.querySelectorAll('td')[unassignedProfitColumnIndex].textContent.trim()).toBe('-');
+
+        const scenarioInput = overlay.querySelector('input[aria-label="Projected contribution amount for OCBC selected portfolio planning"]');
+        expect(scenarioInput).toBeTruthy();
+        scenarioInput.value = '1200';
+        scenarioInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Projected Investment: SGD');
 
         expect(allocationText).toContain('25.00%');
         expect(allocationText).toContain('50.00%');
@@ -2966,6 +2976,20 @@ describe('initialization and URL monitoring', () => {
         targetInput.value = 'Infinity';
         targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
         expect(JSON.parse(storage.get('ocbc')).targetsByScope['assets|P-1|core|']).toBeUndefined();
+
+        const keepCurrentLabel = Array.from(overlay.querySelectorAll('div.gpv-sync-help'))
+            .find(node => node.textContent.trim() === 'Keep current allocation');
+        expect(keepCurrentLabel).toBeTruthy();
+
+        const fixedToggle = overlay.querySelector('input[aria-label="Keep current allocation for sub-portfolio Core"]');
+        expect(fixedToggle).toBeTruthy();
+        fixedToggle.checked = true;
+        fixedToggle.dispatchEvent(new window.Event('change', { bubbles: true }));
+        expect(JSON.parse(storage.get('ocbc')).fixedByScope['assets|P-1|core|']).toBe(true);
+
+        overlay = document.querySelector('#gpv-overlay');
+        targetInput = overlay.querySelector('input[aria-label="Target percentage for portfolio P-1 sub-portfolio Core"]');
+        expect(targetInput.disabled).toBe(true);
     });
 
     test('OCBC allocation mode resolves duplicate legacy bucket ids by row product type and keeps product-scoped legacy targets', () => {

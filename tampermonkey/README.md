@@ -1,6 +1,6 @@
 # Goal Portfolio Viewer - Tampermonkey Script
 
-A modern Tampermonkey userscript that provides an enhanced portfolio viewing experience for investors using Endowus (Singapore) and FSMOne. The script helps you organize portfolio scope, monitor allocation drift, and plan target actions with a modern interface.
+A modern Tampermonkey userscript that provides an enhanced portfolio viewing experience for investors using Endowus (Singapore), FSMOne, and OCBC. The script helps you organize portfolio scope, monitor allocation drift, and plan target actions with a modern interface.
 
 ## The Problem
 
@@ -26,6 +26,8 @@ Perfect for investors using strategies like Core + Satellite across multiple lif
 - **Performance Insights**: Per goal-type charts with responsive sizing (including dynamic height), recent return windows, and key metrics (including Total Return % with weighting context and Simple Return %)
 - **Declutter Controls**: Expand/shrink the overlay, switch between Allocation/Performance modes, and collapse heavy panels
 - **Action Guidance**: Needs Attention strip, health status with reasons, and planning panel with scenario and rebalance advisory text
+- **Shared Planner Semantics**: Endowus/FSM/OCBC use the same canonical planning concepts for coverage, drift, and recommendation ordering
+- **OCBC Keep-Current Support**: Sub-portfolios support **Keep current allocation** (`fixedByScope`), which uses current allocation as effective target and excludes fixed scopes from underweight/overweight recommendation lists
 
 ### 🎨 Modern UX Design
 - **Beautiful Gradient UI**: Modern purple gradient theme with smooth animations

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.14.18
+// @version      2.14.19
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -3379,14 +3379,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 metadata: { legacyScopeId: subPortfolioId }
             };
         });
-        const targets = {};
-        Object.entries(isPlainObject(source.targetsByScope) ? source.targetsByScope : {}).forEach(([scope, value]) => {
-            const normalizedScope = utils.normalizeString(scope, '');
-            const targetPercent = toOptionalFiniteNumber(value);
-            if (normalizedScope && targetPercent !== null) {
-                targets[normalizedScope] = { targetPercent, fixed: false, scopeId: normalizedScope };
-            }
-        });
+        const targets = buildCanonicalTargetsFromMaps(source.targetsByScope, source.fixedByScope);
         return normalizeCanonicalAllocationModel({
             scopes,
             assignments,
@@ -3439,8 +3432,12 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             }
         });
         const targetsByScope = {};
+        const fixedByScope = {};
         Object.entries(model.targets).forEach(([scope, target]) => {
-            if (!target.fixed && Number.isFinite(target.targetPercent)) {
+            if (target.fixed === true) {
+                fixedByScope[scope] = true;
+            }
+            if (target.fixed !== true && Number.isFinite(target.targetPercent)) {
                 targetsByScope[scope] = target.targetPercent;
             }
         });
@@ -3448,7 +3445,8 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             subPortfolios: normalizeOcbcSubPortfolios(subPortfolios),
             assignmentByCode,
             orderByScope: normalizeOcbcOrderByScope(model.ordering),
-            targetsByScope
+            targetsByScope,
+            fixedByScope
         };
     }
 
@@ -3592,6 +3590,21 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return normalizeOcbcOrderByScope(data);
     }
 
+    function normalizeOcbcFixedByScopeForStore(data) {
+        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+        const normalized = {};
+        Object.entries(source).forEach(([scope, value]) => {
+            const normalizedScope = utils.normalizeString(scope, '');
+            if (!normalizedScope) {
+                return;
+            }
+            if (value === true) {
+                normalized[normalizedScope] = true;
+            }
+        });
+        return normalized;
+    }
+
     function normalizeOcbcOrderByScope(data) {
         const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
         const normalized = {};
@@ -3634,6 +3647,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const targetsByScope = isPlainObject(source.targetsByScope)
             ? source.targetsByScope
             : allocationDerived.targetsByScope;
+        const fixedByScope = isPlainObject(source.fixedByScope)
+            ? normalizeOcbcFixedByScopeForStore(source.fixedByScope)
+            : allocationDerived.fixedByScope;
         return {
             holdingsByPortfolio,
             holdings: normalizedHoldings || (Object.keys(holdingsByPortfolio).length ? flattenOcbcHoldingsByPortfolio(holdingsByPortfolio) : null),
@@ -3642,11 +3658,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             assignmentByCode,
             orderByScope,
             targetsByScope,
+            fixedByScope,
             allocationModel: buildOcbcAllocationModelFromConfig({
                 subPortfolios,
                 assignmentByCode,
                 orderByScope,
-                targetsByScope
+                targetsByScope,
+                fixedByScope
             })
         };
     }
@@ -3984,7 +4002,8 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             orderByScope: normalizeOcbcOrderByScopeForStore(
                 Storage.readJson(STORAGE_KEYS.ocbcAllocationOrderByScope, data => data && typeof data === 'object' && !Array.isArray(data), 'Error loading OCBC order') || {}
             ),
-            targetsByScope
+            targetsByScope,
+            fixedByScope: {}
         };
     }
 
@@ -4369,6 +4388,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 STORAGE_KEYS.ocbc,
                 'Error writing migrated OCBC allocation model'
             );
+            if (!hasOwnField(rawStored, 'fixedByScope')) {
+                writePlatformStore(STORAGE_KEYS.ocbc, normalized, 'Error writing migrated OCBC fixed-by-scope schema');
+            }
             return normalized;
         }
         const migrated = collectLegacyOcbcStore();
@@ -5107,12 +5129,12 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 : { targetsByCode: {}, fixedByCode: {}, timestamp: config.timestamp || Date.now() };
             const ocbc = config.platforms.ocbc && typeof config.platforms.ocbc === 'object'
                 ? config.platforms.ocbc
-                : { allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, targetsByScope: {}, timestamp: config.timestamp || Date.now() };
+                : { allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, targetsByScope: {}, fixedByScope: {}, timestamp: config.timestamp || Date.now() };
             const normalizedEndowus = normalizeEndowusStore(endowus);
             const normalizedFsm = normalizeFsmStore(fsm);
             const normalizedOcbc = normalizeOcbcStore(ocbc);
             return {
-                version: 3,
+                version: 4,
                 platforms: {
                     endowus: {
                         goalTargets: normalizedEndowus.goalTargets,
@@ -5136,6 +5158,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                         assignmentByCode: normalizedOcbc.assignmentByCode,
                         orderByScope: normalizedOcbc.orderByScope,
                         targetsByScope: normalizedOcbc.targetsByScope,
+                        fixedByScope: normalizedOcbc.fixedByScope,
                         allocationModel: normalizedOcbc.allocationModel,
                         timestamp: typeof ocbc.timestamp === 'number' ? ocbc.timestamp : (config.timestamp || Date.now())
                     }
@@ -5145,7 +5168,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             };
         }
         return {
-            version: 3,
+            version: 4,
             platforms: {
                 endowus: {
                     goalTargets: config.goalTargets && typeof config.goalTargets === 'object' ? config.goalTargets : {},
@@ -5169,6 +5192,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     assignmentByCode: {},
                     orderByScope: {},
                     targetsByScope: {},
+                    fixedByScope: {},
                     allocationModel: normalizeCanonicalAllocationModel(),
                     timestamp: typeof config.timestamp === 'number' ? config.timestamp : Date.now()
                 }
@@ -5187,7 +5211,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const fsm = readFsmStore();
         const ocbc = readOcbcStore();
         return {
-            version: 3,
+            version: 4,
             platforms: {
                 endowus: {
                     goalTargets: endowus.goalTargets,
@@ -5211,6 +5235,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                     assignmentByCode: ocbc.assignmentByCode,
                     orderByScope: ocbc.orderByScope,
                     targetsByScope: ocbc.targetsByScope,
+                    fixedByScope: ocbc.fixedByScope,
                     allocationModel: ocbc.allocationModel,
                     timestamp
                 }
@@ -5365,6 +5390,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const ocbcOrderByScope = normalizeOcbcOrderByScopeEntries(ocbc.orderByScope);
         const ocbcAllocationBuckets = ocbc.allocationBuckets && typeof ocbc.allocationBuckets === 'object' ? ocbc.allocationBuckets : {};
         const ocbcTargetsByScope = ocbc.targetsByScope && typeof ocbc.targetsByScope === 'object' ? ocbc.targetsByScope : {};
+        const ocbcFixedByScope = ocbc.fixedByScope && typeof ocbc.fixedByScope === 'object' ? ocbc.fixedByScope : {};
         const currentOcbcStore = readOcbcStore();
         const updatedOcbcStore = normalizeOcbcStore({
             ...currentOcbcStore,
@@ -5373,11 +5399,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             assignmentByCode: ocbcAssignmentByCode,
             orderByScope: ocbcOrderByScope,
             targetsByScope: ocbcTargetsByScope,
+            fixedByScope: ocbcFixedByScope,
             allocationModel: ocbc.allocationModel || buildOcbcAllocationModelFromConfig({
                 subPortfolios: ocbcSubPortfolios,
                 assignmentByCode: ocbcAssignmentByCode,
                 orderByScope: ocbcOrderByScope,
-                targetsByScope: ocbcTargetsByScope
+                targetsByScope: ocbcTargetsByScope,
+                fixedByScope: ocbcFixedByScope
             })
         });
 
@@ -6530,7 +6558,7 @@ function getFsmSyncView(config) {
 
 function getOcbcSyncView(config) {
     if (!config || typeof config !== 'object') {
-        return { allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {} };
+        return { allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {}, fixedByScope: {} };
     }
     const source = config.platforms && typeof config.platforms === 'object'
         ? (config.platforms.ocbc && typeof config.platforms.ocbc === 'object' ? config.platforms.ocbc : {})
@@ -6541,7 +6569,8 @@ function getOcbcSyncView(config) {
         subPortfolios: normalized.subPortfolios,
         assignmentByCode: normalized.assignmentByCode,
         orderByScope: normalized.orderByScope,
-        targetsByScope: normalized.targetsByScope
+        targetsByScope: normalized.targetsByScope,
+        fixedByScope: normalized.fixedByScope
     };
 }
 
@@ -6700,6 +6729,14 @@ function formatOcbcTargetsByScopeDisplay(targetsByScope) {
         .map(scope => `${scope}: ${formatSyncTarget(source[scope])}`);
 }
 
+function formatOcbcFixedByScopeDisplay(fixedByScope) {
+    const source = fixedByScope && typeof fixedByScope === 'object' && !Array.isArray(fixedByScope) ? fixedByScope : {};
+    return Object.keys(source)
+        .filter(scope => source[scope] === true)
+        .sort()
+        .map(scope => `${scope}: ${formatSyncFixed(true)}`);
+}
+
 function buildOcbcConflictDiffItems(conflict) {
     if (!conflict || !conflict.local || !conflict.remote) {
         return [];
@@ -6760,6 +6797,17 @@ function buildOcbcConflictDiffItems(conflict) {
             settingName: 'Allocation targets',
             localDisplay: formatSyncValue(localTargetsByScope),
             remoteDisplay: formatSyncValue(remoteTargetsByScope)
+        });
+    }
+
+    const localFixedByScope = formatOcbcFixedByScopeDisplay(localOcbc.fixedByScope);
+    const remoteFixedByScope = formatOcbcFixedByScopeDisplay(remoteOcbc.fixedByScope);
+    if (JSON.stringify(localFixedByScope) !== JSON.stringify(remoteFixedByScope)) {
+        rows.push({
+            section: 'target',
+            settingName: 'Keep current allocation scopes',
+            localDisplay: formatSyncValue(localFixedByScope),
+            remoteDisplay: formatSyncValue(remoteFixedByScope)
         });
     }
 
@@ -16060,6 +16108,27 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return true;
     }
 
+    function applyOcbcFixedScopeUpdate(scope, isFixed) {
+        updateOcbcStore(current => {
+            const fixedByScope = { ...(current.fixedByScope || {}) };
+            const targetsByScope = { ...(current.targetsByScope || {}) };
+            if (isFixed === true) {
+                fixedByScope[scope] = true;
+                delete targetsByScope[scope];
+            } else {
+                delete fixedByScope[scope];
+            }
+            return {
+                ...current,
+                fixedByScope,
+                targetsByScope
+            };
+        });
+        if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
+            SyncManager.scheduleSyncOnChange('ocbc-fixed-scope-update');
+        }
+    }
+
     function normalizeOcbcRowOrderCodes(currentOrder, rows) {
         const normalizedRows = Array.isArray(rows) ? rows : [];
         const rowCodes = normalizedRows.map(row => utils.normalizeString(row?.code, '')).filter(Boolean);
@@ -16186,6 +16255,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const latestPortfolioNos = new Set(Array.isArray(options.latestPortfolioNos) ? options.latestPortfolioNos : []);
         let viewMode = 'overview';
         let selectedPortfolioNo = FSM_ALL_PORTFOLIO_ID;
+        const planningScenarioAmountByPortfolioScope = {};
 
         const allocationConfig = loadOcbcAllocationConfig();
         const bucketsByView = allocationConfig.bucketsByView;
@@ -16196,6 +16266,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         function renderAllocationMode(activeView, rows) {
             let assignmentConfigChanged = false;
             const groupedByPortfolio = buildOcbcAllocationRowsByPortfolio(rows);
+            const ocbcFixedByScope = readOcbcStore().fixedByScope || {};
+            const isFixedSubPortfolioScope = (viewKey, portfolioNo, subPortfolioId) => {
+                const scope = buildOcbcTargetScope(viewKey, portfolioNo, subPortfolioId, '');
+                return ocbcFixedByScope[scope] === true;
+            };
             const portfolioNos = Object.keys(groupedByPortfolio);
             if (portfolioNos.length === 0) {
                 contentDiv.appendChild(createElement('div', 'gpv-conflict-diff-empty', 'No holdings available in this view.'));
@@ -16211,6 +16286,25 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             ));
             planningPanel.appendChild(createElement('p', 'gpv-planning-copy', `Scope: ${activeView === 'liabilities' ? 'Liabilities' : 'Assets'}`));
 
+            const selectedPortfolioScopeKey = `${activeView}${PROJECTED_KEY_SEPARATOR}${selectedPortfolioNo}`;
+            const scenarioInputRow = createElement('div', 'gpv-control-row');
+            const scenarioInput = createElement('input', 'gpv-projected-input');
+            scenarioInput.type = 'number';
+            scenarioInput.min = '0';
+            scenarioInput.step = '0.01';
+            scenarioInput.placeholder = 'Projected contribution amount';
+            scenarioInput.setAttribute('aria-label', 'Projected contribution amount for OCBC selected portfolio planning');
+            const storedScenarioAmount = toFiniteNumber(planningScenarioAmountByPortfolioScope[selectedPortfolioScopeKey], 0);
+            scenarioInput.value = storedScenarioAmount > 0 ? storedScenarioAmount.toFixed(2) : '';
+            scenarioInput.onchange = () => {
+                const parsed = toFiniteNumber(scenarioInput.value, null);
+                planningScenarioAmountByPortfolioScope[selectedPortfolioScopeKey] = parsed !== null && parsed > 0 ? parsed : 0;
+                rerender();
+            };
+            scenarioInputRow.appendChild(createElement('label', null, 'Scenario contribution (SGD):'));
+            scenarioInputRow.appendChild(scenarioInput);
+            planningPanel.appendChild(scenarioInputRow);
+
             const planningTotalValue = portfolioNos.reduce((sum, portfolioNo) => (
                 sum + toFiniteNumber(buildOcbcSummary(groupedByPortfolio[portfolioNo] || []).total, 0)
             ), 0);
@@ -16221,6 +16315,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             let planningMaterialDriftCount = 0;
             let planningLargestDriftPercent = null;
             let planningLargestDriftAmount = null;
+            const planningMaterialUnderweightCandidates = [];
+            const planningMaterialOverweightCandidates = [];
+            const planningScenarioSplitByGoal = {};
+            const selectedScenarioAmount = toFiniteNumber(planningScenarioAmountByPortfolioScope[selectedPortfolioScopeKey], 0);
 
             portfolioNos.forEach(portfolioNo => {
                 const portfolioRows = groupedByPortfolio[portfolioNo] || [];
@@ -16255,14 +16353,19 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     if (!subPortfolio.id) {
                         return sum;
                     }
+                    if (isFixedSubPortfolioScope(activeView, portfolioNo, subPortfolio.id)) {
+                        const currentValue = toFiniteNumber(buildOcbcSummary(subPortfolio.rows).total, 0);
+                        return sum + (calculateFixedTargetPercent(currentValue, portfolioTotal) || 0);
+                    }
                     const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId);
                     return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
                 }, 0);
                 const hasCoverageIntent = hasConfiguredAllocationIntent({
                     targetValues: subPortfolioRowsData
                         .filter(item => item.id)
+                        .filter(item => !isFixedSubPortfolioScope(activeView, portfolioNo, item.id))
                         .map(item => getOcbcAllocationTargetPercent(activeView, portfolioNo, item.id, '', item.legacyProductType, item.legacyBucketId)),
-                    fixedCount: 0
+                    fixedCount: subPortfolioRowsData.filter(item => item.id && isFixedSubPortfolioScope(activeView, portfolioNo, item.id)).length
                 });
                 if (hasCoverageIntent) {
                     planningCoverageConfiguredCount += 1;
@@ -16271,28 +16374,60 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     }
                 }
 
-                subPortfolioRowsData.forEach(subPortfolio => {
-                    if (!subPortfolio.id) {
-                        return;
-                    }
-                    const subPortfolioSummary = buildOcbcSummary(subPortfolio.rows);
-                    const subPortfolioValue = toFiniteNumber(subPortfolioSummary.total, 0);
-                    const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId);
-                    if (!Number.isFinite(targetPercent) || portfolioTotal <= 0) {
-                        return;
-                    }
-                    const driftModel = calculateAllocationDrift(subPortfolioValue, targetPercent, portfolioTotal);
-                    if (!Number.isFinite(driftModel?.driftPercent)) {
-                        return;
-                    }
-                    if (Math.abs(driftModel.driftPercent) > MATERIAL_DRIFT_RATIO) {
-                        planningMaterialDriftCount += 1;
-                    }
-                    if (planningLargestDriftPercent === null || Math.abs(driftModel.driftPercent) > Math.abs(planningLargestDriftPercent)) {
-                        planningLargestDriftPercent = driftModel.driftPercent;
-                        planningLargestDriftAmount = driftModel.driftAmount;
-                    }
+                const ocbcPlanningGoals = subPortfolioRowsData
+                    .filter(subPortfolio => Boolean(subPortfolio.id))
+                    .map(subPortfolio => {
+                        const subPortfolioSummary = buildOcbcSummary(subPortfolio.rows);
+                        const subPortfolioValue = toFiniteNumber(subPortfolioSummary.total, 0);
+                        const isFixed = isFixedSubPortfolioScope(activeView, portfolioNo, subPortfolio.id);
+                        const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId);
+                        const effectiveTargetPercent = isFixed
+                            ? calculateFixedTargetPercent(subPortfolioValue, portfolioTotal)
+                            : targetPercent;
+                        const diff = calculateGoalDiff(subPortfolioValue, effectiveTargetPercent, portfolioTotal);
+                        return {
+                            goalId: subPortfolio.id,
+                            goalName: subPortfolio.name || subPortfolio.id,
+                            endingBalanceAmount: subPortfolioValue,
+                            effectiveTargetPercent,
+                            isFixed,
+                            diffAmount: diff.diffAmount,
+                            driftPercent: diff.driftPercent,
+                            driftAmount: diff.driftAmount
+                        };
+                    });
+                const ocbcPlanning = buildPlanningModel({
+                    goals: ocbcPlanningGoals,
+                    adjustedTotal: portfolioTotal,
+                    projectedAmount: selectedScenarioAmount
                 });
+                planningMaterialDriftCount += (ocbcPlanning.materialBuys?.length || 0) + (ocbcPlanning.materialSells?.length || 0);
+                planningMaterialUnderweightCandidates.push(...(Array.isArray(ocbcPlanning.materialBuys) ? ocbcPlanning.materialBuys : []));
+                planningMaterialOverweightCandidates.push(...(Array.isArray(ocbcPlanning.materialSells) ? ocbcPlanning.materialSells : []));
+                (Array.isArray(ocbcPlanning.scenarioSplit) ? ocbcPlanning.scenarioSplit : []).forEach(item => {
+                    const goalId = utils.normalizeString(item?.goalId, '');
+                    if (!goalId) {
+                        return;
+                    }
+                    if (!planningScenarioSplitByGoal[goalId]) {
+                        planningScenarioSplitByGoal[goalId] = {
+                            goalId,
+                            goalName: utils.normalizeString(item?.goalName, goalId),
+                            amount: 0
+                        };
+                    }
+                    planningScenarioSplitByGoal[goalId].amount += toFiniteNumber(item?.amount, 0);
+                });
+                const largestSubPortfolioDrift = [
+                    ...(Array.isArray(ocbcPlanning.materialBuys) ? ocbcPlanning.materialBuys : []),
+                    ...(Array.isArray(ocbcPlanning.materialSells) ? ocbcPlanning.materialSells : [])
+                ][0];
+                if (largestSubPortfolioDrift && Number.isFinite(largestSubPortfolioDrift.driftPercent)) {
+                    if (planningLargestDriftPercent === null || Math.abs(largestSubPortfolioDrift.driftPercent) > Math.abs(planningLargestDriftPercent)) {
+                        planningLargestDriftPercent = largestSubPortfolioDrift.driftPercent;
+                        planningLargestDriftAmount = largestSubPortfolioDrift.driftAmount;
+                    }
+                }
             });
 
             const planningCoverageText = planningCoverageConfiguredCount > 0
@@ -16328,6 +16463,29 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 planningPanel.appendChild(createWorkspaceTitle({ title: 'Needs attention', level: 3, className: 'gpv-planning-subtitle' }));
                 planningPanel.appendChild(createHealthReasonList(planningStatusItems));
             }
+
+            const planningScenarioSplit = Object.values(planningScenarioSplitByGoal)
+                .sort((left, right) => right.amount - left.amount)
+                .slice(0, 4)
+                .map(item => ({ ...item, amount: Number(item.amount.toFixed(2)) }));
+            const sortedPlanningMaterialBuys = selectPlanningTradesByDrift(planningMaterialUnderweightCandidates, 'buy', { materialOnly: true });
+            const sortedPlanningMaterialSells = selectPlanningTradesByDrift(planningMaterialOverweightCandidates, 'sell', { materialOnly: true });
+            const planningSuggestedBuys = buildFundingRecommendations(sortedPlanningMaterialSells, sortedPlanningMaterialBuys);
+            const planningSuggestedSells = buildFundingRecommendations(sortedPlanningMaterialBuys, sortedPlanningMaterialSells);
+            appendPlanningDetails(planningPanel, {
+                scenarioAmount: selectedScenarioAmount,
+                scenarioSplit: planningScenarioSplit,
+                suggestedBuys: planningSuggestedBuys,
+                suggestedSells: planningSuggestedSells,
+                triggerBuys: buildTriggerSubset(sortedPlanningMaterialBuys, planningSuggestedSells),
+                triggerSells: buildTriggerSubset(sortedPlanningMaterialSells, planningSuggestedBuys)
+            }, {
+                showScenarioPrompt: true
+            });
+            const underweightNames = sortedPlanningMaterialBuys.slice(0, 3).map(item => item.goalName).filter(Boolean).join(' | ');
+            const overweightNames = sortedPlanningMaterialSells.slice(0, 3).map(item => item.goalName).filter(Boolean).join(' | ');
+            planningPanel.appendChild(createElement('p', 'gpv-planning-copy', `Underweight sub-portfolios: ${underweightNames || '-'}`));
+            planningPanel.appendChild(createElement('p', 'gpv-planning-copy', `Overweight sub-portfolios: ${overweightNames || '-'}`));
             contentDiv.appendChild(planningPanel);
 
             portfolioNos.forEach(portfolioNo => {
@@ -16413,29 +16571,50 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     const subPortfolioSummary = buildOcbcSummary(subPortfolio.rows);
                     const subPortfolioValue = toFiniteNumber(subPortfolioSummary.total, 0);
                     const currentPercent = calculateAllocationRatio(subPortfolioValue, portfolioTotal);
+                    const isFixed = subPortfolio.id
+                        ? isFixedSubPortfolioScope(activeView, portfolioNo, subPortfolio.id)
+                        : false;
                     const targetPercent = subPortfolio.id
                         ? getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId)
                         : null;
-                    const driftModel = targetPercent === null
+                    const effectiveTargetPercent = isFixed ? calculateFixedTargetPercent(subPortfolioValue, portfolioTotal) : targetPercent;
+                    const driftModel = effectiveTargetPercent === null
                         ? { driftPercent: null, driftAmount: null }
-                        : calculateAllocationDrift(subPortfolioValue, targetPercent, portfolioTotal);
+                        : calculateAllocationDrift(subPortfolioValue, effectiveTargetPercent, portfolioTotal);
                     tr.appendChild(createTableCell(subPortfolio.name));
                     tr.appendChild(createTableCell(formatMoney(subPortfolioValue)));
                     tr.appendChild(createTableCell(formatPercent(currentPercent, { multiplier: 100, showSign: false })));
 
                     const targetCell = createElement('td');
                     if (subPortfolio.id) {
+                        const scope = buildOcbcTargetScope(activeView, portfolioNo, subPortfolio.id, '');
                         const targetInput = createPercentTargetInput(
-                            targetPercent,
+                            effectiveTargetPercent,
                             `Target percentage for portfolio ${portfolioNo} sub-portfolio ${subPortfolio.name}`,
                             () => {
-                                const scope = buildOcbcTargetScope(activeView, portfolioNo, subPortfolio.id, '');
+                                if (isFixed) {
+                                    return;
+                                }
                                 if (applyOcbcTargetScopeUpdate(scope, targetInput.value)) {
                                     rerender();
                                 }
                             }
                         );
+                        targetInput.disabled = isFixed;
                         targetCell.appendChild(targetInput);
+                        const fixedLabel = createElement('label', 'gpv-fixed-toggle');
+                        const fixedInput = createElement('input', CLASS_NAMES.fixedToggleInput);
+                        fixedInput.type = 'checkbox';
+                        fixedInput.checked = isFixed;
+                        fixedInput.setAttribute('aria-label', `Keep current allocation for sub-portfolio ${subPortfolio.name}`);
+                        fixedInput.onchange = () => {
+                            applyOcbcFixedScopeUpdate(scope, fixedInput.checked === true);
+                            rerender();
+                        };
+                        fixedLabel.appendChild(fixedInput);
+                        fixedLabel.appendChild(createElement('span', 'gpv-toggle-slider'));
+                        targetCell.appendChild(fixedLabel);
+                        targetCell.appendChild(createElement('div', 'gpv-sync-help', 'Keep current allocation'));
                     } else {
                         targetCell.textContent = '-';
                     }

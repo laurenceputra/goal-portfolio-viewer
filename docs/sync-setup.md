@@ -14,7 +14,7 @@ Keep your Goal Portfolio Viewer settings synchronized across all your devices wi
 ✅ **Synced**:
 - Goal target percentages (your custom allocations)
 - Goal fixed flags (whether goals are locked)
-- OCBC allocation configuration (allocation buckets, sub-portfolios, assignments/order, and scope targets)
+- OCBC allocation configuration (allocation buckets, sub-portfolios, assignments/order, scope targets, and `fixedByScope` keep-current-allocation state)
 
 ❌ **Not Synced** (cached data, regenerated on each device):
 - API responses (including OCBC holdings payloads)

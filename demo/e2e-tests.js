@@ -111,6 +111,66 @@ function getDiffThresholdForFlow(flowName) {
     return typeof thresholdOverride === 'number' ? thresholdOverride : DEFAULT_DIFF_THRESHOLD;
 }
 
+function isMissingPlaywrightExecutableError(error) {
+    const message = error instanceof Error ? error.message : String(error || '');
+    return /executable\s+does(?:n't|\s+not)\s+exist|failed\s+to\s+launch.*executable|enoent/i.test(message);
+}
+
+function pickNewestMsPlaywrightExecutable() {
+    const root = '/ms-playwright';
+    if (!fs.existsSync(root)) {
+        return null;
+    }
+    let entries;
+    try {
+        entries = fs.readdirSync(root, { withFileTypes: true });
+    } catch (_error) {
+        return null;
+    }
+
+    const parseCandidates = prefix => entries
+        .filter(entry => entry.isDirectory() && entry.name.startsWith(`${prefix}-`))
+        .map(entry => {
+            const buildId = Number.parseInt(entry.name.slice(prefix.length + 1), 10);
+            return Number.isFinite(buildId) ? { name: entry.name, buildId } : null;
+        })
+        .filter(Boolean)
+        .sort((left, right) => right.buildId - left.buildId);
+
+    const shellCandidates = parseCandidates('chromium_headless_shell');
+    for (const candidate of shellCandidates) {
+        const executablePath = path.join(root, candidate.name, 'chrome-linux', 'headless_shell');
+        if (fs.existsSync(executablePath)) {
+            return executablePath;
+        }
+    }
+
+    const chromiumCandidates = parseCandidates('chromium');
+    for (const candidate of chromiumCandidates) {
+        const executablePath = path.join(root, candidate.name, 'chrome-linux', 'chrome');
+        if (fs.existsSync(executablePath)) {
+            return executablePath;
+        }
+    }
+
+    return null;
+}
+
+async function launchChromiumWithMsPlaywrightFallback(playwright) {
+    try {
+        return await playwright.chromium.launch({ headless: true });
+    } catch (error) {
+        if (!isMissingPlaywrightExecutableError(error)) {
+            throw error;
+        }
+        const executablePath = pickNewestMsPlaywrightExecutable();
+        if (!executablePath) {
+            throw error;
+        }
+        return playwright.chromium.launch({ headless: true, executablePath });
+    }
+}
+
 async function runE2ETests() {
     let playwright;
     try {
@@ -148,7 +208,7 @@ async function runE2ETests() {
 
     try {
         server = await startDemoServer({ port: DEFAULT_PORT });
-        browser = await playwright.chromium.launch({ headless: true });
+        browser = await launchChromiumWithMsPlaywrightFallback(playwright);
         const context = await browser.newContext({
             viewport: DEFAULT_VIEWPORT,
             locale: 'en-SG',
@@ -175,6 +235,14 @@ async function runE2ETests() {
 
         const summaryHeader = await page.$('.gpv-header');
         assertCondition(summaryHeader, 'Expected summary header to render.');
+
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('.gpv-overlay', { state: 'detached', timeout: 5000 });
+        const triggerHasFocusAfterEscape = await page.$eval('.gpv-trigger-btn', node => document.activeElement === node);
+        recordAssertion(summary, 'summary', 'overlay-escape-close-focus-restore', triggerHasFocusAfterEscape, 'Escape closes overlay and restores focus to trigger.');
+
+        await page.click('.gpv-trigger-btn');
+        await page.waitForSelector('.gpv-overlay', { timeout: 5000 });
 
         await captureScreenshot(page, summary, outputDir, 'summary');
         recordAssertion(summary, 'summary', 'summary-header', true, 'Summary header rendered.');
@@ -207,13 +275,13 @@ async function runE2ETests() {
             null,
             { timeout: 5000 }
         );
-    recordAssertion(summary, 'house-purchase', 'fixed-toggle', true, 'Fixed toggle enabled.');
+        recordAssertion(summary, 'house-purchase', 'fixed-toggle', true, 'Fixed toggle enabled.');
         await captureScreenshot(page, summary, outputDir, 'house-purchase');
 
         await clickButtonByRole(page, /back to overview/i);
         await page.waitForSelector('.gpv-bucket-card', { state: 'visible', timeout: 5000 });
         await openBucket(page, 'Retirement');
-    recordAssertion(summary, 'retirement', 'detail-title', true, 'Retirement detail loaded.');
+        recordAssertion(summary, 'retirement', 'detail-title', true, 'Retirement detail loaded.');
         await captureScreenshot(page, summary, outputDir, 'retirement');
 
         await captureEndowusExtendedFlow(page, summary, outputDir);
@@ -1246,7 +1314,8 @@ async function captureOcbcFlow(page, summary, outputDir) {
 
     const hasPlanningPanel = overlayTextAllocation.includes('Planning')
         && overlayTextAllocation.includes('Assign instruments to sub-portfolios, set target percentages, and spot drift before rebalancing.')
-        && overlayTextAllocation.includes('Scope: Assets');
+        && overlayTextAllocation.includes('Scope: Assets')
+        && overlayTextAllocation.includes('Scenario contribution (SGD):');
     recordAssertion(summary, ocbcFlowName, 'allocation-has-planning-panel', hasPlanningPanel, 'Allocation mode includes OCBC planning framing with scope helper copy.');
 
     const hasPortfolioFirstAllocation = allocationVisibleText.includes('Portfolio 6500142646-2')
@@ -1510,7 +1579,26 @@ async function captureOcbcFlow(page, summary, outputDir) {
         const text = root.textContent || '';
         return /Sub-portfolio targets:\s*[\d.]+% assigned,\s*[\d.]+% remaining/i.test(text);
     });
+    const scenarioPlannerCheck = await page.evaluate(() => {
+        const input = document.querySelector('input[aria-label="Projected contribution amount for OCBC selected portfolio planning"]');
+        if (!(input instanceof HTMLInputElement)) {
+            return { hasInput: false, hasProjection: false, hasUnderweight: false, hasOverweight: false };
+        }
+        input.value = '5000';
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        const text = document.querySelector('.gpv-overlay')?.textContent || '';
+        return {
+            hasInput: true,
+            hasProjection: text.includes('Projected Investment: SGD'),
+            hasUnderweight: text.includes('Underweight sub-portfolios:'),
+            hasOverweight: text.includes('Overweight sub-portfolios:')
+        };
+    });
     recordAssertion(summary, ocbcFlowName, 'allocation-target-indicator-updates', finalIndicator, 'Allocation target indicator updates after editing target %.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-scenario-input-visible', scenarioPlannerCheck.hasInput, 'OCBC allocation planning shows scenario input.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-scenario-updates-projection', scenarioPlannerCheck.hasProjection, 'Scenario input updates projected investment planning copy.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-underweight-wording', scenarioPlannerCheck.hasUnderweight, 'OCBC planning shows Underweight wording from shared planner output.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-overweight-wording', scenarioPlannerCheck.hasOverweight, 'OCBC planning shows Overweight wording from shared planner output.');
     recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-button-visible', clipboardCheck.isVisible, 'Copy values button is visible in allocation mode.');
     recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-single-row-numeric-tsv', clipboardCheck.hasNumericSingleRowTsv, 'Copy values output is a single-row numeric-or-empty TSV payload.');
     recordAssertion(summary, ocbcFlowName, 'allocation-copy-values-matches-rendered-row-order', clipboardCheck.matchesRenderedRowOrder, 'Copy values output follows visible instrument row order for the matching sub-portfolio.');
@@ -1534,6 +1622,83 @@ async function captureOcbcFlow(page, summary, outputDir) {
     recordAssertion(summary, ocbcFlowName, 'subportfolio-manager-draft-visible', managerDraftApplied === managerDraftValue, 'OCBC manager screenshot includes an in-progress sub-portfolio draft input state.');
 
     await captureScreenshot(page, summary, outputDir, 'ocbc-subportfolio-manager');
+
+    const fixedScopeBehavior = await page.evaluate(() => {
+        const fixedInput = document.querySelector('input[aria-label^="Keep current allocation for sub-portfolio "]');
+        if (!(fixedInput instanceof HTMLInputElement)) {
+            return { hasToggle: false, checked: false, persisted: false, excludesFromUnderweight: false };
+        }
+        const ariaLabel = fixedInput.getAttribute('aria-label') || '';
+        const fixedScopeName = ariaLabel.replace('Keep current allocation for sub-portfolio ', '').trim();
+        fixedInput.checked = true;
+        fixedInput.dispatchEvent(new Event('change', { bubbles: true }));
+        const storeRaw = window.GM_getValue ? window.GM_getValue('ocbc', null) : null;
+        const persisted = typeof storeRaw === 'string' && storeRaw.includes('fixedByScope');
+        const overlayTextAfter = document.querySelector('.gpv-overlay')?.innerText || '';
+        const recommendationLines = overlayTextAfter
+            .split('\n')
+            .map(line => String(line || '').trim())
+            .filter(line => line.startsWith('Underweight sub-portfolios:') || line.startsWith('Overweight sub-portfolios:'));
+        const excludesFromUnderweight = fixedScopeName
+            ? recommendationLines.every(line => !line.includes(fixedScopeName))
+            : false;
+        return { hasToggle: true, checked: fixedInput.checked === true, persisted, excludesFromUnderweight };
+    });
+    recordAssertion(summary, ocbcFlowName, 'allocation-fixed-toggle-visible', fixedScopeBehavior.hasToggle, 'OCBC allocation shows Keep current allocation toggle.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-fixed-toggle-enabled', fixedScopeBehavior.checked, 'OCBC keep-current toggle can be enabled.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-fixed-toggle-persists', fixedScopeBehavior.persisted, 'OCBC fixed scope persists in OCBC store.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-fixed-excluded-from-underweight-overweight', fixedScopeBehavior.excludesFromUnderweight, 'OCBC fixed sub-portfolio is excluded from underweight/overweight recommendation wording.');
+
+    const ocbcConflict = {
+        local: {
+            version: 4,
+            platforms: {
+                ocbc: {
+                    allocationBuckets: {},
+                    subPortfolios: {},
+                    assignmentByCode: {},
+                    orderByScope: {},
+                    targetsByScope: {},
+                    fixedByScope: { 'assets|6500142646-2|core|': true }
+                }
+            }
+        },
+        remote: {
+            version: 4,
+            platforms: {
+                ocbc: {
+                    allocationBuckets: {},
+                    subPortfolios: {},
+                    assignmentByCode: {},
+                    orderByScope: {},
+                    targetsByScope: {},
+                    fixedByScope: {}
+                }
+            }
+        }
+    };
+    await page.evaluate(conflictPayload => {
+        const conflictHtml = window.__gpvSyncUi?.createConflictDialogHTML
+            ? window.__gpvSyncUi.createConflictDialogHTML(conflictPayload)
+            : '';
+        if (!conflictHtml) {
+            return;
+        }
+        const overlay = document.createElement('div');
+        overlay.className = 'gpv-overlay gpv-conflict-overlay';
+        const container = document.createElement('div');
+        container.className = 'gpv-container gpv-conflict-modal';
+        container.innerHTML = conflictHtml;
+        overlay.appendChild(container);
+        document.body.appendChild(overlay);
+    }, ocbcConflict);
+    await page.waitForSelector('.gpv-conflict-dialog', { timeout: 5000 });
+    const hasOcbcFixedConflictDiff = await page.$eval('.gpv-conflict-dialog', node => (node.textContent || '').includes('Keep current allocation scopes'));
+    recordAssertion(summary, ocbcFlowName, 'conflict-diff-includes-fixed-scope', hasOcbcFixedConflictDiff, 'OCBC conflict diff includes fixed scope state.');
+    await page.evaluate(() => {
+        const overlays = Array.from(document.querySelectorAll('.gpv-overlay.gpv-conflict-overlay'));
+        overlays.forEach(overlay => overlay.remove());
+    });
 
     const portfolioAfterAllocationEdits = await page.$eval('.gpv-overlay', root => {
         const text = root.textContent || '';

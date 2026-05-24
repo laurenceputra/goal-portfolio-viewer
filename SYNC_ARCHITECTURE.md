@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This document provides the complete technical architecture for adding optional, privacy-first cross-device sync to the Goal Portfolio Viewer using Cloudflare Workers with client-side encryption.
+This document provides the complete technical architecture for adding optional, privacy-first cross-device sync to the Goal Portfolio Viewer using Cloudflare Workers with client-side encryption. Sync configuration payloads use **version 4** and include OCBC `fixedByScope` (sub-portfolio keep-current-allocation state), while holdings, balances, transactions, and amount history remain explicitly out-of-scope for sync.
 
 ### Key Design Principles
 

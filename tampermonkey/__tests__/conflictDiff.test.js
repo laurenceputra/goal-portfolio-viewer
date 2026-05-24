@@ -221,6 +221,40 @@ describe('conflict diff helpers', () => {
         expect(rows.some(item => item.section === 'definition' && item.settingName === 'Sub-portfolios')).toBe(true);
     });
 
+    it('detects OCBC keep-current-allocation scope differences', () => {
+        const conflict = {
+            local: {
+                version: 4,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {},
+                        fixedByScope: { 'assets|P-1|core|': true }
+                    }
+                }
+            },
+            remote: {
+                version: 4,
+                platforms: {
+                    ocbc: {
+                        allocationBuckets: {},
+                        subPortfolios: {},
+                        assignmentByCode: {},
+                        orderByScope: {},
+                        targetsByScope: {},
+                        fixedByScope: {}
+                    }
+                }
+            }
+        };
+
+        const rows = buildOcbcConflictDiffItems(conflict);
+        expect(rows.some(item => item.section === 'target' && item.settingName === 'Keep current allocation scopes')).toBe(true);
+    });
+
     it('shows OCBC sub-portfolio legacy linkage and preserves inner order', () => {
         const conflict = {
             local: {

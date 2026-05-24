@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document explains the testing infrastructure for the Goal Portfolio Viewer project. The project uses Jest for testing with **zero code duplication** - all logic lives in one place.
+This document explains the testing infrastructure for the Goal Portfolio Viewer project. The project uses Jest for testing with **zero code duplication** - all logic lives in one place, including shared planner behavior across Endowus/FSM/OCBC and sync configuration migration paths such as OCBC `fixedByScope` in sync v4.
 
 ## Architecture
 

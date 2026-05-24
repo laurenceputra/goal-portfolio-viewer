@@ -28,7 +28,7 @@
 
 Investing today often means buying individual funds or managed funds across multiple goals. Most platforms still do not provide an easy way to visualize each of these purchases or track allocation across all of them, whether you follow core-satellite or a broader asset allocation framework. This userscript helps you spot imbalances early and organize everything around your real-life goals.
 
-> **Platform Support**: Currently works with Endowus (Singapore). This userscript enhances your portfolio visualization experience by organizing goals into custom buckets.
+> **Platform Support**: Endowus, FSMOne, and OCBC (Singapore).
 
 ---
 
@@ -54,6 +54,8 @@ Core-satellite strategies complement this approach. The core anchors each goal w
 - **Core + satellite aligned:** See long-term core holdings and tactical satellites side-by-side within each life goal.
 - **Asset allocation visibility:** CPF, SRS, and cash investments show together with clear return and growth indicators.
 - **Allocation drift:** Set goal targets to surface per-goal-type drift (measured against target amounts) and spot imbalances early.
+- **Shared planner model:** Endowus, FSM, and OCBC allocation planning use the same target-coverage and rebalance planning concepts.
+- **OCBC fixed scope support:** Use **Keep current allocation** on OCBC sub-portfolios to lock current allocation as effective target; fixed scopes count toward coverage and are excluded from underweight/overweight recommendations.
 - **Privacy first:** By default, all data stays on your device and is processed locally in the browser. Optional sync is opt-in and only sends encrypted configuration data.
 - **Zero friction:** Use the "Bucket Name - Description" naming pattern in your goal names and the script does the rest.
 - **Keyboard-friendly overlay:** Press Esc to close, with focus kept inside the modal while it is open.
@@ -96,7 +98,8 @@ Sync your portfolio configuration across multiple devices with end-to-end encryp
 **Privacy & Opt-In**:
 - ✅ Sync is completely optional.
 - ✅ No data is sent until you click **Save Settings**.
-- ✅ Only encrypted config values are synced, including goal targets and fixed flags.
+- ✅ Only encrypted config values are synced (sync config v4), including goal targets/fixed flags and OCBC allocation config (`subPortfolios`, `assignmentByCode`, `orderByScope`, `targetsByScope`, `fixedByScope`).
+- ✅ Holdings, balances, transactions, and amount history are not synced.
 - ✅ By default, a derived encryption key is stored locally after login or sign up to keep sync unlocked on this device (you can disable remember key or log out to clear it).
 
 **Getting Started**:

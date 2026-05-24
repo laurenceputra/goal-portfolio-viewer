@@ -25,6 +25,8 @@ The Tampermonkey userscript uses a single-file architecture that:
 - Injects UI components directly into the DOM
 - Processes all data client-side
 
+Planning/allocation uses a shared canonical model across Endowus, FSM, and OCBC. OCBC config includes `fixedByScope` for sub-portfolio keep-current-allocation behavior, and sync normalization/collection/application paths carry that configuration in sync payload version 4.
+
 **File Structure:**
 ```
 tampermonkey/

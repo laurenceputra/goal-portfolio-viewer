@@ -453,7 +453,7 @@ describe('SyncManager', () => {
         expect(JSON.parse(storage.get('endowus')).clearedGoalBuckets['goal-1']).toBe(true);
     });
 
-    test('collectConfigData emits v3 payload and excludes Endowus targets for fixed goals', () => {
+    test('collectConfigData emits v4 payload and excludes Endowus targets for fixed goals', () => {
         const { SyncManager, storageKeys } = loadModule();
         const targetKey = storageKeys.goalTarget('goal-1');
         const fixedKey = storageKeys.goalFixed('goal-1');
@@ -464,7 +464,7 @@ describe('SyncManager', () => {
 
         const config = SyncManager.collectConfigData();
 
-        expect(config.version).toBe(3);
+        expect(config.version).toBe(4);
         expect(config.platforms.endowus.goalTargets).toEqual({});
         expect(config.platforms.endowus.goalFixed).toEqual({ 'goal-1': true });
         expect(config.platforms.endowus.allocationModel).toEqual(expect.objectContaining({
@@ -508,7 +508,7 @@ describe('SyncManager', () => {
         const { SyncManager } = loadModule();
 
         SyncManager.applyConfigData({
-            version: 3,
+            version: 4,
             platforms: {
                 endowus: {
                     allocationModel: {
@@ -564,8 +564,29 @@ describe('SyncManager', () => {
         expect(ocbc.subPortfolios.assets['P-1']).toEqual([expect.objectContaining({ id: 'core', name: 'Core' })]);
         expect(ocbc.assignmentByCode).toEqual({ 'P-1:EQ1': 'core' });
         expect(ocbc.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 55 });
+        expect(ocbc.fixedByScope).toEqual({});
         expect(ocbc.orderByScope).toEqual({ 'assets|P-1|core': ['P-1:EQ1'] });
         expect(ocbc.allocationModel.scopes[0]).toEqual(expect.objectContaining({ id: 'assets|P-1|core', kind: 'subPortfolio' }));
+    });
+
+    test('collectConfigData and applyConfigData preserve OCBC fixedByScope', () => {
+        const { SyncManager } = loadModule();
+        storage.set('ocbc', JSON.stringify({
+            holdings: null,
+            allocationBuckets: {},
+            subPortfolios: { assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false }] } },
+            assignmentByCode: {},
+            orderByScope: {},
+            targetsByScope: {},
+            fixedByScope: { 'assets|P-1|core|': true }
+        }));
+
+        const config = SyncManager.collectConfigData();
+        expect(config.platforms.ocbc.fixedByScope).toEqual({ 'assets|P-1|core|': true });
+
+        storage.clear();
+        SyncManager.applyConfigData(config);
+        expect(JSON.parse(storage.get('ocbc')).fixedByScope).toEqual({ 'assets|P-1|core|': true });
     });
 
     test('applyConfigData removes stale local keys absent from remote config', () => {
@@ -1213,6 +1234,7 @@ describe('SyncManager', () => {
         expect(JSON.parse(storage.get('endowus')).allocationModel.version).toBe(1);
         expect(JSON.parse(storage.get('fsm')).allocationModel.version).toBe(1);
         expect(JSON.parse(storage.get('ocbc')).allocationModel.version).toBe(1);
+        expect(JSON.parse(storage.get('ocbc')).fixedByScope).toEqual({});
     });
 
     test('hashConfigData ignores OCBC timestamp-only differences', async () => {

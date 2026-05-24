@@ -2,7 +2,7 @@
 
 ## Goal
 
-Implement the approved UX plan for Endowus and FSM overlays so users can configure portfolio structure with less friction, understand what needs attention immediately, and take action through a unified planning flow.
+Implement the approved UX plan for Endowus, FSM, and OCBC overlays so users can configure portfolio structure with less friction, understand what needs attention immediately, and take action through a unified planning flow. OCBC allocation mode follows the same planning language (coverage, scenario input, and underweight/overweight recommendations) with sub-portfolio-level fixed scopes via **Keep current allocation**.
 
 ## Scope
 
