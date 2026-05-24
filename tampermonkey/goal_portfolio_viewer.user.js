@@ -1638,7 +1638,7 @@ function buildBucketDetailGoalRow(goal) {
 }
 
 function enrichGoalTypeWithPlanning(goalTypeModel) {
-    const planning = buildPlanningModel(goalTypeModel);
+    const planning = buildCanonicalPlanningModel(goalTypeModel);
     const reasons = [];
     const largestUnderweight = Array.isArray(planning.materialBuys) ? planning.materialBuys[0] : null;
     const largestOverweight = Array.isArray(planning.materialSells) ? planning.materialSells[0] : null;
@@ -2037,6 +2037,21 @@ function buildPlanningModel(goalTypeModel) {
         materialBuys: planningRecommendations.materialBuys,
         materialSells: planningRecommendations.materialSells,
         hasMaterialDrift: planningRecommendations.hasMaterialDrift
+    };
+}
+
+function buildCanonicalPlanningModel(canonicalPlannerInput) {
+    const planning = buildPlanningModel(canonicalPlannerInput);
+    if (!planning) {
+        return planning;
+    }
+    const coverageLabelOverride = utils.normalizeString(canonicalPlannerInput?.targetCoverageLabelOverride, '');
+    if (!coverageLabelOverride) {
+        return planning;
+    }
+    return {
+        ...planning,
+        targetCoverageLabel: coverageLabelOverride
     };
 }
 
@@ -14377,6 +14392,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return {
             total,
             targetAssignedDisplay: formatPercent(targetPercentTotal / 100, { multiplier: 100, showSign: false }),
+            targetCoverageDisplay: buildAssignedCoverageText(targetPercentTotal),
             driftDisplay: formatPercent(totalDrift, { multiplier: 100, showSign: false }),
             driftClass,
             holdingsCount: rows.length,
@@ -14394,39 +14410,42 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         };
     }
 
-    function buildFsmPlanningModel(rows, summary, options = {}) {
+    function buildFsmPlanningInput(rows, options = {}) {
         const safeRows = Array.isArray(rows) ? rows : [];
-        const safeSummary = summary || {};
-        const underweightCandidates = safeRows
-            .filter(row => Number.isFinite(row?.driftAmount) && row.driftAmount < 0)
-            .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount));
-        const overweightCandidates = safeRows
-            .filter(row => Number.isFinite(row?.driftAmount) && row.driftAmount > 0)
-            .sort((left, right) => Math.abs(right.driftAmount) - Math.abs(left.driftAmount));
-        const planningRecommendations = buildPlanningRecommendations({
-            buys: underweightCandidates,
-            sells: overweightCandidates
-        });
         const projectedAmount = toFiniteNumber(options?.projectedAmount, 0);
         const scenarioAmount = projectedAmount > 0 ? projectedAmount : 0;
-        const scenarioSplit = calculateRecommendedContributionSplit(
-            safeRows.map(row => ({
+        return {
+            goals: safeRows.map(row => ({
                 goalId: row?.holdingId || row?.code,
                 goalName: row?.displayTicker || row?.name || row?.code,
+                endingBalanceAmount: row?.currentValueLcy,
+                effectiveTargetPercent: row?.targetPercent,
                 isFixed: row?.fixed === true,
-                diffAmount: row?.driftAmount
+                diffAmount: row?.driftAmount,
+                driftPercent: row?.driftPercent,
+                driftAmount: row?.driftAmount,
+                displayTicker: row?.displayTicker,
+                name: row?.name,
+                code: row?.code
             })),
-            scenarioAmount
-        );
+            adjustedTotal: toFiniteNumber(options?.adjustedTotal, null),
+            projectedAmount: scenarioAmount
+        };
+    }
+
+    function buildFsmPlanningModel(rows, summary, options = {}) {
+        const safeSummary = summary || {};
+        const canonicalPlanningInput = buildFsmPlanningInput(rows, {
+            projectedAmount: options?.projectedAmount,
+            adjustedTotal: options?.adjustedTotal
+        });
+        const planning = buildCanonicalPlanningModel({
+            ...canonicalPlanningInput,
+            targetCoverageLabelOverride: safeSummary.targetCoverageLabel || null
+        });
         return {
-            targetCoverageLabel: safeSummary.targetCoverageLabel || null,
-            scenarioAmount,
-            scenarioSplit,
-            suggestedBuys: planningRecommendations.suggestedBuys,
-            suggestedSells: planningRecommendations.suggestedSells,
-            triggerBuys: planningRecommendations.triggerBuys,
-            triggerSells: planningRecommendations.triggerSells,
-            hasMaterialDrift: planningRecommendations.hasMaterialDrift
+            ...(planning || {}),
+            targetCoverageLabel: safeSummary.targetCoverageLabel || planning?.targetCoverageLabel || null
         };
     }
 
@@ -14767,7 +14786,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             : '';
         summaryRow.innerHTML = `
             <div class="gpv-summary-card gpv-metric-card"><strong>Current value:</strong> ${escapeHtml(formatMoney(summary.total))}</div>
-            ${showTargetAssigned ? `<div class="gpv-summary-card gpv-metric-card"><strong>Target Assigned:</strong> ${escapeHtml(summary.targetAssignedDisplay)}</div>` : ''}
+            ${showTargetAssigned ? `<div class="gpv-summary-card gpv-metric-card"><strong>Target coverage:</strong> ${escapeHtml(summary.targetCoverageDisplay || summary.targetAssignedDisplay)}</div>` : ''}
             <div class="gpv-summary-card gpv-metric-card"><strong>Holdings:</strong> ${escapeHtml(String(summary.holdingsCount))}</div>
             ${showUnassigned ? `<div class="gpv-summary-card gpv-metric-card"><strong>Unassigned:</strong> ${escapeHtml(String(summary.unassignedCount))}</div>` : ''}
             ${profitCardHtml}
@@ -14842,6 +14861,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 holdingsCount: summary.holdingsCount,
                 totalDisplay: formatMoney(summary.total),
                 targetAssignedDisplay: summary.targetAssignedDisplay,
+                targetCoverageDisplay: summary.targetCoverageDisplay,
                 driftDisplay: summary.driftDisplay,
                 driftClass: summary.driftClass,
                 fixedCount: summary.fixedCount,
@@ -14909,7 +14929,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                     badgeHtml: `<span class="gpv-health-badge ${escapeHtml(card.health?.className || 'gpv-health--healthy')}">${escapeHtml(card.health?.label || 'Healthy')}</span>`,
                     stats: [
                         { label: 'Total value', value: card.totalDisplay },
-                        { label: 'Target assigned', value: card.targetAssignedDisplay },
+                        { label: 'Target coverage', value: card.targetCoverageDisplay || card.targetAssignedDisplay },
                         { label: 'Drift', value: card.driftDisplay, valueClass: card.driftClass || '' },
                         { label: 'Profit', value: card.profitDisplay || '-', valueClass: card.profitClass || '' }
                     ]
@@ -15372,7 +15392,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const displayRows = buildFsmDisplayRows(filteredRows, adjustedTotal);
             const scopedDisplayRows = buildFsmDisplayRows(scopedRows, adjustedTotal);
             const planning = buildFsmPlanningModel(scopedDisplayRows, summary, {
-                projectedAmount
+                projectedAmount,
+                adjustedTotal
             });
             return {
                 rows,
@@ -16396,7 +16417,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                             driftAmount: diff.driftAmount
                         };
                     });
-                const ocbcPlanning = buildPlanningModel({
+                const ocbcPlanning = buildCanonicalPlanningModel({
                     goals: ocbcPlanningGoals,
                     adjustedTotal: portfolioTotal,
                     projectedAmount: selectedScenarioAmount
@@ -16547,13 +16568,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 });
                 const subPortfolioRowsData = [{ id: '', name: 'Unassigned', rows: [] }];
                 persistedSubPortfolios.forEach(item => subPortfolioRowsData.push({ ...item, rows: [] }));
-                const configuredSubPortfolioTargets = subPortfolioRowsData.reduce((sum, subPortfolio) => {
-                    if (!subPortfolio.id) {
-                        return sum;
-                    }
-                    const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId);
-                    return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
-                }, 0);
 
                 portfolioRows.forEach(row => {
                     const code = utils.normalizeString(row?.code, '');
@@ -16565,6 +16579,19 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         assignmentConfigChanged = true;
                     }
                 });
+
+                const configuredSubPortfolioTargets = subPortfolioRowsData.reduce((sum, subPortfolio) => {
+                    if (!subPortfolio.id) {
+                        return sum;
+                    }
+                    const isFixed = isFixedSubPortfolioScope(activeView, portfolioNo, subPortfolio.id);
+                    if (isFixed) {
+                        const currentValue = toFiniteNumber(buildOcbcSummary(subPortfolio.rows).total, 0);
+                        return sum + (calculateFixedTargetPercent(currentValue, portfolioTotal) || 0);
+                    }
+                    const targetPercent = getOcbcAllocationTargetPercent(activeView, portfolioNo, subPortfolio.id, '', subPortfolio.legacyProductType, subPortfolio.legacyBucketId);
+                    return Number.isFinite(targetPercent) ? sum + targetPercent : sum;
+                }, 0);
 
                 subPortfolioRowsData.forEach(subPortfolio => {
                     const tr = createElement('tr');

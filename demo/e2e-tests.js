@@ -1665,28 +1665,110 @@ async function captureOcbcFlow(page, summary, outputDir) {
     const fixedScopeBehavior = await page.evaluate(() => {
         const fixedInput = document.querySelector('input[aria-label^="Keep current allocation for sub-portfolio "]');
         if (!(fixedInput instanceof HTMLInputElement)) {
-            return { hasToggle: false, checked: false, persisted: false, excludesFromUnderweight: false };
+            return {
+                hasToggle: false,
+                checked: false,
+                persisted: false,
+                persistedScopeMatch: false,
+                hasRecommendationLines: false,
+                excludesFromUnderweight: false,
+                hasAssignedCoverageAfterToggle: false
+            };
         }
         const ariaLabel = fixedInput.getAttribute('aria-label') || '';
         const fixedScopeName = ariaLabel.replace('Keep current allocation for sub-portfolio ', '').trim();
+        const selectedPortfolioHeading = Array.from(document.querySelectorAll('.gpv-bucket-title'))
+            .map(node => (node.textContent || '').trim())
+            .find(text => text.startsWith('Portfolio ')) || '';
+        const selectedPortfolioNoFromHeading = selectedPortfolioHeading.replace('Portfolio ', '').trim();
         fixedInput.checked = true;
         fixedInput.dispatchEvent(new Event('change', { bubbles: true }));
         const storeRaw = window.GM_getValue ? window.GM_getValue('ocbc', null) : null;
-        const persisted = typeof storeRaw === 'string' && storeRaw.includes('fixedByScope');
+        let parsedStore = null;
+        if (typeof storeRaw === 'string') {
+            try {
+                parsedStore = JSON.parse(storeRaw);
+            } catch (_error) {
+                parsedStore = null;
+            }
+        } else if (storeRaw && typeof storeRaw === 'object') {
+            parsedStore = storeRaw;
+        }
+        const fixedByScope = parsedStore && typeof parsedStore.fixedByScope === 'object' ? parsedStore.fixedByScope : null;
+        const persisted = Boolean(fixedByScope);
+        const decodeScopeSegment = value => {
+            try {
+                return decodeURIComponent(String(value || ''));
+            } catch (_error) {
+                return String(value || '');
+            }
+        };
+        const subPortfolioOptions = Array.from(document.querySelectorAll('select[aria-label^="Sub-portfolio for "] option'));
+        const matchingOption = subPortfolioOptions.find(option => (
+            option.parentElement instanceof HTMLSelectElement
+            && option.parentElement.offsetParent !== null
+            && (option.textContent || '').trim() === fixedScopeName
+        )) || subPortfolioOptions.find(option => (option.textContent || '').trim() === fixedScopeName) || null;
+        const selectedSubPortfolioId = matchingOption ? (matchingOption.value || '').trim() : '';
+        const persistedFixedScopes = fixedByScope
+            ? Object.entries(fixedByScope)
+                .filter(([, isFixed]) => isFixed === true)
+                .map(([scopeKey]) => {
+                    const segments = String(scopeKey || '').split('|');
+                    return {
+                        key: scopeKey,
+                        view: decodeScopeSegment(segments[0] || ''),
+                        portfolioNo: decodeScopeSegment(segments[1] || ''),
+                        subPortfolioId: decodeScopeSegment(segments[2] || ''),
+                        instrumentCode: decodeScopeSegment(segments[3] || '')
+                    };
+                })
+            : [];
+        const portfolioNoFromOverlayText = (() => {
+            const overlayText = document.querySelector('.gpv-overlay')?.innerText || '';
+            const match = overlayText.match(/Portfolio\s+([^\n]+)/i);
+            return match ? String(match[1] || '').trim() : '';
+        })();
+        const selectedPortfolioNo = selectedPortfolioNoFromHeading
+            || (persistedFixedScopes.find(scope => scope.subPortfolioId === selectedSubPortfolioId)?.portfolioNo || '')
+            || portfolioNoFromOverlayText;
+        const persistedScopeMatch = persistedFixedScopes.some(scope => {
+            if (scope.view !== 'assets' || scope.instrumentCode !== '' || scope.subPortfolioId !== selectedSubPortfolioId) {
+                return false;
+            }
+            if (selectedPortfolioNo) {
+                return scope.portfolioNo === selectedPortfolioNo;
+            }
+            return true;
+        });
         const overlayTextAfter = document.querySelector('.gpv-overlay')?.innerText || '';
         const recommendationLines = overlayTextAfter
             .split('\n')
             .map(line => String(line || '').trim())
             .filter(line => line.startsWith('Underweight sub-portfolios:') || line.startsWith('Overweight sub-portfolios:'));
+        const hasRecommendationLines = recommendationLines.length > 0;
         const excludesFromUnderweight = fixedScopeName
-            ? recommendationLines.every(line => !line.includes(fixedScopeName))
+            ? hasRecommendationLines && recommendationLines.every(line => !line.includes(fixedScopeName))
             : false;
-        return { hasToggle: true, checked: fixedInput.checked === true, persisted, excludesFromUnderweight };
+        const hasAssignedCoverageAfterToggle = /Sub-portfolio targets:\s*[\d.]+% assigned,\s*[\d.]+% remaining/i.test(overlayTextAfter)
+            || /Sub-portfolio targets:\s*[\d.]+% assigned/i.test(overlayTextAfter);
+        return {
+            hasToggle: true,
+            checked: fixedInput.checked === true,
+            persisted,
+            persistedScopeMatch,
+            hasRecommendationLines,
+            excludesFromUnderweight,
+            hasAssignedCoverageAfterToggle
+        };
     });
     recordAssertion(summary, ocbcFlowName, 'allocation-fixed-toggle-visible', fixedScopeBehavior.hasToggle, 'OCBC allocation shows Keep current allocation toggle.');
     recordAssertion(summary, ocbcFlowName, 'allocation-fixed-toggle-enabled', fixedScopeBehavior.checked, 'OCBC keep-current toggle can be enabled.');
     recordAssertion(summary, ocbcFlowName, 'allocation-fixed-toggle-persists', fixedScopeBehavior.persisted, 'OCBC fixed scope persists in OCBC store.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-fixed-toggle-persists-selected-scope', fixedScopeBehavior.persistedScopeMatch, 'OCBC fixed scope persists for the selected sub-portfolio scope key.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-fixed-recommendation-lines-exist', fixedScopeBehavior.hasRecommendationLines, 'OCBC planning renders recommendation lines before exclusion checks.');
     recordAssertion(summary, ocbcFlowName, 'allocation-fixed-excluded-from-underweight-overweight', fixedScopeBehavior.excludesFromUnderweight, 'OCBC fixed sub-portfolio is excluded from underweight/overweight recommendation wording.');
+    recordAssertion(summary, ocbcFlowName, 'allocation-fixed-coverage-summary-visible', fixedScopeBehavior.hasAssignedCoverageAfterToggle, 'OCBC fixed toggle keeps assigned/remaining sub-portfolio target coverage visible.');
 
     const ocbcConflict = {
         local: {

@@ -2393,6 +2393,13 @@ describe('initialization and URL monitoring', () => {
         expect(Array.from(targetSummaries).some(node => node.textContent.includes('Sub-portfolio targets:'))).toBe(true);
         expect(Array.from(targetSummaries).some(node => node.textContent.includes('Core instrument targets:'))).toBe(true);
 
+        const fixedToggle = overlay.querySelector('input[aria-label="Keep current allocation for sub-portfolio Core"]');
+        expect(fixedToggle).toBeTruthy();
+        fixedToggle.checked = true;
+        fixedToggle.dispatchEvent(new window.Event('change', { bubbles: true }));
+        overlay = document.querySelector('#gpv-overlay');
+        expect(overlay.textContent).toContain('Sub-portfolio targets: 40.00% assigned, 60.00% remaining');
+
         const headers = Array.from(overlay.querySelectorAll('th')).map(cell => cell.textContent.trim());
         expect(headers).toContain('Current % of portfolio');
         expect(headers).toContain('Target % of portfolio');

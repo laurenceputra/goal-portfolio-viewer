@@ -27,6 +27,56 @@ The Tampermonkey userscript uses a single-file architecture that:
 
 Planning/allocation uses a shared canonical model across Endowus, FSM, and OCBC. OCBC config includes `fixedByScope` for sub-portfolio keep-current-allocation behavior, and sync normalization/collection/application paths carry that configuration in sync payload version 4.
 
+### Canonical Planner Contract
+
+All three platform overlays map platform-specific rows to one canonical planner input shape and call the same planner entrypoint.
+
+Canonical input:
+
+```ts
+{
+  goals: Array<{
+    goalId: string;
+    goalName: string;
+    endingBalanceAmount: number | null;
+    effectiveTargetPercent: number | null;
+    isFixed: boolean;
+    diffAmount: number | null;
+  }>;
+  adjustedTotal: number | null;
+  projectedAmount: number; // scenario contribution amount
+  targetCoverageLabelOverride?: string | null;
+}
+```
+
+Canonical output:
+
+```ts
+{
+  adjustedTotal: number | null;
+  targetCoveragePercent: number;
+  targetCoverageLabel: string | null;
+  scenarioAmount: number;
+  scenarioSplit: Array<{ goalId: string; goalName: string; amount: number }>;
+  suggestedBuys: Array<PlanningTrade>;
+  suggestedSells: Array<PlanningTrade>;
+  triggerBuys: Array<PlanningTrade>;
+  triggerSells: Array<PlanningTrade>;
+  buyCandidates: Array<PlanningTrade>;
+  sellCandidates: Array<PlanningTrade>;
+  materialBuys: Array<PlanningTrade>;
+  materialSells: Array<PlanningTrade>;
+  hasMaterialDrift: boolean;
+}
+```
+
+Platform mappings:
+
+- Endowus: scope = bucket; position = goal (grouped by goal type).
+- FSM: scope = portfolio (or selected holdings scope); position = holding.
+- OCBC: scope = view + portfolio; position = sub-portfolio.
+- OCBC instrument-level rows are not fixed targets; fixed behavior applies at sub-portfolio scope (`fixedByScope`) only.
+
 **File Structure:**
 ```
 tampermonkey/
@@ -499,9 +549,9 @@ When shipping a release, update every version touchpoint to keep them aligned:
 
 1. **Userscript metadata**: `tampermonkey/goal_portfolio_viewer.user.js` → `// @version`
 2. **Package metadata**: `package.json` → `"version"`
-3. **Changelog**: `tampermonkey/README.md` → add a new entry under `## Changelog`
+3. **Release notes**: update the release/PR notes in repository workflow artifacts
 
-If any of these are missed, Tampermonkey auto-updates or release notes can drift from the actual code.
+If any of these are missed, Tampermonkey auto-updates or published release notes can drift from the actual code.
 
 **Key Sections to Modify:**
 
@@ -895,25 +945,12 @@ When contributing to the technical implementation:
 3. **Document changes**
    - Update this technical documentation
    - Add inline comments for complex code
-   - Update changelog
+   - Update relevant architecture docs
 
 4. **Consider backwards compatibility**
    - Don't break existing bucket naming conventions
    - Maintain API compatibility
    - Provide migration guides for breaking changes
-
----
-
-## Changelog
-
-### Version 2.0.0 (Tampermonkey)
-- Complete rewrite with modern architecture
-- Modern gradient UI design
-- Cross-browser compatibility
-- Monkey patching API interception
-- Auto-update functionality
-- Enhanced animations and transitions
-- Improved data visualization
 
 ---
 

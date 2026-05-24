@@ -59,7 +59,15 @@ pnpm run test:watch
 pnpm run test:coverage
 
 # Run layered coverage (userscript vs overall)
+
+# Demo end-to-end smoke checks
+pnpm --filter ./demo test:e2e:smoke
+
+# Demo end-to-end regression checks
+pnpm --filter ./demo test:e2e:regression
 ```
+
+Live platform smoke checks (Endowus/FSM/OCBC) are manual verification steps and are not part of automated CI execution.
 
 ### Test Output
 
