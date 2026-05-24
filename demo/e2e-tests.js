@@ -815,12 +815,74 @@ async function captureFsmFlow(page, summary, outputDir) {
         if (typeof window.GM_setValue !== 'function') {
             throw new Error('Demo bridge missing: window.GM_setValue is not available');
         }
-        const key = `fsm_target_pct_${growthId}`;
-        await Promise.resolve(window.GM_setValue(key, 64.5));
+        const key = 'fsm';
+        const existingRaw = typeof window.GM_getValue === 'function'
+            ? await Promise.resolve(window.GM_getValue(key, null))
+            : null;
+        const existingStore = (() => {
+            if (existingRaw && typeof existingRaw === 'object' && !Array.isArray(existingRaw)) {
+                return existingRaw;
+            }
+            if (typeof existingRaw !== 'string' || !existingRaw.trim()) {
+                return {};
+            }
+            try {
+                const parsed = JSON.parse(existingRaw);
+                return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+            } catch (_error) {
+                return {};
+            }
+        })();
+        const nextStore = {
+            ...existingStore,
+            version: Number.isFinite(existingStore.version) ? existingStore.version : 4,
+            datasets: existingStore.datasets && typeof existingStore.datasets === 'object' && !Array.isArray(existingStore.datasets)
+                ? existingStore.datasets
+                : {},
+            allocation: {
+                ...(existingStore && typeof existingStore.allocation === 'object' && !Array.isArray(existingStore.allocation)
+                    ? existingStore.allocation
+                    : {}),
+                targetsByCode: {
+                    ...((existingStore
+                        && existingStore.allocation
+                        && typeof existingStore.allocation === 'object'
+                        && !Array.isArray(existingStore.allocation)
+                        && existingStore.allocation.targetsByCode
+                        && typeof existingStore.allocation.targetsByCode === 'object'
+                        && !Array.isArray(existingStore.allocation.targetsByCode))
+                        ? existingStore.allocation.targetsByCode
+                        : {}),
+                    [growthId]: 64.5
+                }
+            },
+            ui: existingStore.ui && typeof existingStore.ui === 'object' && !Array.isArray(existingStore.ui)
+                ? existingStore.ui
+                : {},
+            localCache: existingStore.localCache && typeof existingStore.localCache === 'object' && !Array.isArray(existingStore.localCache)
+                ? existingStore.localCache
+                : {}
+        };
+        await Promise.resolve(window.GM_setValue(key, JSON.stringify(nextStore)));
         if (typeof window.GM_getValue === 'function') {
             const storedValue = await Promise.resolve(window.GM_getValue(key));
-            if (storedValue !== 64.5) {
-                throw new Error(`Demo bridge verification failed for ${key}: expected 64.5, received ${String(storedValue)}`);
+            let parsedStoredValue = null;
+            try {
+                parsedStoredValue = (storedValue && typeof storedValue === 'object' && !Array.isArray(storedValue))
+                    ? storedValue
+                    : (typeof storedValue === 'string' ? JSON.parse(storedValue) : null);
+            } catch (_error) {
+                parsedStoredValue = null;
+            }
+            const seededTarget = parsedStoredValue
+                && parsedStoredValue.allocation
+                && typeof parsedStoredValue.allocation === 'object'
+                && parsedStoredValue.allocation.targetsByCode
+                && typeof parsedStoredValue.allocation.targetsByCode === 'object'
+                ? parsedStoredValue.allocation.targetsByCode[growthId]
+                : undefined;
+            if (seededTarget !== 64.5) {
+                throw new Error(`Demo bridge verification failed for ${key}.allocation.targetsByCode[${growthId}]: expected 64.5, received ${String(seededTarget)}`);
             }
         }
     });
