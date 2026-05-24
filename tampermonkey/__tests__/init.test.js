@@ -2433,8 +2433,14 @@ describe('initialization and URL monitoring', () => {
         expect(bd1Row).toBeTruthy();
         expect(bd1Row.querySelectorAll('td')[unassignedProfitColumnIndex].textContent.trim()).toBe('-');
 
-        const scenarioInput = overlay.querySelector('input[aria-label="Projected contribution amount for OCBC selected portfolio planning"]');
+        const scenarioInputLabel = Array.from(overlay.querySelectorAll('label'))
+            .find(node => node.textContent.trim() === 'Scenario contribution (SGD):');
+        expect(scenarioInputLabel).toBeTruthy();
+        expect(scenarioInputLabel.getAttribute('for')).toBeTruthy();
+
+        const scenarioInput = overlay.querySelector(`#${scenarioInputLabel.getAttribute('for')}`);
         expect(scenarioInput).toBeTruthy();
+        expect(scenarioInput.id).toBe(scenarioInputLabel.getAttribute('for'));
         scenarioInput.value = '1200';
         scenarioInput.dispatchEvent(new window.Event('change', { bubbles: true }));
 
