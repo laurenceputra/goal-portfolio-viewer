@@ -16282,6 +16282,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             scenarioInput.min = '0';
             scenarioInput.step = '0.01';
             scenarioInput.placeholder = 'Projected contribution amount';
+            scenarioInput.setAttribute('aria-label', 'Projected contribution amount for OCBC selected portfolio planning');
             scenarioInput.id = buildSafeCollapseId('gpv-ocbc-scenario-contribution', activeView, selectedPortfolioNo);
             const storedScenarioAmount = toFiniteNumber(planningScenarioAmountByPortfolioScope[selectedPortfolioScopeKey], 0);
             scenarioInput.value = storedScenarioAmount > 0 ? storedScenarioAmount.toFixed(2) : '';
