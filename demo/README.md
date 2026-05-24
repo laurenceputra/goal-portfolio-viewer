@@ -19,7 +19,6 @@ This directory contains tools and files for demonstrating the Goal Portfolio Vie
     - Contribution events for testing contribution-adjusted calculations
 
 - **`mock-data.json`** - Generated mock data (performance, investible, summary, performanceTimeSeries)
-- **`mock-data.js`** - JavaScript version of the mock data generator (legacy)
 - **`BUCKET_CONFIGURATION.md`** - Documentation of bucket structure, targets, and calculated values
 
 ### Mock Server (E2E)
@@ -46,7 +45,6 @@ This directory contains tools and files for demonstrating the Goal Portfolio Vie
   - Useful for quick manual checks without API interception
 
 - **`index.html`** - Full-featured demo page with info panel
-- **`demo.html`** - Alternative demo page (kept for reference)
 - **`fsm/index.html`** - FSM E2E demo page (served at `/fsmone/holdings/investments`)
   - Loads FSM mock holdings and seeds portfolio/assignment targets for FSM flows
 

@@ -37,7 +37,6 @@
     const FSM_ALL_PORTFOLIO_ID = 'all';
     const FSM_MAX_PORTFOLIO_NAME_LENGTH = 64;
     const CANONICAL_ALLOCATION_MODEL_VERSION = 1;
-    const DEBUG_AUTH = false;
 
     const UNKNOWN_GOAL_TYPE = 'UNKNOWN_GOAL_TYPE';
     const PROJECTED_KEY_SEPARATOR = '|';
@@ -7264,16 +7263,6 @@ let GoalTargetStore;
         }
     }
 
-    function logAuthDebug(message, data) {
-        if (!DEBUG_AUTH) {
-            return;
-        }
-        if (data && typeof data === 'object') {
-            console.log(message, data);
-            return;
-        }
-        console.log(message);
-    }
     // Non-persistent storage for projected investments (resets on reload)
     // Key format: "bucketName|goalType" -> projected amount
 
@@ -7604,26 +7593,6 @@ let GoalTargetStore;
         });
     }
 
-    function dumpAvailableCookies() {
-        if (state.auth.gmCookieDumped || !DEBUG_AUTH) {
-            return;
-        }
-        state.auth.gmCookieDumped = true;
-        listCookieByQuery({})
-            .then(cookies => {
-                // Debug-only: log a safe summary of available GM_cookie entries
-                const summary = cookies.map(cookie => ({
-                    domain: cookie.domain,
-                    path: cookie.path,
-                    name: cookie.name
-                }));
-                logAuthDebug('[Goal Portfolio Viewer][DEBUG_AUTH] Available GM_cookie entries:', summary);
-            })
-            .catch(error => {
-                console.error('[Goal Portfolio Viewer][DEBUG_AUTH] Failed to list GM_cookie entries:', error);
-            });
-    }
-
     function getAuthTokenFromGMCookie() {
         if (!isEndowusAuthContext()) {
             return Promise.resolve(null);
@@ -7631,7 +7600,6 @@ let GoalTargetStore;
         if (typeof GM_cookie === 'undefined' || typeof GM_cookie.list !== 'function') {
             return Promise.resolve(null);
         }
-        dumpAvailableCookies();
         const cookieNames = ['webapp-sg-access-token', 'webapp-sg-accessToken'];
         const domains = ['.endowus.com', 'app.sg.endowus.com'];
         const queries = domains.flatMap(domain => (
