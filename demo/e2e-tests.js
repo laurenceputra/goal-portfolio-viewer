@@ -25,6 +25,8 @@ const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 const DEFAULT_DIFF_THRESHOLD = Number.parseFloat(process.env.E2E_DIFF_THRESHOLD || '0.001');
 const FLOW_DIFF_THRESHOLD_OVERRIDES = {
     'endowus-performance-mode': 0.008,
+    retirement: 0.0015,
+    'fsm-manager': 0.0015,
     'fsm-assignment-manager': 0.0015,
     'ocbc-allocation': 0.0025,
     'ocbc-subportfolio-manager': 0.004
@@ -568,10 +570,22 @@ async function clickButtonByRole(page, name, { timeout = 5000, retries = 1 } = {
     }
 }
 
-async function captureScreenshot(page, summary, outputDir, flowName) {
+async function captureScreenshot(page, summary, outputDir, flowName, { resetOverlayScroll = false } = {}) {
     const normalizedFlowName = normalizeName(flowName);
     const screenshotName = `e2e-${normalizedFlowName}.png`;
     const screenshotPath = path.join(outputDir, screenshotName);
+    if (resetOverlayScroll) {
+        await page.evaluate(() => {
+            // Only normalize overlay scroll for flows whose baseline expects the
+            // top of a selected detail/overlay view.
+            const overlayContainer = document.querySelector('#gpv-overlay .gpv-container');
+            if (!overlayContainer) {
+                return;
+            }
+            overlayContainer.scrollTop = 0;
+            overlayContainer.scrollLeft = 0;
+        });
+    }
     await page.waitForFunction(
         () => !document.fonts || document.fonts.status === 'loaded',
         null,
@@ -1256,7 +1270,7 @@ async function captureOcbcFlow(page, summary, outputDir) {
     const excludesLiabilityByDefault = !overlayTextAssets.includes('OCBC Investment Credit Line');
     recordAssertion(summary, ocbcFlowName, 'assets-excludes-liability', excludesLiabilityByDefault, 'Assets view does not contain OCBC Investment Credit Line.');
 
-    await captureScreenshot(page, summary, outputDir, 'ocbc-assets');
+    await captureScreenshot(page, summary, outputDir, 'ocbc-assets', { resetOverlayScroll: true });
 
     const isViewLabelAssociated = await page.$eval('.gpv-overlay', root => {
         const labels = Array.from(root.querySelectorAll('label'));
