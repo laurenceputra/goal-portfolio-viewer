@@ -216,10 +216,15 @@ describe('sync settings UI', () => {
         expectClassTokens(stepper, ['gpv-conflict-stepper']);
 
         const stepPanels = Array.from(document.querySelectorAll('.gpv-conflict-step-panel'));
-        expect(stepPanels.length).toBeGreaterThan(0);
+        expect(stepPanels.length).toBe(5);
         stepPanels.forEach(panel => {
             expectClassTokens(panel, ['gpv-conflict-step-panel']);
         });
+
+        const summaryPanel = document.querySelector('[data-step-panel="1"]');
+        expect(summaryPanel.textContent).toMatch(/FSM differences:\s*0/);
+        expect(summaryPanel.textContent).toMatch(/Endowus differences:\s*0/);
+        expect(summaryPanel.textContent).toMatch(/OCBC differences:\s*0/);
 
         const actions = Array.from(document.querySelectorAll('.gpv-conflict-actions'));
         expect(actions.length).toBeGreaterThan(0);

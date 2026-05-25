@@ -262,6 +262,43 @@ describe('initialization and URL monitoring', () => {
         expect(document.querySelector('.gpv-trigger-btn')).toBeNull();
     });
 
+    test('startUrlMonitoring toggles visibility on replaceState transition', () => {
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.startUrlMonitoring();
+
+        expect(document.querySelector('.gpv-trigger-btn')).toBeTruthy();
+
+        window.history.replaceState({}, '', 'https://app.sg.endowus.com/settings');
+        expect(document.querySelector('.gpv-trigger-btn')).toBeNull();
+    });
+
+    test('startUrlMonitoring toggles visibility on popstate transition', () => {
+        const exportsModule = loadModuleForUrl('https://app.sg.endowus.com/settings');
+        exportsModule.startUrlMonitoring();
+
+        expect(document.querySelector('.gpv-trigger-btn')).toBeNull();
+
+        window.history.pushState({}, '', 'https://app.sg.endowus.com/dashboard');
+        window.dispatchEvent(new window.PopStateEvent('popstate'));
+        expect(document.querySelector('.gpv-trigger-btn')).toBeTruthy();
+    });
+
+    test('startUrlMonitoring re-entry runs previous cleanup before re-hooking', () => {
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.startUrlMonitoring();
+
+        const firstCleanup = window.__gpvUrlMonitorCleanup;
+        expect(typeof firstCleanup).toBe('function');
+
+        exportsModule.startUrlMonitoring();
+
+        expect(typeof window.__gpvUrlMonitorCleanup).toBe('function');
+        expect(window.__gpvUrlMonitorCleanup).not.toBe(firstCleanup);
+
+        window.history.pushState({}, '', 'https://app.sg.endowus.com/settings');
+        expect(document.querySelector('.gpv-trigger-btn')).toBeNull();
+    });
+
     test('overlay platform descriptor resolves FSM, OCBC, then Endowus fallback by route', () => {
         let exportsModule = loadModuleForUrl('https://app.sg.endowus.com/goals');
         expect(exportsModule.getOverlayPlatformDescriptor().id).toBe('endowus');

@@ -432,6 +432,83 @@ describe('API interception', () => {
         expect(global.GM_setValue).not.toHaveBeenCalledWith('ocbc', expect.any(String));
     });
 
+    test('invalid Endowus performance payload shows validation error and does not persist', async () => {
+        const initialEndowus = JSON.stringify({
+            version: 4,
+            datasets: {
+                performance: [{ goalId: 'existing-goal' }]
+            }
+        });
+        storage.set('endowus', initialEndowus);
+
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        baseFetchMock.mockResolvedValueOnce(responseFactory({ stale: true }));
+        global.GM_setValue.mockClear();
+
+        await window.fetch('https://app.sg.endowus.com/v1/goals/performance');
+        await flushPromises();
+
+        expect(document.body.textContent).toContain('Latest Endowus refresh failed validation. Showing last synced portfolio data.');
+        expect(storage.get('endowus')).toBe(initialEndowus);
+        expect(global.GM_setValue).not.toHaveBeenCalledWith('endowus', expect.any(String));
+    });
+
+    test('malformed FSM payload is ignored and does not persist FSM store', async () => {
+        const initialFsm = JSON.stringify({ version: 4, datasets: { holdings: [{ code: 'KEEP' }] } });
+        storage.set('fsm', initialFsm);
+
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        baseFetchMock.mockResolvedValueOnce(responseFactory({ data: [{ refno: 'ref-1', holdings: null }] }));
+        global.GM_setValue.mockClear();
+
+        await window.fetch('https://secure.fundsupermart.com/fsmone/rest/holding/client/protected/find-holdings-with-pnl');
+        await flushPromises();
+
+        expect(storage.get('fsm')).toBe(initialFsm);
+        expect(global.GM_setValue).not.toHaveBeenCalledWith('fsm', expect.any(String));
+    });
+
+    test('malformed OCBC payload is ignored and does not persist OCBC store', async () => {
+        const initialOcbc = JSON.stringify({
+            version: 4,
+            datasets: {
+                holdingsByPortfolio: {
+                    'P-KEEP': { assets: [{ code: 'P-KEEP:A1' }], liabilities: [] }
+                },
+                holdings: { assets: [{ code: 'P-KEEP:A1' }], liabilities: [] }
+            }
+        });
+        storage.set('ocbc', initialOcbc);
+
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        baseFetchMock.mockResolvedValueOnce(responseFactory({ data: [null] }));
+        global.GM_setValue.mockClear();
+
+        await window.fetch(
+            'https://internet.ocbc.com/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry',
+            { method: 'POST' }
+        );
+        await flushPromises();
+
+        expect(storage.get('ocbc')).toBe(initialOcbc);
+        expect(global.GM_setValue).not.toHaveBeenCalledWith('ocbc', expect.any(String));
+    });
+
     test('fetch interception ignores non-matching endpoints', async () => {
         const responseFactory = body => ({
             clone: () => responseFactory(body),

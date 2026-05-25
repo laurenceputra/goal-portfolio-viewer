@@ -2273,11 +2273,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return bucketMap;
     }
 
-    const ViewModels = {
-        buildSummaryViewModel,
-        buildBucketDetailViewModel
-    };
-
     // ============================================
     // Performance Logic
     // ============================================
@@ -6507,82 +6502,159 @@ let GoalTargetStore;
         });
     }
 
-    const ENDPOINT_HANDLERS = {
-        performance: data => {
-            if (!Array.isArray(data)) {
-                return;
+    const ENDPOINT_DESCRIPTORS = [
+        {
+            endpointKey: 'fsmHoldings',
+            platformId: 'fsm',
+            matches: (url) => url.includes(ENDPOINT_PATHS.fsmHoldings),
+            validate: data => {
+                if (!data || typeof data !== 'object') {
+                    return { valid: false, reason: 'Expected object payload' };
+                }
+                const groups = Array.isArray(data.data) ? data.data : null;
+                if (!groups) {
+                    return { valid: false, reason: 'Missing data array in FSM holdings payload' };
+                }
+                const isValid = groups.every(group => group && typeof group === 'object' && Array.isArray(group.holdings));
+                return { valid: isValid, reason: isValid ? null : 'Invalid holdings group format in FSM payload' };
+            },
+            handle: data => {
+                const rows = Array.isArray(data?.data)
+                    ? data.data.flatMap(group => Array.isArray(group?.holdings) ? group.holdings : [])
+                    : [];
+                const filteredRows = rows.filter(row => row && row.productType !== 'DPMS_HEADER');
+                state.apiData.fsmHoldings = filteredRows;
+                state.readiness.fsm.holdingsLoaded = true;
+                updateFsmStore(current => ({ ...current, holdings: filteredRows }), 'Error saving FSM holdings data');
+                logDebug('[Goal Portfolio Viewer] Intercepted FSM holdings data', { rows: filteredRows.length });
+                notifyDataUpdates();
             }
-            state.apiData.performance = data;
-            state.readiness.endowus.performanceLoaded = true;
-            updateEndowusStore(current => ({ ...current, performance: data }), 'Error saving performance data');
-            logDebug('[Goal Portfolio Viewer] Intercepted performance data');
-            notifyDataUpdates();
         },
-        investible: data => {
-            if (!Array.isArray(data)) {
-                return;
-            }
-            state.apiData.investible = data;
-            state.readiness.endowus.investibleLoaded = true;
-            updateEndowusStore(current => ({ ...current, investible: data }), 'Error saving investible data');
-            logDebug('[Goal Portfolio Viewer] Intercepted investible data');
-            notifyDataUpdates();
-        },
-        summary: data => {
-            if (!Array.isArray(data)) {
-                return;
-            }
-            state.apiData.summary = data;
-            state.readiness.endowus.summaryLoaded = true;
-            updateEndowusStore(current => ({ ...current, summary: data }), 'Error saving summary data');
-            logDebug('[Goal Portfolio Viewer] Intercepted summary data');
-            notifyDataUpdates();
-        },
-        fsmHoldings: data => {
-            const rows = Array.isArray(data?.data)
-                ? data.data.flatMap(group => Array.isArray(group?.holdings) ? group.holdings : [])
-                : [];
-            const filteredRows = rows.filter(row => row && row.productType !== 'DPMS_HEADER');
-            state.apiData.fsmHoldings = filteredRows;
-            state.readiness.fsm.holdingsLoaded = true;
-            updateFsmStore(current => ({ ...current, holdings: filteredRows }), 'Error saving FSM holdings data');
-            logDebug('[Goal Portfolio Viewer] Intercepted FSM holdings data', { rows: filteredRows.length });
-            notifyDataUpdates();
-        },
-        ocbcHoldings: data => {
-            const normalized = normalizeOcbcHoldingsPayload(data);
-            const nextByPortfolio = groupOcbcHoldingsByPortfolio(normalized);
-            const now = Date.now();
-            Object.keys(nextByPortfolio).forEach(portfolioNo => {
-                nextByPortfolio[portfolioNo].lastSeenAt = now;
-            });
-            const latestPortfolioNos = Array.isArray(state.readiness.ocbc.latestPortfolioNos)
-                ? state.readiness.ocbc.latestPortfolioNos
-                : [];
-            state.readiness.ocbc.latestPortfolioNos = Array.from(new Set([
-                ...latestPortfolioNos,
-                ...Object.keys(nextByPortfolio)
-            ]));
+        {
+            endpointKey: 'ocbcHoldings',
+            platformId: 'ocbc',
+            matches: (url, method) => url.includes(ENDPOINT_PATHS.ocbcHoldings) && (!method || method === 'POST'),
+            validate: data => {
+                if (!data || typeof data !== 'object') {
+                    return { valid: false, reason: 'Expected object payload' };
+                }
+                const groups = Array.isArray(data.data) ? data.data : null;
+                if (!groups) {
+                    return { valid: false, reason: 'Missing data array in OCBC holdings payload' };
+                }
+                const isValid = groups.every(group => group && typeof group === 'object');
+                return { valid: isValid, reason: isValid ? null : 'Invalid portfolio group format in OCBC payload' };
+            },
+            handle: data => {
+                const normalized = normalizeOcbcHoldingsPayload(data);
+                const nextByPortfolio = groupOcbcHoldingsByPortfolio(normalized);
+                const now = Date.now();
+                Object.keys(nextByPortfolio).forEach(portfolioNo => {
+                    nextByPortfolio[portfolioNo].lastSeenAt = now;
+                });
+                const latestPortfolioNos = Array.isArray(state.readiness.ocbc.latestPortfolioNos)
+                    ? state.readiness.ocbc.latestPortfolioNos
+                    : [];
+                state.readiness.ocbc.latestPortfolioNos = Array.from(new Set([
+                    ...latestPortfolioNos,
+                    ...Object.keys(nextByPortfolio)
+                ]));
 
-            const updateResult = updateOcbcStore(current => {
-                const mergedByPortfolio = mergeOcbcHoldingsByPortfolio(current?.holdingsByPortfolio, nextByPortfolio, now);
-                const mergedHoldings = flattenOcbcHoldingsByPortfolio(mergedByPortfolio);
-                return {
-                    ...current,
-                    holdingsByPortfolio: mergedByPortfolio,
-                    holdings: mergedHoldings
-                };
-            }, 'Error saving OCBC holdings data');
-            const flattened = updateResult?.value?.holdings || { assets: [], liabilities: [] };
-            state.apiData.ocbcHoldings = flattened;
-            state.readiness.ocbc.holdingsLoaded = true;
-            logDebug('[Goal Portfolio Viewer] Intercepted OCBC holdings data', {
-                assets: flattened.assets.length,
-                liabilities: flattened.liabilities.length
-            });
-            notifyDataUpdates();
+                const updateResult = updateOcbcStore(current => {
+                    const mergedByPortfolio = mergeOcbcHoldingsByPortfolio(current?.holdingsByPortfolio, nextByPortfolio, now);
+                    const mergedHoldings = flattenOcbcHoldingsByPortfolio(mergedByPortfolio);
+                    return {
+                        ...current,
+                        holdingsByPortfolio: mergedByPortfolio,
+                        holdings: mergedHoldings
+                    };
+                }, 'Error saving OCBC holdings data');
+                const flattened = updateResult?.value?.holdings || { assets: [], liabilities: [] };
+                state.apiData.ocbcHoldings = flattened;
+                state.readiness.ocbc.holdingsLoaded = true;
+                logDebug('[Goal Portfolio Viewer] Intercepted OCBC holdings data', {
+                    assets: flattened.assets.length,
+                    liabilities: flattened.liabilities.length
+                });
+                notifyDataUpdates();
+            }
+        },
+        {
+            endpointKey: 'performance',
+            platformId: 'endowus',
+            matches: (url) => url.includes(ENDPOINT_PATHS.performance),
+            validate: data => {
+                if (!data || typeof data !== 'object') {
+                    return { valid: false, reason: 'Expected object payload' };
+                }
+                if (!Array.isArray(data)) {
+                    return { valid: false, reason: 'Expected array payload for performance' };
+                }
+                const isValid = data.every(item => item && typeof item === 'object' && item.goalId);
+                return { valid: isValid, reason: isValid ? null : 'Missing goalId in performance payload' };
+            },
+            handle: data => {
+                if (!Array.isArray(data)) {
+                    return;
+                }
+                state.apiData.performance = data;
+                state.readiness.endowus.performanceLoaded = true;
+                updateEndowusStore(current => ({ ...current, performance: data }), 'Error saving performance data');
+                logDebug('[Goal Portfolio Viewer] Intercepted performance data');
+                notifyDataUpdates();
+            }
+        },
+        {
+            endpointKey: 'investible',
+            platformId: 'endowus',
+            matches: (url) => url.includes(ENDPOINT_PATHS.investible),
+            validate: data => {
+                if (!data || typeof data !== 'object') {
+                    return { valid: false, reason: 'Expected object payload' };
+                }
+                if (!Array.isArray(data)) {
+                    return { valid: false, reason: 'Expected array payload for investible' };
+                }
+                const isValid = data.every(item => item && typeof item === 'object' && item.goalId);
+                return { valid: isValid, reason: isValid ? null : 'Missing goalId in investible payload' };
+            },
+            handle: data => {
+                if (!Array.isArray(data)) {
+                    return;
+                }
+                state.apiData.investible = data;
+                state.readiness.endowus.investibleLoaded = true;
+                updateEndowusStore(current => ({ ...current, investible: data }), 'Error saving investible data');
+                logDebug('[Goal Portfolio Viewer] Intercepted investible data');
+                notifyDataUpdates();
+            }
+        },
+        {
+            endpointKey: 'summary',
+            platformId: 'endowus',
+            matches: (url) => url.match(SUMMARY_ENDPOINT_REGEX),
+            validate: data => {
+                if (!data || typeof data !== 'object') {
+                    return { valid: false, reason: 'Expected object payload' };
+                }
+                if (!Array.isArray(data)) {
+                    return { valid: false, reason: 'Expected array payload for summary' };
+                }
+                const isValid = data.every(item => item && typeof item === 'object' && item.goalId);
+                return { valid: isValid, reason: isValid ? null : 'Missing goalId in summary payload' };
+            },
+            handle: data => {
+                if (!Array.isArray(data)) {
+                    return;
+                }
+                state.apiData.summary = data;
+                state.readiness.endowus.summaryLoaded = true;
+                updateEndowusStore(current => ({ ...current, summary: data }), 'Error saving summary data');
+                logDebug('[Goal Portfolio Viewer] Intercepted summary data');
+                notifyDataUpdates();
+            }
         }
-    };
+    ];
 
     const PLATFORM_ADAPTERS = [
         {
@@ -6596,8 +6668,7 @@ let GoalTargetStore;
                 description: 'Waiting for FSM holdings response. This updates automatically when data arrives.',
                 getItems: () => [{ label: 'FSM holdings data', ready: getFsmReadinessState().ready }]
             }),
-            renderOverlay: readinessState => renderFsmOverlay(readinessState.fsmHoldings),
-            endpointMatchers: [{ endpointKey: 'fsmHoldings', matches: (url) => url.includes(ENDPOINT_PATHS.fsmHoldings) }]
+            renderOverlay: readinessState => renderFsmOverlay(readinessState.fsmHoldings)
         },
         {
             id: 'ocbc',
@@ -6612,8 +6683,7 @@ let GoalTargetStore;
             renderOverlay: readinessState => renderOcbcOverlay(readinessState.ocbcHoldings, {
                 holdingsByPortfolio: readinessState.holdingsByPortfolio,
                 latestPortfolioNos: readinessState.latestPortfolioNos
-            }),
-            endpointMatchers: [{ endpointKey: 'ocbcHoldings', matches: (url, method) => url.includes(ENDPOINT_PATHS.ocbcHoldings) && (!method || method === 'POST') }]
+            })
         },
         {
             id: 'endowus',
@@ -6633,74 +6703,28 @@ let GoalTargetStore;
                     ];
                 }
             }),
-            renderOverlay: readinessState => renderEndowusOverlay(readinessState),
-            endpointMatchers: [
-                { endpointKey: 'performance', matches: (url) => url.includes(ENDPOINT_PATHS.performance) },
-                { endpointKey: 'investible', matches: (url) => url.includes(ENDPOINT_PATHS.investible) },
-                { endpointKey: 'summary', matches: (url) => url.match(SUMMARY_ENDPOINT_REGEX) }
-            ]
+            renderOverlay: renderEndowusOverlay
         }
     ];
 
-    function detectEndpointInfo(url, method = null) {
+    function getEndpointDescriptor(url, method = null) {
         if (typeof url !== 'string' || !url) {
-            return { endpointKey: null };
+            return null;
         }
-        for (const adapter of PLATFORM_ADAPTERS) {
-            const matcher = (adapter.endpointMatchers || []).find(entry => typeof entry.matches === 'function' && entry.matches(url, method));
-            if (matcher) {
-                return { endpointKey: matcher.endpointKey, platformId: adapter.id };
+        for (const descriptor of ENDPOINT_DESCRIPTORS) {
+            if (typeof descriptor.matches === 'function' && descriptor.matches(url, method)) {
+                return descriptor;
             }
         }
-        return { endpointKey: null };
-    }
-
-
-    function validateEndpointPayload(endpointKey, data) {
-        if (!data || typeof data !== 'object') {
-            return { valid: false, reason: 'Expected object payload' };
-        }
-        if (!Array.isArray(data) && endpointKey !== 'fsmHoldings' && endpointKey !== 'ocbcHoldings') {
-            return { valid: false, reason: `Expected array payload for ${endpointKey}` };
-        }
-        if (endpointKey === 'performance') {
-            const isValid = data.every(item => item && typeof item === 'object' && item.goalId);
-            return { valid: isValid, reason: isValid ? null : 'Missing goalId in performance payload' };
-        }
-        if (endpointKey === 'investible') {
-            const isValid = data.every(item => item && typeof item === 'object' && item.goalId);
-            return { valid: isValid, reason: isValid ? null : 'Missing goalId in investible payload' };
-        }
-        if (endpointKey === 'summary') {
-            const isValid = data.every(item => item && typeof item === 'object' && item.goalId);
-            return { valid: isValid, reason: isValid ? null : 'Missing goalId in summary payload' };
-        }
-        if (endpointKey === 'fsmHoldings') {
-            const groups = Array.isArray(data.data) ? data.data : null;
-            if (!groups) {
-                return { valid: false, reason: 'Missing data array in FSM holdings payload' };
-            }
-            const isValid = groups.every(group => group && typeof group === 'object' && Array.isArray(group.holdings));
-            return { valid: isValid, reason: isValid ? null : 'Invalid holdings group format in FSM payload' };
-        }
-        if (endpointKey === 'ocbcHoldings') {
-            const groups = Array.isArray(data.data) ? data.data : null;
-            if (!groups) {
-                return { valid: false, reason: 'Missing data array in OCBC holdings payload' };
-            }
-            const isValid = groups.every(group => group && typeof group === 'object');
-            return { valid: isValid, reason: isValid ? null : 'Invalid portfolio group format in OCBC payload' };
-        }
-        return { valid: true, reason: null };
+        return null;
     }
 
     async function handleInterceptedResponse(url, readData, method = null) {
-        const endpointInfo = detectEndpointInfo(url, method);
-        const endpointKey = endpointInfo.endpointKey;
-        if (!endpointKey) {
+        const descriptor = getEndpointDescriptor(url, method);
+        if (!descriptor) {
             return;
         }
-        const handler = ENDPOINT_HANDLERS[endpointKey];
+        const handler = descriptor.handle;
         if (typeof handler !== 'function') {
             return;
         }
@@ -6709,8 +6733,11 @@ let GoalTargetStore;
             if (data === null || data === undefined) {
                 return;
             }
-            const validation = validateEndpointPayload(endpointKey, data);
+            const validation = typeof descriptor.validate === 'function'
+                ? descriptor.validate(data)
+                : { valid: true, reason: null };
             if (!validation.valid) {
+                const endpointKey = descriptor.endpointKey;
                 console.warn(`[Goal Portfolio Viewer] Ignoring ${endpointKey} payload: ${validation.reason}`);
                 if (endpointKey === 'performance' || endpointKey === 'investible' || endpointKey === 'summary') {
                     showNotification('Latest Endowus refresh failed validation. Showing last synced portfolio data.', 'error');
@@ -8580,7 +8607,7 @@ let GoalTargetStore;
         const projectedInputControl = createProjectedInvestmentInput({
             amount: goalTypeModel.projectedAmount,
             onInput: input => {
-                EventHandlers.handleProjectedInvestmentChange({
+                handleProjectedInvestmentChange({
                     input,
                     bucket: bucketViewModel.bucketName,
                     goalType: goalTypeModel.goalType,
@@ -8738,7 +8765,7 @@ let GoalTargetStore;
             if (!goalModel) {
                 return;
             }
-            EventHandlers.handleGoalTargetChange({
+            handleGoalTargetChange({
                 input: resolved.element,
                 goalId: goalModel.goalId,
                 currentEndingBalance: goalModel.endingBalanceAmount,
@@ -8762,7 +8789,7 @@ let GoalTargetStore;
             if (!goalModel) {
                 return;
             }
-            EventHandlers.handleGoalFixedToggle({
+            handleGoalFixedToggle({
                 input: resolved.element,
                 goalId: goalModel.goalId,
                 bucket: bucketViewModel.bucketName,
@@ -9466,12 +9493,6 @@ let GoalTargetStore;
             projectedInvestmentsState
         });
     }
-
-    const EventHandlers = {
-        handleGoalTargetChange,
-        handleGoalFixedToggle,
-        handleProjectedInvestmentChange
-    };
 
     const FSM_PROJECTION_BUCKET = '__fsm__';
     const FSM_PROJECTION_REFRESH_DEBOUNCE_MS = PROJECTION_REFRESH_DEBOUNCE_MS;
@@ -10540,72 +10561,35 @@ function createConflictDialogHTML(conflict) {
     const localFixed = Object.keys(localEndowus.goalFixed || {}).length;
     const remoteFixed = Object.keys(remoteEndowus.goalFixed || {}).length;
     const diffSections = _buildConflictDiffItems(conflict);
+    const buildDiffRow = (name, localDisplay, remoteDisplay) => `
+        <tr>
+            <td class="gpv-conflict-goal-name">${escapeHtml(name)}</td>
+            <td>${escapeHtml(localDisplay)}</td>
+            <td>${escapeHtml(remoteDisplay)}</td>
+        </tr>
+    `;
     const sectionRows = (rows, label) => rows.length > 0
         ? `<table class="gpv-conflict-diff-table"><thead><tr><th>${label}</th><th>Local</th><th>Remote</th></tr></thead><tbody>${rows}</tbody></table>`
         : '<div class="gpv-conflict-diff-empty">No differences detected.</div>';
 
     const endowusRows = diffSections.endowus.map(item => `
-        <tr>
-            <td class="gpv-conflict-goal-name">${escapeHtml(item.goalName)}</td>
-            <td>${escapeHtml(item.localTargetDisplay)} / ${escapeHtml(item.localFixedDisplay)} / ${escapeHtml(item.localBucketDisplay)}</td>
-            <td>${escapeHtml(item.remoteTargetDisplay)} / ${escapeHtml(item.remoteFixedDisplay)} / ${escapeHtml(item.remoteBucketDisplay)}</td>
-        </tr>
+            ${buildDiffRow(
+        item.goalName,
+        `${item.localTargetDisplay} / ${item.localFixedDisplay} / ${item.localBucketDisplay}`,
+        `${item.remoteTargetDisplay} / ${item.remoteFixedDisplay} / ${item.remoteBucketDisplay}`
+    )}
     `).join('');
 
-    const fsmDefinitionRows = diffSections.fsm
-        .filter(item => item.section === 'definition')
-        .map(item => `
-            <tr>
-                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
-                <td>${escapeHtml(item.localDisplay)}</td>
-                <td>${escapeHtml(item.remoteDisplay)}</td>
-            </tr>
-        `).join('');
-    const ocbcDefinitionRows = diffSections.ocbc
-        .filter(item => item.section === 'definition')
-        .map(item => `
-            <tr>
-                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
-                <td>${escapeHtml(item.localDisplay)}</td>
-                <td>${escapeHtml(item.remoteDisplay)}</td>
-            </tr>
-        `).join('');
-    const fsmAssignmentRows = diffSections.fsm
-        .filter(item => item.section === 'assignment')
-        .map(item => `
-            <tr>
-                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
-                <td>${escapeHtml(item.localDisplay)}</td>
-                <td>${escapeHtml(item.remoteDisplay)}</td>
-            </tr>
-        `).join('');
-    const ocbcAssignmentRows = diffSections.ocbc
-        .filter(item => item.section === 'assignment')
-        .map(item => `
-            <tr>
-                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
-                <td>${escapeHtml(item.localDisplay)}</td>
-                <td>${escapeHtml(item.remoteDisplay)}</td>
-            </tr>
-        `).join('');
-    const fsmInstrumentRows = diffSections.fsm
-        .filter(item => item.section === 'instrument')
-        .map(item => `
-            <tr>
-                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
-                <td>${escapeHtml(item.localDisplay)}</td>
-                <td>${escapeHtml(item.remoteDisplay)}</td>
-            </tr>
-        `).join('');
-    const ocbcTargetRows = diffSections.ocbc
-        .filter(item => item.section === 'target')
-        .map(item => `
-            <tr>
-                <td class="gpv-conflict-goal-name">${escapeHtml(item.settingName)}</td>
-                <td>${escapeHtml(item.localDisplay)}</td>
-                <td>${escapeHtml(item.remoteDisplay)}</td>
-            </tr>
-        `).join('');
+    const buildRowsBySection = (items, sectionName) => items
+        .filter(item => item.section === sectionName)
+        .map(item => buildDiffRow(item.settingName, item.localDisplay, item.remoteDisplay))
+        .join('');
+    const fsmDefinitionRows = buildRowsBySection(diffSections.fsm, 'definition');
+    const ocbcDefinitionRows = buildRowsBySection(diffSections.ocbc, 'definition');
+    const fsmAssignmentRows = buildRowsBySection(diffSections.fsm, 'assignment');
+    const ocbcAssignmentRows = buildRowsBySection(diffSections.ocbc, 'assignment');
+    const fsmInstrumentRows = buildRowsBySection(diffSections.fsm, 'instrument');
+    const ocbcTargetRows = buildRowsBySection(diffSections.ocbc, 'target');
     const hasTargetRows = endowusRows.length > 0 || fsmInstrumentRows.length > 0 || ocbcTargetRows.length > 0;
     const targetRowsHtml = hasTargetRows
         ? `${endowusRows.length > 0 ? sectionRows(endowusRows, 'Goal') : ''}${fsmInstrumentRows.length > 0 ? sectionRows(fsmInstrumentRows, 'Instrument') : ''}${ocbcTargetRows.length > 0 ? sectionRows(ocbcTargetRows, 'Setting') : ''}`
@@ -13461,7 +13445,7 @@ syncUi.update = function updateSyncUI() {
             const goalFixedById = buildGoalFixedById(goalIds, GoalTargetStore.getFixed);
             return {
                 kind: 'SUMMARY',
-                viewModel: ViewModels.buildSummaryViewModel(
+                viewModel: buildSummaryViewModel(
                     mergedInvestmentDataState,
                     projectedInvestmentsState,
                     goalTargetById,
@@ -13476,7 +13460,7 @@ syncUi.update = function updateSyncUI() {
         const goalIds = collectGoalIds(bucketObj);
         const goalTargetById = buildGoalTargetById(goalIds, GoalTargetStore.getTarget);
         const goalFixedById = buildGoalFixedById(goalIds, GoalTargetStore.getFixed);
-        const viewModel = ViewModels.buildBucketDetailViewModel({
+        const viewModel = buildBucketDetailViewModel({
             bucketName: selection,
             bucketMap: mergedInvestmentDataState,
             projectedInvestmentsState,
@@ -13524,11 +13508,6 @@ syncUi.update = function updateSyncUI() {
             useCacheOnly
         });
     }
-
-    const ViewPipeline = {
-        buildViewModel: buildPortfolioViewModel,
-        render: renderPortfolioView
-    };
 
     function getEndowusBucketConfigSignature(performanceData, investibleData, summaryData) {
         const store = readEndowusStore();
@@ -16521,7 +16500,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
             performanceRefreshToken += 1;
             const refreshToken = performanceRefreshToken;
-            ViewPipeline.render({
+            renderPortfolioView({
                 contentDiv,
                 selection,
                 mergedInvestmentDataState,
@@ -16799,34 +16778,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const restorePushState = wrapHistoryMethod('pushState', handleUrlChange);
         const restoreReplaceState = wrapHistoryMethod('replaceState', handleUrlChange);
 
-        let intervalId = null;
-        let stableChecks = 0;
-        const maxStableChecks = 10;
-        const pollingIntervalMs = 1000;
-        intervalId = window.setInterval(() => {
-            if (typeof window === 'undefined' || !window || typeof document === 'undefined') {
-                if (intervalId) {
-                    clearInterval(intervalId);
-                    intervalId = null;
-                }
-                return;
-            }
-            const beforeUrl = state.ui.lastUrl;
-            handleUrlChange();
-            if (state.ui.lastUrl === beforeUrl) {
-                stableChecks += 1;
-            } else {
-                stableChecks = 0;
-            }
-            if (stableChecks >= maxStableChecks && intervalId) {
-                window.clearInterval(intervalId);
-                intervalId = null;
-            }
-        }, pollingIntervalMs);
-        if (intervalId && typeof intervalId.unref === 'function') {
-            intervalId.unref();
-        }
-
         const appRoot = document.querySelector('#root')
             || document.querySelector('#app')
             || document.querySelector('main');
@@ -16843,10 +16794,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             window.removeEventListener('popstate', handleUrlChange);
             restorePushState();
             restoreReplaceState();
-            if (intervalId) {
-                window.clearInterval(intervalId);
-                intervalId = null;
-            }
             if (state.ui.observer) {
                 state.ui.observer.disconnect();
                 state.ui.observer = null;
