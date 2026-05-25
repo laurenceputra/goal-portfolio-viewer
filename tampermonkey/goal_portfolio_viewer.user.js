@@ -6584,9 +6584,6 @@ let GoalTargetStore;
             platformId: 'endowus',
             matches: (url) => url.includes(ENDPOINT_PATHS.performance),
             validate: data => {
-                if (!data || typeof data !== 'object') {
-                    return { valid: false, reason: 'Expected object payload' };
-                }
                 if (!Array.isArray(data)) {
                     return { valid: false, reason: 'Expected array payload for performance' };
                 }
@@ -6609,9 +6606,6 @@ let GoalTargetStore;
             platformId: 'endowus',
             matches: (url) => url.includes(ENDPOINT_PATHS.investible),
             validate: data => {
-                if (!data || typeof data !== 'object') {
-                    return { valid: false, reason: 'Expected object payload' };
-                }
                 if (!Array.isArray(data)) {
                     return { valid: false, reason: 'Expected array payload for investible' };
                 }
@@ -6634,9 +6628,6 @@ let GoalTargetStore;
             platformId: 'endowus',
             matches: (url) => url.match(SUMMARY_ENDPOINT_REGEX),
             validate: data => {
-                if (!data || typeof data !== 'object') {
-                    return { valid: false, reason: 'Expected object payload' };
-                }
                 if (!Array.isArray(data)) {
                     return { valid: false, reason: 'Expected array payload for summary' };
                 }

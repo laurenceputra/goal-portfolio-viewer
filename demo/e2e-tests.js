@@ -834,7 +834,6 @@ async function captureFsmFlow(page, summary, outputDir) {
             }
         })();
         const nextStore = {
-            ...existingStore,
             version: 4,
             datasets: existingStore.datasets && typeof existingStore.datasets === 'object' && !Array.isArray(existingStore.datasets)
                 ? existingStore.datasets

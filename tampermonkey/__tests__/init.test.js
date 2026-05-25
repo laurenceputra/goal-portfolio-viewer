@@ -4640,6 +4640,12 @@ describe('initialization and URL monitoring', () => {
             global.fetch.mockResolvedValueOnce(responseFactory({ stale: true }));
             await window.fetch('/v1/goals/performance');
 
+            global.fetch.mockResolvedValueOnce(responseFactory(null));
+            await window.fetch('/v2/goals/investible');
+
+            global.fetch.mockResolvedValueOnce(responseFactory('invalid'));
+            await window.fetch('/v1/goals');
+
             await new Promise(resolve => setTimeout(resolve, 0));
 
             overlay = document.querySelector('#gpv-overlay');
@@ -4652,6 +4658,41 @@ describe('initialization and URL monitoring', () => {
             expect(warnSpy.mock.calls.filter(([message]) => (
                 message === '[Goal Portfolio Viewer] Ignoring performance payload: Expected array payload for performance'
             )).length).toBeGreaterThanOrEqual(2);
+            expect(warnSpy).toHaveBeenCalledWith(
+                '[Goal Portfolio Viewer] Ignoring summary payload: Expected array payload for summary'
+            );
+        } finally {
+            warnSpy.mockRestore();
+        }
+    });
+
+    test('Endowus investible/summary validators warn with expected array payload reasons', async () => {
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            const exportsModule = require('../goal_portfolio_viewer.user.js');
+            exportsModule.init();
+
+            global.fetch.mockResolvedValueOnce(responseFactory({ stale: true }));
+            await window.fetch('/v2/goals/investible');
+
+            global.fetch.mockResolvedValueOnce(responseFactory('invalid'));
+            await window.fetch('/v1/goals');
+
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            expect(warnSpy).toHaveBeenCalledWith(
+                '[Goal Portfolio Viewer] Ignoring investible payload: Expected array payload for investible'
+            );
+            expect(warnSpy).toHaveBeenCalledWith(
+                '[Goal Portfolio Viewer] Ignoring summary payload: Expected array payload for summary'
+            );
         } finally {
             warnSpy.mockRestore();
         }
