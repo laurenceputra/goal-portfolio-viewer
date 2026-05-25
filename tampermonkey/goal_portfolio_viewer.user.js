@@ -14631,6 +14631,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         let nextFocusTarget = null;
         const targetErrorsByHoldingId = {};
         const activePortfolios = () => portfolios.filter(item => item.archived !== true);
+        const codeCounts = buildFsmCodeCounts(fsmHoldings);
+
+        const clearLegacyFsmAllocationKeys = (row, maps = {}) => {
+            const code = utils.normalizeString(row?.code, '');
+            const holdingId = utils.normalizeString(row?.holdingId || row?.code, '');
+            if (!isFsmLegacyCodeFallbackAllowed(code, holdingId, codeCounts)) {
+                return;
+            }
+            if (maps.targetsByCode && typeof maps.targetsByCode === 'object') {
+                delete maps.targetsByCode[code];
+            }
+            if (maps.fixedByCode && typeof maps.fixedByCode === 'object') {
+                delete maps.fixedByCode[code];
+            }
+        };
 
         const managerSection = createElement('div', 'gpv-fsm-section');
         const summarySection = createElement('div', 'gpv-fsm-section');
@@ -14913,6 +14928,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         updateFsmStore(current => {
                             const targetsByCode = { ...current.targetsByCode };
                             delete targetsByCode[holdingId];
+                            clearLegacyFsmAllocationKeys(row, { targetsByCode });
                             return { ...current, targetsByCode };
                         });
                         if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
@@ -14927,25 +14943,33 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                         return;
                     }
                     delete targetErrorsByHoldingId[holdingId];
-                    updateFsmStore(current => ({
-                        ...current,
-                        targetsByCode: { ...current.targetsByCode, [holdingId]: normalizedTarget.value }
-                    }));
+                    updateFsmStore(current => {
+                        const targetsByCode = { ...current.targetsByCode, [holdingId]: normalizedTarget.value };
+                        clearLegacyFsmAllocationKeys(row, { targetsByCode });
+                        return {
+                            ...current,
+                            targetsByCode
+                        };
+                    });
                     if (typeof SyncManager?.scheduleSyncOnChange === 'function') {
                         SyncManager.scheduleSyncOnChange('fsm-target-update');
                     }
                     rerender();
                 },
                 onFixedChange: (holdingId, isFixed) => {
+                    const row = viewState.rows.find(item => (item.holdingId || item.code) === holdingId) || null;
                     updateFsmStore(current => {
                         const targetsByCode = { ...current.targetsByCode };
+                        const fixedByCode = { ...current.fixedByCode, [holdingId]: isFixed };
                         if (isFixed) {
                             delete targetsByCode[holdingId];
+                            clearLegacyFsmAllocationKeys(row, { targetsByCode });
                         }
+                        clearLegacyFsmAllocationKeys(row, { fixedByCode });
                         return {
                             ...current,
                             targetsByCode,
-                            fixedByCode: { ...current.fixedByCode, [holdingId]: isFixed }
+                            fixedByCode
                         };
                     });
                     if (typeof SyncManager?.scheduleSyncOnChange === 'function') {

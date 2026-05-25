@@ -5052,7 +5052,14 @@ describe('initialization and URL monitoring', () => {
         seedFsmStore({ holdings: [
             { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
         ] });
-        upsertFsmStore(current => ({ ...current, allocation: { ...(current.allocation || {}), targetsByCode: { AAA: 35 } } }));
+        upsertFsmStore(current => ({
+            ...current,
+            allocation: {
+                ...(current.allocation || {}),
+                targetsByCode: { AAA: 35 },
+                fixedByCode: { AAA: true }
+            }
+        }));
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
         exportsModule.init();
@@ -5072,9 +5079,140 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
-        expect(JSON.parse(storage.get('fsm')).allocation.targetsByCode.AAA).toBe(35);
+        expect(JSON.parse(storage.get('fsm')).allocation.targetsByCode.AAA).toBeUndefined();
         expect(JSON.parse(storage.get('fsm')).allocation.targetsByCode['AAA|sub:AAPL']).toBeUndefined();
-        expect(targetInput.value).toBe('35.00');
+        expect(targetInput.value).toBe('');
+    });
+
+    test('FSM duplicate-code holdings keep legacy code target/fixed keys when editing canonical row', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        setupStorage();
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        seedFsmStore({ holdings: [
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 },
+            { code: 'AAA', subcode: 'MSFT', name: 'Fund B', productType: 'UNIT_TRUST', currentValueLcy: 800 }
+        ] });
+        upsertFsmStore(current => ({ ...current, allocation: { ...(current.allocation || {}), targetsByCode: { AAA: 35 }, fixedByCode: { AAA: true } } }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const viewAllHoldingsButton = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        expect(viewAllHoldingsButton).toBeTruthy();
+        viewAllHoldingsButton.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const fundARow = Array.from(overlay.querySelectorAll('table tbody tr')).find(row => row.textContent.includes('Fund A'));
+        expect(fundARow).toBeTruthy();
+
+        let targetInput = fundARow.querySelector('input.gpv-target-input');
+        targetInput.value = '40';
+        targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        let storedAllocation = JSON.parse(storage.get('fsm')).allocation;
+        expect(storedAllocation.targetsByCode.AAA).toBe(35);
+        expect(storedAllocation.targetsByCode['AAA|sub:AAPL']).toBe(40);
+
+        targetInput.value = '';
+        targetInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        storedAllocation = JSON.parse(storage.get('fsm')).allocation;
+        expect(storedAllocation.targetsByCode.AAA).toBe(35);
+        expect(storedAllocation.targetsByCode['AAA|sub:AAPL']).toBeUndefined();
+
+        let fixedCheckbox = fundARow.querySelector('input[aria-label^="Fixed allocation"]');
+        fixedCheckbox.checked = true;
+        fixedCheckbox.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        storedAllocation = JSON.parse(storage.get('fsm')).allocation;
+        expect(storedAllocation.fixedByCode.AAA).toBe(true);
+        expect(storedAllocation.fixedByCode['AAA|sub:AAPL']).toBe(true);
+    });
+
+    test('FSM fixed on then off does not restore stale legacy target fallback', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        setupStorage();
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        seedFsmStore({ holdings: [
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+        ] });
+        upsertFsmStore(current => ({ ...current, allocation: { ...(current.allocation || {}), targetsByCode: { AAA: 35 } } }));
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const viewAllHoldingsButton = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        expect(viewAllHoldingsButton).toBeTruthy();
+        viewAllHoldingsButton.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        let fixedCheckbox = overlay.querySelector('input[aria-label^="Fixed allocation"]');
+        fixedCheckbox.checked = true;
+        fixedCheckbox.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        fixedCheckbox = overlay.querySelector('input[aria-label^="Fixed allocation"]');
+        fixedCheckbox.checked = false;
+        fixedCheckbox.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        overlay = document.querySelector('#gpv-overlay');
+        const targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
+        const storedAllocation = JSON.parse(storage.get('fsm')).allocation;
+        expect(storedAllocation.targetsByCode.AAA).toBeUndefined();
+        expect(storedAllocation.targetsByCode['AAA|sub:AAPL']).toBeUndefined();
+        expect(storedAllocation.fixedByCode.AAA).toBeUndefined();
+        expect(storedAllocation.fixedByCode['AAA|sub:AAPL']).toBe(false);
+        expect(targetInput.value).toBe('');
     });
 
     test('FSM migration preserves legacy target entries when normalized target map exists', () => {
@@ -5178,7 +5316,7 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         fixedCheckbox = overlay.querySelector('input[aria-label^="Fixed allocation"]');
-        expect(JSON.parse(storage.get('fsm')).allocation.fixedByCode.AAA).toBe(true);
+        expect(JSON.parse(storage.get('fsm')).allocation.fixedByCode.AAA).toBeUndefined();
         expect(JSON.parse(storage.get('fsm')).allocation.fixedByCode['AAA|sub:AAPL']).toBe(false);
         expect(fixedCheckbox.checked).toBe(false);
     });
