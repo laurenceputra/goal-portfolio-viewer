@@ -38,6 +38,7 @@ For backend APIs called from browsers:
 For encrypted sync payload systems:
 - Verify server treats encrypted payload as opaque unless schema parsing is explicitly required.
 - Confirm migrations do not broaden synced data classes (e.g., no amounts/PII unless approved).
+- Confirm migration retention policy is documented (intro date + removal-eligible date), that the 2-month window is for in-repo migration support, and that legacy storage cleanup only runs after successful migrated write during the active window.
 - Confirm logs/telemetry do not include sensitive payload content.
 
 ## Output Format

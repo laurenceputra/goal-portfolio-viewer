@@ -370,5 +370,5 @@ When validating the userscript architecture rewrite:
 2. Assert v2/v3 namespaced config payloads normalize into v4-compatible apply behavior.
 3. Assert sync payload collection excludes raw datasets and local cache.
 4. Assert adapter-registry-based route and endpoint dispatch still works for Endowus/FSM/OCBC interception and overlay readiness.
-5. Do not retain v1 flat platform migration/cleanup assertions for deprecated flat keys.
+5. During active migration windows, retain flat platform migration/cleanup assertions (read fallback -> v4 write -> successful cleanup). The 2-month window governs how long migration code/tests remain in-repo; legacy flat keys may be cleaned immediately after a successful migrated v4 write during that window. Remove these migration-path assertions after the 2-month retention window ends.
 6. Keep sync auth-key migration coverage (`sync_*` flat keys -> `sync` store) separate; this is sync-settings migration, not platform data/config migration.

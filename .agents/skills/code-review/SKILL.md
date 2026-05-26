@@ -55,7 +55,7 @@ Reference: `debugging-assistant` escalation policy and `qa-testing` verification
 - **Financial calculations**: guard zero division, use `Number.isFinite()`, preserve null vs 0, round only at display.
 - **API interception safety**: clone responses before reading, match URLs precisely, avoid blocking the native response, prevent fetch/XHR loops.
 - **XSS prevention**: never render user data via `innerHTML`, avoid inline event handlers, use `textContent` or DOM nodes.
-- **Storage key compatibility**: keep key formats stable, encode separators, add migrations if any key shape changes.
+- **Storage key compatibility**: keep key formats stable, encode separators, add migrations if any key shape changes, and verify policy clarity that the 2-month window covers in-repo migration support while runtime legacy-key cleanup may occur immediately after successful migrated write during that window.
 - **Sync/security boundaries**: no data egress by default, encryption/auth flows unchanged unless explicitly intended and verified.
 
 ## Output Format

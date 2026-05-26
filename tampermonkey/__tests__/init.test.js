@@ -299,6 +299,47 @@ describe('initialization and URL monitoring', () => {
         expect(document.querySelector('.gpv-trigger-btn')).toBeNull();
     });
 
+    test('startUrlMonitoring bounded polling detects URL changes without history wrapper', () => {
+        jest.useFakeTimers();
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        const originalPushState = window.history.pushState.bind(window.history);
+        exportsModule.startUrlMonitoring();
+
+        expect(document.querySelector('.gpv-trigger-btn')).toBeTruthy();
+
+        originalPushState({}, '', 'https://app.sg.endowus.com/settings');
+        jest.advanceTimersByTime(800);
+
+        expect(document.querySelector('.gpv-trigger-btn')).toBeNull();
+    });
+
+    test('startUrlMonitoring re-entry clears previous bounded polling interval', () => {
+        jest.useFakeTimers();
+        const clearIntervalSpy = jest.spyOn(global, 'clearInterval');
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.startUrlMonitoring();
+        exportsModule.startUrlMonitoring();
+        expect(clearIntervalSpy).toHaveBeenCalled();
+    });
+
+    test('startUrlMonitoring bounded polling auto-stops after stable checks', () => {
+        jest.useFakeTimers();
+        const clearIntervalSpy = jest.spyOn(global, 'clearInterval');
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        const originalPushState = window.history.pushState.bind(window.history);
+
+        exportsModule.startUrlMonitoring();
+        expect(document.querySelector('.gpv-trigger-btn')).toBeTruthy();
+
+        jest.advanceTimersByTime(7500);
+        expect(clearIntervalSpy).toHaveBeenCalled();
+
+        originalPushState({}, '', 'https://app.sg.endowus.com/settings');
+        jest.advanceTimersByTime(3000);
+
+        expect(document.querySelector('.gpv-trigger-btn')).toBeTruthy();
+    });
+
     test('overlay platform descriptor resolves FSM, OCBC, then Endowus fallback by route', () => {
         let exportsModule = loadModuleForUrl('https://app.sg.endowus.com/goals');
         expect(exportsModule.getOverlayPlatformDescriptor().id).toBe('endowus');
@@ -679,7 +720,7 @@ describe('initialization and URL monitoring', () => {
         const summaryData = [{ goalId: 'goal1' }];
 
         const exportsModule = require('../goal_portfolio_viewer.user.js');
-        const clearedKey = 'goal_bucket_cleared_goal1';
+        const clearedKey = 'goal_bucket_name_goal1__cleared';
 
         const before = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
         global.GM_setValue(clearedKey, true);
@@ -688,7 +729,7 @@ describe('initialization and URL monitoring', () => {
         expect(after).toBe(before);
     });
 
-    test('Endowus bucket config signature ignores legacy goal bucket key changes', () => {
+    test('Endowus bucket config signature reads legacy goal bucket key during migration window', () => {
         const performanceData = [{ goalId: 'goal1' }];
         const investibleData = [{ goalId: 'goal1' }];
         const summaryData = [{ goalId: 'goal1' }];
@@ -700,10 +741,10 @@ describe('initialization and URL monitoring', () => {
         global.GM_setValue(bucketKey, 'Legacy Override');
         const after = exportsModule.getEndowusBucketConfigSignature(performanceData, investibleData, summaryData);
 
-        expect(after).toBe(before);
+        expect(after).not.toBe(before);
     });
 
-    test('Endowus readiness ignores legacy goal bucket assignment changes', () => {
+    test('Endowus readiness reflects active-window legacy goal bucket assignment updates', () => {
         const performanceData = [{
             goalId: 'goal1',
             totalCumulativeReturn: { amount: 100 },
@@ -731,16 +772,16 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).not.toContain('Legacy Bucket A');
+        expect(overlay.textContent).toContain('Legacy Bucket A');
 
         global.GM_setValue('goal_bucket_name_goal1', 'Legacy Bucket B');
         exportsModule.showOverlay();
 
         overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).not.toContain('Legacy Bucket B');
+        expect(overlay.textContent).toContain('Legacy Bucket B');
     });
 
-    test('Endowus readiness ignores legacy cleared flag changes', () => {
+    test('Endowus readiness keeps migrated legacy bucket after unrelated legacy cleared flag changes', () => {
         const performanceData = [{
             goalId: 'goal1',
             totalCumulativeReturn: { amount: 100 },
@@ -768,14 +809,13 @@ describe('initialization and URL monitoring', () => {
         exportsModule.showOverlay();
 
         let overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).not.toContain('Legacy Bucket A');
+        expect(overlay.textContent).toContain('Legacy Bucket A');
 
-        global.GM_setValue('goal_bucket_cleared_goal1', true);
+        global.GM_setValue('goal_bucket_name_goal2__cleared', true);
         exportsModule.showOverlay();
 
         overlay = document.querySelector('#gpv-overlay');
-        expect(overlay.textContent).not.toContain('Legacy Bucket A');
-        expect(overlay.textContent).toContain('Retirement Fund');
+        expect(overlay.textContent).toContain('Legacy Bucket A');
     });
 
     test('store-backed cleared goal bucket hides seeded bucket and falls back to derived bucket on overlay rerender', () => {
@@ -5318,6 +5358,62 @@ describe('initialization and URL monitoring', () => {
         fixedCheckbox = overlay.querySelector('input[aria-label^="Fixed allocation"]');
         expect(JSON.parse(storage.get('fsm')).allocation.fixedByCode.AAA).toBeUndefined();
         expect(JSON.parse(storage.get('fsm')).allocation.fixedByCode['AAA|sub:AAPL']).toBe(false);
+        expect(fixedCheckbox.checked).toBe(false);
+    });
+
+    test('FSM canonical v4 target prevents legacy fixed fallback on runtime row build', () => {
+        teardownDom();
+        setupDom({ url: 'https://secure.fundsupermart.com/fsmone/holdings/investments' });
+
+        storage = new Map();
+        setupStorage();
+        global.alert = jest.fn();
+        global.fetch = jest.fn(() => Promise.resolve({ clone: () => ({}), json: () => Promise.resolve({}), ok: true, status: 200 }));
+        window.fetch = global.fetch;
+        global.history = window.history;
+        class FakeXHR {
+            constructor() {
+                this._headers = {};
+                this.responseText = '{}';
+            }
+            open(method, url) {
+                this._url = url;
+                return true;
+            }
+            setRequestHeader(header, value) {
+                this._headers[header] = value;
+            }
+            addEventListener() {}
+            send() {}
+        }
+        global.XMLHttpRequest = FakeXHR;
+
+        seedFsmStore({ holdings: [
+            { code: 'AAA', subcode: 'AAPL', name: 'Fund A', productType: 'UNIT_TRUST', currentValueLcy: 1200 }
+        ] });
+        upsertFsmStore(current => ({
+            ...current,
+            allocation: {
+                ...(current.allocation || {}),
+                targetsByCode: { AAA: 22 }
+            }
+        }));
+        storage.set('fsm_fixed_AAA', true);
+
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        exportsModule.init();
+        exportsModule.showOverlay();
+
+        let overlay = document.querySelector('#gpv-overlay');
+        const viewAllHoldingsButton = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('View all holdings'));
+        expect(viewAllHoldingsButton).toBeTruthy();
+        viewAllHoldingsButton.click();
+
+        overlay = document.querySelector('#gpv-overlay');
+        const targetInput = overlay.querySelector('table tbody tr input.gpv-target-input');
+        const fixedCheckbox = overlay.querySelector('table tbody tr input[aria-label^="Fixed allocation"]');
+
+        expect(targetInput.value).toBe('22.00');
         expect(fixedCheckbox.checked).toBe(false);
     });
 

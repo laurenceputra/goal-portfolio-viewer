@@ -758,17 +758,132 @@ describe('SyncManager', () => {
         })).toThrow('Invalid config data');
     });
 
-    test('collectConfigData ignores legacy flat platform keys', () => {
+    test('collectConfigData migrates legacy flat platform keys into v4 stores and cleans up legacy keys', () => {
         const { SyncManager } = loadModule();
+        storage.set('api_performance', [{ goalId: 'goal-1' }]);
+        storage.set('api_investible', [{ goalId: 'goal-1' }]);
+        storage.set('api_summary', [{ goalId: 'goal-1' }]);
         storage.set('goal_target_pct_goal-1', 25);
+        storage.set('goal_fixed_goal-2', true);
+        storage.set('goal_target_pct_goal-2', 40);
+        storage.set('goal_bucket_name_goal-1', 'Core');
+        storage.set('goal_bucket_name_goal-3__cleared', true);
+        storage.set('api_fsm_holdings', [{ code: 'AAA' }]);
+        storage.set('fsm_portfolios', [{ id: 'core', name: 'Core', archived: false }]);
+        storage.set('fsm_assignment_by_code', { AAA: 'core' });
         storage.set('fsm_target_pct_AAA', 20);
+        storage.set('fsm_target_pct_BBB', 10);
+        storage.set('fsm_fixed_BBB', true);
+        storage.set('api_ocbc_holdings', { assets: [{ code: 'P-1:EQ1' }] });
+        storage.set('ocbc_allocation_buckets', { assets: [{ id: 'legacy', name: 'Legacy' }] });
+        storage.set('ocbc_sub_portfolios', { assets: { 'P-1': [{ id: 'core', name: 'Core', archived: false }] } });
+        storage.set('ocbc_allocation_assignment_by_code', { 'P-1:EQ1': 'core' });
+        storage.set('ocbc_allocation_order_by_scope', { 'assets|P-1|core': ['P-1:EQ1'] });
         storage.set('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1', 50);
+        global.GM_listValues = () => Array.from(storage.keys());
 
         const config = SyncManager.collectConfigData();
 
-        expect(config.platforms.endowus.allocation.goalTargets).toEqual({});
-        expect(config.platforms.fsm.allocation.targetsByCode).toEqual({});
-        expect(config.platforms.ocbc.allocation.targetsByScope).toEqual({});
+        expect(config.platforms.endowus.allocation.goalTargets).toEqual({ 'goal-1': 25 });
+        expect(config.platforms.endowus.allocation.goalFixed).toEqual({ 'goal-2': true });
+        expect(config.platforms.endowus.allocation.goalBuckets).toEqual({ 'goal-1': 'Core' });
+        expect(config.platforms.endowus.allocation.clearedGoalBuckets).toEqual({ 'goal-3': true });
+        expect(config.platforms.endowus.allocation.goalBuckets['goal-3__cleared']).toBeUndefined();
+        expect(config.platforms.fsm.allocation.targetsByCode).toEqual({ AAA: 20 });
+        expect(config.platforms.fsm.allocation.fixedByCode).toEqual({ BBB: true });
+        expect(config.platforms.fsm.allocation.portfolios).toEqual([{ id: 'core', name: 'Core', archived: false }]);
+        expect(config.platforms.fsm.allocation.assignmentByCode).toEqual({ AAA: 'core' });
+        expect(config.platforms.ocbc.allocation.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 50 });
+
+        const endowusStore = JSON.parse(storage.get('endowus'));
+        expect(endowusStore.version).toBe(4);
+        expect(endowusStore.datasets.performance).toEqual([{ goalId: 'goal-1' }]);
+        expect(storage.has('goal_target_pct_goal-1')).toBe(false);
+        expect(storage.has('goal_fixed_goal-2')).toBe(false);
+        expect(storage.has('goal_bucket_name_goal-1')).toBe(false);
+        expect(storage.has('goal_bucket_name_goal-3__cleared')).toBe(false);
+        expect(storage.has('fsm_target_pct_AAA')).toBe(false);
+        expect(storage.has('fsm_target_pct_BBB')).toBe(false);
+        expect(storage.has('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(false);
+    });
+
+    test('collectConfigData prefers v4 namespaced platform values over conflicting legacy flat keys', () => {
+        const { SyncManager } = loadModule();
+        storage.set('endowus', JSON.stringify({ goalTargets: { 'goal-1': 11 } }));
+        storage.set('fsm', JSON.stringify({ targetsByCode: { AAA: 22 } }));
+        storage.set('ocbc', JSON.stringify({ targetsByScope: { 'assets|P-1|core|P-1%3AEQ1': 33 } }));
+        storage.set('goal_target_pct_goal-1', 99);
+        storage.set('fsm_target_pct_AAA', 88);
+        storage.set('fsm_fixed_AAA', true);
+        storage.set('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1', 77);
+        global.GM_listValues = () => Array.from(storage.keys());
+
+        const config = SyncManager.collectConfigData();
+
+        expect(config.platforms.endowus.allocation.goalTargets).toEqual({ 'goal-1': 11 });
+        expect(config.platforms.fsm.allocation.targetsByCode).toEqual({ AAA: 22 });
+        expect(config.platforms.fsm.allocation.fixedByCode.AAA).toBeUndefined();
+        expect(config.platforms.ocbc.allocation.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 33 });
+        expect(storage.has('goal_target_pct_goal-1')).toBe(false);
+        expect(storage.has('fsm_target_pct_AAA')).toBe(false);
+        expect(storage.has('fsm_fixed_AAA')).toBe(false);
+        expect(storage.has('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(false);
+    });
+
+    test('collectConfigData cleans conflicting legacy keys when canonical v4 stores are already normalized', () => {
+        const { SyncManager } = loadModule();
+        storage.set('endowus', JSON.stringify({
+            version: 4,
+            datasets: {},
+            allocation: { goalTargets: { 'goal-1': 11 }, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} },
+            ui: {},
+            localCache: {}
+        }));
+        storage.set('fsm', JSON.stringify({
+            version: 4,
+            datasets: {},
+            allocation: { targetsByCode: { AAA: 22 }, fixedByCode: {}, portfolios: [], assignmentByCode: {} },
+            ui: {},
+            localCache: {}
+        }));
+        storage.set('ocbc', JSON.stringify({
+            version: 4,
+            datasets: {},
+            allocation: { targetsByScope: { 'assets|P-1|core|P-1%3AEQ1': 33 }, allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, orderByScope: {} },
+            ui: {},
+            localCache: {}
+        }));
+        storage.set('goal_target_pct_goal-1', 99);
+        storage.set('fsm_fixed_AAA', true);
+        storage.set('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1', 77);
+        global.GM_listValues = () => Array.from(storage.keys());
+
+        const config = SyncManager.collectConfigData();
+
+        expect(config.platforms.endowus.allocation.goalTargets).toEqual({ 'goal-1': 11 });
+        expect(config.platforms.fsm.allocation.targetsByCode).toEqual({ AAA: 22 });
+        expect(config.platforms.fsm.allocation.fixedByCode.AAA).toBeUndefined();
+        expect(config.platforms.ocbc.allocation.targetsByScope).toEqual({ 'assets|P-1|core|P-1%3AEQ1': 33 });
+        expect(storage.has('goal_target_pct_goal-1')).toBe(false);
+        expect(storage.has('fsm_fixed_AAA')).toBe(false);
+        expect(storage.has('ocbc_target_pct_assets|P-1|core|P-1%3AEQ1')).toBe(false);
+    });
+
+    test('collectConfigData retains legacy keys when v4 migration write fails', () => {
+        const { SyncManager } = loadModule();
+        storage.set('goal_target_pct_goal-1', 25);
+        global.GM_listValues = () => Array.from(storage.keys());
+        const originalSet = global.GM_setValue;
+        global.GM_setValue = jest.fn((key, value) => {
+            if (key === 'endowus') {
+                throw new Error('Write failed');
+            }
+            originalSet(key, value);
+        });
+
+        const config = SyncManager.collectConfigData();
+        expect(config.platforms.endowus.allocation.goalTargets).toEqual({ 'goal-1': 25 });
+        expect(storage.has('goal_target_pct_goal-1')).toBe(true);
     });
 
     test('collectConfigData persists and exports namespaced Endowus data only', () => {

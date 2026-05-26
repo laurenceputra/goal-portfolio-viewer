@@ -278,6 +278,24 @@
     }
 
     const storageKeys = {
+        legacyGoalTarget(goalId) {
+            return buildStorageKey('goal_target_pct_', goalId ?? '');
+        },
+        legacyGoalFixed(goalId) {
+            return buildStorageKey('goal_fixed_', goalId ?? '');
+        },
+        legacyGoalBucket(goalId) {
+            return buildStorageKey('goal_bucket_name_', goalId ?? '');
+        },
+        legacyFsmTarget(code) {
+            return buildStorageKey('fsm_target_pct_', code ?? '');
+        },
+        legacyFsmFixed(code) {
+            return buildStorageKey('fsm_fixed_', code ?? '');
+        },
+        legacyOcbcTarget(scope) {
+            return buildStorageKey('ocbc_target_pct_', scope ?? '');
+        },
         performanceCache(goalId) {
             return buildStorageKey(STORAGE_KEY_PREFIXES.performanceCache, goalId ?? '');
         },
@@ -299,6 +317,23 @@
             const safeGoalType = encodeURIComponent(goalType ?? '');
             // Keep separator unencoded to preserve a stable split point in storage keys.
             return buildStorageKey(safeBucket, PROJECTED_KEY_SEPARATOR, safeGoalType);
+        }
+    };
+
+    // Storage migration compatibility (introduced in 2.14.11 / 2026-05-03).
+    // Flat platform keys are cleanup-eligible after 2026-07-03.
+    const LEGACY_PLATFORM_STORAGE_KEYS = {
+        endowus: {
+            exact: ['api_performance', 'api_investible', 'api_summary'],
+            prefixes: ['goal_target_pct_', 'goal_fixed_', 'goal_bucket_name_']
+        },
+        fsm: {
+            exact: ['api_fsm_holdings', 'fsm_portfolios', 'fsm_assignment_by_code'],
+            prefixes: ['fsm_target_pct_', 'fsm_fixed_']
+        },
+        ocbc: {
+            exact: ['api_ocbc_holdings', 'ocbc_allocation_buckets', 'ocbc_sub_portfolios', 'ocbc_allocation_assignment_by_code', 'ocbc_allocation_order_by_scope'],
+            prefixes: ['ocbc_target_pct_']
         }
     };
 
@@ -3784,6 +3819,225 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     migrateLegacySyncStore();
     cleanupStaleNamespacedKeys();
 
+    function listLegacyPlatformKeys({ exact = [], prefixes = [] }) {
+        const keys = new Set();
+        exact.forEach(key => {
+            if (Storage.hasRaw(key)) {
+                keys.add(key);
+            }
+        });
+        if (typeof GM_listValues !== 'function' || !prefixes.length) {
+            return Array.from(keys);
+        }
+        try {
+            const allKeys = GM_listValues();
+            allKeys.forEach(key => {
+                if (typeof key === 'string' && prefixes.some(prefix => key.startsWith(prefix))) {
+                    keys.add(key);
+                }
+            });
+        } catch (error) {
+            console.warn('[Goal Portfolio Viewer] Unable to enumerate legacy platform keys:', error);
+        }
+        return Array.from(keys);
+    }
+
+    function removeLegacyPlatformKeys(keys) {
+        (Array.isArray(keys) ? keys : []).forEach(key => {
+            Storage.removeRaw(key, `Error deleting legacy platform key: ${key}`);
+        });
+    }
+
+    // v4 namespaced platform stores are canonical.
+    // Legacy flat keys only backfill missing v4 fields and are cleanup-eligible after a successful v4 write.
+    function mergeMissingEndowusLegacyData(store) {
+        const next = normalizeEndowusStore(store || {});
+        let didMerge = false;
+        const performance = Storage.getRaw('api_performance', null, 'Error reading legacy Endowus performance');
+        const investible = Storage.getRaw('api_investible', null, 'Error reading legacy Endowus investible');
+        const summary = Storage.getRaw('api_summary', null, 'Error reading legacy Endowus summary');
+        if (!Array.isArray(next.datasets.performance) && Array.isArray(performance)) {
+            next.datasets.performance = performance;
+            didMerge = true;
+        }
+        if (!Array.isArray(next.datasets.investible) && Array.isArray(investible)) {
+            next.datasets.investible = investible;
+            didMerge = true;
+        }
+        if (!Array.isArray(next.datasets.summary) && Array.isArray(summary)) {
+            next.datasets.summary = summary;
+            didMerge = true;
+        }
+        listLegacyPlatformKeys(LEGACY_PLATFORM_STORAGE_KEYS.endowus).forEach(key => {
+            if (key.startsWith('goal_target_pct_')) {
+                const goalId = key.slice('goal_target_pct_'.length);
+                if (!Object.prototype.hasOwnProperty.call(next.goalTargets, goalId)) {
+                    const value = toOptionalFiniteNumber(Storage.getRaw(key, null, `Error reading legacy Endowus target for ${goalId}`));
+                    if (value !== null) {
+                        next.allocation.goalTargets[goalId] = value;
+                        didMerge = true;
+                    }
+                }
+                return;
+            }
+            if (key.startsWith('goal_fixed_')) {
+                const goalId = key.slice('goal_fixed_'.length);
+                if (!Object.prototype.hasOwnProperty.call(next.goalFixed, goalId)) {
+                    next.allocation.goalFixed[goalId] = Storage.getRaw(key, false, `Error reading legacy Endowus fixed for ${goalId}`) === true;
+                    didMerge = true;
+                }
+                return;
+            }
+            if (key.startsWith('goal_bucket_name_')) {
+                if (key.endsWith('__cleared')) {
+                    const goalId = key.slice('goal_bucket_name_'.length, -'__cleared'.length);
+                    if (!Object.prototype.hasOwnProperty.call(next.clearedGoalBuckets, goalId)) {
+                        next.allocation.clearedGoalBuckets[goalId] = Storage.getRaw(key, false, `Error reading legacy Endowus bucket cleared state for ${goalId}`) === true;
+                        didMerge = true;
+                    }
+                    return;
+                }
+                const goalId = key.slice('goal_bucket_name_'.length);
+                if (!Object.prototype.hasOwnProperty.call(next.goalBuckets, goalId)) {
+                    const bucketName = utils.normalizeString(Storage.getRaw(key, '', `Error reading legacy Endowus bucket for ${goalId}`), '');
+                    if (bucketName) {
+                        next.allocation.goalBuckets[goalId] = bucketName;
+                        didMerge = true;
+                    }
+                }
+            }
+        });
+        return { store: normalizeEndowusStore(next), didMerge };
+    }
+
+    function mergeMissingFsmLegacyData(store) {
+        const next = normalizeFsmStore(store || {});
+        let didMerge = false;
+        const canonicalV4TargetCodes = new Set(Object.keys(next.targetsByCode || {}));
+        const canonicalV4FixedCodes = new Set(Object.keys(next.fixedByCode || {})
+            .filter(code => next.fixedByCode[code] === true));
+        const legacyFixedCodes = new Set();
+        const holdings = Storage.getRaw('api_fsm_holdings', null, 'Error reading legacy FSM holdings');
+        if (!Array.isArray(next.holdings) && Array.isArray(holdings)) {
+            next.datasets.holdings = holdings;
+            didMerge = true;
+        }
+        const legacyPortfolios = normalizeFsmPortfolios(Storage.getRaw('fsm_portfolios', [], 'Error reading legacy FSM portfolios'));
+        if (!next.portfolios.length && legacyPortfolios.length) {
+            next.allocation.portfolios = legacyPortfolios;
+            didMerge = true;
+        }
+        const activePortfolioIds = new Set((Array.isArray(next.portfolios) ? next.portfolios : [])
+            .filter(portfolio => portfolio && portfolio.archived !== true)
+            .map(portfolio => portfolio.id));
+        if (!Object.keys(next.assignmentByCode || {}).length) {
+            const rawAssignments = Storage.getRaw('fsm_assignment_by_code', {}, 'Error reading legacy FSM assignments');
+            const normalizedAssignments = Object.entries(rawAssignments && typeof rawAssignments === 'object' && !Array.isArray(rawAssignments) ? rawAssignments : {})
+                .reduce((acc, [code, portfolioId]) => {
+                    const normalizedCode = utils.normalizeString(code, '');
+                    if (!normalizedCode) {
+                        return acc;
+                    }
+                    const normalizedPortfolioId = utils.normalizeString(portfolioId, '');
+                    acc[normalizedCode] = activePortfolioIds.has(normalizedPortfolioId)
+                        ? normalizedPortfolioId
+                        : FSM_UNASSIGNED_PORTFOLIO_ID;
+                    return acc;
+                }, {});
+            if (Object.keys(normalizedAssignments).length) {
+                next.allocation.assignmentByCode = normalizedAssignments;
+                didMerge = true;
+            }
+        }
+        listLegacyPlatformKeys(LEGACY_PLATFORM_STORAGE_KEYS.fsm).forEach(key => {
+            if (key.startsWith('fsm_target_pct_')) {
+                const code = key.slice('fsm_target_pct_'.length);
+                if (!canonicalV4TargetCodes.has(code)
+                    && !canonicalV4FixedCodes.has(code)
+                    && !Object.prototype.hasOwnProperty.call(next.targetsByCode, code)) {
+                    const value = toOptionalFiniteNumber(Storage.getRaw(key, null, `Error reading legacy FSM target for ${code}`));
+                    if (value !== null) {
+                        next.allocation.targetsByCode[code] = value;
+                        didMerge = true;
+                    }
+                }
+                return;
+            }
+            if (key.startsWith('fsm_fixed_')) {
+                const code = key.slice('fsm_fixed_'.length);
+                const fixed = Storage.getRaw(key, false, `Error reading legacy FSM fixed for ${code}`) === true;
+                if (!canonicalV4FixedCodes.has(code)
+                    && !canonicalV4TargetCodes.has(code)
+                    && !Object.prototype.hasOwnProperty.call(next.fixedByCode, code)) {
+                    next.allocation.fixedByCode[code] = fixed;
+                    if (fixed) {
+                        legacyFixedCodes.add(code);
+                    }
+                    didMerge = true;
+                }
+            }
+        });
+        legacyFixedCodes.forEach(code => {
+            if (Object.prototype.hasOwnProperty.call(next.allocation.targetsByCode, code)) {
+                delete next.allocation.targetsByCode[code];
+                didMerge = true;
+            }
+        });
+        return { store: normalizeFsmStore(next), didMerge };
+    }
+
+    function mergeMissingOcbcLegacyData(store) {
+        const next = normalizeOcbcStore(store || {});
+        let didMerge = false;
+        const holdings = Storage.getRaw('api_ocbc_holdings', null, 'Error reading legacy OCBC holdings');
+        if (!next.holdings && holdings && typeof holdings === 'object') {
+            next.datasets.holdings = holdings;
+            didMerge = true;
+        }
+        if (!Object.keys(next.allocationBuckets || {}).length) {
+            const buckets = Storage.getRaw('ocbc_allocation_buckets', null, 'Error reading legacy OCBC allocation buckets');
+            if (buckets && typeof buckets === 'object') {
+                next.allocation.allocationBuckets = buckets;
+                didMerge = true;
+            }
+        }
+        if (!Object.keys(next.subPortfolios || {}).length) {
+            const subPortfolios = Storage.getRaw('ocbc_sub_portfolios', null, 'Error reading legacy OCBC sub-portfolios');
+            if (subPortfolios && typeof subPortfolios === 'object') {
+                next.allocation.subPortfolios = normalizeOcbcSubPortfolios(subPortfolios);
+                didMerge = true;
+            }
+        }
+        if (!Object.keys(next.assignmentByCode || {}).length) {
+            const assignmentByCode = Storage.getRaw('ocbc_allocation_assignment_by_code', null, 'Error reading legacy OCBC assignments');
+            if (assignmentByCode && typeof assignmentByCode === 'object') {
+                next.allocation.assignmentByCode = normalizeOcbcAssignmentByCode(assignmentByCode);
+                didMerge = true;
+            }
+        }
+        if (!Object.keys(next.orderByScope || {}).length) {
+            const orderByScope = Storage.getRaw('ocbc_allocation_order_by_scope', null, 'Error reading legacy OCBC order');
+            if (orderByScope && typeof orderByScope === 'object') {
+                next.allocation.orderByScope = normalizeOcbcOrderByScope(orderByScope);
+                didMerge = true;
+            }
+        }
+        listLegacyPlatformKeys(LEGACY_PLATFORM_STORAGE_KEYS.ocbc).forEach(key => {
+            if (!key.startsWith('ocbc_target_pct_')) {
+                return;
+            }
+            const scope = key.slice('ocbc_target_pct_'.length);
+            if (!Object.prototype.hasOwnProperty.call(next.targetsByScope, scope)) {
+                const value = toOptionalFiniteNumber(Storage.getRaw(key, null, `Error reading legacy OCBC target for ${scope}`));
+                if (value !== null) {
+                    next.allocation.targetsByScope[scope] = value;
+                    didMerge = true;
+                }
+            }
+        });
+        return { store: normalizeOcbcStore(next), didMerge };
+    }
+
 
 
     function getLocalEndowusGoalIds(endowusStore) {
@@ -3896,47 +4150,51 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         };
     }
 
+    // Precedence rule: when both exist, v4 namespaced values win; flat legacy keys only fill gaps.
     function readEndowusStore() {
+        const legacyKeys = listLegacyPlatformKeys(LEGACY_PLATFORM_STORAGE_KEYS.endowus);
         const rawStored = Storage.readJson(STORAGE_KEYS.endowus, data => data && typeof data === 'object' && !Array.isArray(data));
-        if (rawStored) {
-            const normalized = normalizeEndowusStore(rawStored);
-            const { value: cleanedNormalized, didMutate } = cleanupEndowusLocalStore(normalized);
-            if (didMutate || rawStored.version !== PLATFORM_STORE_VERSION) {
-                writePlatformStore(STORAGE_KEYS.endowus, cleanedNormalized, 'Error writing cleaned Endowus store');
+        const normalized = rawStored ? normalizeEndowusStore(rawStored) : normalizeEndowusStore({});
+        const migrated = mergeMissingEndowusLegacyData(normalized);
+        const { value: cleanedNormalized, didMutate } = cleanupEndowusLocalStore(migrated.store);
+        const shouldWrite = !rawStored || didMutate || migrated.didMerge || legacyKeys.length > 0 || rawStored.version !== PLATFORM_STORE_VERSION;
+        if (shouldWrite) {
+            const didWrite = writePlatformStore(STORAGE_KEYS.endowus, cleanedNormalized, rawStored ? 'Error writing cleaned Endowus store' : 'Error writing Endowus store');
+            if (didWrite) {
+                removeLegacyPlatformKeys(legacyKeys);
             }
-            return cleanedNormalized;
         }
-        const empty = normalizeEndowusStore({});
-        writePlatformStore(STORAGE_KEYS.endowus, empty, 'Error writing Endowus store');
-        return empty;
+        return cleanedNormalized;
     }
 
     function readFsmStore() {
+        const legacyKeys = listLegacyPlatformKeys(LEGACY_PLATFORM_STORAGE_KEYS.fsm);
         const rawStored = Storage.readJson(STORAGE_KEYS.fsm, data => data && typeof data === 'object' && !Array.isArray(data));
-        if (rawStored) {
-            const normalized = normalizeFsmStore(rawStored);
-            if (rawStored.version !== PLATFORM_STORE_VERSION) {
-                writePlatformStore(STORAGE_KEYS.fsm, normalized, 'Error writing migrated FSM v4 store');
+        const normalized = rawStored ? normalizeFsmStore(rawStored) : normalizeFsmStore({});
+        const migrated = mergeMissingFsmLegacyData(normalized);
+        const shouldWrite = !rawStored || migrated.didMerge || legacyKeys.length > 0 || rawStored.version !== PLATFORM_STORE_VERSION;
+        if (shouldWrite) {
+            const didWrite = writePlatformStore(STORAGE_KEYS.fsm, migrated.store, rawStored ? 'Error writing migrated FSM v4 store' : 'Error writing FSM store');
+            if (didWrite) {
+                removeLegacyPlatformKeys(legacyKeys);
             }
-            return normalized;
         }
-        const empty = normalizeFsmStore({});
-        writePlatformStore(STORAGE_KEYS.fsm, empty, 'Error writing FSM store');
-        return empty;
+        return migrated.store;
     }
 
     function readOcbcStore() {
+        const legacyKeys = listLegacyPlatformKeys(LEGACY_PLATFORM_STORAGE_KEYS.ocbc);
         const rawStored = Storage.readJson(STORAGE_KEYS.ocbc, data => data && typeof data === 'object' && !Array.isArray(data));
-        if (rawStored) {
-            const normalized = normalizeOcbcStore(rawStored);
-            if (rawStored.version !== PLATFORM_STORE_VERSION) {
-                writePlatformStore(STORAGE_KEYS.ocbc, normalized, 'Error writing migrated OCBC v4 store');
+        const normalized = rawStored ? normalizeOcbcStore(rawStored) : normalizeOcbcStore({});
+        const migrated = mergeMissingOcbcLegacyData(normalized);
+        const shouldWrite = !rawStored || migrated.didMerge || legacyKeys.length > 0 || rawStored.version !== PLATFORM_STORE_VERSION;
+        if (shouldWrite) {
+            const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, migrated.store, rawStored ? 'Error writing migrated OCBC v4 store' : 'Error writing OCBC store');
+            if (didWrite) {
+                removeLegacyPlatformKeys(legacyKeys);
             }
-            return normalized;
         }
-        const empty = normalizeOcbcStore({});
-        writePlatformStore(STORAGE_KEYS.ocbc, empty, 'Error writing OCBC store');
-        return empty;
+        return migrated.store;
     }
 
     function updatePlatformStore({ readStore, normalizeStore, storageKey, updater, context }) {
@@ -6451,6 +6709,8 @@ let GoalTargetStore;
             lastUrl: window.location.href,
             urlMonitorCleanup: null,
             urlCheckTimeout: null,
+            urlPollInterval: null,
+            urlPollStableChecks: 0,
             observer: null,
             dataUpdateListeners: new Set()
         },
@@ -6817,8 +7077,15 @@ let GoalTargetStore;
 
     GoalTargetStore = {
         getTarget(goalId) {
-            const storeValue = readEndowusStore().goalTargets[goalId];
+            const store = readEndowusStore();
+            const storeValue = store.goalTargets[goalId];
             const value = storeValue;
+            if (value === undefined) {
+                if (store.goalFixed[goalId] === true) {
+                    return null;
+                }
+                return toOptionalFiniteNumber(Storage.getRaw(storageKeys.legacyGoalTarget(goalId), null, `Error reading legacy target for ${goalId}`));
+            }
             if (value === null) {
                 return null;
             }
@@ -6859,9 +7126,16 @@ let GoalTargetStore;
             }
         },
         getFixed(goalId) {
-            const storeValue = readEndowusStore().goalFixed[goalId];
+            const store = readEndowusStore();
+            const storeValue = store.goalFixed[goalId];
             if (storeValue === true || storeValue === false) {
                 return storeValue === true;
+            }
+            if (storeValue === undefined) {
+                if (Object.prototype.hasOwnProperty.call(store.goalTargets, goalId)) {
+                    return false;
+                }
+                return Storage.getRaw(storageKeys.legacyGoalFixed(goalId), false, `Error reading legacy fixed for ${goalId}`) === true;
             }
             return false;
         },
@@ -6899,6 +7173,14 @@ let GoalTargetStore;
             }
             const storeValue = utils.normalizeString(readEndowusStore().goalBuckets[goalId] || '', '');
             const value = storeValue;
+            if (!value) {
+                const legacyCleared = Storage.getRaw(`${storageKeys.legacyGoalBucket(goalId)}__cleared`, false, `Error reading legacy bucket cleared state for ${goalId}`) === true;
+                if (legacyCleared) {
+                    return null;
+                }
+                const legacyValue = utils.normalizeString(Storage.getRaw(storageKeys.legacyGoalBucket(goalId), '', `Error reading legacy bucket for ${goalId}`), '');
+                return legacyValue || null;
+            }
             return value || null;
         },
         setBucket(goalId, bucketName, options = {}) {
@@ -13707,7 +13989,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             ? store.targetsByCode[code]
             : null;
         if (value === null || value === undefined || value === '') {
-            return null;
+            if (store.fixedByCode[code] === true) {
+                return null;
+            }
+            return toOptionalFiniteNumber(Storage.getRaw(storageKeys.legacyFsmTarget(code), null, `Error reading legacy FSM target for ${code}`));
         }
         const parsed = Number(value);
         return Number.isFinite(parsed) ? parsed : null;
@@ -13717,6 +14002,12 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const store = readFsmStore();
         if (Object.prototype.hasOwnProperty.call(store.fixedByCode, code)) {
             return store.fixedByCode[code] === true;
+        }
+        if (Object.prototype.hasOwnProperty.call(store.targetsByCode, code)) {
+            return null;
+        }
+        if (Storage.hasRaw(storageKeys.legacyFsmFixed(code))) {
+            return Storage.getRaw(storageKeys.legacyFsmFixed(code), false, `Error reading legacy FSM fixed for ${code}`) === true;
         }
         return null;
     }
@@ -15185,6 +15476,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         if (Object.prototype.hasOwnProperty.call(ocbcStore.targetsByScope, scope)) {
             return toOptionalFiniteNumber(ocbcStore.targetsByScope[scope]);
         }
+        const legacyScopeValue = toOptionalFiniteNumber(Storage.getRaw(storageKeys.legacyOcbcTarget(scope), null, `Error reading legacy OCBC target for ${scope}`));
+        if (legacyScopeValue !== null) {
+            return legacyScopeValue;
+        }
         const normalizedLegacyBucketId = utils.normalizeString(legacyBucketId, '');
         const normalizedBucketId = utils.normalizeString(bucketId, '');
         const normalizedLegacyProductType = utils.normalizeString(legacyProductType, '');
@@ -15193,6 +15488,10 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             const legacyScope = buildLegacyOcbcTargetScope(viewKey, normalizedLegacyProductType, legacyScopeBucketId);
             if (Object.prototype.hasOwnProperty.call(ocbcStore.targetsByScope, legacyScope)) {
                 return toOptionalFiniteNumber(ocbcStore.targetsByScope[legacyScope]);
+            }
+            const legacyFlatScopeValue = toOptionalFiniteNumber(Storage.getRaw(storageKeys.legacyOcbcTarget(legacyScope), null, `Error reading legacy OCBC target for ${legacyScope}`));
+            if (legacyFlatScopeValue !== null) {
+                return legacyFlatScopeValue;
             }
         }
         return null;
@@ -16768,6 +17067,37 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
         };
     }
+
+    function clearBoundedUrlPolling() {
+        if (!state || !state.ui) {
+            return;
+        }
+        if (state.ui.urlPollInterval) {
+            clearInterval(state.ui.urlPollInterval);
+            state.ui.urlPollInterval = null;
+        }
+        state.ui.urlPollStableChecks = 0;
+    }
+
+    function startBoundedUrlPolling() {
+        if (!state || !state.ui) {
+            return;
+        }
+        clearBoundedUrlPolling();
+        const maxStableChecks = 9;
+        const pollIntervalMs = 750;
+        let stableChecks = 0;
+        state.ui.urlPollInterval = setInterval(() => {
+            const before = state.ui.lastUrl;
+            handleUrlChange();
+            const after = state.ui.lastUrl;
+            stableChecks = before === after ? stableChecks + 1 : 0;
+            state.ui.urlPollStableChecks = stableChecks;
+            if (stableChecks >= maxStableChecks) {
+                clearBoundedUrlPolling();
+            }
+        }, pollIntervalMs);
+    }
     
     function startUrlMonitoring() {
         if (state.ui.urlMonitorCleanup) {
@@ -16789,14 +17119,21 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
         // Listen to popstate event for browser back/forward navigation
         window.addEventListener('popstate', handleUrlChange);
+        window.addEventListener('popstate', startBoundedUrlPolling);
 
-        const restorePushState = wrapHistoryMethod('pushState', handleUrlChange);
-        const restoreReplaceState = wrapHistoryMethod('replaceState', handleUrlChange);
+        const restorePushState = wrapHistoryMethod('pushState', () => {
+            handleUrlChange();
+            startBoundedUrlPolling();
+        });
+        const restoreReplaceState = wrapHistoryMethod('replaceState', () => {
+            handleUrlChange();
+            startBoundedUrlPolling();
+        });
 
         const appRoot = document.querySelector('#root')
             || document.querySelector('#app')
             || document.querySelector('main');
-        if (appRoot) {
+        if (appRoot && typeof MutationObserver === 'function') {
             // Use MutationObserver as a fallback for navigation patterns not caught by History API
             state.ui.observer = new MutationObserver(debouncedUrlCheck);
             state.ui.observer.observe(appRoot, {
@@ -16805,10 +17142,14 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             });
         }
 
+        startBoundedUrlPolling();
+
         state.ui.urlMonitorCleanup = () => {
             window.removeEventListener('popstate', handleUrlChange);
+            window.removeEventListener('popstate', startBoundedUrlPolling);
             restorePushState();
             restoreReplaceState();
+            clearBoundedUrlPolling();
             if (state.ui.observer) {
                 state.ui.observer.disconnect();
                 state.ui.observer = null;

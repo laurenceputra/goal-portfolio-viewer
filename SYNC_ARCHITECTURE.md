@@ -1697,7 +1697,9 @@ Compatibility:
 
 - Supported input payloads: v2/v3 namespaced payloads.
 - Removed: legacy v1 flat config payload support.
-- Platform v1 flat GM keys are ignored for Endowus/FSM/OCBC data/config.
+- Flat platform GM keys for Endowus/FSM/OCBC are migrated/read during the active 2-month compatibility window (introduced in 2.14.11 / 2026-05-03), with migration code/tests/support retained until 2026-07-03.
+- When both v4 namespaced and flat legacy values exist for the same platform setting, v4 namespaced is canonical; flat legacy only backfills missing v4 fields.
+- During that active window, legacy flat keys may still be cleaned immediately after a successful migrated v4 write.
 - Flat `sync_*` auth/settings keys may still be migrated into the `sync` store as a sync-settings compatibility path (distinct from platform data migration).
 
 ---
