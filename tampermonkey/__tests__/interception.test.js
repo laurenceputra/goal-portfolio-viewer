@@ -79,7 +79,9 @@ describe('API interception', () => {
         const endowusCalls = global.GM_setValue.mock.calls.filter(([key]) => key === 'endowus');
         const endowusCall = endowusCalls[endowusCalls.length - 1];
         expect(endowusCall).toBeDefined();
-        expect(JSON.parse(endowusCall[1]).performance).toEqual(performanceData);
+        const parsed = JSON.parse(endowusCall[1]);
+        expect(parsed.version).toBe(4);
+        expect(parsed.datasets.performance).toEqual(performanceData);
     });
 
 
@@ -115,7 +117,9 @@ describe('API interception', () => {
         const fsmCalls = global.GM_setValue.mock.calls.filter(([key]) => key === 'fsm');
         const fsmCall = fsmCalls[fsmCalls.length - 1];
         expect(fsmCall).toBeDefined();
-        expect(JSON.parse(fsmCall[1]).holdings).toEqual([
+        const parsed = JSON.parse(fsmCall[1]);
+        expect(parsed.version).toBe(4);
+        expect(parsed.datasets.holdings).toEqual([
             {
                 code: 'AAA',
                 productType: 'STOCK',
@@ -200,7 +204,9 @@ describe('API interception', () => {
         const ocbcStorageCall = ocbcCalls[ocbcCalls.length - 1];
         expect(ocbcStorageCall).toBeDefined();
 
-        const normalized = JSON.parse(ocbcStorageCall[1]).holdings;
+        const ocbcStore = JSON.parse(ocbcStorageCall[1]);
+        expect(ocbcStore.version).toBe(4);
+        const normalized = ocbcStore.datasets.holdings;
         expect(normalized).toMatchObject({
             assets: [
                 {
@@ -305,9 +311,9 @@ describe('API interception', () => {
         await flushPromises();
 
         const savedOcbc = JSON.parse(storage.get('ocbc'));
-        expect(savedOcbc.holdingsByPortfolio['P-OLD']).toBeTruthy();
-        expect(savedOcbc.holdingsByPortfolio['P-NEW']).toBeTruthy();
-        expect(savedOcbc.holdings.assets.map(item => item.portfolioNo)).toEqual(expect.arrayContaining(['P-OLD', 'P-NEW']));
+        expect(savedOcbc.datasets.holdingsByPortfolio['P-OLD']).toBeTruthy();
+        expect(savedOcbc.datasets.holdingsByPortfolio['P-NEW']).toBeTruthy();
+        expect(savedOcbc.datasets.holdings.assets.map(item => item.portfolioNo)).toEqual(expect.arrayContaining(['P-OLD', 'P-NEW']));
     });
 
     test('fetch interception preserves disjoint OCBC portfolios across consecutive updates', async () => {
@@ -383,17 +389,17 @@ describe('API interception', () => {
         await flushPromises();
 
         const savedOcbc = JSON.parse(storage.get('ocbc'));
-        expect(savedOcbc.holdingsByPortfolio['P-A']).toBeTruthy();
-        expect(savedOcbc.holdingsByPortfolio['P-B']).toBeTruthy();
-        const flattenedPortfolioNos = savedOcbc.holdings.assets.map(item => item.portfolioNo);
+        expect(savedOcbc.datasets.holdingsByPortfolio['P-A']).toBeTruthy();
+        expect(savedOcbc.datasets.holdingsByPortfolio['P-B']).toBeTruthy();
+        const flattenedPortfolioNos = savedOcbc.datasets.holdings.assets.map(item => item.portfolioNo);
         expect(flattenedPortfolioNos).toEqual(expect.arrayContaining(['P-A', 'P-B']));
 
         const combinedByPortfolioAssets = [
-            ...(savedOcbc.holdingsByPortfolio['P-A']?.assets || []),
-            ...(savedOcbc.holdingsByPortfolio['P-B']?.assets || [])
+            ...(savedOcbc.datasets.holdingsByPortfolio['P-A']?.assets || []),
+            ...(savedOcbc.datasets.holdingsByPortfolio['P-B']?.assets || [])
         ];
-        expect(savedOcbc.holdings.assets).toHaveLength(combinedByPortfolioAssets.length);
-        expect(savedOcbc.holdings.assets.map(item => item.code)).toEqual(
+        expect(savedOcbc.datasets.holdings.assets).toHaveLength(combinedByPortfolioAssets.length);
+        expect(savedOcbc.datasets.holdings.assets.map(item => item.code)).toEqual(
             expect.arrayContaining(combinedByPortfolioAssets.map(item => item.code))
         );
     });
@@ -423,6 +429,83 @@ describe('API interception', () => {
         );
         await flushPromises();
 
+        expect(global.GM_setValue).not.toHaveBeenCalledWith('ocbc', expect.any(String));
+    });
+
+    test('invalid Endowus performance payload shows validation error and does not persist', async () => {
+        const initialEndowus = JSON.stringify({
+            version: 4,
+            datasets: {
+                performance: [{ goalId: 'existing-goal' }]
+            }
+        });
+        storage.set('endowus', initialEndowus);
+
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        baseFetchMock.mockResolvedValueOnce(responseFactory({ stale: true }));
+        global.GM_setValue.mockClear();
+
+        await window.fetch('https://app.sg.endowus.com/v1/goals/performance');
+        await flushPromises();
+
+        expect(document.body.textContent).toContain('Latest Endowus refresh failed validation. Showing last synced portfolio data.');
+        expect(storage.get('endowus')).toBe(initialEndowus);
+        expect(global.GM_setValue).not.toHaveBeenCalledWith('endowus', expect.any(String));
+    });
+
+    test('malformed FSM payload is ignored and does not persist FSM store', async () => {
+        const initialFsm = JSON.stringify({ version: 4, datasets: { holdings: [{ code: 'KEEP' }] } });
+        storage.set('fsm', initialFsm);
+
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        baseFetchMock.mockResolvedValueOnce(responseFactory({ data: [{ refno: 'ref-1', holdings: null }] }));
+        global.GM_setValue.mockClear();
+
+        await window.fetch('https://secure.fundsupermart.com/fsmone/rest/holding/client/protected/find-holdings-with-pnl');
+        await flushPromises();
+
+        expect(storage.get('fsm')).toBe(initialFsm);
+        expect(global.GM_setValue).not.toHaveBeenCalledWith('fsm', expect.any(String));
+    });
+
+    test('malformed OCBC payload is ignored and does not persist OCBC store', async () => {
+        const initialOcbc = JSON.stringify({
+            version: 4,
+            datasets: {
+                holdingsByPortfolio: {
+                    'P-KEEP': { assets: [{ code: 'P-KEEP:A1' }], liabilities: [] }
+                },
+                holdings: { assets: [{ code: 'P-KEEP:A1' }], liabilities: [] }
+            }
+        });
+        storage.set('ocbc', initialOcbc);
+
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        baseFetchMock.mockResolvedValueOnce(responseFactory({ data: [null] }));
+        global.GM_setValue.mockClear();
+
+        await window.fetch(
+            'https://internet.ocbc.com/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry',
+            { method: 'POST' }
+        );
+        await flushPromises();
+
+        expect(storage.get('ocbc')).toBe(initialOcbc);
         expect(global.GM_setValue).not.toHaveBeenCalledWith('ocbc', expect.any(String));
     });
 
@@ -490,7 +573,7 @@ describe('API interception', () => {
         const endowusCalls = global.GM_setValue.mock.calls.filter(([key]) => key === 'endowus');
         const endowusCall = endowusCalls[endowusCalls.length - 1];
         expect(endowusCall).toBeDefined();
-        expect(JSON.parse(endowusCall[1]).summary).toEqual(summaryData);
+        expect(JSON.parse(endowusCall[1]).datasets.summary).toEqual(summaryData);
     });
 
     test('XMLHttpRequest interception ignores non-2xx responses', async () => {

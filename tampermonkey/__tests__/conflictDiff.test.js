@@ -8,21 +8,16 @@ const {
 } = require('../goal_portfolio_viewer.user.js');
 
 describe('conflict diff helpers', () => {
+    const toConfig = allocation => ({ version: 4, platforms: { endowus: { allocation } } });
     const baseConflict = {
-        local: {
-            goalTargets: { goal1: 10, goal2: 20 },
-            goalFixed: { goal1: true }
-        },
-        remote: {
-            goalTargets: { goal1: 10, goal2: 25 },
-            goalFixed: { goal1: false }
-        }
+        local: toConfig({ goalTargets: { goal1: 10, goal2: 20 }, goalFixed: { goal1: true } }),
+        remote: toConfig({ goalTargets: { goal1: 10, goal2: 25 }, goalFixed: { goal1: false } })
     };
 
     it('detects target change only', () => {
         const conflict = {
-            local: { goalTargets: { goal1: 10 }, goalFixed: {} },
-            remote: { goalTargets: { goal1: 15 }, goalFixed: {} }
+            local: toConfig({ goalTargets: { goal1: 10 }, goalFixed: {} }),
+            remote: toConfig({ goalTargets: { goal1: 15 }, goalFixed: {} })
         };
         const items = buildConflictDiffItemsForMap(conflict, { goal1: 'Goal One' });
         expect(items).toHaveLength(1);
@@ -37,8 +32,8 @@ describe('conflict diff helpers', () => {
 
     it('detects explicit bucket assignment change', () => {
         const conflict = {
-            local: { goalTargets: {}, goalFixed: {}, goalBuckets: { goal1: 'Retirement' } },
-            remote: { goalTargets: {}, goalFixed: {}, goalBuckets: { goal1: 'Education' } }
+            local: toConfig({ goalTargets: {}, goalFixed: {}, goalBuckets: { goal1: 'Retirement' } }),
+            remote: toConfig({ goalTargets: {}, goalFixed: {}, goalBuckets: { goal1: 'Education' } })
         };
         const items = buildConflictDiffItemsForMap(conflict, { goal1: 'Goal One' });
         expect(items).toHaveLength(1);
@@ -48,8 +43,22 @@ describe('conflict diff helpers', () => {
 
     it('detects cleared bucket marker differences', () => {
         const conflict = {
-            local: { goalTargets: {}, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: { goal1: true } },
-            remote: { goalTargets: {}, goalFixed: {}, goalBuckets: { goal1: 'Retirement' }, clearedGoalBuckets: {} }
+            local: {
+                version: 4,
+                platforms: {
+                    endowus: {
+                        allocation: { goalTargets: {}, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: { goal1: true } }
+                    }
+                }
+            },
+            remote: {
+                version: 4,
+                platforms: {
+                    endowus: {
+                        allocation: { goalTargets: {}, goalFixed: {}, goalBuckets: { goal1: 'Retirement' }, clearedGoalBuckets: {} }
+                    }
+                }
+            }
         };
         const items = buildConflictDiffItemsForMap(conflict, { goal1: 'Goal One' });
         expect(items).toHaveLength(1);
@@ -59,8 +68,8 @@ describe('conflict diff helpers', () => {
 
     it('ignores target changes when goal is fixed', () => {
         const conflict = {
-            local: { goalTargets: { goal1: 10 }, goalFixed: { goal1: true } },
-            remote: { goalTargets: { goal1: 15 }, goalFixed: { goal1: true } }
+            local: toConfig({ goalTargets: { goal1: 10 }, goalFixed: { goal1: true } }),
+            remote: toConfig({ goalTargets: { goal1: 15 }, goalFixed: { goal1: true } })
         };
         const items = buildConflictDiffItemsForMap(conflict, { goal1: 'Goal One' });
         expect(items).toHaveLength(0);
@@ -68,8 +77,8 @@ describe('conflict diff helpers', () => {
 
     it('detects fixed change only', () => {
         const conflict = {
-            local: { goalTargets: {}, goalFixed: { goal1: true } },
-            remote: { goalTargets: {}, goalFixed: { goal1: false } }
+            local: toConfig({ goalTargets: {}, goalFixed: { goal1: true } }),
+            remote: toConfig({ goalTargets: {}, goalFixed: { goal1: false } })
         };
         const items = buildConflictDiffItemsForMap(conflict, { goal1: 'Goal One' });
         expect(items).toHaveLength(1);
@@ -89,8 +98,8 @@ describe('conflict diff helpers', () => {
 
     it('falls back to goal id when name missing', () => {
         const conflict = {
-            local: { goalTargets: { goalXYZ: 10 }, goalFixed: {} },
-            remote: { goalTargets: { goalXYZ: 15 }, goalFixed: {} }
+            local: toConfig({ goalTargets: { goalXYZ: 10 }, goalFixed: {} }),
+            remote: toConfig({ goalTargets: { goalXYZ: 15 }, goalFixed: {} })
         };
         const items = buildConflictDiffItemsForMap(conflict, {});
         expect(items).toHaveLength(1);
@@ -137,8 +146,8 @@ describe('conflict diff helpers', () => {
 
     it('keeps Endowus-only changes visible', () => {
         const conflict = {
-            local: { goalTargets: { goal1: 10 }, goalFixed: {} },
-            remote: { goalTargets: { goal1: 20 }, goalFixed: {} }
+            local: toConfig({ goalTargets: { goal1: 10 }, goalFixed: {} }),
+            remote: toConfig({ goalTargets: { goal1: 20 }, goalFixed: {} })
         };
 
         const sections = buildConflictDiffSections(conflict, { goal1: 'Goal One' });
@@ -462,7 +471,7 @@ describe('conflict diff helpers', () => {
         expect(rows.some(item => item.settingName === 'Allocation Buckets')).toBe(false);
     });
 
-    it('uses top-level OCBC fallback when platforms is missing or malformed', () => {
+    it('normalizes OCBC top-level fallback only when both sides use equivalent shape', () => {
         const cases = [
             {
                 local: {
@@ -511,9 +520,8 @@ describe('conflict diff helpers', () => {
             }
         ];
 
-        cases.forEach(({ local, remote }) => {
-            expect(buildOcbcConflictDiffItems({ local, remote })).toHaveLength(0);
-        });
+        expect(buildOcbcConflictDiffItems({ local: cases[0].local, remote: cases[0].remote }).length).toBeGreaterThan(0);
+        expect(buildOcbcConflictDiffItems({ local: cases[1].local, remote: cases[1].remote }).length).toBeGreaterThan(0);
     });
 
     it('does not diff OCBC assignments and targets when object insertion order differs only', () => {

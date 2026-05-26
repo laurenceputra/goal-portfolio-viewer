@@ -1,16 +1,45 @@
 const { setupDom, teardownDom } = require('./helpers/domSetup');
 
 describe('FSM profit models', () => {
+    function buildFsmStore({ holdings = [], portfolios = [], assignments = {}, extraAllocation = {} } = {}) {
+        return {
+            version: 4,
+            datasets: { holdings },
+            allocation: {
+                targetsByCode: {},
+                fixedByCode: {},
+                portfolios,
+                assignmentByCode: assignments,
+                allocationModel: {
+                    version: 1,
+                    scopes: [],
+                    assignments: {},
+                    targets: {},
+                    ordering: {},
+                    metadata: { platformId: 'fsm' }
+                },
+                ...extraAllocation
+            },
+            ui: {},
+            localCache: {}
+        };
+    }
+
     function mockStorageWithFsmConfig({ holdings, portfolios = [], assignments = {}, extra = {} }) {
+        const extraTargetsByCode = Object.entries(extra).reduce((acc, [key, value]) => {
+            if (key.startsWith('fsm_target_pct_')) {
+                acc[key.slice('fsm_target_pct_'.length)] = Number(value);
+            }
+            return acc;
+        }, {});
         global.GM_getValue = jest.fn((key, fallback = null) => {
-            if (key === 'api_fsm_holdings') {
-                return JSON.stringify(holdings || []);
-            }
-            if (key === 'fsm_portfolios') {
-                return JSON.stringify(portfolios);
-            }
-            if (key === 'fsm_assignment_by_code') {
-                return JSON.stringify(assignments);
+            if (key === 'fsm') {
+                return JSON.stringify(buildFsmStore({
+                    holdings: holdings || [],
+                    portfolios,
+                    assignments,
+                    extraAllocation: { targetsByCode: extraTargetsByCode }
+                }));
             }
             if (Object.prototype.hasOwnProperty.call(extra, key)) {
                 return extra[key];
@@ -42,8 +71,8 @@ describe('FSM profit models', () => {
         const { init, showOverlay } = require('../goal_portfolio_viewer.user.js');
 
         global.GM_getValue = jest.fn((key, fallback = null) => {
-            if (key === 'api_fsm_holdings') {
-                return JSON.stringify([
+            if (key === 'fsm') {
+                return JSON.stringify(buildFsmStore({ holdings: [
                     {
                         code: 'AAA',
                         subcode: 'AAPL',
@@ -62,7 +91,7 @@ describe('FSM profit models', () => {
                         profitValueLcy: 40,
                         profitPercentLcy: 5
                     }
-                ]);
+                ] }));
             }
             return fallback;
         });
@@ -78,8 +107,8 @@ describe('FSM profit models', () => {
         const { init, showOverlay } = require('../goal_portfolio_viewer.user.js');
 
         global.GM_getValue = jest.fn((key, fallback = null) => {
-            if (key === 'api_fsm_holdings') {
-                return JSON.stringify([
+            if (key === 'fsm') {
+                return JSON.stringify(buildFsmStore({ holdings: [
                     {
                         code: 'AAA',
                         subcode: 'AAPL',
@@ -97,7 +126,7 @@ describe('FSM profit models', () => {
                         currentValueLcy: 800,
                         profitValueLcy: 40
                     }
-                ]);
+                ] }));
             }
             return fallback;
         });
@@ -167,8 +196,8 @@ describe('FSM profit models', () => {
         const { init, showOverlay } = require('../goal_portfolio_viewer.user.js');
 
         global.GM_getValue = jest.fn((key, fallback = null) => {
-            if (key === 'api_fsm_holdings') {
-                return JSON.stringify([
+            if (key === 'fsm') {
+                return JSON.stringify(buildFsmStore({ holdings: [
                     {
                         code: 'AAA',
                         subcode: 'AAPL',
@@ -178,7 +207,7 @@ describe('FSM profit models', () => {
                         profitValueLcy: 5,
                         profitPercentLcy: 0.5
                     }
-                ]);
+                ] }));
             }
             return fallback;
         });
@@ -199,8 +228,8 @@ describe('FSM profit models', () => {
         const { init, showOverlay } = require('../goal_portfolio_viewer.user.js');
 
         global.GM_getValue = jest.fn((key, fallback = null) => {
-            if (key === 'api_fsm_holdings') {
-                return JSON.stringify([
+            if (key === 'fsm') {
+                return JSON.stringify(buildFsmStore({ holdings: [
                     {
                         code: 'AAA',
                         subcode: 'AAPL',
@@ -210,7 +239,7 @@ describe('FSM profit models', () => {
                         profitValueLcy: 150,
                         profitPercentLcy: 1.5
                     }
-                ]);
+                ] }));
             }
             return fallback;
         });
@@ -231,8 +260,8 @@ describe('FSM profit models', () => {
         const { init, showOverlay } = require('../goal_portfolio_viewer.user.js');
 
         global.GM_getValue = jest.fn((key, fallback = null) => {
-            if (key === 'api_fsm_holdings') {
-                return JSON.stringify([
+            if (key === 'fsm') {
+                return JSON.stringify(buildFsmStore({ holdings: [
                     {
                         code: 'AAA',
                         subcode: 'AAPL',
@@ -241,7 +270,7 @@ describe('FSM profit models', () => {
                         currentValueLcy: 1000,
                         profitPercentLcy: 1.5
                     }
-                ]);
+                ] }));
             }
             return fallback;
         });
@@ -262,8 +291,8 @@ describe('FSM profit models', () => {
         const { init, showOverlay } = require('../goal_portfolio_viewer.user.js');
 
         global.GM_getValue = jest.fn((key, fallback = null) => {
-            if (key === 'api_fsm_holdings') {
-                return JSON.stringify([
+            if (key === 'fsm') {
+                return JSON.stringify(buildFsmStore({ holdings: [
                     {
                         code: 'P1',
                         subcode: 'POS',
@@ -288,7 +317,7 @@ describe('FSM profit models', () => {
                         currentValueLcy: 940,
                         profitValueLcy: -60
                     }
-                ]);
+                ] }));
             }
             return fallback;
         });
@@ -317,8 +346,8 @@ describe('FSM profit models', () => {
         const { init, showOverlay } = require('../goal_portfolio_viewer.user.js');
 
         global.GM_getValue = jest.fn((key, fallback = null) => {
-            if (key === 'api_fsm_holdings') {
-                return JSON.stringify([
+            if (key === 'fsm') {
+                return JSON.stringify(buildFsmStore({ holdings: [
                     {
                         code: 'AAA',
                         subcode: 'AAPL',
@@ -327,7 +356,7 @@ describe('FSM profit models', () => {
                         currentValueLcy: 1000,
                         profitPercentLcy: 0.5
                     }
-                ]);
+                ] }));
             }
             return fallback;
         });

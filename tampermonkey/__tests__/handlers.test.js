@@ -118,7 +118,8 @@ describe('handlers and cache', () => {
             projectedInvestmentsState
         });
 
-        expect(storage.get('goal_target_pct_g1')).toBe(50);
+        const endowusAfterSet = JSON.parse(storage.get('endowus'));
+        expect(endowusAfterSet.allocation?.goalTargets?.g1).toBe(50);
         expect(diffCell.textContent).toMatch(/100\.00/);
         expect(diffCell.className).toContain('gpv-diff-cell');
         expect(scheduleSpy).toHaveBeenCalledWith('target-update');
@@ -150,7 +151,13 @@ describe('handlers and cache', () => {
         };
         const projectedInvestmentsState = {};
         const { typeSection, targetInput, diffCell } = createTypeSection(goalId);
-        storage.set('goal_target_pct_g1', 50);
+        storage.set('endowus', JSON.stringify({
+            version: 4,
+            datasets: { performance: null, investible: null, summary: null },
+            allocation: { goalTargets: { g1: 50 }, goalFixed: {}, goalBuckets: {} },
+            ui: { uiPreferences: { bucketMode: 'allocation', collapseState: {} } },
+            localCache: {}
+        }));
         targetInput.value = '';
 
         handleGoalTargetChange({
@@ -165,7 +172,8 @@ describe('handlers and cache', () => {
             projectedInvestmentsState
         });
 
-        expect(storage.has('goal_target_pct_g1')).toBe(false);
+        const endowusAfterClear = JSON.parse(storage.get('endowus'));
+        expect(endowusAfterClear.allocation?.goalTargets?.g1).toBeUndefined();
         expect(diffCell.textContent).toBe('-');
         expect(diffCell.className).toBe('gpv-diff-cell');
         expect(scheduleSpy).toHaveBeenCalledWith('target-clear');
@@ -212,7 +220,8 @@ describe('handlers and cache', () => {
             projectedInvestmentsState
         });
 
-        expect(storage.get('goal_target_pct_g1')).toBe(100);
+        const endowusAfterClamp = JSON.parse(storage.get('endowus'));
+        expect(endowusAfterClamp.allocation?.goalTargets?.g1).toBe(100);
         expect(targetInput.value).toBe('100.00');
 
         jest.runOnlyPendingTimers();
@@ -259,7 +268,8 @@ describe('handlers and cache', () => {
             projectedInvestmentsState
         });
 
-        expect(storage.has('goal_target_pct_g1')).toBe(false);
+        const endowusAfterFixed = storage.get('endowus') ? JSON.parse(storage.get('endowus')) : null;
+        expect(endowusAfterFixed?.allocation?.goalTargets?.g1).toBeUndefined();
     });
 
     test('handleGoalTargetChange shows error on invalid input', () => {
@@ -303,7 +313,8 @@ describe('handlers and cache', () => {
             projectedInvestmentsState
         });
 
-        expect(storage.has('goal_target_pct_g1')).toBe(false);
+        const endowusAfterInvalid = storage.get('endowus') ? JSON.parse(storage.get('endowus')) : null;
+        expect(endowusAfterInvalid?.allocation?.goalTargets?.g1).toBeUndefined();
         expect(targetInput.classList.contains('gpv-input-flash--error')).toBe(true);
 
         jest.runOnlyPendingTimers();
@@ -316,7 +327,8 @@ describe('handlers and cache', () => {
 
         const result = GoalTargetStore.setTarget('g-nonfinite', Infinity);
         expect(result).toBeNull();
-        expect(storage.has('goal_target_pct_g-nonfinite')).toBe(false);
+        const endowusAfterNonFinite = storage.get('endowus') ? JSON.parse(storage.get('endowus')) : null;
+        expect(endowusAfterNonFinite?.allocation?.goalTargets?.['g-nonfinite']).toBeUndefined();
     });
 
     test('GoalTargetStore.setTarget clamps to 0-100 range', () => {
@@ -326,12 +338,12 @@ describe('handlers and cache', () => {
         const above = GoalTargetStore.setTarget('g-above', 150);
         expect(above).toBe(100);
         const endowusAfterAbove = JSON.parse(storage.get('endowus'));
-        expect(endowusAfterAbove.goalTargets['g-above']).toBe(100);
+        expect(endowusAfterAbove.allocation?.goalTargets?.['g-above']).toBe(100);
 
         const below = GoalTargetStore.setTarget('g-below', -10);
         expect(below).toBe(0);
         const endowusAfterBelow = JSON.parse(storage.get('endowus'));
-        expect(endowusAfterBelow.goalTargets['g-below']).toBe(0);
+        expect(endowusAfterBelow.allocation?.goalTargets?.['g-below']).toBe(0);
     });
 
     test('handleGoalFixedToggle disables target input and stores flag', () => {
@@ -615,8 +627,8 @@ describe('handlers and cache', () => {
 
         expect(getCollapseState('Retirement', 'GENERAL_WEALTH_ACCUMULATION', 'performance')).toBe(false);
         const endowus = JSON.parse(storage.get('endowus'));
-        expect(endowus.uiPreferences.bucketMode).toBe('performance');
-        expect(endowus.uiPreferences.collapseState).toEqual({
+        expect(endowus.ui?.uiPreferences?.bucketMode).toBe('performance');
+        expect(endowus.ui?.uiPreferences?.collapseState).toEqual({
             'gpv_collapse_Retirement|GENERAL_WEALTH_ACCUMULATION|performance': false
         });
     });
@@ -801,7 +813,7 @@ describe('handlers and cache', () => {
         await window.fetch('/v1/goals/performance');
         const stored = storage.get('endowus');
         expect(stored).toBeDefined();
-        expect(JSON.parse(stored).performance).toEqual(body);
+        expect(JSON.parse(stored).datasets?.performance).toEqual(body);
     });
 
     test('hydrateVisibleGoalMetricRows updates all matching rows', () => {

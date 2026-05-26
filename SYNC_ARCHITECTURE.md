@@ -2,7 +2,7 @@
 **Version**: 1.0  
 **Status**: Implemented  
 **Author**: Staff Engineer  
-**Date**: December 2024
+**Date**: May 2026
 
 ---
 
@@ -1687,7 +1687,24 @@ This architecture provides a robust, privacy-first sync solution that:
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: December 2024  
-**Reviewed By**: Pending  
+## Current Sync Boundary (Config-Only)
+
+Sync payloads are config-only and do **not** include raw holdings/API datasets, amounts, performance response cache, or UI-local cache values.
+
+For platform payloads, sync reads and writes allocation/config data from the v4 store structure and leaves `datasets` + `localCache` device-local.
+
+Compatibility:
+
+- Supported input payloads: v2/v3 namespaced payloads.
+- Removed: legacy v1 flat config payload support.
+- Flat platform GM keys for Endowus/FSM/OCBC are migrated/read during the active 2-month compatibility window (introduced in 2.14.11 / 2026-05-03), with migration code/tests/support retained until 2026-07-03.
+- When both v4 namespaced and flat legacy values exist for the same platform setting, v4 namespaced is canonical; flat legacy only backfills missing v4 fields.
+- During that active window, legacy flat keys may still be cleaned immediately after a successful migrated v4 write.
+- Flat `sync_*` auth/settings keys may still be migrated into the `sync` store as a sync-settings compatibility path (distinct from platform data migration).
+
+---
+
+**Document Version**: 1.0
+**Last Updated**: May 2026
+**Reviewed By**: Pending
 **Approved By**: Pending

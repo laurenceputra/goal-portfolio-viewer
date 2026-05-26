@@ -53,7 +53,8 @@ Include targeted tests for:
 - Disallowed origin preflight behavior (no allow-origin).
 - Normal JSON/error responses carrying consistent CORS headers.
 - Config parsing edge cases (comma-separated allowlist with spaces/empty values).
-- Backward compatibility for sync payload migrations (v1 read + v2 write/normalize).
+- Backward compatibility for active migration windows (storage/sync read fallback + normalized write).
+- Migration-window cleanup checks: confirm cleanup triggers after successful migrated write, confirm the 2-month window applies to retaining migration code/tests in-repo, and confirm legacy-path tests are removed only after that retention window.
 
 ## Refactor Test Focus (Repo)
 - **High-priority before refactors**: UI overlay DOM structure, focus trap/keyboard flow, sync error categorization, retry/backoff logic, performance baselines, worker crypto/validation utilities.

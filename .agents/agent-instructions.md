@@ -181,6 +181,20 @@ When a new abstraction or helper is introduced, the PR artifacts must justify wh
 
 Reuse-first changes must preserve current behavior and keep tests aligned with that behavior.
 
+## Migration Retention Policy (Storage + Sync)
+
+- Storage/sync compatibility migrations are temporary and must be removed after a 2-month retention window.
+- The 2-month window applies to keeping migration code/tests/support in-repo; it does not require retaining legacy flat keys in storage after a successful migrated v4 write.
+- Every migration must include:
+  - introduction version and date
+  - removal-eligible date (`introduced_at + 2 months`)
+- Temporary migration comments should be concise and placed near the migration code path.
+- Use this standard migration comment format where practical:
+  - `Migration: introduced <version> on <YYYY-MM-DD>; removal eligible after <YYYY-MM-DD>.`
+- Tests must cover both:
+  - migration behavior during the active window
+  - cleanup/removal readiness once the window is elapsed
+
 ## Required PR Artifacts
 
 Every PR or change record must include these sections:
