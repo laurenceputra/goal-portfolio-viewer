@@ -1427,21 +1427,22 @@ function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
         };
     }
 
-    function buildGoalTypeAllocationContext({
+    function buildGoalTypeAllocationState({
         bucketName,
         goalType,
         group,
-        projectedInvestments,
+        projectedInvestmentsState,
         goalTargets,
         goalFixed
     }) {
         if (!group) {
             return null;
         }
-        const endingBalanceAmount = group.endingBalanceAmount || 0;
-        const projectedAmount = getProjectedInvestmentValue(projectedInvestments, bucketName, goalType);
-        const adjustedTotal = endingBalanceAmount + projectedAmount;
         const goals = Array.isArray(group.goals) ? group.goals : [];
+        const goalIds = goals.map(goal => goal?.goalId).filter(Boolean);
+        const endingBalanceAmount = group.endingBalanceAmount || 0;
+        const projectedAmount = getProjectedInvestmentValue(projectedInvestmentsState, bucketName, goalType);
+        const adjustedTotal = endingBalanceAmount + projectedAmount;
         const allocationModel = computeGoalTypeViewState(
             goals,
             endingBalanceAmount,
@@ -1450,11 +1451,46 @@ function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
             goalFixed
         );
         return {
+            group,
+            goals,
+            goalIds,
             endingBalanceAmount,
             projectedAmount,
             adjustedTotal,
             allocationModel
         };
+    }
+
+    function buildGoalTypeBaseViewModel({ goalType, group, allocationState }) {
+        const allocationModel = allocationState?.allocationModel || {};
+        const typeReturn = group.totalCumulativeReturn === null
+            ? null
+            : toFiniteNumber(group.totalCumulativeReturn, null);
+        return {
+            goalType,
+            displayName: getDisplayGoalType(goalType),
+            endingBalanceAmount: allocationState?.endingBalanceAmount || 0,
+            endingBalanceDisplay: formatMoney(group.endingBalanceAmount),
+            totalReturn: typeReturn,
+            returnDisplay: formatMoney(typeReturn),
+            growthDisplay: formatGrowthPercentFromEndingBalance(
+                typeReturn,
+                group.endingBalanceAmount
+            ),
+            returnClass: getReturnClass(typeReturn),
+            projectedAmount: allocationState?.projectedAmount || 0,
+            adjustedTotal: allocationState?.adjustedTotal || 0,
+            allocationDriftDisplay: allocationModel.allocationDriftDisplay,
+            allocationDriftClass: allocationModel.allocationDriftClass,
+            allocationDriftAvailable: allocationModel.allocationDriftAvailable,
+            goals: Array.isArray(allocationModel.goalModels)
+                ? allocationModel.goalModels.map(goal => buildBucketDetailGoalRow(goal))
+                : []
+        };
+    }
+
+    function buildSummaryGoalTypeModel({ goalType, group, allocationState }) {
+        return buildGoalTypeBaseViewModel({ goalType, group, allocationState });
     }
 
     function buildBucketHealth(goalTypeModels) {
@@ -1465,86 +1501,105 @@ function buildDiffCellData(currentAmount, targetPercent, adjustedTypeTotal) {
         });
     }
 
-    function buildSummaryViewModel(bucketMap, projectedInvestmentsState, goalTargetById, goalFixedById) {
-        if (!bucketMap || typeof bucketMap !== 'object') {
-            return { buckets: [], showAllocationDriftHint: false, attentionItems: [] };
+    function buildBucketGoalTypeModels({
+        bucketName,
+        bucketObj,
+        projectedInvestmentsState,
+        goalTargetById,
+        goalFixedById,
+        buildGoalTypeModel
+    }) {
+        if (!bucketObj || typeof bucketObj !== 'object' || typeof buildGoalTypeModel !== 'function') {
+            return { goalTypeModels: [], showAllocationDriftHint: false };
         }
         const projectedInvestments = projectedInvestmentsState || {};
         const goalTargets = goalTargetById || {};
         const goalFixed = goalFixedById || {};
         let showAllocationDriftHint = false;
-        const buckets = Object.keys(bucketMap)
-            .sort()
-            .map(bucketName => {
-                const bucketObj = bucketMap[bucketName];
-                const base = buildBucketBase(bucketName, bucketObj);
-                if (!base) {
+        const orderedTypes = sortGoalTypes(Object.keys(bucketObj).filter(key => key !== '_meta'));
+        const goalTypeModels = orderedTypes
+            .map(goalType => {
+                const group = bucketObj[goalType];
+                const allocationState = buildGoalTypeAllocationState({
+                    bucketName,
+                    goalType,
+                    group,
+                    projectedInvestmentsState: projectedInvestments,
+                    goalTargets,
+                    goalFixed
+                });
+                if (!allocationState) {
                     return null;
                 }
-                const { orderedTypes, bucketTotalReturn, endingBalanceTotal } = base;
-                const goalTypeModels = orderedTypes
-                    .map(goalType => {
-                        const group = base.bucketObj[goalType];
-                        const allocationContext = buildGoalTypeAllocationContext({
-                            bucketName,
-                            goalType,
-                            group,
-                            projectedInvestments,
-                            goalTargets,
-                            goalFixed
-                        });
-                        if (!allocationContext) {
-                            return null;
-                        }
-                        const {
-                            endingBalanceAmount,
-                            projectedAmount,
-                            adjustedTotal,
-                            allocationModel
-                        } = allocationContext;
-                        const typeReturn = group.totalCumulativeReturn === null
-                            ? null
-                            : toFiniteNumber(group.totalCumulativeReturn, null);
-                        if (allocationModel.allocationDriftAvailable === false) {
-                            showAllocationDriftHint = true;
-                        }
-                        return enrichGoalTypeWithPlanning({
-                            goalType,
-                            displayName: getDisplayGoalType(goalType),
-                            endingBalanceAmount,
-                            endingBalanceDisplay: formatMoney(group.endingBalanceAmount),
-                            totalReturn: typeReturn,
-                            returnDisplay: formatMoney(typeReturn),
-                            growthDisplay: formatGrowthPercentFromEndingBalance(
-                                typeReturn,
-                                group.endingBalanceAmount
-                            ),
-                            returnClass: getReturnClass(typeReturn),
-                            allocationDriftDisplay: allocationModel.allocationDriftDisplay,
-                            allocationDriftClass: allocationModel.allocationDriftClass,
-                            allocationDriftAvailable: allocationModel.allocationDriftAvailable,
-                            goals: allocationModel.goalModels.map(goal => buildBucketDetailGoalRow(goal)),
-                            adjustedTotal,
-                            projectedAmount
-                        });
-                    })
-                    .filter(Boolean);
-                return {
-                    bucketName,
-                    endingBalanceAmount: endingBalanceTotal,
-                    totalReturn: bucketTotalReturn,
-                    endingBalanceDisplay: formatMoney(endingBalanceTotal),
-                    returnDisplay: formatMoney(bucketTotalReturn),
-                    growthDisplay: formatGrowthPercentFromEndingBalance(
-                        bucketTotalReturn,
-                        endingBalanceTotal
-                    ),
-                    returnClass: getReturnClass(bucketTotalReturn),
-                    goalTypes: goalTypeModels,
-                    health: buildBucketHealth(goalTypeModels)
-                };
+                if (allocationState.allocationModel.allocationDriftAvailable === false) {
+                    showAllocationDriftHint = true;
+                }
+                return enrichGoalTypeWithPlanning(buildGoalTypeModel({
+                    goalType,
+                    group,
+                    allocationState
+                }));
             })
             .filter(Boolean);
+        return {
+            goalTypeModels,
+            showAllocationDriftHint
+        };
+    }
+
+    function buildBucketViewModel({
+        bucketName,
+        bucketObj,
+        projectedInvestmentsState,
+        goalTargetById,
+        goalFixedById,
+        buildGoalTypeModel
+    }) {
+        const base = buildBucketBase(bucketName, bucketObj);
+        if (!base) {
+            return null;
+        }
+        const { goalTypeModels, showAllocationDriftHint } = buildBucketGoalTypeModels({
+            bucketName,
+            bucketObj: base.bucketObj,
+            projectedInvestmentsState,
+            goalTargetById,
+            goalFixedById,
+            buildGoalTypeModel
+        });
+        return {
+            bucketName,
+            endingBalanceAmount: base.endingBalanceTotal,
+            totalReturn: base.bucketTotalReturn,
+            endingBalanceDisplay: formatMoney(base.endingBalanceTotal),
+            returnDisplay: formatMoney(base.bucketTotalReturn),
+            growthDisplay: formatGrowthPercentFromEndingBalance(
+                base.bucketTotalReturn,
+                base.endingBalanceTotal
+            ),
+            returnClass: getReturnClass(base.bucketTotalReturn),
+            goalTypes: goalTypeModels,
+            showAllocationDriftHint,
+            health: buildBucketHealth(goalTypeModels)
+        };
+    }
+
+    function buildSummaryViewModel(bucketMap, projectedInvestmentsState, goalTargetById, goalFixedById) {
+        if (!bucketMap || typeof bucketMap !== 'object') {
+            return { buckets: [], showAllocationDriftHint: false, attentionItems: [] };
+        }
+        const buckets = Object.keys(bucketMap)
+            .sort()
+            .map(bucketName => buildBucketViewModel({
+                bucketName,
+                bucketObj: bucketMap[bucketName],
+                projectedInvestmentsState,
+                goalTargetById,
+                goalFixedById,
+                buildGoalTypeModel: buildSummaryGoalTypeModel
+            }))
+            .filter(Boolean);
+        const showAllocationDriftHint = buckets.some(bucket => bucket.showAllocationDriftHint === true);
         return {
             buckets,
             showAllocationDriftHint,
@@ -1567,83 +1622,25 @@ function buildBucketDetailViewModel({
         if (!base) {
             return null;
         }
-        const projectedInvestments = projectedInvestmentsState || {};
-        const goalTargets = goalTargetById || {};
-        const goalFixed = goalFixedById || {};
-        const { orderedTypes, bucketTotalReturn, endingBalanceTotal } = base;
-        let showAllocationDriftHint = false;
-
-    const goalTypeModels = orderedTypes
-        .map(goalType => {
-            const group = base.bucketObj[goalType];
-            const allocationContext = buildGoalTypeAllocationContext({
-                bucketName,
-                goalType,
-                group,
-                projectedInvestments,
-                goalTargets,
-                goalFixed
-            });
-            if (!allocationContext) {
-                return null;
-            }
-            const { projectedAmount, allocationModel } = allocationContext;
-            if (allocationModel.allocationDriftAvailable === false) {
-                showAllocationDriftHint = true;
-            }
-            return enrichGoalTypeWithPlanning(buildBucketDetailGoalTypeModel({
-                goalType,
-                group,
-                projectedAmount,
-                allocationModel
-            }));
-        })
-        .filter(Boolean);
-
-    return {
-        bucketName,
-        endingBalanceAmount: endingBalanceTotal,
-        totalReturn: bucketTotalReturn,
-        endingBalanceDisplay: formatMoney(endingBalanceTotal),
-        returnDisplay: formatMoney(bucketTotalReturn),
-        growthDisplay: formatGrowthPercentFromEndingBalance(
-            bucketTotalReturn,
-            endingBalanceTotal
-        ),
-        returnClass: getReturnClass(bucketTotalReturn),
-        goalTypes: goalTypeModels,
-        showAllocationDriftHint,
-        health: buildBucketHealth(goalTypeModels)
-    };
+        return buildBucketViewModel({
+            bucketName,
+            bucketObj: base.bucketObj,
+            projectedInvestmentsState,
+            goalTargetById,
+            goalFixedById,
+            buildGoalTypeModel: buildBucketDetailGoalTypeModel
+        });
 }
 
-function buildBucketDetailGoalTypeModel({ goalType, group, projectedAmount, allocationModel }) {
-    const typeReturn = group.totalCumulativeReturn === null
-        ? null
-        : toFiniteNumber(group.totalCumulativeReturn, null);
-    const endingBalanceAmount = group.endingBalanceAmount || 0;
+function buildBucketDetailGoalTypeModel({ goalType, group, allocationState }) {
+    const allocationModel = allocationState?.allocationModel || {};
+    const baseModel = buildGoalTypeBaseViewModel({ goalType, group, allocationState });
     return {
-        goalType,
-        displayName: getDisplayGoalType(goalType),
-        endingBalanceAmount,
-        endingBalanceDisplay: formatMoney(group.endingBalanceAmount),
-        totalReturn: typeReturn,
-        returnDisplay: formatMoney(typeReturn),
-        growthDisplay: formatGrowthPercentFromEndingBalance(
-            typeReturn,
-            group.endingBalanceAmount
-        ),
-        returnClass: getReturnClass(typeReturn),
-        projectedAmount,
-        adjustedTotal: endingBalanceAmount + projectedAmount,
+        ...baseModel,
         remainingTargetPercent: allocationModel.remainingTargetPercent,
         remainingTargetDisplay: formatPercent(allocationModel.remainingTargetPercent),
         remainingTargetIsHigh: isRemainingTargetAboveThreshold(allocationModel.remainingTargetPercent),
-        allocationDriftDisplay: allocationModel.allocationDriftDisplay,
-        allocationDriftClass: allocationModel.allocationDriftClass,
-        allocationDriftAvailable: allocationModel.allocationDriftAvailable,
-        goalModelsById: allocationModel.goalModelsById,
-        goals: allocationModel.goalModels.map(goal => buildBucketDetailGoalRow(goal))
+        goalModelsById: allocationModel.goalModelsById || {}
     };
 }
 
@@ -2239,6 +2236,30 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             getFixedFn,
             value => value === true
         );
+    }
+
+    function loadGoalAllocationConfig(goalIds, {
+        getTarget = GoalTargetStore.getTarget,
+        getFixed = GoalTargetStore.getFixed
+    } = {}) {
+        const normalizedGoalIds = Array.from(new Set(
+            (Array.isArray(goalIds) ? goalIds : [])
+                .map(goalId => utils.normalizeString(goalId, ''))
+                .filter(Boolean)
+        ));
+        return {
+            goalIds: normalizedGoalIds,
+            goalTargetById: buildGoalTargetById(normalizedGoalIds, getTarget),
+            goalFixedById: buildGoalFixedById(normalizedGoalIds, getFixed)
+        };
+    }
+
+    function loadBucketAllocationConfig(bucketObj, getters = {}) {
+        return loadGoalAllocationConfig(collectGoalIds(bucketObj), getters);
+    }
+
+    function loadAllBucketAllocationConfig(bucketMap, getters = {}) {
+        return loadGoalAllocationConfig(collectAllGoalIds(bucketMap), getters);
     }
 
 
@@ -9446,20 +9467,17 @@ let GoalTargetStore;
         if (!group) {
             return null;
         }
-        const goals = Array.isArray(group.goals) ? group.goals : [];
-        const goalIds = goals.map(goal => goal.goalId).filter(Boolean);
-        const goalTargets = buildGoalTargetById(goalIds, GoalTargetStore.getTarget);
-        const goalFixed = buildGoalFixedById(goalIds, GoalTargetStore.getFixed);
-        const totalTypeAmount = group.endingBalanceAmount || 0;
-        const projectedAmount = getProjectedInvestmentValue(projectedInvestmentsState, bucket, goalType);
-        const adjustedTotal = totalTypeAmount + projectedAmount;
-        return computeGoalTypeViewState(
-            goals,
-            totalTypeAmount,
-            adjustedTotal,
-            goalTargets,
-            goalFixed
+        const { goalTargetById, goalFixedById } = loadGoalAllocationConfig(
+            Array.isArray(group.goals) ? group.goals.map(goal => goal?.goalId).filter(Boolean) : []
         );
+        return buildGoalTypeAllocationState({
+            bucketName: bucket,
+            goalType,
+            group,
+            projectedInvestmentsState,
+            goalTargets: goalTargetById,
+            goalFixed: goalFixedById
+        })?.allocationModel || null;
     }
 
     function refreshGoalTypeSection({
@@ -9536,8 +9554,7 @@ let GoalTargetStore;
             bucketName: bucket,
             bucketMap: mergedInvestmentDataState,
             projectedInvestmentsState,
-            goalTargetById: buildGoalTargetById(collectGoalIds(mergedInvestmentDataState?.[bucket]), GoalTargetStore.getTarget),
-            goalFixedById: buildGoalFixedById(collectGoalIds(mergedInvestmentDataState?.[bucket]), GoalTargetStore.getFixed)
+            ...loadBucketAllocationConfig(mergedInvestmentDataState?.[bucket])
         });
         if (!bucketViewModel) {
             return;
@@ -13735,9 +13752,7 @@ syncUi.update = function updateSyncUI() {
             return null;
         }
         if (selection === 'SUMMARY') {
-            const goalIds = collectAllGoalIds(mergedInvestmentDataState);
-            const goalTargetById = buildGoalTargetById(goalIds, GoalTargetStore.getTarget);
-            const goalFixedById = buildGoalFixedById(goalIds, GoalTargetStore.getFixed);
+            const { goalTargetById, goalFixedById } = loadAllBucketAllocationConfig(mergedInvestmentDataState);
             return {
                 kind: 'SUMMARY',
                 viewModel: buildSummaryViewModel(
@@ -13752,9 +13767,7 @@ syncUi.update = function updateSyncUI() {
         if (!bucketObj) {
             return null;
         }
-        const goalIds = collectGoalIds(bucketObj);
-        const goalTargetById = buildGoalTargetById(goalIds, GoalTargetStore.getTarget);
-        const goalFixedById = buildGoalFixedById(goalIds, GoalTargetStore.getFixed);
+        const { goalTargetById, goalFixedById } = loadBucketAllocationConfig(bucketObj);
         const viewModel = buildBucketDetailViewModel({
             bucketName: selection,
             bucketMap: mergedInvestmentDataState,
@@ -17293,6 +17306,9 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             collectAllGoalIds,
             buildGoalTargetById,
             buildGoalFixedById,
+            loadGoalAllocationConfig,
+            loadBucketAllocationConfig,
+            loadAllBucketAllocationConfig,
             getBucketViewModePreference,
             setBucketViewModePreference,
             getCollapseState,

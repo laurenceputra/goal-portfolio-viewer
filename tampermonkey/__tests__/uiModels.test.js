@@ -25,6 +25,9 @@ const {
     collectAllGoalIds,
     buildGoalTargetById,
     buildGoalFixedById,
+    loadGoalAllocationConfig,
+    loadBucketAllocationConfig,
+    loadAllBucketAllocationConfig,
     buildMergedInvestmentData,
     buildBucketPlanningModel,
     getBucketViewModePreference,
@@ -902,6 +905,40 @@ describe('collectGoalIds and buildGoalTargetById', () => {
     test('should build goal fixed map with getter', () => {
         const map = buildGoalFixedById(['a', 'b'], id => id === 'b');
         expect(map).toEqual({ b: true });
+    });
+
+    test('should load goal allocation config with deduplicated normalized ids', () => {
+        const config = loadGoalAllocationConfig([' a ', 'b', 'a', '', null], {
+            getTarget: id => (id === 'a' ? 20 : null),
+            getFixed: id => id === 'b'
+        });
+        expect(config).toEqual({
+            goalIds: ['a', 'b'],
+            goalTargetById: { a: 20 },
+            goalFixedById: { b: true }
+        });
+    });
+
+    test('should load bucket allocation config from bucket goals', () => {
+        const bucketMap = createBucketMapFixture();
+        const config = loadBucketAllocationConfig(bucketMap.Retirement, {
+            getTarget: id => (id === 'g2' ? 35 : null),
+            getFixed: id => id === 'g1'
+        });
+        expect(config.goalIds.sort()).toEqual(['g1', 'g2', 'g3']);
+        expect(config.goalTargetById).toEqual({ g2: 35 });
+        expect(config.goalFixedById).toEqual({ g1: true });
+    });
+
+    test('should load all bucket allocation config across buckets', () => {
+        const bucketMap = createBucketMapFixture();
+        const config = loadAllBucketAllocationConfig(bucketMap, {
+            getTarget: id => (id === 'g3' ? 15 : null),
+            getFixed: id => id === 'g1'
+        });
+        expect(config.goalIds.sort()).toEqual(['g1', 'g2', 'g3']);
+        expect(config.goalTargetById).toEqual({ g3: 15 });
+        expect(config.goalFixedById).toEqual({ g1: true });
     });
 });
 
