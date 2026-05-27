@@ -4,8 +4,28 @@ import { webcrypto } from 'node:crypto';
 
 import worker from '../src/index.js';
 import { tokens } from '../src/auth.js';
+import { SyncContracts } from './helpers/contracts.js';
 
 const MAX_PAYLOAD_SIZE = 64 * 1024;
+const {
+  userIds: {
+    testerEmail,
+    login: LOGIN_USER_ID,
+    refresh: REFRESH_USER_ID,
+    payload: PAYLOAD_USER_ID,
+    owner: OWNER_USER_ID,
+    other: OTHER_USER_ID,
+    route: ROUTE_USER_ID,
+    rateLimit: RATE_LIMIT_USER_ID
+  },
+  routes: {
+    syncPathTemplate: SYNC_PATH_TEMPLATE
+  }
+} = SyncContracts;
+
+function buildRateLimitKey(identity, method = 'GET') {
+  return SyncContracts.kvKeys.rateLimit(identity, SYNC_PATH_TEMPLATE, method);
+}
 
 if (!globalThis.crypto) {
   globalThis.crypto = webcrypto;
@@ -144,7 +164,7 @@ test('POST /auth/register supports success and validation failures', async () =>
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ userId: 'tester@example.com', passwordHash: 'hash' })
+    body: JSON.stringify({ userId: testerEmail, passwordHash: 'hash' })
   });
 
   const validResponse = await worker.fetch(validRequest, env, {});
@@ -175,7 +195,7 @@ test('POST /auth/login returns tokens on success', async () => {
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ userId: 'login-user', passwordHash: 'hash' })
+    body: JSON.stringify({ userId: LOGIN_USER_ID, passwordHash: 'hash' })
   });
   await worker.fetch(registerRequest, env, {});
 
@@ -184,7 +204,7 @@ test('POST /auth/login returns tokens on success', async () => {
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ userId: 'login-user', passwordHash: 'hash' })
+    body: JSON.stringify({ userId: LOGIN_USER_ID, passwordHash: 'hash' })
   });
 
   const loginResponse = await worker.fetch(loginRequest, env, {});
@@ -219,7 +239,7 @@ test('POST /auth/refresh handles missing, invalid, and valid tokens', async () =
 
   assert.equal(invalidParsed.status, 401);
 
-  const issuedTokens = await tokens.issueTokens('refresh-user', env);
+  const issuedTokens = await tokens.issueTokens(REFRESH_USER_ID, env);
   const validRequest = new Request('https://worker.example/auth/refresh', {
     method: 'POST',
     headers: {
@@ -236,7 +256,7 @@ test('POST /auth/refresh handles missing, invalid, and valid tokens', async () =
 
 test('POST /sync rejects payloads larger than MAX_PAYLOAD_SIZE', async () => {
   const env = createEnv();
-  const issuedTokens = await tokens.issueTokens('payload-user', env);
+  const issuedTokens = await tokens.issueTokens(PAYLOAD_USER_ID, env);
   const request = new Request('https://worker.example/sync', {
     method: 'POST',
     headers: {
@@ -244,7 +264,7 @@ test('POST /sync rejects payloads larger than MAX_PAYLOAD_SIZE', async () => {
       'Content-Type': 'application/json',
       'Content-Length': String(MAX_PAYLOAD_SIZE + 1)
     },
-    body: JSON.stringify({ userId: 'payload-user', data: 'ok' })
+    body: JSON.stringify({ userId: PAYLOAD_USER_ID, data: 'ok' })
   });
 
   const response = await worker.fetch(request, env, {});
@@ -256,7 +276,7 @@ test('POST /sync rejects payloads larger than MAX_PAYLOAD_SIZE', async () => {
 
 test('POST /sync rejects oversized payload without Content-Length', async () => {
   const env = createEnv();
-  const issuedTokens = await tokens.issueTokens('payload-user', env);
+  const issuedTokens = await tokens.issueTokens(PAYLOAD_USER_ID, env);
   const request = new Request('https://worker.example/sync', {
     method: 'POST',
     headers: {
@@ -311,12 +331,12 @@ test('POST /sync accepts payload exactly at MAX_PAYLOAD_SIZE boundary', async ()
 
 test('GET/DELETE /sync/:userId blocks access for mismatched authenticated user', async () => {
   const env = createEnv();
-  const issuedTokens = await tokens.issueTokens('owner-user', env);
+  const issuedTokens = await tokens.issueTokens(OWNER_USER_ID, env);
   const headers = {
     Authorization: `Bearer ${issuedTokens.accessToken}`
   };
 
-  const getRequest = new Request('https://worker.example/sync/other-user', {
+  const getRequest = new Request(`https://worker.example/sync/${OTHER_USER_ID}`, {
     method: 'GET',
     headers
   });
@@ -327,7 +347,7 @@ test('GET/DELETE /sync/:userId blocks access for mismatched authenticated user',
   assert.equal(getParsed.status, 403);
   assert.equal(getParsed.body.error, 'FORBIDDEN');
 
-  const deleteRequest = new Request('https://worker.example/sync/other-user', {
+  const deleteRequest = new Request(`https://worker.example/sync/${OTHER_USER_ID}`, {
     method: 'DELETE',
     headers
   });
@@ -340,7 +360,7 @@ test('GET/DELETE /sync/:userId blocks access for mismatched authenticated user',
 
 test('unknown authenticated route returns 404', async () => {
   const env = createEnv();
-  const issuedTokens = await tokens.issueTokens('route-user', env);
+  const issuedTokens = await tokens.issueTokens(ROUTE_USER_ID, env);
   const request = new Request('https://worker.example/unknown', {
     method: 'GET',
     headers: {
@@ -357,12 +377,12 @@ test('unknown authenticated route returns 404', async () => {
 
 test('rate limit is enforced for authenticated requests', async () => {
   const env = createEnv();
-  const issuedTokens = await tokens.issueTokens('limit-user', env);
-  const rateLimitKey = 'ratelimit:limit-user:/sync/:userId:GET';
+  const issuedTokens = await tokens.issueTokens(RATE_LIMIT_USER_ID, env);
+  const rateLimitKey = buildRateLimitKey(RATE_LIMIT_USER_ID, 'GET');
   const resetAt = Date.now() + 60_000;
   await env.SYNC_KV.put(rateLimitKey, JSON.stringify({ count: 60, resetAt }));
 
-  const request = new Request('https://worker.example/sync/limit-user', {
+  const request = new Request(`https://worker.example/sync/${RATE_LIMIT_USER_ID}`, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${issuedTokens.accessToken}`

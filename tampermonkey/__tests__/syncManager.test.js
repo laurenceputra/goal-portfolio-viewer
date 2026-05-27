@@ -732,6 +732,16 @@ describe('SyncManager', () => {
         })).rejects.toThrow('HTTPS');
     });
 
+    test('enable rejects invalid sync user IDs', async () => {
+        const { SyncManager } = loadModule();
+
+        await expect(SyncManager.enable({
+            serverUrl: 'https://sync.example.com',
+            userId: 'invalid user',
+            password: 'password123'
+        })).rejects.toThrow('Invalid userId format');
+    });
+
     test('getStatus treats stored insecure sync URL as unconfigured without throwing', () => {
         storage.set('sync_enabled', true);
         storage.set('sync_server_url', 'http://sync.example.com');
@@ -742,6 +752,20 @@ describe('SyncManager', () => {
         const { SyncManager } = loadModule();
 
         expect(() => SyncManager.getStatus()).not.toThrow();
+        expect(SyncManager.getStatus()).toEqual(expect.objectContaining({
+            isConfigured: false
+        }));
+    });
+
+    test('getStatus treats stored invalid sync user ID as unconfigured', () => {
+        storage.set('sync_enabled', true);
+        storage.set('sync_server_url', 'https://sync.example.com');
+        storage.set('sync_user_id', 'invalid user');
+        storage.set('sync_refresh_token', 'refresh-token');
+        storage.set('sync_refresh_token_expiry', Date.now() + 120_000);
+
+        const { SyncManager } = loadModule();
+
         expect(SyncManager.getStatus()).toEqual(expect.objectContaining({
             isConfigured: false
         }));
@@ -1945,6 +1969,54 @@ describe('SyncManager', () => {
         const { SyncManager } = loadModule();
         await expect(SyncManager.register('https://sync.example.com', 'user@example.com', 'password123')).resolves.toEqual({ success: true });
         expect(global.GM_xmlhttpRequest).toHaveBeenCalled();
+    });
+
+    test('register rejects invalid userId before making network requests', async () => {
+        global.GM_xmlhttpRequest = jest.fn();
+        fetchMock.mockImplementation(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ success: true }) }));
+
+        const { SyncManager } = loadModule();
+        await expect(SyncManager.register('https://sync.example.com', 'bad user', 'password123')).rejects.toThrow('Invalid userId format');
+        expect(global.GM_xmlhttpRequest).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    test('login rejects invalid userId before making network requests', async () => {
+        global.GM_xmlhttpRequest = jest.fn();
+        fetchMock.mockImplementation(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ success: true }) }));
+
+        const { SyncManager } = loadModule();
+        await expect(SyncManager.login('https://sync.example.com', 'bad user', 'password123')).rejects.toThrow('Invalid userId format');
+        expect(global.GM_xmlhttpRequest).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    test('performSync classifies payload-too-large errors with user guidance', async () => {
+        seedConfiguredState();
+        const { SyncManager } = loadModule();
+        unlockSync(SyncManager);
+
+        global.GM_xmlhttpRequest = jest.fn(({ url, method, onload }) => {
+            if (url.includes('/sync') && method === 'POST') {
+                onload({
+                    status: 413,
+                    responseText: JSON.stringify({
+                        success: false,
+                        error: 'PAYLOAD_TOO_LARGE',
+                        message: 'Payload too large'
+                    }),
+                    responseHeaders: ''
+                });
+                return;
+            }
+            onload({ status: 200, responseText: '{}', responseHeaders: '' });
+        });
+
+        await expect(SyncManager.performSync({ direction: 'upload' })).rejects.toThrow('Payload too large');
+        expect(SyncManager.getStatus().lastErrorMeta).toEqual(expect.objectContaining({
+            category: 'payload',
+            primaryAction: 'Review sync data'
+        }));
     });
 
     describe('token helpers', () => {

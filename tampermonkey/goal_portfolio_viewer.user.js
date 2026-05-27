@@ -121,6 +121,11 @@
     };
     const SYNC_METADATA_VERSION = 2;
     const SYNC_REQUEST_TIMEOUT_MS = 15000;
+    const SYNC_USER_ID_PATTERNS = Object.freeze([
+        /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
+        /^[a-zA-Z0-9_-]{3,50}$/
+    ]);
+    const SYNC_USER_ID_VALIDATION_MESSAGE = 'Invalid userId format. Use email or alphanumeric with underscores/hyphens (3-50 chars)';
     const FSM_HOLDING_ID_SEPARATOR = '|sub:';
 
     const utils = {
@@ -211,6 +216,26 @@
             return bucket || 'Uncategorized';
         }
     };
+
+    function normalizeSyncUserId(userId) {
+        return utils.normalizeString(userId, '');
+    }
+
+    function isValidSyncUserId(userId) {
+        const normalizedUserId = normalizeSyncUserId(userId);
+        if (!normalizedUserId) {
+            return false;
+        }
+        return SYNC_USER_ID_PATTERNS.some(pattern => pattern.test(normalizedUserId));
+    }
+
+    function assertValidSyncUserId(userId) {
+        const normalizedUserId = normalizeSyncUserId(userId);
+        if (!isValidSyncUserId(normalizedUserId)) {
+            throw new Error(SYNC_USER_ID_VALIDATION_MESSAGE);
+        }
+        return normalizedUserId;
+    }
 
     function getFsmHoldingIdentity(rowOrCode, maybeSubcode) {
         const isRow = rowOrCode && typeof rowOrCode === 'object';
@@ -4150,51 +4175,77 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         };
     }
 
-    // Precedence rule: when both exist, v4 namespaced values win; flat legacy keys only fill gaps.
-    function readEndowusStore() {
-        const legacyKeys = listLegacyPlatformKeys(LEGACY_PLATFORM_STORAGE_KEYS.endowus);
-        const rawStored = Storage.readJson(STORAGE_KEYS.endowus, data => data && typeof data === 'object' && !Array.isArray(data));
-        const normalized = rawStored ? normalizeEndowusStore(rawStored) : normalizeEndowusStore({});
-        const migrated = mergeMissingEndowusLegacyData(normalized);
-        const { value: cleanedNormalized, didMutate } = cleanupEndowusLocalStore(migrated.store);
-        const shouldWrite = !rawStored || didMutate || migrated.didMerge || legacyKeys.length > 0 || rawStored.version !== PLATFORM_STORE_VERSION;
+    function readPlatformStore({
+        storageKey,
+        normalizeStore,
+        legacyStorageKeys,
+        mergeLegacyData,
+        finalizeStore,
+        existingWriteContext,
+        initialWriteContext
+    }) {
+        const legacyKeys = listLegacyPlatformKeys(legacyStorageKeys);
+        const rawStored = Storage.readJson(storageKey, data => data && typeof data === 'object' && !Array.isArray(data));
+        const normalized = rawStored ? normalizeStore(rawStored) : normalizeStore({});
+        const migrated = typeof mergeLegacyData === 'function'
+            ? mergeLegacyData(normalized)
+            : { store: normalized, didMerge: false };
+        const finalized = typeof finalizeStore === 'function'
+            ? finalizeStore(migrated.store)
+            : { value: migrated.store, didMutate: false };
+        const nextStore = normalizeStore(finalized?.value || migrated.store);
+        const didMutate = finalized?.didMutate === true;
+        const shouldWrite = !rawStored
+            || didMutate
+            || migrated.didMerge
+            || legacyKeys.length > 0
+            || rawStored.version !== PLATFORM_STORE_VERSION;
         if (shouldWrite) {
-            const didWrite = writePlatformStore(STORAGE_KEYS.endowus, cleanedNormalized, rawStored ? 'Error writing cleaned Endowus store' : 'Error writing Endowus store');
+            const didWrite = writePlatformStore(
+                storageKey,
+                nextStore,
+                rawStored ? existingWriteContext : initialWriteContext
+            );
             if (didWrite) {
                 removeLegacyPlatformKeys(legacyKeys);
             }
         }
-        return cleanedNormalized;
+        return nextStore;
+    }
+
+    // Precedence rule: when both exist, v4 namespaced values win; flat legacy keys only fill gaps.
+    function readEndowusStore() {
+        return readPlatformStore({
+            storageKey: STORAGE_KEYS.endowus,
+            normalizeStore: normalizeEndowusStore,
+            legacyStorageKeys: LEGACY_PLATFORM_STORAGE_KEYS.endowus,
+            mergeLegacyData: mergeMissingEndowusLegacyData,
+            finalizeStore: cleanupEndowusLocalStore,
+            existingWriteContext: 'Error writing cleaned Endowus store',
+            initialWriteContext: 'Error writing Endowus store'
+        });
     }
 
     function readFsmStore() {
-        const legacyKeys = listLegacyPlatformKeys(LEGACY_PLATFORM_STORAGE_KEYS.fsm);
-        const rawStored = Storage.readJson(STORAGE_KEYS.fsm, data => data && typeof data === 'object' && !Array.isArray(data));
-        const normalized = rawStored ? normalizeFsmStore(rawStored) : normalizeFsmStore({});
-        const migrated = mergeMissingFsmLegacyData(normalized);
-        const shouldWrite = !rawStored || migrated.didMerge || legacyKeys.length > 0 || rawStored.version !== PLATFORM_STORE_VERSION;
-        if (shouldWrite) {
-            const didWrite = writePlatformStore(STORAGE_KEYS.fsm, migrated.store, rawStored ? 'Error writing migrated FSM v4 store' : 'Error writing FSM store');
-            if (didWrite) {
-                removeLegacyPlatformKeys(legacyKeys);
-            }
-        }
-        return migrated.store;
+        return readPlatformStore({
+            storageKey: STORAGE_KEYS.fsm,
+            normalizeStore: normalizeFsmStore,
+            legacyStorageKeys: LEGACY_PLATFORM_STORAGE_KEYS.fsm,
+            mergeLegacyData: mergeMissingFsmLegacyData,
+            existingWriteContext: 'Error writing migrated FSM v4 store',
+            initialWriteContext: 'Error writing FSM store'
+        });
     }
 
     function readOcbcStore() {
-        const legacyKeys = listLegacyPlatformKeys(LEGACY_PLATFORM_STORAGE_KEYS.ocbc);
-        const rawStored = Storage.readJson(STORAGE_KEYS.ocbc, data => data && typeof data === 'object' && !Array.isArray(data));
-        const normalized = rawStored ? normalizeOcbcStore(rawStored) : normalizeOcbcStore({});
-        const migrated = mergeMissingOcbcLegacyData(normalized);
-        const shouldWrite = !rawStored || migrated.didMerge || legacyKeys.length > 0 || rawStored.version !== PLATFORM_STORE_VERSION;
-        if (shouldWrite) {
-            const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, migrated.store, rawStored ? 'Error writing migrated OCBC v4 store' : 'Error writing OCBC store');
-            if (didWrite) {
-                removeLegacyPlatformKeys(legacyKeys);
-            }
-        }
-        return migrated.store;
+        return readPlatformStore({
+            storageKey: STORAGE_KEYS.ocbc,
+            normalizeStore: normalizeOcbcStore,
+            legacyStorageKeys: LEGACY_PLATFORM_STORAGE_KEYS.ocbc,
+            mergeLegacyData: mergeMissingOcbcLegacyData,
+            existingWriteContext: 'Error writing migrated OCBC v4 store',
+            initialWriteContext: 'Error writing OCBC store'
+        });
     }
 
     function updatePlatformStore({ readStore, normalizeStore, storageKey, updater, context }) {
@@ -4864,7 +4915,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     function isConfigured() {
         const serverUrl = getStoredServerUrl('', { enforceAllowed: false });
         const userId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
-        return Boolean(serverUrl && utils.isAllowedSyncServerUrl(serverUrl) && userId && hasValidRefreshToken());
+        return Boolean(serverUrl && utils.isAllowedSyncServerUrl(serverUrl) && isValidSyncUserId(userId) && hasValidRefreshToken());
     }
 
     /**
@@ -5189,10 +5240,19 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         if (code === 'RATE_LIMIT_EXCEEDED') {
             return 'rate_limit';
         }
+        if (code === 'CONFLICT') {
+            return 'conflict';
+        }
+        if (code === 'PAYLOAD_TOO_LARGE') {
+            return 'payload';
+        }
+        if (code === 'BAD_REQUEST') {
+            return 'bad_request';
+        }
         if (code === 'SYNC_IN_PROGRESS') {
             return 'in_progress';
         }
-        if (code.includes('AUTH') || /unauthorized|forbidden|token|login/i.test(message)) {
+        if (code === 'UNAUTHORIZED' || code === 'FORBIDDEN' || code.includes('AUTH') || /unauthorized|forbidden|token|login/i.test(message)) {
             return 'auth';
         }
         if (code.includes('TIMEOUT') || /timeout/i.test(message)) {
@@ -5260,6 +5320,27 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 primaryAction: 'Retry sync'
             };
         }
+        if (category === 'payload') {
+            return {
+                category,
+                userMessage: 'Sync payload is too large for the server limit. Reduce synced data and retry.',
+                primaryAction: 'Review sync data'
+            };
+        }
+        if (category === 'bad_request') {
+            return {
+                category,
+                userMessage: 'Sync request was rejected. Check your sync settings and try again.',
+                primaryAction: 'Review settings'
+            };
+        }
+        if (category === 'conflict') {
+            return {
+                category,
+                userMessage: 'Sync conflict detected. Review local and remote changes before continuing.',
+                primaryAction: 'Resolve conflict'
+            };
+        }
         return {
             category,
             userMessage: 'Sync server issue detected. Please retry in a moment.',
@@ -5267,20 +5348,55 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         };
     }
 
+    function getDefaultErrorCodeForStatus(status) {
+        const numericStatus = Number(status);
+        if (!Number.isFinite(numericStatus)) {
+            return null;
+        }
+        if (numericStatus === 400) {
+            return 'BAD_REQUEST';
+        }
+        if (numericStatus === 401) {
+            return 'UNAUTHORIZED';
+        }
+        if (numericStatus === 403) {
+            return 'FORBIDDEN';
+        }
+        if (numericStatus === 404) {
+            return 'NOT_FOUND';
+        }
+        if (numericStatus === 409) {
+            return 'CONFLICT';
+        }
+        if (numericStatus === 413) {
+            return 'PAYLOAD_TOO_LARGE';
+        }
+        if (numericStatus === 429) {
+            return 'RATE_LIMIT_EXCEEDED';
+        }
+        if (numericStatus >= 500) {
+            return 'INTERNAL_ERROR';
+        }
+        return null;
+    }
+
     function createApiError(response, errorData, fallbackMessage) {
         const message = (errorData && (errorData.message || errorData.error)) || fallbackMessage;
         const error = new Error(message);
+        if (response && typeof response.status === 'number') {
+            error.status = response.status;
+        }
         if (errorData && errorData.error) {
             error.code = errorData.error;
+        }
+        if (!error.code) {
+            error.code = getDefaultErrorCodeForStatus(response?.status);
         }
         if (response?.parseError) {
             error.code = 'PARSE_ERROR';
             if (typeof response.rawText === 'string') {
                 error.rawResponse = response.rawText.slice(0, 500);
             }
-        }
-        if (response && response.status === 429) {
-            error.code = 'RATE_LIMIT_EXCEEDED';
         }
         const retryAfterHeader = response?.headers?.get('Retry-After');
         const retryAfterSeconds = Number(errorData?.retryAfter || retryAfterHeader);
@@ -5432,10 +5548,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      */
     async function uploadConfig(config, options = {}) {
         const serverUrl = getStoredServerUrl(SYNC_DEFAULTS.serverUrl);
-        const userId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
+        const userId = normalizeSyncUserId(Storage.get(SYNC_STORAGE_KEYS.userId, null));
 
         if (!userId) {
             throw new Error('Sync not configured');
+        }
+        if (!isValidSyncUserId(userId)) {
+            throw new Error(SYNC_USER_ID_VALIDATION_MESSAGE);
         }
 
         const masterKey = requireSessionKey();
@@ -5481,10 +5600,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      */
     async function downloadConfig() {
         const serverUrl = getStoredServerUrl(SYNC_DEFAULTS.serverUrl);
-        const userId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
+        const userId = normalizeSyncUserId(Storage.get(SYNC_STORAGE_KEYS.userId, null));
 
         if (!userId) {
             throw new Error('Sync not configured');
+        }
+        if (!isValidSyncUserId(userId)) {
+            throw new Error(SYNC_USER_ID_VALIDATION_MESSAGE);
         }
 
         const accessToken = await getAccessToken();
@@ -5597,6 +5719,40 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         }
     }
 
+    function notifySyncUiUpdate() {
+        if (typeof syncUi.update === 'function') {
+            syncUi.update();
+        }
+    }
+
+    function markSyncing() {
+        syncStatus = SYNC_STATUS.syncing;
+        notifySyncUiUpdate();
+    }
+
+    function markSyncSuccess(logMessage) {
+        syncStatus = SYNC_STATUS.success;
+        lastError = null;
+        lastErrorMeta = null;
+        if (logMessage) {
+            logDebug(logMessage);
+        }
+    }
+
+    function markSyncError(error, logMessage = '[Goal Portfolio Viewer] Sync failed:') {
+        console.error(logMessage, error);
+        syncStatus = SYNC_STATUS.error;
+        lastError = error.message;
+        const guidance = getSyncErrorGuidance(error);
+        lastErrorMeta = {
+            category: guidance.category,
+            userMessage: guidance.userMessage,
+            primaryAction: guidance.primaryAction,
+            retryAfterSeconds: Number(error?.retryAfterSeconds) || null,
+            lastAttemptAt: Date.now()
+        };
+    }
+
     /**
      * Perform sync operation
      */
@@ -5619,10 +5775,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
         requireSessionKey();
 
-        syncStatus = SYNC_STATUS.syncing;
-        if (typeof syncUi.update === 'function') {
-            syncUi.update();
-        }
+        markSyncing();
 
         try {
             const localConfig = collectConfigData();
@@ -5637,28 +5790,17 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             if (direction === 'upload') {
                 await uploadConfig(localConfig);
                 recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-
-                syncStatus = SYNC_STATUS.success;
-                lastError = null;
-                lastErrorMeta = null;
-                logDebug('[Goal Portfolio Viewer] Sync upload successful');
+                markSyncSuccess('[Goal Portfolio Viewer] Sync upload successful');
             } else if (direction === 'download') {
                 const serverData = await downloadConfig();
                 if (!serverData) {
                     recordSuccessfulSync();
-                    syncStatus = SYNC_STATUS.success;
-                    lastError = null;
-                    lastErrorMeta = null;
-                    logDebug('[Goal Portfolio Viewer] No server data to download');
+                    markSyncSuccess('[Goal Portfolio Viewer] No server data to download');
                 } else {
                     applyConfigData(serverData.config);
                     const serverHash = await hashConfigData(serverData.config);
                     recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-
-                    syncStatus = SYNC_STATUS.success;
-                    lastError = null;
-                    lastErrorMeta = null;
-                    logDebug('[Goal Portfolio Viewer] Sync download successful');
+                    markSyncSuccess('[Goal Portfolio Viewer] Sync download successful');
                 }
             } else {
                 const serverData = await downloadConfig();
@@ -5666,32 +5808,20 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 if (!serverData) {
                     await uploadConfig(localConfig);
                     recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-
-                    syncStatus = SYNC_STATUS.success;
-                    lastError = null;
-                    lastErrorMeta = null;
-                    logDebug('[Goal Portfolio Viewer] No server data, uploaded local config');
+                    markSyncSuccess('[Goal Portfolio Viewer] No server data, uploaded local config');
                 } else {
                     const serverHash = await hashConfigData(serverData.config);
 
                     if (!hasLastDataTimestamp) {
                         applyConfigData(serverData.config);
                         recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-
-                        syncStatus = SYNC_STATUS.success;
-                        lastError = null;
-                        lastErrorMeta = null;
-                        logDebug('[Goal Portfolio Viewer] Missing sync metadata, bootstrapped from server snapshot');
+                        markSyncSuccess('[Goal Portfolio Viewer] Missing sync metadata, bootstrapped from server snapshot');
                     } else if (localHash && serverHash && localHash === serverHash) {
                         recordSuccessfulSync({
                             dataTimestamp: Math.max(localConfig.timestamp, serverData.metadata.timestamp),
                             hash: localHash
                         });
-
-                        syncStatus = SYNC_STATUS.success;
-                        lastError = null;
-                        lastErrorMeta = null;
-                        logDebug('[Goal Portfolio Viewer] Local and server content identical, sync already up to date');
+                        markSyncSuccess('[Goal Portfolio Viewer] Local and server content identical, sync already up to date');
                     } else {
                         const conflict = await detectConflict(localConfig, serverData, localHash, serverHash);
 
@@ -5706,49 +5836,24 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                         if (localConfig.timestamp > serverData.metadata.timestamp) {
                             await uploadConfig(localConfig);
                             recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-
-                            syncStatus = SYNC_STATUS.success;
-                            lastError = null;
-                            lastErrorMeta = null;
-                            logDebug('[Goal Portfolio Viewer] Local config newer, uploaded to server');
+                            markSyncSuccess('[Goal Portfolio Viewer] Local config newer, uploaded to server');
                         } else if (localConfig.timestamp < serverData.metadata.timestamp) {
                             applyConfigData(serverData.config);
                             recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-
-                            syncStatus = SYNC_STATUS.success;
-                            lastError = null;
-                            lastErrorMeta = null;
-                            logDebug('[Goal Portfolio Viewer] Server config newer, applied locally');
+                            markSyncSuccess('[Goal Portfolio Viewer] Server config newer, applied locally');
                         } else {
                             recordSuccessfulSync();
-                            syncStatus = SYNC_STATUS.success;
-                            lastError = null;
-                            lastErrorMeta = null;
-                            logDebug('[Goal Portfolio Viewer] Sync already up to date');
+                            markSyncSuccess('[Goal Portfolio Viewer] Sync already up to date');
                         }
                     }
                 }
             }
 
-            if (typeof syncUi.update === 'function') {
-                syncUi.update();
-            }
+            notifySyncUiUpdate();
             return { status: 'success' };
         } catch (error) {
-            console.error('[Goal Portfolio Viewer] Sync failed:', error);
-            syncStatus = SYNC_STATUS.error;
-            lastError = error.message;
-            const guidance = getSyncErrorGuidance(error);
-            lastErrorMeta = {
-                category: guidance.category,
-                userMessage: guidance.userMessage,
-                primaryAction: guidance.primaryAction,
-                retryAfterSeconds: Number(error?.retryAfterSeconds) || null,
-                lastAttemptAt: Date.now()
-            };
-            if (typeof syncUi.update === 'function') {
-                syncUi.update();
-            }
+            markSyncError(error, '[Goal Portfolio Viewer] Sync failed:');
+            notifySyncUiUpdate();
             throw error;
         }
     }
@@ -5758,10 +5863,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      */
     async function resolveConflict(resolution, conflict) {
         try {
-            syncStatus = SYNC_STATUS.syncing;
-            if (typeof syncUi.update === 'function') {
-                syncUi.update();
-            }
+            markSyncing();
 
             if (resolution === 'local') {
                 // Upload local, overwrite server
@@ -5800,32 +5902,16 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 throw new Error('Invalid resolution');
             }
 
-            syncStatus = SYNC_STATUS.success;
-            lastError = null;
-            lastErrorMeta = null;
-            if (typeof syncUi.update === 'function') {
-                syncUi.update();
-            }
+            markSyncSuccess();
+            notifySyncUiUpdate();
             
             // Refresh the portfolio view
             if (typeof document !== 'undefined') {
                 document.dispatchEvent(new CustomEvent('gpv-show-portfolio'));
             }
         } catch (error) {
-            console.error('[Goal Portfolio Viewer] Conflict resolution failed:', error);
-            syncStatus = SYNC_STATUS.error;
-            lastError = error.message;
-            const guidance = getSyncErrorGuidance(error);
-            lastErrorMeta = {
-                category: guidance.category,
-                userMessage: guidance.userMessage,
-                primaryAction: guidance.primaryAction,
-                retryAfterSeconds: Number(error?.retryAfterSeconds) || null,
-                lastAttemptAt: Date.now()
-            };
-            if (typeof syncUi.update === 'function') {
-                syncUi.update();
-            }
+            markSyncError(error, '[Goal Portfolio Viewer] Conflict resolution failed:');
+            notifySyncUiUpdate();
             throw error;
         }
     }
@@ -6005,10 +6091,12 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      */
     async function enable(config) {
         const normalizedServerUrl = utils.normalizeServerUrl(config?.serverUrl);
-        if (!config || !normalizedServerUrl || !config.userId) {
+        const normalizedUserId = normalizeSyncUserId(config?.userId);
+        if (!config || !normalizedServerUrl || !normalizedUserId) {
             throw new Error('Invalid sync configuration: serverUrl and userId required');
         }
         utils.assertAllowedSyncServerUrl(normalizedServerUrl);
+        assertValidSyncUserId(normalizedUserId);
 
         if (config.masterKey) {
             setSessionMasterKey(config.masterKey);
@@ -6025,14 +6113,14 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
         const previousUserId = Storage.get(SYNC_STORAGE_KEYS.userId, null);
         const previousServerUrl = Storage.get(SYNC_STORAGE_KEYS.serverUrl, null);
-        if ((previousUserId && previousUserId !== config.userId) ||
+        if ((previousUserId && previousUserId !== normalizedUserId) ||
             (previousServerUrl && previousServerUrl !== normalizedServerUrl)) {
             clearTokens();
         }
 
         Storage.set(SYNC_STORAGE_KEYS.enabled, true);
         Storage.set(SYNC_STORAGE_KEYS.serverUrl, normalizedServerUrl);
-        Storage.set(SYNC_STORAGE_KEYS.userId, config.userId);
+        Storage.set(SYNC_STORAGE_KEYS.userId, normalizedUserId);
         
         if (config.autoSync !== undefined) {
             Storage.set(SYNC_STORAGE_KEYS.autoSync, config.autoSync);
@@ -6058,17 +6146,19 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      */
     async function register(serverUrl, userId, password) {
         const normalizedServerUrl = utils.normalizeServerUrl(serverUrl);
-        if (!normalizedServerUrl || !userId || !password) {
+        const normalizedUserId = normalizeSyncUserId(userId);
+        if (!normalizedServerUrl || !normalizedUserId || !password) {
             throw new Error('serverUrl, userId, and password are required');
         }
         utils.assertAllowedSyncServerUrl(normalizedServerUrl);
+        assertValidSyncUserId(normalizedUserId);
 
         if (password.length < 8) {
             throw new Error('Password must be at least 8 characters');
         }
 
         // Hash password for authentication
-        const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
+        const passwordHash = await SyncEncryption.hashPasswordForAuth(password, normalizedUserId);
 
         // Call register endpoint
         const response = await requestJson(`${normalizedServerUrl}/auth/register`, {
@@ -6077,7 +6167,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                userId,
+                userId: normalizedUserId,
                 passwordHash
             })
         });
@@ -6089,7 +6179,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         }
 
         Storage.set(SYNC_STORAGE_KEYS.serverUrl, normalizedServerUrl);
-        Storage.set(SYNC_STORAGE_KEYS.userId, userId);
+        Storage.set(SYNC_STORAGE_KEYS.userId, normalizedUserId);
         const masterKey = await SyncEncryption.deriveMasterKey(password);
         setSessionMasterKey(masterKey);
 
@@ -6101,13 +6191,15 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      */
     async function login(serverUrl, userId, password) {
         const normalizedServerUrl = utils.normalizeServerUrl(serverUrl);
-        if (!normalizedServerUrl || !userId || !password) {
+        const normalizedUserId = normalizeSyncUserId(userId);
+        if (!normalizedServerUrl || !normalizedUserId || !password) {
             throw new Error('serverUrl, userId, and password are required');
         }
         utils.assertAllowedSyncServerUrl(normalizedServerUrl);
+        assertValidSyncUserId(normalizedUserId);
 
         // Hash password for authentication
-        const passwordHash = await SyncEncryption.hashPasswordForAuth(password, userId);
+        const passwordHash = await SyncEncryption.hashPasswordForAuth(password, normalizedUserId);
 
         // Call login endpoint
         const response = await requestJson(`${normalizedServerUrl}/auth/login`, {
@@ -6116,7 +6208,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                userId,
+                userId: normalizedUserId,
                 passwordHash
             })
         });
@@ -6136,7 +6228,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
         storeTokens(result.tokens);
         Storage.set(SYNC_STORAGE_KEYS.serverUrl, normalizedServerUrl);
-        Storage.set(SYNC_STORAGE_KEYS.userId, userId);
+        Storage.set(SYNC_STORAGE_KEYS.userId, normalizedUserId);
 
         if (isEnabled()) {
             startAutoSync();
@@ -6438,58 +6530,48 @@ function buildOcbcConflictDiffItems(conflict) {
 
     const localAllocationBuckets = formatOcbcAllocationBucketsDisplay(localOcbc.allocationBuckets);
     const remoteAllocationBuckets = formatOcbcAllocationBucketsDisplay(remoteOcbc.allocationBuckets);
-    if (JSON.stringify(localAllocationBuckets) !== JSON.stringify(remoteAllocationBuckets)) {
-        rows.push({
-            section: 'definition',
-            settingName: 'Allocation Buckets',
-            localDisplay: formatSyncValue(localAllocationBuckets),
-            remoteDisplay: formatSyncValue(remoteAllocationBuckets)
-        });
-    }
+    pushConflictDiffSectionRow(rows, {
+        section: 'definition',
+        settingName: 'Allocation Buckets',
+        localValue: localAllocationBuckets,
+        remoteValue: remoteAllocationBuckets
+    });
 
     const localSubPortfolios = formatOcbcSubPortfoliosDisplay(localOcbc.subPortfolios);
     const remoteSubPortfolios = formatOcbcSubPortfoliosDisplay(remoteOcbc.subPortfolios);
-    if (JSON.stringify(localSubPortfolios) !== JSON.stringify(remoteSubPortfolios)) {
-        rows.push({
-            section: 'definition',
-            settingName: 'Sub-portfolios',
-            localDisplay: formatSyncValue(localSubPortfolios),
-            remoteDisplay: formatSyncValue(remoteSubPortfolios)
-        });
-    }
+    pushConflictDiffSectionRow(rows, {
+        section: 'definition',
+        settingName: 'Sub-portfolios',
+        localValue: localSubPortfolios,
+        remoteValue: remoteSubPortfolios
+    });
 
     const localAssignmentByCode = formatOcbcAssignmentByCodeDisplay(localOcbc.assignmentByCode);
     const remoteAssignmentByCode = formatOcbcAssignmentByCodeDisplay(remoteOcbc.assignmentByCode);
-    if (JSON.stringify(localAssignmentByCode) !== JSON.stringify(remoteAssignmentByCode)) {
-        rows.push({
-            section: 'assignment',
-            settingName: 'Code assignments',
-            localDisplay: formatSyncValue(localAssignmentByCode),
-            remoteDisplay: formatSyncValue(remoteAssignmentByCode)
-        });
-    }
+    pushConflictDiffSectionRow(rows, {
+        section: 'assignment',
+        settingName: 'Code assignments',
+        localValue: localAssignmentByCode,
+        remoteValue: remoteAssignmentByCode
+    });
 
     const localOrderByScope = formatOcbcOrderByScopeDisplay(localOcbc.orderByScope);
     const remoteOrderByScope = formatOcbcOrderByScopeDisplay(remoteOcbc.orderByScope);
-    if (JSON.stringify(localOrderByScope) !== JSON.stringify(remoteOrderByScope)) {
-        rows.push({
-            section: 'assignment',
-            settingName: 'Display order',
-            localDisplay: formatSyncValue(localOrderByScope),
-            remoteDisplay: formatSyncValue(remoteOrderByScope)
-        });
-    }
+    pushConflictDiffSectionRow(rows, {
+        section: 'assignment',
+        settingName: 'Display order',
+        localValue: localOrderByScope,
+        remoteValue: remoteOrderByScope
+    });
 
     const localTargetsByScope = formatOcbcTargetsByScopeDisplay(localOcbc.targetsByScope);
     const remoteTargetsByScope = formatOcbcTargetsByScopeDisplay(remoteOcbc.targetsByScope);
-    if (JSON.stringify(localTargetsByScope) !== JSON.stringify(remoteTargetsByScope)) {
-        rows.push({
-            section: 'target',
-            settingName: 'Allocation targets',
-            localDisplay: formatSyncValue(localTargetsByScope),
-            remoteDisplay: formatSyncValue(remoteTargetsByScope)
-        });
-    }
+    pushConflictDiffSectionRow(rows, {
+        section: 'target',
+        settingName: 'Allocation targets',
+        localValue: localTargetsByScope,
+        remoteValue: remoteTargetsByScope
+    });
 
     return rows;
 }
@@ -6535,14 +6617,12 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
 
     const localPortfolios = normalizeFsmPortfolios(localFsm.portfolios || []).map(item => `${item.name} (${item.id})`).sort();
     const remotePortfolios = normalizeFsmPortfolios(remoteFsm.portfolios || []).map(item => `${item.name} (${item.id})`).sort();
-    if (JSON.stringify(localPortfolios) !== JSON.stringify(remotePortfolios)) {
-        rows.push({
-            section: 'definition',
-            settingName: 'Portfolio Definitions',
-            localDisplay: formatSyncValue(localPortfolios),
-            remoteDisplay: formatSyncValue(remotePortfolios)
-        });
-    }
+    pushConflictDiffSectionRow(rows, {
+        section: 'definition',
+        settingName: 'Portfolio Definitions',
+        localValue: localPortfolios,
+        remoteValue: remotePortfolios
+    });
 
     const assignmentCodes = new Set([
         ...Object.keys(localFsm.assignmentByCode || {}),
@@ -6583,13 +6663,38 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
     return rows;
 }
 
-function buildConflictDiffSections(conflict, nameMapOverride = {}, fsmOptions = {}) {
-    return {
-        endowus: buildConflictDiffItemsForMap(conflict, nameMapOverride),
-        fsm: buildFsmConflictDiffItems(conflict, fsmOptions),
-        ocbc: buildOcbcConflictDiffItems(conflict)
-    };
-}
+    function buildConflictDiffSections(conflict, nameMapOverride = {}, fsmOptions = {}) {
+        return {
+            endowus: buildConflictDiffItemsForMap(conflict, nameMapOverride),
+            fsm: buildFsmConflictDiffItems(conflict, fsmOptions),
+            ocbc: buildOcbcConflictDiffItems(conflict)
+        };
+    }
+
+    function pushConflictDiffSectionRow(rows, {
+        section,
+        settingName,
+        localValue,
+        remoteValue,
+        localFormatter = formatSyncValue,
+        remoteFormatter = localFormatter,
+        compareUsingJson = true
+    }) {
+        const localDisplay = localFormatter(localValue);
+        const remoteDisplay = remoteFormatter(remoteValue);
+        const didChange = compareUsingJson
+            ? JSON.stringify(localValue) !== JSON.stringify(remoteValue)
+            : localDisplay !== remoteDisplay;
+        if (!didChange) {
+            return;
+        }
+        rows.push({
+            section,
+            settingName,
+            localDisplay,
+            remoteDisplay
+        });
+    }
 
 function buildConflictDiffItemsForMap(conflict, nameMapOverride = {}) {
     if (!conflict || !conflict.local || !conflict.remote) {

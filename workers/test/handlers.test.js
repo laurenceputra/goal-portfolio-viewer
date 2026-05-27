@@ -2,11 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { handleSync, handleGetSync, handleDeleteSync } from '../src/handlers.js';
+import { SyncContracts } from './helpers/contracts.js';
+
+const PRIMARY_USER_ID = SyncContracts.userIds.primary;
+const PRIMARY_SYNC_KEY = SyncContracts.kvKeys.syncUser(PRIMARY_USER_ID);
 
 function createKvMock(initialSyncData = null) {
   const store = new Map();
   if (initialSyncData) {
-    store.set('sync_user:user-1', JSON.stringify(initialSyncData));
+    store.set(PRIMARY_SYNC_KEY, JSON.stringify(initialSyncData));
   }
 
   return {
@@ -71,7 +75,7 @@ test('handleSync returns conflict when server data is newer', async () => {
 
   const response = await handleSync(
     {
-      userId: 'user-1',
+      userId: PRIMARY_USER_ID,
       deviceId: 'd1',
       encryptedData: 'v1',
       timestamp: 100,
@@ -93,7 +97,7 @@ test('handleSync allows force overwrite when server data is newer', async () => 
 
   const response = await handleSync(
     {
-      userId: 'user-1',
+      userId: PRIMARY_USER_ID,
       deviceId: 'd1',
       encryptedData: 'v1',
       timestamp: 100,
@@ -107,8 +111,8 @@ test('handleSync allows force overwrite when server data is newer', async () => 
   assert.equal(parsed.status, 200);
   assert.equal(parsed.body.success, true);
   assert.equal(parsed.body.timestamp, now + 1000);
-  assert.equal(env.SYNC_KV.store.has('sync_user:user-1'), true);
-  const stored = JSON.parse(env.SYNC_KV.store.get('sync_user:user-1'));
+  assert.equal(env.SYNC_KV.store.has(PRIMARY_SYNC_KEY), true);
+  const stored = JSON.parse(env.SYNC_KV.store.get(PRIMARY_SYNC_KEY));
   assert.equal(stored.timestamp, now + 1000);
 
   Date.now = originalDateNow;
@@ -119,7 +123,7 @@ test('handleSync stores payload when validation succeeds', async () => {
 
   const response = await handleSync(
     {
-      userId: 'user-1',
+      userId: PRIMARY_USER_ID,
       deviceId: 'd1',
       encryptedData: 'ciphertext',
       timestamp: Date.now(),
@@ -131,13 +135,13 @@ test('handleSync stores payload when validation succeeds', async () => {
   const parsed = await parseResponse(response);
   assert.equal(parsed.status, 200);
   assert.equal(parsed.body.success, true);
-  assert.equal(env.SYNC_KV.store.has('sync_user:user-1'), true);
+  assert.equal(env.SYNC_KV.store.has(PRIMARY_SYNC_KEY), true);
 });
 
 test('handleGetSync returns 404 when data is missing', async () => {
   const env = { SYNC_KV: createKvMock() };
 
-  const response = await handleGetSync('user-1', env);
+  const response = await handleGetSync(PRIMARY_USER_ID, env);
   const parsed = await parseResponse(response);
 
   assert.equal(parsed.status, 404);
@@ -147,10 +151,10 @@ test('handleGetSync returns 404 when data is missing', async () => {
 test('handleDeleteSync removes user config', async () => {
   const env = { SYNC_KV: createKvMock({ timestamp: 200, encryptedData: 'v2', deviceId: 'd2', version: 1 }) };
 
-  const response = await handleDeleteSync('user-1', env);
+  const response = await handleDeleteSync(PRIMARY_USER_ID, env);
   const parsed = await parseResponse(response);
 
   assert.equal(parsed.status, 200);
   assert.equal(parsed.body.success, true);
-  assert.equal(env.SYNC_KV.store.has('sync_user:user-1'), false);
+  assert.equal(env.SYNC_KV.store.has(PRIMARY_SYNC_KEY), false);
 });

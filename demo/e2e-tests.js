@@ -33,6 +33,7 @@ const REGRESSION_DIR = path.join(__dirname, 'regression');
 const REGRESSION_BASELINE_DIR = path.join(REGRESSION_DIR, 'baseline');
 const REGRESSION_ACTUAL_DIR = path.join(REGRESSION_DIR, 'actual');
 const REGRESSION_DIFF_DIR = path.join(REGRESSION_DIR, 'diff');
+const E2E_FSM_GROWTH_ID = 'ESG003|sub:ESG3';
 
 function assertCondition(condition, message) {
     if (!condition) {
@@ -810,8 +811,7 @@ async function captureFsmFlow(page, summary, outputDir) {
         { timeout: 5000 }
     );
 
-    await page.evaluate(async () => {
-        const growthId = 'ESG003|sub:ESG3';
+    await page.evaluate(async growthId => {
         if (typeof window.GM_setValue !== 'function') {
             throw new Error('Demo bridge missing: window.GM_setValue is not available');
         }
@@ -884,7 +884,7 @@ async function captureFsmFlow(page, summary, outputDir) {
                 throw new Error(`Demo bridge verification failed for ${key}.allocation.targetsByCode[${growthId}]: expected 64.5, received ${String(seededTarget)}`);
             }
         }
-    });
+    }, E2E_FSM_GROWTH_ID);
     await clickButtonByRole(page, /back to portfolios/i);
     const coreOverviewCard = page.locator('.gpv-fsm-overview-card').filter({ hasText: /core/i }).first();
     await coreOverviewCard.click();
