@@ -126,6 +126,33 @@
         /^[a-zA-Z0-9_-]{3,50}$/
     ]);
     const SYNC_USER_ID_VALIDATION_MESSAGE = 'Invalid userId format. Use email or alphanumeric with underscores/hyphens (3-50 chars)';
+    const SYNC_ERROR_CODE_BY_STATUS = Object.freeze({
+        400: 'BAD_REQUEST',
+        401: 'UNAUTHORIZED',
+        403: 'FORBIDDEN',
+        404: 'NOT_FOUND',
+        409: 'CONFLICT',
+        413: 'PAYLOAD_TOO_LARGE',
+        429: 'RATE_LIMIT_EXCEEDED'
+    });
+    const SYNC_ERROR_CATEGORY_BY_CODE = Object.freeze({
+        RATE_LIMIT_EXCEEDED: 'rate_limit',
+        CONFLICT: 'conflict',
+        PAYLOAD_TOO_LARGE: 'payload',
+        BAD_REQUEST: 'bad_request',
+        SYNC_IN_PROGRESS: 'in_progress'
+    });
+    const SYNC_ERROR_GUIDANCE_BY_CATEGORY = Object.freeze({
+        auth: Object.freeze({ userMessage: 'Authentication failed. Please log in again to refresh your session.', primaryAction: 'Login again' }),
+        network: Object.freeze({ userMessage: 'Network issue detected. Check connection and retry sync.', primaryAction: 'Retry sync' }),
+        in_progress: Object.freeze({ userMessage: 'Sync already in progress. Please wait for it to finish before retrying.', primaryAction: 'Wait for sync' }),
+        crypto: Object.freeze({ userMessage: 'Sync is locked. Enter your password and save settings to unlock encryption key.', primaryAction: 'Unlock sync' }),
+        parse: Object.freeze({ userMessage: 'Unexpected server response. Retry and check sync server health if it persists.', primaryAction: 'Retry sync' }),
+        payload: Object.freeze({ userMessage: 'Sync payload is too large for the server limit. Reduce synced data and retry.', primaryAction: 'Review sync data' }),
+        bad_request: Object.freeze({ userMessage: 'Sync request was rejected. Check your sync settings and try again.', primaryAction: 'Review settings' }),
+        conflict: Object.freeze({ userMessage: 'Sync conflict detected. Review local and remote changes before continuing.', primaryAction: 'Resolve conflict' }),
+        server: Object.freeze({ userMessage: 'Sync server issue detected. Please retry in a moment.', primaryAction: 'Retry sync' })
+    });
     const FSM_HOLDING_ID_SEPARATOR = '|sub:';
 
     const utils = {
@@ -217,21 +244,14 @@
         }
     };
 
-    function normalizeSyncUserId(userId) {
-        return utils.normalizeString(userId, '');
-    }
-
     function isValidSyncUserId(userId) {
-        const normalizedUserId = normalizeSyncUserId(userId);
-        if (!normalizedUserId) {
-            return false;
-        }
-        return SYNC_USER_ID_PATTERNS.some(pattern => pattern.test(normalizedUserId));
+        const normalizedUserId = utils.normalizeString(userId, '');
+        return Boolean(normalizedUserId && SYNC_USER_ID_PATTERNS.some(pattern => pattern.test(normalizedUserId)));
     }
 
     function assertValidSyncUserId(userId) {
-        const normalizedUserId = normalizeSyncUserId(userId);
-        if (!isValidSyncUserId(normalizedUserId)) {
+        const normalizedUserId = utils.normalizeString(userId, '');
+        if (!normalizedUserId || !SYNC_USER_ID_PATTERNS.some(pattern => pattern.test(normalizedUserId))) {
             throw new Error(SYNC_USER_ID_VALIDATION_MESSAGE);
         }
         return normalizedUserId;
@@ -5236,21 +5256,10 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     function categorizeSyncError(error) {
         const message = String(error?.message || 'Unknown error');
         const code = String(error?.code || '').toUpperCase();
+        const mappedCategory = SYNC_ERROR_CATEGORY_BY_CODE[code];
 
-        if (code === 'RATE_LIMIT_EXCEEDED') {
-            return 'rate_limit';
-        }
-        if (code === 'CONFLICT') {
-            return 'conflict';
-        }
-        if (code === 'PAYLOAD_TOO_LARGE') {
-            return 'payload';
-        }
-        if (code === 'BAD_REQUEST') {
-            return 'bad_request';
-        }
-        if (code === 'SYNC_IN_PROGRESS') {
-            return 'in_progress';
+        if (mappedCategory) {
+            return mappedCategory;
         }
         if (code === 'UNAUTHORIZED' || code === 'FORBIDDEN' || code.includes('AUTH') || /unauthorized|forbidden|token|login/i.test(message)) {
             return 'auth';
@@ -5276,20 +5285,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
     function getSyncErrorGuidance(error) {
         const category = categorizeSyncError(error);
         const retryAfter = Number(error?.retryAfterSeconds);
-        if (category === 'auth') {
-            return {
-                category,
-                userMessage: 'Authentication failed. Please log in again to refresh your session.',
-                primaryAction: 'Login again'
-            };
-        }
-        if (category === 'network') {
-            return {
-                category,
-                userMessage: 'Network issue detected. Check connection and retry sync.',
-                primaryAction: 'Retry sync'
-            };
-        }
         if (category === 'rate_limit') {
             return {
                 category,
@@ -5299,90 +5294,18 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 primaryAction: 'Retry later'
             };
         }
-        if (category === 'in_progress') {
-            return {
-                category,
-                userMessage: 'Sync already in progress. Please wait for it to finish before retrying.',
-                primaryAction: 'Wait for sync'
-            };
-        }
-        if (category === 'crypto') {
-            return {
-                category,
-                userMessage: 'Sync is locked. Enter your password and save settings to unlock encryption key.',
-                primaryAction: 'Unlock sync'
-            };
-        }
-        if (category === 'parse') {
-            return {
-                category,
-                userMessage: 'Unexpected server response. Retry and check sync server health if it persists.',
-                primaryAction: 'Retry sync'
-            };
-        }
-        if (category === 'payload') {
-            return {
-                category,
-                userMessage: 'Sync payload is too large for the server limit. Reduce synced data and retry.',
-                primaryAction: 'Review sync data'
-            };
-        }
-        if (category === 'bad_request') {
-            return {
-                category,
-                userMessage: 'Sync request was rejected. Check your sync settings and try again.',
-                primaryAction: 'Review settings'
-            };
-        }
-        if (category === 'conflict') {
-            return {
-                category,
-                userMessage: 'Sync conflict detected. Review local and remote changes before continuing.',
-                primaryAction: 'Resolve conflict'
-            };
-        }
+        const guidance = SYNC_ERROR_GUIDANCE_BY_CATEGORY[category] || SYNC_ERROR_GUIDANCE_BY_CATEGORY.server;
         return {
             category,
-            userMessage: 'Sync server issue detected. Please retry in a moment.',
-            primaryAction: 'Retry sync'
+            userMessage: guidance.userMessage,
+            primaryAction: guidance.primaryAction
         };
-    }
-
-    function getDefaultErrorCodeForStatus(status) {
-        const numericStatus = Number(status);
-        if (!Number.isFinite(numericStatus)) {
-            return null;
-        }
-        if (numericStatus === 400) {
-            return 'BAD_REQUEST';
-        }
-        if (numericStatus === 401) {
-            return 'UNAUTHORIZED';
-        }
-        if (numericStatus === 403) {
-            return 'FORBIDDEN';
-        }
-        if (numericStatus === 404) {
-            return 'NOT_FOUND';
-        }
-        if (numericStatus === 409) {
-            return 'CONFLICT';
-        }
-        if (numericStatus === 413) {
-            return 'PAYLOAD_TOO_LARGE';
-        }
-        if (numericStatus === 429) {
-            return 'RATE_LIMIT_EXCEEDED';
-        }
-        if (numericStatus >= 500) {
-            return 'INTERNAL_ERROR';
-        }
-        return null;
     }
 
     function createApiError(response, errorData, fallbackMessage) {
         const message = (errorData && (errorData.message || errorData.error)) || fallbackMessage;
         const error = new Error(message);
+        const responseStatus = Number(response?.status);
         if (response && typeof response.status === 'number') {
             error.status = response.status;
         }
@@ -5390,7 +5313,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             error.code = errorData.error;
         }
         if (!error.code) {
-            error.code = getDefaultErrorCodeForStatus(response?.status);
+            error.code = SYNC_ERROR_CODE_BY_STATUS[responseStatus] || (responseStatus >= 500 ? 'INTERNAL_ERROR' : null);
         }
         if (response?.parseError) {
             error.code = 'PARSE_ERROR';
@@ -5548,14 +5471,12 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      */
     async function uploadConfig(config, options = {}) {
         const serverUrl = getStoredServerUrl(SYNC_DEFAULTS.serverUrl);
-        const userId = normalizeSyncUserId(Storage.get(SYNC_STORAGE_KEYS.userId, null));
+        const userId = utils.normalizeString(Storage.get(SYNC_STORAGE_KEYS.userId, null), '');
 
         if (!userId) {
             throw new Error('Sync not configured');
         }
-        if (!isValidSyncUserId(userId)) {
-            throw new Error(SYNC_USER_ID_VALIDATION_MESSAGE);
-        }
+        assertValidSyncUserId(userId);
 
         const masterKey = requireSessionKey();
 
@@ -5600,14 +5521,12 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      */
     async function downloadConfig() {
         const serverUrl = getStoredServerUrl(SYNC_DEFAULTS.serverUrl);
-        const userId = normalizeSyncUserId(Storage.get(SYNC_STORAGE_KEYS.userId, null));
+        const userId = utils.normalizeString(Storage.get(SYNC_STORAGE_KEYS.userId, null), '');
 
         if (!userId) {
             throw new Error('Sync not configured');
         }
-        if (!isValidSyncUserId(userId)) {
-            throw new Error(SYNC_USER_ID_VALIDATION_MESSAGE);
-        }
+        assertValidSyncUserId(userId);
 
         const accessToken = await getAccessToken();
 
@@ -5725,32 +5644,34 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         }
     }
 
-    function markSyncing() {
-        syncStatus = SYNC_STATUS.syncing;
-        notifySyncUiUpdate();
-    }
-
-    function markSyncSuccess(logMessage) {
-        syncStatus = SYNC_STATUS.success;
-        lastError = null;
-        lastErrorMeta = null;
-        if (logMessage) {
-            logDebug(logMessage);
+    function setSyncState(status, {
+        logMessage = '',
+        error = null,
+        errorLogPrefix = '[Goal Portfolio Viewer] Sync failed:',
+        updateUi = false
+    } = {}) {
+        syncStatus = status;
+        if (status === SYNC_STATUS.success) {
+            lastError = null;
+            lastErrorMeta = null;
+            if (logMessage) {
+                logDebug(logMessage);
+            }
+        } else if (status === SYNC_STATUS.error && error) {
+            console.error(errorLogPrefix, error);
+            lastError = error.message;
+            const guidance = getSyncErrorGuidance(error);
+            lastErrorMeta = {
+                category: guidance.category,
+                userMessage: guidance.userMessage,
+                primaryAction: guidance.primaryAction,
+                retryAfterSeconds: Number(error?.retryAfterSeconds) || null,
+                lastAttemptAt: Date.now()
+            };
         }
-    }
-
-    function markSyncError(error, logMessage = '[Goal Portfolio Viewer] Sync failed:') {
-        console.error(logMessage, error);
-        syncStatus = SYNC_STATUS.error;
-        lastError = error.message;
-        const guidance = getSyncErrorGuidance(error);
-        lastErrorMeta = {
-            category: guidance.category,
-            userMessage: guidance.userMessage,
-            primaryAction: guidance.primaryAction,
-            retryAfterSeconds: Number(error?.retryAfterSeconds) || null,
-            lastAttemptAt: Date.now()
-        };
+        if (updateUi) {
+            notifySyncUiUpdate();
+        }
     }
 
     /**
@@ -5775,7 +5696,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 
         requireSessionKey();
 
-        markSyncing();
+        setSyncState(SYNC_STATUS.syncing, { updateUi: true });
 
         try {
             const localConfig = collectConfigData();
@@ -5790,17 +5711,17 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             if (direction === 'upload') {
                 await uploadConfig(localConfig);
                 recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-                markSyncSuccess('[Goal Portfolio Viewer] Sync upload successful');
+                setSyncState(SYNC_STATUS.success, { logMessage: '[Goal Portfolio Viewer] Sync upload successful' });
             } else if (direction === 'download') {
                 const serverData = await downloadConfig();
                 if (!serverData) {
                     recordSuccessfulSync();
-                    markSyncSuccess('[Goal Portfolio Viewer] No server data to download');
+                    setSyncState(SYNC_STATUS.success, { logMessage: '[Goal Portfolio Viewer] No server data to download' });
                 } else {
                     applyConfigData(serverData.config);
                     const serverHash = await hashConfigData(serverData.config);
                     recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-                    markSyncSuccess('[Goal Portfolio Viewer] Sync download successful');
+                    setSyncState(SYNC_STATUS.success, { logMessage: '[Goal Portfolio Viewer] Sync download successful' });
                 }
             } else {
                 const serverData = await downloadConfig();
@@ -5808,20 +5729,20 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 if (!serverData) {
                     await uploadConfig(localConfig);
                     recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-                    markSyncSuccess('[Goal Portfolio Viewer] No server data, uploaded local config');
+                    setSyncState(SYNC_STATUS.success, { logMessage: '[Goal Portfolio Viewer] No server data, uploaded local config' });
                 } else {
                     const serverHash = await hashConfigData(serverData.config);
 
                     if (!hasLastDataTimestamp) {
                         applyConfigData(serverData.config);
                         recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-                        markSyncSuccess('[Goal Portfolio Viewer] Missing sync metadata, bootstrapped from server snapshot');
+                        setSyncState(SYNC_STATUS.success, { logMessage: '[Goal Portfolio Viewer] Missing sync metadata, bootstrapped from server snapshot' });
                     } else if (localHash && serverHash && localHash === serverHash) {
                         recordSuccessfulSync({
                             dataTimestamp: Math.max(localConfig.timestamp, serverData.metadata.timestamp),
                             hash: localHash
                         });
-                        markSyncSuccess('[Goal Portfolio Viewer] Local and server content identical, sync already up to date');
+                        setSyncState(SYNC_STATUS.success, { logMessage: '[Goal Portfolio Viewer] Local and server content identical, sync already up to date' });
                     } else {
                         const conflict = await detectConflict(localConfig, serverData, localHash, serverHash);
 
@@ -5836,14 +5757,14 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                         if (localConfig.timestamp > serverData.metadata.timestamp) {
                             await uploadConfig(localConfig);
                             recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-                            markSyncSuccess('[Goal Portfolio Viewer] Local config newer, uploaded to server');
+                            setSyncState(SYNC_STATUS.success, { logMessage: '[Goal Portfolio Viewer] Local config newer, uploaded to server' });
                         } else if (localConfig.timestamp < serverData.metadata.timestamp) {
                             applyConfigData(serverData.config);
                             recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-                            markSyncSuccess('[Goal Portfolio Viewer] Server config newer, applied locally');
+                            setSyncState(SYNC_STATUS.success, { logMessage: '[Goal Portfolio Viewer] Server config newer, applied locally' });
                         } else {
                             recordSuccessfulSync();
-                            markSyncSuccess('[Goal Portfolio Viewer] Sync already up to date');
+                            setSyncState(SYNC_STATUS.success, { logMessage: '[Goal Portfolio Viewer] Sync already up to date' });
                         }
                     }
                 }
@@ -5852,8 +5773,11 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             notifySyncUiUpdate();
             return { status: 'success' };
         } catch (error) {
-            markSyncError(error, '[Goal Portfolio Viewer] Sync failed:');
-            notifySyncUiUpdate();
+            setSyncState(SYNC_STATUS.error, {
+                error,
+                errorLogPrefix: '[Goal Portfolio Viewer] Sync failed:',
+                updateUi: true
+            });
             throw error;
         }
     }
@@ -5863,7 +5787,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      */
     async function resolveConflict(resolution, conflict) {
         try {
-            markSyncing();
+            setSyncState(SYNC_STATUS.syncing, { updateUi: true });
 
             if (resolution === 'local') {
                 // Upload local, overwrite server
@@ -5902,16 +5826,18 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 throw new Error('Invalid resolution');
             }
 
-            markSyncSuccess();
-            notifySyncUiUpdate();
+            setSyncState(SYNC_STATUS.success, { updateUi: true });
             
             // Refresh the portfolio view
             if (typeof document !== 'undefined') {
                 document.dispatchEvent(new CustomEvent('gpv-show-portfolio'));
             }
         } catch (error) {
-            markSyncError(error, '[Goal Portfolio Viewer] Conflict resolution failed:');
-            notifySyncUiUpdate();
+            setSyncState(SYNC_STATUS.error, {
+                error,
+                errorLogPrefix: '[Goal Portfolio Viewer] Conflict resolution failed:',
+                updateUi: true
+            });
             throw error;
         }
     }
@@ -6091,7 +6017,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      */
     async function enable(config) {
         const normalizedServerUrl = utils.normalizeServerUrl(config?.serverUrl);
-        const normalizedUserId = normalizeSyncUserId(config?.userId);
+        const normalizedUserId = utils.normalizeString(config?.userId, '');
         if (!config || !normalizedServerUrl || !normalizedUserId) {
             throw new Error('Invalid sync configuration: serverUrl and userId required');
         }
@@ -6146,7 +6072,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      */
     async function register(serverUrl, userId, password) {
         const normalizedServerUrl = utils.normalizeServerUrl(serverUrl);
-        const normalizedUserId = normalizeSyncUserId(userId);
+        const normalizedUserId = utils.normalizeString(userId, '');
         if (!normalizedServerUrl || !normalizedUserId || !password) {
             throw new Error('serverUrl, userId, and password are required');
         }
@@ -6191,7 +6117,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      */
     async function login(serverUrl, userId, password) {
         const normalizedServerUrl = utils.normalizeServerUrl(serverUrl);
-        const normalizedUserId = normalizeSyncUserId(userId);
+        const normalizedUserId = utils.normalizeString(userId, '');
         if (!normalizedServerUrl || !normalizedUserId || !password) {
             throw new Error('serverUrl, userId, and password are required');
         }
@@ -6528,49 +6454,39 @@ function buildOcbcConflictDiffItems(conflict) {
     const remoteOcbc = getOcbcSyncView(conflict.remote);
     const rows = [];
 
-    const localAllocationBuckets = formatOcbcAllocationBucketsDisplay(localOcbc.allocationBuckets);
-    const remoteAllocationBuckets = formatOcbcAllocationBucketsDisplay(remoteOcbc.allocationBuckets);
-    pushConflictDiffSectionRow(rows, {
-        section: 'definition',
-        settingName: 'Allocation Buckets',
-        localValue: localAllocationBuckets,
-        remoteValue: remoteAllocationBuckets
-    });
-
-    const localSubPortfolios = formatOcbcSubPortfoliosDisplay(localOcbc.subPortfolios);
-    const remoteSubPortfolios = formatOcbcSubPortfoliosDisplay(remoteOcbc.subPortfolios);
-    pushConflictDiffSectionRow(rows, {
-        section: 'definition',
-        settingName: 'Sub-portfolios',
-        localValue: localSubPortfolios,
-        remoteValue: remoteSubPortfolios
-    });
-
-    const localAssignmentByCode = formatOcbcAssignmentByCodeDisplay(localOcbc.assignmentByCode);
-    const remoteAssignmentByCode = formatOcbcAssignmentByCodeDisplay(remoteOcbc.assignmentByCode);
-    pushConflictDiffSectionRow(rows, {
-        section: 'assignment',
-        settingName: 'Code assignments',
-        localValue: localAssignmentByCode,
-        remoteValue: remoteAssignmentByCode
-    });
-
-    const localOrderByScope = formatOcbcOrderByScopeDisplay(localOcbc.orderByScope);
-    const remoteOrderByScope = formatOcbcOrderByScopeDisplay(remoteOcbc.orderByScope);
-    pushConflictDiffSectionRow(rows, {
-        section: 'assignment',
-        settingName: 'Display order',
-        localValue: localOrderByScope,
-        remoteValue: remoteOrderByScope
-    });
-
-    const localTargetsByScope = formatOcbcTargetsByScopeDisplay(localOcbc.targetsByScope);
-    const remoteTargetsByScope = formatOcbcTargetsByScopeDisplay(remoteOcbc.targetsByScope);
-    pushConflictDiffSectionRow(rows, {
-        section: 'target',
-        settingName: 'Allocation targets',
-        localValue: localTargetsByScope,
-        remoteValue: remoteTargetsByScope
+    [
+        {
+            section: 'definition',
+            settingName: 'Allocation Buckets',
+            localValue: formatOcbcAllocationBucketsDisplay(localOcbc.allocationBuckets),
+            remoteValue: formatOcbcAllocationBucketsDisplay(remoteOcbc.allocationBuckets)
+        },
+        {
+            section: 'definition',
+            settingName: 'Sub-portfolios',
+            localValue: formatOcbcSubPortfoliosDisplay(localOcbc.subPortfolios),
+            remoteValue: formatOcbcSubPortfoliosDisplay(remoteOcbc.subPortfolios)
+        },
+        {
+            section: 'assignment',
+            settingName: 'Code assignments',
+            localValue: formatOcbcAssignmentByCodeDisplay(localOcbc.assignmentByCode),
+            remoteValue: formatOcbcAssignmentByCodeDisplay(remoteOcbc.assignmentByCode)
+        },
+        {
+            section: 'assignment',
+            settingName: 'Display order',
+            localValue: formatOcbcOrderByScopeDisplay(localOcbc.orderByScope),
+            remoteValue: formatOcbcOrderByScopeDisplay(remoteOcbc.orderByScope)
+        },
+        {
+            section: 'target',
+            settingName: 'Allocation targets',
+            localValue: formatOcbcTargetsByScopeDisplay(localOcbc.targetsByScope),
+            remoteValue: formatOcbcTargetsByScopeDisplay(remoteOcbc.targetsByScope)
+        }
+    ].forEach(descriptor => {
+        pushConflictDiffSectionRow(rows, descriptor);
     });
 
     return rows;
@@ -6588,6 +6504,7 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
         : buildFsmHoldingsNameMap(fsmHoldings || getFsmHoldingsFromStorage());
     const localPortfolioNameById = buildFsmPortfolioNameMap(localFsm.portfolios || []);
     const remotePortfolioNameById = buildFsmPortfolioNameMap(remoteFsm.portfolios || []);
+    const formatInstrumentStateDisplay = (target, fixed) => `Target ${formatSyncTarget(target)} · Fixed ${formatSyncFixed(fixed)}`;
 
     const rows = [];
     const codes = new Set([
@@ -6610,8 +6527,8 @@ function buildFsmConflictDiffItems(conflict, options = {}) {
         rows.push({
             section: 'instrument',
             settingName: `Instrument ${formatFsmInstrumentLabel(code, holdingsByCode)}`,
-            localDisplay: `Target ${formatSyncTarget(localTarget)} · Fixed ${formatSyncFixed(localFixed)}`,
-            remoteDisplay: `Target ${formatSyncTarget(remoteTarget)} · Fixed ${formatSyncFixed(remoteFixed)}`
+            localDisplay: formatInstrumentStateDisplay(localTarget, localFixed),
+            remoteDisplay: formatInstrumentStateDisplay(remoteTarget, remoteFixed)
         });
     });
 
