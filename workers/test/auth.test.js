@@ -141,6 +141,18 @@ test('registerUser rejects invalid userId format', async () => {
   const result = await auth.credentials.registerUser('not an email', 'hashed', env);
 
   assert.equal(result.success, false);
+  assert.equal(result.error, 'BAD_REQUEST');
+  assert.match(result.message, /Invalid userId/i);
+});
+
+test('loginUser rejects invalid userId format', async () => {
+  const kv = createKvStore();
+  const env = { SYNC_KV: kv };
+
+  const result = await auth.credentials.loginUser('not an email', 'hashed', env);
+
+  assert.equal(result.success, false);
+  assert.equal(result.error, 'BAD_REQUEST');
   assert.match(result.message, /Invalid userId/i);
 });
 

@@ -7,6 +7,35 @@ import { getKvBinding } from './kv.js';
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_SECONDS = 60 * 24 * 60 * 60;
+const USER_ID_PATTERNS = Object.freeze([
+	/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
+	/^[a-zA-Z0-9_-]{3,50}$/
+]);
+const USER_ID_VALIDATION_MESSAGE = 'Invalid userId format. Use email or alphanumeric with underscores/hyphens (3-50 chars)';
+
+function isValidUserId(userId) {
+	return typeof userId === 'string' && USER_ID_PATTERNS.some(pattern => pattern.test(userId));
+}
+
+function validateAuthRequest(userId, passwordHash) {
+	if (!userId || !passwordHash) {
+		return {
+			valid: false,
+			error: 'BAD_REQUEST',
+			message: 'userId and passwordHash required'
+		};
+	}
+
+	if (!isValidUserId(userId)) {
+		return {
+			valid: false,
+			error: 'BAD_REQUEST',
+			message: USER_ID_VALIDATION_MESSAGE
+		};
+	}
+
+	return { valid: true };
+}
 
 /**
  * Derive a slow hash from the incoming password hash for storage
@@ -79,7 +108,7 @@ function generateSalt() {
  * @returns {Promise<boolean>} - True if valid, false otherwise
  */
 export async function validatePassword(userId, passwordHash, env) {
-	if (!userId || !passwordHash) {
+	if (!userId || !passwordHash || !isValidUserId(userId)) {
 		return false;
 	}
 
@@ -257,14 +286,13 @@ export async function verifyRefreshToken(token, env) {
  * @returns {Promise<Object>} - { success: boolean, message: string }
  */
 export async function registerUser(userId, passwordHash, env) {
-	if (!userId || !passwordHash) {
-		return { success: false, message: 'userId and passwordHash required' };
-	}
-
-	// Validate userId format (email or alphanumeric)
-	if (!/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(userId) && 
-	    !/^[a-zA-Z0-9_-]{3,50}$/.test(userId)) {
-		return { success: false, message: 'Invalid userId format. Use email or alphanumeric (3-50 chars)' };
+	const validation = validateAuthRequest(userId, passwordHash);
+	if (!validation.valid) {
+		return {
+			success: false,
+			error: validation.error,
+			message: validation.message
+		};
 	}
 
 	// Check if user already exists
@@ -305,10 +333,19 @@ export async function registerUser(userId, passwordHash, env) {
  * @returns {Promise<Object>} - { success: boolean, message: string }
  */
 export async function loginUser(userId, passwordHash, env) {
+	const validation = validateAuthRequest(userId, passwordHash);
+	if (!validation.valid) {
+		return {
+			success: false,
+			error: validation.error,
+			message: validation.message
+		};
+	}
+
 	const isValid = await validatePassword(userId, passwordHash, env);
 	
 	if (!isValid) {
-		return { success: false, message: 'Invalid credentials' };
+		return { success: false, error: 'UNAUTHORIZED', message: 'Invalid credentials' };
 	}
 
 	// Update last login time

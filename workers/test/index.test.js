@@ -186,6 +186,26 @@ test('POST /auth/register supports success and validation failures', async () =>
 
   assert.equal(invalidParsed.status, 400);
   assert.equal(invalidParsed.body.success, false);
+  assert.equal(invalidParsed.body.error, 'BAD_REQUEST');
+});
+
+test('POST /auth/login rejects invalid userId format with bad request', async () => {
+  const env = createEnv();
+  const request = new Request('https://worker.example/auth/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ userId: 'invalid user', passwordHash: 'hash' })
+  });
+
+  const response = await worker.fetch(request, env, {});
+  const parsed = await parseJsonResponse(response);
+
+  assert.equal(parsed.status, 400);
+  assert.equal(parsed.body.success, false);
+  assert.equal(parsed.body.error, 'BAD_REQUEST');
+  assert.match(parsed.body.message, /Invalid userId/i);
 });
 
 test('POST /auth/login returns tokens on success', async () => {

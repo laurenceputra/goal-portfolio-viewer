@@ -265,7 +265,7 @@ async function handleLogin(request, env) {
 		const { userId, passwordHash } = parsed.data;
 		const result = await credentials.loginUser(userId, passwordHash, env);
 		if (!result.success) {
-			return jsonResponseWithCors(result, 401, {}, env);
+			return jsonResponseWithCors(result, result.error === 'BAD_REQUEST' ? 400 : 401, {}, env);
 		}
 		const issuedTokens = await tokens.issueTokens(userId, env);
 		return jsonResponseWithCors({
