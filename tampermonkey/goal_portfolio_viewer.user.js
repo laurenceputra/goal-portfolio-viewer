@@ -1049,10 +1049,43 @@
         };
     }
 
-    function normalizeOcbcHoldingsPayload(data) {
+    function createEmptyOcbcHoldings() {
+        return { assets: [], liabilities: [] };
+    }
+
+    function normalizeOcbcPortfolioHoldingsEntry(entry, { defaultLastSeenAt = null } = {}) {
+        const source = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : {};
+        const lastSeenAt = typeof source.lastSeenAt === 'number' && source.lastSeenAt > 0
+            ? source.lastSeenAt
+            : defaultLastSeenAt;
+        return {
+            assets: Array.isArray(source.assets) ? source.assets : [],
+            liabilities: Array.isArray(source.liabilities) ? source.liabilities : [],
+            lastSeenAt: typeof lastSeenAt === 'number' && lastSeenAt > 0 ? lastSeenAt : null
+        };
+    }
+
+    function ensureOcbcHoldingsByPortfolioEntry(target, rawPortfolioNo, options = {}) {
+        const grouped = target && typeof target === 'object' && !Array.isArray(target) ? target : {};
+        const portfolioNo = utils.normalizeString(rawPortfolioNo, '-');
+        if (!grouped[portfolioNo]) {
+            grouped[portfolioNo] = normalizeOcbcPortfolioHoldingsEntry({}, options);
+        }
+        return grouped[portfolioNo];
+    }
+
+    function appendOcbcRowByPortfolio(target, section, row, options = {}) {
+        if (!row || (section !== 'assets' && section !== 'liabilities')) {
+            return target;
+        }
+        const entry = ensureOcbcHoldingsByPortfolioEntry(target, row.portfolioNo, options);
+        entry[section].push(row);
+        return target;
+    }
+
+    function buildOcbcHoldingsByPortfolioFromPayload(data) {
         const groups = Array.isArray(data?.data) ? data.data : [];
-        const assets = [];
-        const liabilities = [];
+        const grouped = {};
         let assetIndex = 0;
         let liabilityIndex = 0;
 
@@ -1078,12 +1111,11 @@
                             if (!normalized) {
                                 return;
                             }
+                            appendOcbcRowByPortfolio(grouped, sectionType, normalized);
                             if (isAssets) {
                                 assetIndex += 1;
-                                assets.push(normalized);
                             } else {
                                 liabilityIndex += 1;
-                                liabilities.push(normalized);
                             }
                         });
                     });
@@ -1093,44 +1125,36 @@
 
         flattenSectionRows('assets', groups);
         flattenSectionRows('liabilities', groups);
-        return { assets, liabilities };
+        return normalizeOcbcHoldingsByPortfolioForStore(grouped);
+    }
+
+    function normalizeOcbcHoldingsPayload(data) {
+        return flattenOcbcHoldingsByPortfolio(buildOcbcHoldingsByPortfolioFromPayload(data));
     }
 
     function groupOcbcHoldingsByPortfolio(holdings) {
-        const source = holdings && typeof holdings === 'object' ? holdings : { assets: [], liabilities: [] };
+        const source = holdings && typeof holdings === 'object' ? holdings : createEmptyOcbcHoldings();
         const grouped = {};
-        function appendRows(section, rows) {
-            (Array.isArray(rows) ? rows : []).forEach(row => {
-                const portfolioNo = utils.normalizeString(row?.portfolioNo, '-');
-                if (!grouped[portfolioNo]) {
-                    grouped[portfolioNo] = { assets: [], liabilities: [], lastSeenAt: null };
-                }
-                grouped[portfolioNo][section].push(row);
-            });
-        }
-        appendRows('assets', source.assets);
-        appendRows('liabilities', source.liabilities);
-        return grouped;
+        (Array.isArray(source.assets) ? source.assets : []).forEach(row => {
+            appendOcbcRowByPortfolio(grouped, 'assets', row);
+        });
+        (Array.isArray(source.liabilities) ? source.liabilities : []).forEach(row => {
+            appendOcbcRowByPortfolio(grouped, 'liabilities', row);
+        });
+        return normalizeOcbcHoldingsByPortfolioForStore(grouped);
     }
 
     function flattenOcbcHoldingsByPortfolio(holdingsByPortfolio) {
         const source = holdingsByPortfolio && typeof holdingsByPortfolio === 'object' && !Array.isArray(holdingsByPortfolio)
             ? holdingsByPortfolio
             : {};
-        const assets = [];
-        const liabilities = [];
+        const flattened = createEmptyOcbcHoldings();
         Object.values(source).forEach(entry => {
-            if (!entry || typeof entry !== 'object') {
-                return;
-            }
-            if (Array.isArray(entry.assets)) {
-                assets.push(...entry.assets);
-            }
-            if (Array.isArray(entry.liabilities)) {
-                liabilities.push(...entry.liabilities);
-            }
+            const normalizedEntry = normalizeOcbcPortfolioHoldingsEntry(entry);
+            flattened.assets.push(...normalizedEntry.assets);
+            flattened.liabilities.push(...normalizedEntry.liabilities);
         });
-        return { assets, liabilities };
+        return flattened;
     }
 
     function normalizeOcbcHoldingsByPortfolioForStore(data) {
@@ -1138,14 +1162,7 @@
         const normalized = {};
         Object.entries(source).forEach(([rawPortfolioNo, entry]) => {
             const portfolioNo = utils.normalizeString(rawPortfolioNo, '-');
-            if (!entry || typeof entry !== 'object') {
-                return;
-            }
-            normalized[portfolioNo] = {
-                assets: Array.isArray(entry.assets) ? entry.assets : [],
-                liabilities: Array.isArray(entry.liabilities) ? entry.liabilities : [],
-                lastSeenAt: typeof entry.lastSeenAt === 'number' && entry.lastSeenAt > 0 ? entry.lastSeenAt : null
-            };
+            normalized[portfolioNo] = normalizeOcbcPortfolioHoldingsEntry(entry);
         });
         return normalized;
     }
@@ -1154,11 +1171,7 @@
         const merged = normalizeOcbcHoldingsByPortfolioForStore(currentByPortfolio);
         const normalizedNext = normalizeOcbcHoldingsByPortfolioForStore(nextByPortfolio);
         Object.entries(normalizedNext).forEach(([portfolioNo, entry]) => {
-            merged[portfolioNo] = {
-                assets: Array.isArray(entry.assets) ? entry.assets : [],
-                liabilities: Array.isArray(entry.liabilities) ? entry.liabilities : [],
-                lastSeenAt: typeof entry.lastSeenAt === 'number' && entry.lastSeenAt > 0 ? entry.lastSeenAt : now
-            };
+            merged[portfolioNo] = normalizeOcbcPortfolioHoldingsEntry(entry, { defaultLastSeenAt: now });
         });
         return merged;
     }
@@ -3797,6 +3810,28 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return Storage.writeJson(key, store, context || `Error saving ${key} store`);
     }
 
+    function restoreStorageSnapshots(snapshotByKey, contextSuffix = 'sync config data') {
+        Object.entries(snapshotByKey || {}).forEach(([key, snapshot]) => {
+            if (snapshot?.exists) {
+                Storage.set(key, snapshot.value, `Error rolling back ${key} ${contextSuffix}`);
+                return;
+            }
+            Storage.remove(key, `Error rolling back ${key} ${contextSuffix}`);
+        });
+    }
+
+    function writePlatformStoresOrRollback(writes, snapshotByKey) {
+        const safeWrites = Array.isArray(writes) ? writes : [];
+        for (const write of safeWrites) {
+            const didWrite = writePlatformStore(write.key, write.store, write.context);
+            if (didWrite) {
+                continue;
+            }
+            restoreStorageSnapshots(snapshotByKey);
+            throw new Error(write.failureMessage || `Failed to save ${write.key} sync config data`);
+        }
+    }
+
     function normalizeSyncStore(data) {
         return data && typeof data === 'object' && !Array.isArray(data) ? { ...data } : {};
     }
@@ -5229,33 +5264,26 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             })
         });
 
-        const restoreNamespacedSnapshots = () => {
-            Object.entries(rawSnapshotByKey).forEach(([key, snapshot]) => {
-                if (snapshot.exists) {
-                    Storage.set(key, snapshot.value, `Error rolling back ${key} sync config data`);
-                    return;
-                }
-                Storage.remove(key, `Error rolling back ${key} sync config data`);
-            });
-        };
-
-        const endowusResult = writePlatformStore(STORAGE_KEYS.endowus, updatedEndowusStore, 'Error saving Endowus store');
-        if (!endowusResult) {
-            restoreNamespacedSnapshots();
-            throw new Error('Failed to save Endowus sync config data');
-        }
-
-        const fsmResult = writePlatformStore(STORAGE_KEYS.fsm, updatedFsmStore, 'Error saving FSM store');
-        if (!fsmResult) {
-            restoreNamespacedSnapshots();
-            throw new Error('Failed to save FSM sync config data');
-        }
-
-        const ocbcResult = writePlatformStore(STORAGE_KEYS.ocbc, updatedOcbcStore, 'Error saving OCBC store');
-        if (!ocbcResult) {
-            restoreNamespacedSnapshots();
-            throw new Error('Failed to save OCBC sync config data');
-        }
+        writePlatformStoresOrRollback([
+            {
+                key: STORAGE_KEYS.endowus,
+                store: updatedEndowusStore,
+                context: 'Error saving Endowus store',
+                failureMessage: 'Failed to save Endowus sync config data'
+            },
+            {
+                key: STORAGE_KEYS.fsm,
+                store: updatedFsmStore,
+                context: 'Error saving FSM store',
+                failureMessage: 'Failed to save FSM sync config data'
+            },
+            {
+                key: STORAGE_KEYS.ocbc,
+                store: updatedOcbcStore,
+                context: 'Error saving OCBC store',
+                failureMessage: 'Failed to save OCBC sync config data'
+            }
+        ], rawSnapshotByKey);
 
         logDebug('[Goal Portfolio Viewer] Applied sync config data', {
             endowusTargets: Object.keys(endowusTargets).length,
@@ -5348,6 +5376,42 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             error.retryAfterSeconds = retryAfterSeconds;
         }
         return error;
+    }
+
+    function getSyncRequestContext() {
+        const serverUrl = getStoredServerUrl(SYNC_DEFAULTS.serverUrl);
+        const userId = utils.normalizeString(Storage.get(SYNC_STORAGE_KEYS.userId, null), '');
+        if (!userId) {
+            throw new Error('Sync not configured');
+        }
+        return {
+            serverUrl,
+            userId: assertValidSyncUserId(userId)
+        };
+    }
+
+    async function requestSyncApi(path, options = {}) {
+        const context = options.context || getSyncRequestContext();
+        const requiresAuth = options.requiresAuth !== false;
+        const headers = {
+            ...(options.headers || {})
+        };
+        if (requiresAuth) {
+            headers.Authorization = `Bearer ${await getAccessToken()}`;
+        }
+        const response = await requestJson(`${context.serverUrl}${path}`, {
+            ...options,
+            headers
+        });
+        if (options.allowNotFound === true && response.status === 404) {
+            return { response, data: null, context };
+        }
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw createApiError(response, errorData, options.errorMessage || `Request failed: ${response.status}`);
+        }
+        const data = await response.json().catch(() => ({}));
+        return { response, data, context };
     }
 
     function buildRequestError(message, code) {
@@ -5491,13 +5555,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
      * Upload config to server
      */
     async function uploadConfig(config, options = {}) {
-        const serverUrl = getStoredServerUrl(SYNC_DEFAULTS.serverUrl);
-        const userId = utils.normalizeString(Storage.get(SYNC_STORAGE_KEYS.userId, null), '');
-
-        if (!userId) {
-            throw new Error('Sync not configured');
-        }
-        assertValidSyncUserId(userId);
+        const context = getSyncRequestContext();
 
         const masterKey = requireSessionKey();
 
@@ -5505,71 +5563,46 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const plaintext = JSON.stringify(config);
         const encryptedData = await SyncEncryption.encryptWithMasterKey(plaintext, masterKey);
 
-        const accessToken = await getAccessToken();
-
         // Prepare payload
         const payload = {
             encryptedData,
             deviceId: getDeviceId(),
             timestamp: config.timestamp,
             version: config.version,
-            userId
+            userId: context.userId
         };
         if (options.force === true) {
             payload.force = true;
         }
 
-        // Upload to server (POST /sync)
-        const response = await requestJson(`${serverUrl}/sync`, {
+        const { data } = await requestSyncApi('/sync', {
+            context,
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${accessToken}`
+                'Content-Type': 'application/json'
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            errorMessage: 'Upload failed'
         });
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw createApiError(response, errorData, `Upload failed: ${response.status}`);
-        }
-
-        return response.json();
+        return data;
     }
 
     /**
      * Download config from server
      */
     async function downloadConfig() {
-        const serverUrl = getStoredServerUrl(SYNC_DEFAULTS.serverUrl);
-        const userId = utils.normalizeString(Storage.get(SYNC_STORAGE_KEYS.userId, null), '');
-
-        if (!userId) {
-            throw new Error('Sync not configured');
-        }
-        assertValidSyncUserId(userId);
-
-        const accessToken = await getAccessToken();
-
-        // Download from server
-        const response = await requestJson(`${serverUrl}/sync/${userId}`, {
+        const context = getSyncRequestContext();
+        const { data: serverData } = await requestSyncApi(`/sync/${context.userId}`, {
+            context,
             method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${accessToken}`
-            }
+            allowNotFound: true,
+            errorMessage: 'Download failed'
         });
 
-        if (response.status === 404) {
+        if (serverData === null) {
             // No data on server yet
             return null;
         }
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw createApiError(response, errorData, `Download failed: ${response.status}`);
-        }
-
-        const serverData = await response.json();
 
         // Server returns: { success: true, data: { encryptedData, deviceId, timestamp, version } }
         const { data } = serverData || {};
@@ -6227,6 +6260,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             setSyncStatus: status => {
                 syncStatus = status;
             },
+            getSyncRequestContext,
             hashConfigData,
             getAutoSyncIntervalMs,
             isStartupSyncDue,
@@ -6849,8 +6883,7 @@ let GoalTargetStore;
                 return { valid: isValid, reason: isValid ? null : 'Invalid portfolio group format in OCBC payload' };
             },
             handle: data => {
-                const normalized = normalizeOcbcHoldingsPayload(data);
-                const nextByPortfolio = groupOcbcHoldingsByPortfolio(normalized);
+                const nextByPortfolio = buildOcbcHoldingsByPortfolioFromPayload(data);
                 const now = Date.now();
                 Object.keys(nextByPortfolio).forEach(portfolioNo => {
                     nextByPortfolio[portfolioNo].lastSeenAt = now;
@@ -17283,6 +17316,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             isOcbcPortfolioHoldingsRoute,
             getOverlayPlatformDescriptor: testingHooks?.getOverlayPlatformDescriptor,
             normalizeOcbcHoldingsPayload,
+            groupOcbcHoldingsByPortfolio,
+            flattenOcbcHoldingsByPortfolio,
+            normalizeOcbcHoldingsByPortfolioForStore,
+            mergeOcbcHoldingsByPortfolio,
+            buildOcbcHoldingsByPortfolioFromPayload,
             calculateFixedTargetPercent,
             calculateRemainingTargetPercent,
             isRemainingTargetAboveThreshold,
@@ -17353,6 +17391,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             createSequentialRequestQueue,
             SyncEncryption,
             SyncManager,
+            getSyncRequestContext: SyncManager.__test?.getSyncRequestContext,
             GoalTargetStore,
             createSyncSettingsHTML: syncUiExports?.createSyncSettingsHTML,
             setupSyncSettingsListeners: syncUiExports?.setupSyncSettingsListeners,

@@ -49,7 +49,12 @@ const {
     summarizePerformanceMetrics,
     derivePerformanceWindows,
     parseJsonSafely,
-    normalizeOcbcHoldingsPayload
+    normalizeOcbcHoldingsPayload,
+    groupOcbcHoldingsByPortfolio,
+    flattenOcbcHoldingsByPortfolio,
+    normalizeOcbcHoldingsByPortfolioForStore,
+    mergeOcbcHoldingsByPortfolio,
+    buildOcbcHoldingsByPortfolioFromPayload
 } = require('../goal_portfolio_viewer.user.js');
 
 describe('storage key helpers', () => {
@@ -757,6 +762,61 @@ describe('normalizeOcbcHoldingsPayload', () => {
         expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:POSITION-LEGACY');
         expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:TRANCHE-LEGACY');
         expect(result.assets[0].legacyCodeAliases).not.toContain('P-ALIASES:SUB-LEGACY');
+    });
+
+    test('builds canonical OCBC by-portfolio holdings from payload', () => {
+        const payload = {
+            data: [{
+                portfolioNo: 'P-CANON',
+                assets: [{
+                    assetClassDesc: 'Managed Funds',
+                    subAssets: [{
+                        subAssetClassDesc: 'Global Equity',
+                        holdings: [{ isin: 'ISIN-1', marketValueReferenceCcy: 100 }]
+                    }]
+                }],
+                liabilities: [{
+                    assetClassDesc: 'Liabilities',
+                    subAssets: [{
+                        subAssetClassDesc: 'Margin',
+                        holdings: [{ description: 'Margin', positionId: 'L-1', marketValueReferenceCcy: -20 }]
+                    }]
+                }]
+            }]
+        };
+
+        const byPortfolio = buildOcbcHoldingsByPortfolioFromPayload(payload);
+        expect(Object.keys(byPortfolio)).toEqual(['P-CANON']);
+        expect(byPortfolio['P-CANON'].assets).toHaveLength(1);
+        expect(byPortfolio['P-CANON'].liabilities).toHaveLength(1);
+        expect(flattenOcbcHoldingsByPortfolio(byPortfolio)).toEqual(normalizeOcbcHoldingsPayload(payload));
+    });
+
+    test('groups, normalizes, and merges OCBC holdings by portfolio consistently', () => {
+        const grouped = groupOcbcHoldingsByPortfolio({
+            assets: [{ code: 'P-1:A', portfolioNo: 'P-1' }],
+            liabilities: [{ code: 'P-2:L', portfolioNo: 'P-2' }]
+        });
+        expect(grouped).toEqual({
+            'P-1': { assets: [{ code: 'P-1:A', portfolioNo: 'P-1' }], liabilities: [], lastSeenAt: null },
+            'P-2': { assets: [], liabilities: [{ code: 'P-2:L', portfolioNo: 'P-2' }], lastSeenAt: null }
+        });
+
+        const normalized = normalizeOcbcHoldingsByPortfolioForStore({
+            ' P-1 ': { assets: [{ code: 'P-1:A', portfolioNo: 'P-1' }], liabilities: 'invalid', lastSeenAt: 0 }
+        });
+        expect(normalized).toEqual({
+            'P-1': { assets: [{ code: 'P-1:A', portfolioNo: 'P-1' }], liabilities: [], lastSeenAt: null }
+        });
+
+        const merged = mergeOcbcHoldingsByPortfolio(grouped, {
+            'P-1': { assets: [{ code: 'P-1:B', portfolioNo: 'P-1' }], liabilities: [] }
+        }, 1234);
+        expect(merged['P-1']).toEqual({
+            assets: [{ code: 'P-1:B', portfolioNo: 'P-1' }],
+            liabilities: [],
+            lastSeenAt: 1234
+        });
     });
 });
 

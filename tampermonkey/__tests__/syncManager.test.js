@@ -159,6 +159,19 @@ describe('SyncManager', () => {
         }));
     }
 
+    test('getSyncRequestContext normalizes and validates stored sync identity', () => {
+        storage.set('sync', JSON.stringify({
+            serverUrl: 'https://sync.example.com/',
+            userId: ' user@example.com '
+        }));
+
+        const moduleExports = loadModule();
+        expect(moduleExports.getSyncRequestContext()).toEqual({
+            serverUrl: 'https://sync.example.com',
+            userId: 'user@example.com'
+        });
+    });
+
     test('legacy flat sync keys migrate full sync schema into sync store and are removed', () => {
         storage.set('sync_enabled', true);
         storage.set('sync_server_url', 'https://sync.example.com');
