@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.15.0
+// @version      2.15.1
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -455,10 +455,7 @@ function composeDisplayPair(primaryDisplay, secondaryDisplay, options = {}) {
 }
 function formatProfitDisplay(profitValue, profitPercent) {
     const valueDisplay = formatSignedMoney(profitValue);
-    const percentDisplay = formatPercent(profitPercent, {
-        multiplier: 100,
-        showSign: true
-    });
+    const percentDisplay = formatPercentage(profitPercent);
     return composeDisplayPair(valueDisplay, percentDisplay);
 }
 function normalizeMoneyDisplaySpacing(value) {
@@ -468,10 +465,7 @@ function normalizeMoneyDisplaySpacing(value) {
     return value.replace(/\u00A0/g, ' ');
 }
 function formatFsmProfitDisplay(profitValue, profitPercent) {
-    const percentDisplay = formatPercent(profitPercent, {
-        multiplier: 100,
-        showSign: true
-    });
+    const percentDisplay = formatPercentage(profitPercent);
     const valueDisplay = normalizeMoneyDisplaySpacing(formatSignedMoney(profitValue));
     return composeDisplayPair(percentDisplay, valueDisplay);
 }
@@ -503,10 +497,7 @@ function getDriftSeverityClass(driftRatio) {
     return 'gpv-drift--red';
 }
 function formatDriftDisplay(driftPercent, driftAmount) {
-    const percentDisplay = formatPercent(driftPercent, {
-        multiplier: 100,
-        showSign: true
-    });
+    const percentDisplay = formatPercentage(driftPercent);
     const amountDisplay = formatSignedMoney(driftAmount);
     return composeDisplayPair(percentDisplay, amountDisplay, { requireBoth: true });
 }
@@ -2178,7 +2169,7 @@ function getGoalWindowReturns(goalId) {
 function buildWindowReturnDisplays(windowReturns) {
     const displays = {};
     Object.values(PERFORMANCE_WINDOWS).forEach(window => {
-        displays[window.key] = formatPercent(windowReturns?.[window.key], { multiplier: 100, showSign: true });
+        displays[window.key] = formatPercentage(windowReturns?.[window.key]);
     });
     return displays;
 }
@@ -2674,23 +2665,23 @@ function buildPerformanceMetricsRows(metrics) {
         {
             key: 'totalReturnPercent',
             label: 'Total Return %',
-            value: formatPercent(metrics?.totalReturnPercent, { multiplier: 100, showSign: true }),
+            value: formatPercentage(metrics?.totalReturnPercent),
             info: 'Weighted by net investment over time. Large recent contributions can dilute earlier gains. Compare with Simple Return % to see how contributions affect performance.'
         },
         {
             key: 'simpleReturnPercent',
             label: 'Simple Return %',
-            value: formatPercent(metrics?.simpleReturnPercent, { multiplier: 100, showSign: true })
+            value: formatPercentage(metrics?.simpleReturnPercent)
         },
         {
             key: 'twrPercent',
             label: 'TWR %',
-            value: formatPercent(metrics?.twrPercent, { multiplier: 100, showSign: true })
+            value: formatPercentage(metrics?.twrPercent)
         },
         {
             key: 'annualisedIrrPercent',
             label: 'Annualised IRR',
-            value: formatPercent(metrics?.annualisedIrrPercent, { multiplier: 100, showSign: true })
+            value: formatPercentage(metrics?.annualisedIrrPercent)
         },
         {
             key: 'totalReturnAmount',
@@ -2965,6 +2956,16 @@ function buildCanonicalTargetsFromMaps(targetsById, fixedById) {
     });
     return targets;
 }
+function filterTargetsByFixed(targetsById, fixedById) {
+    const targets = isPlainObject(targetsById) ? targetsById : {};
+    const fixed = isPlainObject(fixedById) ? fixedById : {};
+    return Object.entries(targets).reduce((acc, [id, value]) => {
+        if (fixed[id] !== true) {
+            acc[id] = value;
+        }
+        return acc;
+    }, {});
+}
 function buildTargetMapsFromCanonicalAllocationModel(allocationModel) {
     const model = normalizeCanonicalAllocationModel(allocationModel);
     const targets = {};
@@ -3186,13 +3187,7 @@ function normalizeEndowusStore(data) {
     const goalFixed = isPlainObject(source.goalFixed)
         ? source.goalFixed
         : (isPlainObject(allocation.goalFixed) ? allocation.goalFixed : allocationDerived.goalFixed);
-    const goalTargets = Object.entries(isPlainObject(goalTargetsSource) ? goalTargetsSource : {}).reduce((acc, [goalId, value]) => {
-        if (goalFixed[goalId] === true) {
-            return acc;
-        }
-        acc[goalId] = value;
-        return acc;
-    }, {});
+    const goalTargets = filterTargetsByFixed(goalTargetsSource, goalFixed);
     const goalBuckets = isPlainObject(source.goalBuckets)
         ? source.goalBuckets
         : (isPlainObject(allocation.goalBuckets) ? allocation.goalBuckets : allocationDerived.goalBuckets);
@@ -3345,12 +3340,6 @@ function normalizeOcbcSubPortfolios(data) {
     });
     return normalized;
 }
-function normalizeOcbcSubPortfoliosForStore(data) {
-    return normalizeOcbcSubPortfolios(data);
-}
-function normalizeOcbcAssignmentByCodeForStore(data) {
-    return normalizeOcbcAssignmentByCode(data);
-}
 function normalizeOcbcAssignmentByCode(data) {
     const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
     const normalized = {};
@@ -3370,9 +3359,6 @@ function normalizeOcbcAssignmentByCode(data) {
         }
     });
     return normalized;
-}
-function normalizeOcbcOrderByScopeForStore(data) {
-    return normalizeOcbcOrderByScope(data);
 }
 function normalizeOcbcOrderByScope(data) {
     const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
@@ -3409,19 +3395,19 @@ function normalizeOcbcStore(data) {
         ? source.holdings
         : (datasets.holdings && typeof datasets.holdings === 'object' ? datasets.holdings : null);
     const subPortfolios = isPlainObject(source.subPortfolios)
-        ? normalizeOcbcSubPortfoliosForStore(source.subPortfolios)
+        ? normalizeOcbcSubPortfolios(source.subPortfolios)
         : (isPlainObject(allocation.subPortfolios)
-            ? normalizeOcbcSubPortfoliosForStore(allocation.subPortfolios)
+            ? normalizeOcbcSubPortfolios(allocation.subPortfolios)
             : allocationDerived.subPortfolios);
     const assignmentByCode = isPlainObject(source.assignmentByCode)
-        ? normalizeOcbcAssignmentByCodeForStore(source.assignmentByCode)
+        ? normalizeOcbcAssignmentByCode(source.assignmentByCode)
         : (isPlainObject(allocation.assignmentByCode)
-            ? normalizeOcbcAssignmentByCodeForStore(allocation.assignmentByCode)
+            ? normalizeOcbcAssignmentByCode(allocation.assignmentByCode)
             : allocationDerived.assignmentByCode);
     const orderByScope = isPlainObject(source.orderByScope)
-        ? normalizeOcbcOrderByScopeForStore(source.orderByScope)
+        ? normalizeOcbcOrderByScope(source.orderByScope)
         : (isPlainObject(allocation.orderByScope)
-            ? normalizeOcbcOrderByScopeForStore(allocation.orderByScope)
+            ? normalizeOcbcOrderByScope(allocation.orderByScope)
             : allocationDerived.orderByScope);
     const targetsByScope = isPlainObject(source.targetsByScope)
         ? source.targetsByScope
@@ -3847,48 +3833,70 @@ function cleanupEndowusLocalStore(endowusStore, nowMs = Date.now()) {
         didMutate: true
     };
 }
-function readEndowusStore() {
-    const legacyKeys = listLegacyPlatformKeys(LEGACY_PLATFORM_STORAGE_KEYS.endowus);
-    const rawStored = Storage.readJson(STORAGE_KEYS.endowus, data => data && typeof data === 'object' && !Array.isArray(data));
-    const normalized = rawStored ? normalizeEndowusStore(rawStored) : normalizeEndowusStore({});
-    const migrated = mergeMissingEndowusLegacyData(normalized);
-    const { value: cleanedNormalized, didMutate } = cleanupEndowusLocalStore(migrated.store);
-    const shouldWrite = !rawStored || didMutate || migrated.didMerge || legacyKeys.length > 0 || rawStored.version !== PLATFORM_STORE_VERSION;
+function readMigratedPlatformStore({
+    storageKey,
+    legacyKeysConfig,
+    normalizeStore,
+    mergeLegacyData,
+    cleanupStore,
+    writeContext,
+    initialWriteContext
+}) {
+    const legacyKeys = listLegacyPlatformKeys(legacyKeysConfig);
+    const rawStored = Storage.readJson(storageKey, data => data && typeof data === 'object' && !Array.isArray(data));
+    const normalized = rawStored ? normalizeStore(rawStored) : normalizeStore({});
+    const migrated = mergeLegacyData(normalized);
+    const cleanupResult = typeof cleanupStore === 'function'
+        ? cleanupStore(migrated.store)
+        : { value: migrated.store, didMutate: false };
+    const store = cleanupResult.value;
+    const shouldWrite = !rawStored
+        || cleanupResult.didMutate
+        || migrated.didMerge
+        || legacyKeys.length > 0
+        || rawStored.version !== PLATFORM_STORE_VERSION;
     if (shouldWrite) {
-        const didWrite = writePlatformStore(STORAGE_KEYS.endowus, cleanedNormalized, rawStored ? 'Error writing cleaned Endowus store' : 'Error writing Endowus store');
+        const didWrite = writePlatformStore(
+            storageKey,
+            store,
+            rawStored ? writeContext : initialWriteContext
+        );
         if (didWrite) {
             removeLegacyPlatformKeys(legacyKeys);
         }
     }
-    return cleanedNormalized;
+    return store;
+}
+function readEndowusStore() {
+    return readMigratedPlatformStore({
+        storageKey: STORAGE_KEYS.endowus,
+        legacyKeysConfig: LEGACY_PLATFORM_STORAGE_KEYS.endowus,
+        normalizeStore: normalizeEndowusStore,
+        mergeLegacyData: mergeMissingEndowusLegacyData,
+        cleanupStore: cleanupEndowusLocalStore,
+        writeContext: 'Error writing cleaned Endowus store',
+        initialWriteContext: 'Error writing Endowus store'
+    });
 }
 function readFsmStore() {
-    const legacyKeys = listLegacyPlatformKeys(LEGACY_PLATFORM_STORAGE_KEYS.fsm);
-    const rawStored = Storage.readJson(STORAGE_KEYS.fsm, data => data && typeof data === 'object' && !Array.isArray(data));
-    const normalized = rawStored ? normalizeFsmStore(rawStored) : normalizeFsmStore({});
-    const migrated = mergeMissingFsmLegacyData(normalized);
-    const shouldWrite = !rawStored || migrated.didMerge || legacyKeys.length > 0 || rawStored.version !== PLATFORM_STORE_VERSION;
-    if (shouldWrite) {
-        const didWrite = writePlatformStore(STORAGE_KEYS.fsm, migrated.store, rawStored ? 'Error writing migrated FSM v4 store' : 'Error writing FSM store');
-        if (didWrite) {
-            removeLegacyPlatformKeys(legacyKeys);
-        }
-    }
-    return migrated.store;
+    return readMigratedPlatformStore({
+        storageKey: STORAGE_KEYS.fsm,
+        legacyKeysConfig: LEGACY_PLATFORM_STORAGE_KEYS.fsm,
+        normalizeStore: normalizeFsmStore,
+        mergeLegacyData: mergeMissingFsmLegacyData,
+        writeContext: 'Error writing migrated FSM v4 store',
+        initialWriteContext: 'Error writing FSM store'
+    });
 }
 function readOcbcStore() {
-    const legacyKeys = listLegacyPlatformKeys(LEGACY_PLATFORM_STORAGE_KEYS.ocbc);
-    const rawStored = Storage.readJson(STORAGE_KEYS.ocbc, data => data && typeof data === 'object' && !Array.isArray(data));
-    const normalized = rawStored ? normalizeOcbcStore(rawStored) : normalizeOcbcStore({});
-    const migrated = mergeMissingOcbcLegacyData(normalized);
-    const shouldWrite = !rawStored || migrated.didMerge || legacyKeys.length > 0 || rawStored.version !== PLATFORM_STORE_VERSION;
-    if (shouldWrite) {
-        const didWrite = writePlatformStore(STORAGE_KEYS.ocbc, migrated.store, rawStored ? 'Error writing migrated OCBC v4 store' : 'Error writing OCBC store');
-        if (didWrite) {
-            removeLegacyPlatformKeys(legacyKeys);
-        }
-    }
-    return migrated.store;
+    return readMigratedPlatformStore({
+        storageKey: STORAGE_KEYS.ocbc,
+        legacyKeysConfig: LEGACY_PLATFORM_STORAGE_KEYS.ocbc,
+        normalizeStore: normalizeOcbcStore,
+        mergeLegacyData: mergeMissingOcbcLegacyData,
+        writeContext: 'Error writing migrated OCBC v4 store',
+        initialWriteContext: 'Error writing OCBC store'
+    });
 }
 function updatePlatformStore({ readStore, normalizeStore, storageKey, updater, context }) {
     const current = readStore();
@@ -4488,15 +4496,6 @@ function getDeviceId() {
     }
     return deviceId;
 }
-function normalizeOcbcSubPortfoliosConfig(data) {
-    return normalizeOcbcSubPortfolios(data);
-}
-function normalizeOcbcAssignmentByCodeConfig(data) {
-    return normalizeOcbcAssignmentByCode(data);
-}
-function normalizeOcbcOrderByScopeEntries(data) {
-    return normalizeOcbcOrderByScope(data);
-}
 function normalizeSyncConfig(config) {
     if (!config || typeof config !== 'object') {
         return null;
@@ -4567,12 +4566,7 @@ function collectConfigData() {
     const endowus = readEndowusStore();
     const fsm = readFsmStore();
     const ocbc = readOcbcStore();
-    const sanitizedEndowusTargets = Object.entries(endowus.goalTargets).reduce((acc, [goalId, value]) => {
-        if (endowus.goalFixed[goalId] !== true) {
-            acc[goalId] = value;
-        }
-        return acc;
-    }, {});
+    const sanitizedEndowusTargets = filterTargetsByFixed(endowus.goalTargets, endowus.goalFixed);
     return {
         version: PLATFORM_STORE_VERSION,
         platforms: {
@@ -4638,12 +4632,7 @@ function applyConfigData(config) {
     const endowusFixed = endowusAllocation.goalFixed && typeof endowusAllocation.goalFixed === 'object' ? endowusAllocation.goalFixed : {};
     const endowusBuckets = endowusAllocation.goalBuckets && typeof endowusAllocation.goalBuckets === 'object' ? endowusAllocation.goalBuckets : {};
     const clearedGoalBuckets = endowusAllocation.clearedGoalBuckets && typeof endowusAllocation.clearedGoalBuckets === 'object' ? endowusAllocation.clearedGoalBuckets : {};
-    const sanitizedEndowusTargets = Object.entries(endowusTargets).reduce((acc, [goalId, value]) => {
-        if (endowusFixed[goalId] !== true) {
-            acc[goalId] = value;
-        }
-        return acc;
-    }, {});
+    const sanitizedEndowusTargets = filterTargetsByFixed(endowusTargets, endowusFixed);
     const currentEndowusStore = readEndowusStore();
     const updatedEndowusStore = normalizeEndowusStore({
         ...currentEndowusStore,
@@ -4676,12 +4665,7 @@ function applyConfigData(config) {
     const fsmFixed = fsmAllocation.fixedByCode && typeof fsmAllocation.fixedByCode === 'object' ? fsmAllocation.fixedByCode : {};
     const fsmPortfolios = normalizeFsmPortfolios(Array.isArray(fsmAllocation.portfolios) ? fsmAllocation.portfolios : []);
     const fsmAssignmentByCode = fsmAllocation.assignmentByCode && typeof fsmAllocation.assignmentByCode === 'object' ? fsmAllocation.assignmentByCode : {};
-    const sanitizedFsmTargets = Object.entries(fsmTargets).reduce((acc, [code, value]) => {
-        if (fsmFixed[code] !== true) {
-            acc[code] = value;
-        }
-        return acc;
-    }, {});
+    const sanitizedFsmTargets = filterTargetsByFixed(fsmTargets, fsmFixed);
     const validPortfolioIds = new Set(fsmPortfolios.filter(item => item.archived !== true).map(item => item.id));
     const sanitizedAssignments = {};
     Object.entries(fsmAssignmentByCode).forEach(([code, portfolioId]) => {
@@ -4712,9 +4696,9 @@ function applyConfigData(config) {
         })
     });
     const ocbcAllocation = normalized.platforms.ocbc?.allocation || {};
-    const ocbcSubPortfolios = normalizeOcbcSubPortfoliosConfig(ocbcAllocation.subPortfolios);
-    const ocbcAssignmentByCode = normalizeOcbcAssignmentByCodeConfig(ocbcAllocation.assignmentByCode);
-    const ocbcOrderByScope = normalizeOcbcOrderByScopeEntries(ocbcAllocation.orderByScope);
+    const ocbcSubPortfolios = normalizeOcbcSubPortfolios(ocbcAllocation.subPortfolios);
+    const ocbcAssignmentByCode = normalizeOcbcAssignmentByCode(ocbcAllocation.assignmentByCode);
+    const ocbcOrderByScope = normalizeOcbcOrderByScope(ocbcAllocation.orderByScope);
     const ocbcAllocationBuckets = ocbcAllocation.allocationBuckets && typeof ocbcAllocation.allocationBuckets === 'object' ? ocbcAllocation.allocationBuckets : {};
     const ocbcTargetsByScope = ocbcAllocation.targetsByScope && typeof ocbcAllocation.targetsByScope === 'object' ? ocbcAllocation.targetsByScope : {};
     const currentOcbcStore = readOcbcStore();
@@ -5135,6 +5119,14 @@ function recordSuccessfulSync({ dataTimestamp = null, hash = null, syncedAt = Da
         Storage.set(SYNC_STORAGE_KEYS.lastSyncHash, hash);
     }
 }
+function markSyncSuccess(message) {
+    syncStatus = SYNC_STATUS.success;
+    lastError = null;
+    lastErrorMeta = null;
+    if (message) {
+        logDebug(message);
+    }
+}
 /**
  * Perform sync operation
  */
@@ -5168,54 +5160,36 @@ async function performSync(options = {}) {
         if (direction === 'upload') {
             await uploadConfig(localConfig);
             recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-            syncStatus = SYNC_STATUS.success;
-            lastError = null;
-            lastErrorMeta = null;
-            logDebug('[Goal Portfolio Viewer] Sync upload successful');
+            markSyncSuccess('[Goal Portfolio Viewer] Sync upload successful');
         } else if (direction === 'download') {
             const serverData = await downloadConfig();
             if (!serverData) {
                 recordSuccessfulSync();
-                syncStatus = SYNC_STATUS.success;
-                lastError = null;
-                lastErrorMeta = null;
-                logDebug('[Goal Portfolio Viewer] No server data to download');
+                markSyncSuccess('[Goal Portfolio Viewer] No server data to download');
             } else {
                 applyConfigData(serverData.config);
                 const serverHash = await hashConfigData(serverData.config);
                 recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-                syncStatus = SYNC_STATUS.success;
-                lastError = null;
-                lastErrorMeta = null;
-                logDebug('[Goal Portfolio Viewer] Sync download successful');
+                markSyncSuccess('[Goal Portfolio Viewer] Sync download successful');
             }
         } else {
             const serverData = await downloadConfig();
             if (!serverData) {
                 await uploadConfig(localConfig);
                 recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-                syncStatus = SYNC_STATUS.success;
-                lastError = null;
-                lastErrorMeta = null;
-                logDebug('[Goal Portfolio Viewer] No server data, uploaded local config');
+                markSyncSuccess('[Goal Portfolio Viewer] No server data, uploaded local config');
             } else {
                 const serverHash = await hashConfigData(serverData.config);
                 if (!hasLastDataTimestamp) {
                     applyConfigData(serverData.config);
                     recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-                    syncStatus = SYNC_STATUS.success;
-                    lastError = null;
-                    lastErrorMeta = null;
-                    logDebug('[Goal Portfolio Viewer] Missing sync metadata, bootstrapped from server snapshot');
+                    markSyncSuccess('[Goal Portfolio Viewer] Missing sync metadata, bootstrapped from server snapshot');
                 } else if (localHash && serverHash && localHash === serverHash) {
                     recordSuccessfulSync({
                         dataTimestamp: Math.max(localConfig.timestamp, serverData.metadata.timestamp),
                         hash: localHash
                     });
-                    syncStatus = SYNC_STATUS.success;
-                    lastError = null;
-                    lastErrorMeta = null;
-                    logDebug('[Goal Portfolio Viewer] Local and server content identical, sync already up to date');
+                    markSyncSuccess('[Goal Portfolio Viewer] Local and server content identical, sync already up to date');
                 } else {
                     const conflict = await detectConflict(localConfig, serverData, localHash, serverHash);
                     if (conflict && !force) {
@@ -5228,23 +5202,14 @@ async function performSync(options = {}) {
                     if (localConfig.timestamp > serverData.metadata.timestamp) {
                         await uploadConfig(localConfig);
                         recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-                        syncStatus = SYNC_STATUS.success;
-                        lastError = null;
-                        lastErrorMeta = null;
-                        logDebug('[Goal Portfolio Viewer] Local config newer, uploaded to server');
+                        markSyncSuccess('[Goal Portfolio Viewer] Local config newer, uploaded to server');
                     } else if (localConfig.timestamp < serverData.metadata.timestamp) {
                         applyConfigData(serverData.config);
                         recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-                        syncStatus = SYNC_STATUS.success;
-                        lastError = null;
-                        lastErrorMeta = null;
-                        logDebug('[Goal Portfolio Viewer] Server config newer, applied locally');
+                        markSyncSuccess('[Goal Portfolio Viewer] Server config newer, applied locally');
                     } else {
                         recordSuccessfulSync();
-                        syncStatus = SYNC_STATUS.success;
-                        lastError = null;
-                        lastErrorMeta = null;
-                        logDebug('[Goal Portfolio Viewer] Sync already up to date');
+                        markSyncSuccess('[Goal Portfolio Viewer] Sync already up to date');
                     }
                 }
             }
@@ -5314,9 +5279,7 @@ async function resolveConflict(resolution, conflict) {
         } else {
             throw new Error('Invalid resolution');
         }
-        syncStatus = SYNC_STATUS.success;
-        lastError = null;
-        lastErrorMeta = null;
+        markSyncSuccess();
         if (typeof syncUi.update === 'function') {
             syncUi.update();
         }
@@ -5667,59 +5630,57 @@ return {
     ...(testingHooks ? { __test: testingHooks } : {})
 };
 })();
+function cloneSyncViewValue(value) {
+if (Array.isArray(value)) {
+    return value.slice();
+}
+if (isPlainObject(value)) {
+    return { ...value };
+}
+return value;
+}
+function buildSyncViewResult(source, fields, defaults) {
+return fields.reduce((acc, field) => {
+    acc[field] = cloneSyncViewValue(source?.[field] ?? defaults[field]);
+    return acc;
+}, {});
+}
+function getPlatformSyncView(config, platformKey, normalizeStore, fields, defaults) {
+if (!config || typeof config !== 'object' || !config.platforms || typeof config.platforms !== 'object') {
+    return buildSyncViewResult(defaults, fields, defaults);
+}
+const platformConfig = config.platforms[platformKey] && typeof config.platforms[platformKey] === 'object'
+    ? config.platforms[platformKey]
+    : (config[platformKey] && typeof config[platformKey] === 'object' ? config[platformKey] : {});
+const normalized = normalizeStore(platformConfig.allocation ? platformConfig : { allocation: platformConfig });
+return buildSyncViewResult(normalized, fields, defaults);
+}
 function getEndowusSyncView(config) {
-if (!config || typeof config !== 'object') {
-    return { goalTargets: {}, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} };
-}
-if (config.platforms && typeof config.platforms === 'object') {
-    const endowus = config.platforms.endowus && typeof config.platforms.endowus === 'object'
-        ? config.platforms.endowus
-        : (config.endowus && typeof config.endowus === 'object' ? config.endowus : {});
-    const normalized = normalizeEndowusStore(endowus.allocation ? endowus : { allocation: endowus });
-    return {
-        goalTargets: normalized.goalTargets,
-        goalFixed: normalized.goalFixed,
-        goalBuckets: normalized.goalBuckets,
-        clearedGoalBuckets: normalized.clearedGoalBuckets
-    };
-}
-return { goalTargets: {}, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} };
+return getPlatformSyncView(
+    config,
+    'endowus',
+    normalizeEndowusStore,
+    ['goalTargets', 'goalFixed', 'goalBuckets', 'clearedGoalBuckets'],
+    { goalTargets: {}, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} }
+);
 }
 function getFsmSyncView(config) {
-if (!config || typeof config !== 'object') {
-    return { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} };
-}
-if (config.platforms && typeof config.platforms === 'object') {
-    const fsm = config.platforms.fsm && typeof config.platforms.fsm === 'object'
-        ? config.platforms.fsm
-        : (config.fsm && typeof config.fsm === 'object' ? config.fsm : {});
-    const normalized = normalizeFsmStore(fsm.allocation ? fsm : { allocation: fsm });
-    return {
-        targetsByCode: normalized.targetsByCode,
-        fixedByCode: normalized.fixedByCode,
-        portfolios: normalized.portfolios,
-        assignmentByCode: normalized.assignmentByCode
-    };
-}
-return { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} };
+return getPlatformSyncView(
+    config,
+    'fsm',
+    normalizeFsmStore,
+    ['targetsByCode', 'fixedByCode', 'portfolios', 'assignmentByCode'],
+    { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} }
+);
 }
 function getOcbcSyncView(config) {
-if (!config || typeof config !== 'object') {
-    return { allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {} };
-}
-const source = config.platforms && typeof config.platforms === 'object'
-    ? (config.platforms.ocbc && typeof config.platforms.ocbc === 'object'
-        ? config.platforms.ocbc
-        : (config.ocbc && typeof config.ocbc === 'object' ? config.ocbc : {}))
-    : {};
-const normalized = normalizeOcbcStore(source.allocation ? source : { allocation: source });
-return {
-    allocationBuckets: normalized.allocationBuckets,
-    subPortfolios: normalized.subPortfolios,
-    assignmentByCode: normalized.assignmentByCode,
-    orderByScope: normalized.orderByScope,
-    targetsByScope: normalized.targetsByScope
-};
+return getPlatformSyncView(
+    config,
+    'ocbc',
+    normalizeOcbcStore,
+    ['allocationBuckets', 'subPortfolios', 'assignmentByCode', 'orderByScope', 'targetsByScope'],
+    { allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {} }
+);
 }
 function formatSyncValue(value) {
 if (value == null) {
@@ -7287,7 +7248,7 @@ function buildPerformanceWindowGrid(windowReturns) {
         const value = createElement(
             'div',
             'gpv-performance-window-value',
-            formatPercent(item.value, { multiplier: 100, showSign: true })
+            formatPercentage(item.value)
         );
         if (typeof item.value === 'number') {
             value.classList.add(item.value >= 0 ? 'positive' : 'negative');
