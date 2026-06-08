@@ -6217,60 +6217,64 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
 })();
 
 function getEndowusSyncView(config) {
-    if (!config || typeof config !== 'object') {
-        return { goalTargets: {}, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} };
-    }
-    if (config.platforms && typeof config.platforms === 'object') {
-        const endowus = config.platforms.endowus && typeof config.platforms.endowus === 'object'
-            ? config.platforms.endowus
-            : (config.endowus && typeof config.endowus === 'object' ? config.endowus : {});
-        const normalized = normalizeEndowusStore(endowus.allocation ? endowus : { allocation: endowus });
-        return {
+    return getPlatformSyncView(config, 'endowus');
+}
+
+function getFsmSyncView(config) {
+    return getPlatformSyncView(config, 'fsm');
+}
+
+function getOcbcSyncView(config) {
+    return getPlatformSyncView(config, 'ocbc');
+}
+
+const PLATFORM_SYNC_VIEW_DESCRIPTORS = {
+    endowus: {
+        empty: () => ({ goalTargets: {}, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} }),
+        normalize: normalizeEndowusStore,
+        pick: normalized => ({
             goalTargets: normalized.goalTargets,
             goalFixed: normalized.goalFixed,
             goalBuckets: normalized.goalBuckets,
             clearedGoalBuckets: normalized.clearedGoalBuckets
-        };
-    }
-    return { goalTargets: {}, goalFixed: {}, goalBuckets: {}, clearedGoalBuckets: {} };
-}
-
-function getFsmSyncView(config) {
-    if (!config || typeof config !== 'object') {
-        return { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} };
-    }
-    if (config.platforms && typeof config.platforms === 'object') {
-        const fsm = config.platforms.fsm && typeof config.platforms.fsm === 'object'
-            ? config.platforms.fsm
-            : (config.fsm && typeof config.fsm === 'object' ? config.fsm : {});
-        const normalized = normalizeFsmStore(fsm.allocation ? fsm : { allocation: fsm });
-        return {
+        })
+    },
+    fsm: {
+        empty: () => ({ targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} }),
+        normalize: normalizeFsmStore,
+        pick: normalized => ({
             targetsByCode: normalized.targetsByCode,
             fixedByCode: normalized.fixedByCode,
             portfolios: normalized.portfolios,
             assignmentByCode: normalized.assignmentByCode
-        };
+        })
+    },
+    ocbc: {
+        empty: () => ({ allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {} }),
+        normalize: normalizeOcbcStore,
+        pick: normalized => ({
+            allocationBuckets: normalized.allocationBuckets,
+            subPortfolios: normalized.subPortfolios,
+            assignmentByCode: normalized.assignmentByCode,
+            orderByScope: normalized.orderByScope,
+            targetsByScope: normalized.targetsByScope
+        })
     }
-    return { targetsByCode: {}, fixedByCode: {}, portfolios: [], assignmentByCode: {} };
-}
+};
 
-function getOcbcSyncView(config) {
-    if (!config || typeof config !== 'object') {
-        return { allocationBuckets: {}, subPortfolios: {}, assignmentByCode: {}, orderByScope: {}, targetsByScope: {} };
+function getPlatformSyncView(config, platformId) {
+    const descriptor = PLATFORM_SYNC_VIEW_DESCRIPTORS[platformId];
+    if (!descriptor || !config || typeof config !== 'object') {
+        return descriptor ? descriptor.empty() : {};
     }
-    const source = config.platforms && typeof config.platforms === 'object'
-        ? (config.platforms.ocbc && typeof config.platforms.ocbc === 'object'
-            ? config.platforms.ocbc
-            : (config.ocbc && typeof config.ocbc === 'object' ? config.ocbc : {}))
-        : {};
-    const normalized = normalizeOcbcStore(source.allocation ? source : { allocation: source });
-    return {
-        allocationBuckets: normalized.allocationBuckets,
-        subPortfolios: normalized.subPortfolios,
-        assignmentByCode: normalized.assignmentByCode,
-        orderByScope: normalized.orderByScope,
-        targetsByScope: normalized.targetsByScope
-    };
+    if (!config.platforms || typeof config.platforms !== 'object') {
+        return descriptor.empty();
+    }
+    const platformConfig = config.platforms[platformId] && typeof config.platforms[platformId] === 'object'
+        ? config.platforms[platformId]
+        : (config[platformId] && typeof config[platformId] === 'object' ? config[platformId] : {});
+    const normalized = descriptor.normalize(platformConfig.allocation ? platformConfig : { allocation: platformConfig });
+    return descriptor.pick(normalized);
 }
 
 function formatSyncValue(value) {
@@ -6428,6 +6432,18 @@ function formatOcbcTargetsByScopeDisplay(targetsByScope) {
         .map(scope => `${scope}: ${formatSyncTarget(source[scope])}`);
 }
 
+function pushOcbcConflictDiffRow(rows, { section, settingName, localDisplay, remoteDisplay }) {
+    if (JSON.stringify(localDisplay) === JSON.stringify(remoteDisplay)) {
+        return;
+    }
+    rows.push({
+        section,
+        settingName,
+        localDisplay: formatSyncValue(localDisplay),
+        remoteDisplay: formatSyncValue(remoteDisplay)
+    });
+}
+
 function buildOcbcConflictDiffItems(conflict) {
     if (!conflict || !conflict.local || !conflict.remote) {
         return [];
@@ -6438,58 +6454,48 @@ function buildOcbcConflictDiffItems(conflict) {
 
     const localAllocationBuckets = formatOcbcAllocationBucketsDisplay(localOcbc.allocationBuckets);
     const remoteAllocationBuckets = formatOcbcAllocationBucketsDisplay(remoteOcbc.allocationBuckets);
-    if (JSON.stringify(localAllocationBuckets) !== JSON.stringify(remoteAllocationBuckets)) {
-        rows.push({
-            section: 'definition',
-            settingName: 'Allocation Buckets',
-            localDisplay: formatSyncValue(localAllocationBuckets),
-            remoteDisplay: formatSyncValue(remoteAllocationBuckets)
-        });
-    }
+    pushOcbcConflictDiffRow(rows, {
+        section: 'definition',
+        settingName: 'Allocation Buckets',
+        localDisplay: localAllocationBuckets,
+        remoteDisplay: remoteAllocationBuckets
+    });
 
     const localSubPortfolios = formatOcbcSubPortfoliosDisplay(localOcbc.subPortfolios);
     const remoteSubPortfolios = formatOcbcSubPortfoliosDisplay(remoteOcbc.subPortfolios);
-    if (JSON.stringify(localSubPortfolios) !== JSON.stringify(remoteSubPortfolios)) {
-        rows.push({
-            section: 'definition',
-            settingName: 'Sub-portfolios',
-            localDisplay: formatSyncValue(localSubPortfolios),
-            remoteDisplay: formatSyncValue(remoteSubPortfolios)
-        });
-    }
+    pushOcbcConflictDiffRow(rows, {
+        section: 'definition',
+        settingName: 'Sub-portfolios',
+        localDisplay: localSubPortfolios,
+        remoteDisplay: remoteSubPortfolios
+    });
 
     const localAssignmentByCode = formatOcbcAssignmentByCodeDisplay(localOcbc.assignmentByCode);
     const remoteAssignmentByCode = formatOcbcAssignmentByCodeDisplay(remoteOcbc.assignmentByCode);
-    if (JSON.stringify(localAssignmentByCode) !== JSON.stringify(remoteAssignmentByCode)) {
-        rows.push({
-            section: 'assignment',
-            settingName: 'Code assignments',
-            localDisplay: formatSyncValue(localAssignmentByCode),
-            remoteDisplay: formatSyncValue(remoteAssignmentByCode)
-        });
-    }
+    pushOcbcConflictDiffRow(rows, {
+        section: 'assignment',
+        settingName: 'Code assignments',
+        localDisplay: localAssignmentByCode,
+        remoteDisplay: remoteAssignmentByCode
+    });
 
     const localOrderByScope = formatOcbcOrderByScopeDisplay(localOcbc.orderByScope);
     const remoteOrderByScope = formatOcbcOrderByScopeDisplay(remoteOcbc.orderByScope);
-    if (JSON.stringify(localOrderByScope) !== JSON.stringify(remoteOrderByScope)) {
-        rows.push({
-            section: 'assignment',
-            settingName: 'Display order',
-            localDisplay: formatSyncValue(localOrderByScope),
-            remoteDisplay: formatSyncValue(remoteOrderByScope)
-        });
-    }
+    pushOcbcConflictDiffRow(rows, {
+        section: 'assignment',
+        settingName: 'Display order',
+        localDisplay: localOrderByScope,
+        remoteDisplay: remoteOrderByScope
+    });
 
     const localTargetsByScope = formatOcbcTargetsByScopeDisplay(localOcbc.targetsByScope);
     const remoteTargetsByScope = formatOcbcTargetsByScopeDisplay(remoteOcbc.targetsByScope);
-    if (JSON.stringify(localTargetsByScope) !== JSON.stringify(remoteTargetsByScope)) {
-        rows.push({
-            section: 'target',
-            settingName: 'Allocation targets',
-            localDisplay: formatSyncValue(localTargetsByScope),
-            remoteDisplay: formatSyncValue(remoteTargetsByScope)
-        });
-    }
+    pushOcbcConflictDiffRow(rows, {
+        section: 'target',
+        settingName: 'Allocation targets',
+        localDisplay: localTargetsByScope,
+        remoteDisplay: remoteTargetsByScope
+    });
 
     return rows;
 }
@@ -8423,14 +8429,22 @@ let GoalTargetStore;
         indicator.setAttribute('role', 'button');
         indicator.setAttribute('tabindex', '0');
         if (typeof onActivate === 'function') {
-            indicator.addEventListener('click', onActivate);
-            indicator.addEventListener('keydown', event => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    onActivate();
-                }
-            });
+            wireClickKeyActivation(indicator, onActivate);
         }
+    }
+
+    function wireClickKeyActivation(element, handler) {
+        if (!element || typeof handler !== 'function') {
+            return;
+        }
+        element.addEventListener('click', handler);
+        element.addEventListener('keydown', event => {
+            if (event.key !== 'Enter' && event.key !== ' ') {
+                return;
+            }
+            event.preventDefault();
+            handler(event);
+        });
     }
 
     function buildSafeCollapseId(prefix, ...parts) {
@@ -8558,15 +8572,10 @@ let GoalTargetStore;
             element.setAttribute('aria-label', ariaLabel);
         }
         if (typeof onSelect === 'function') {
-            element.addEventListener('click', onSelect);
             if (!isNativeButton) {
-                element.addEventListener('keydown', event => {
-                    if (event.key !== 'Enter' && event.key !== ' ') {
-                        return;
-                    }
-                    event.preventDefault();
-                    onSelect(event);
-                });
+                wireClickKeyActivation(element, onSelect);
+            } else {
+                element.addEventListener('click', onSelect);
             }
         }
         return element;
@@ -10187,56 +10196,39 @@ function withButtonState(button, busyText, action) {
         `;
     }
 
-    function renderServerUrlField({ serverUrl, isEnabled, cryptoSupported }) {
+    function renderSyncInputField({ id, label, type = 'text', value = null, placeholder = '', help, disabled }) {
         return `
             <div class="gpv-sync-form-group">
-                <label for="gpv-sync-server-url">Server URL</label>
-                <input 
-                    type="text" 
-                    id="gpv-sync-server-url"
-                    class="gpv-sync-input"
-                    value="${escapeHtml(serverUrl)}"
-                    placeholder="${SYNC_DEFAULTS.serverUrl}"
-                    ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
-                />
-                <p class="gpv-sync-help">
-                    Default: ${SYNC_DEFAULTS.serverUrl} (or use your self-hosted instance)
-                </p>
+                <label for="${id}">${label}</label>
+                <input type="${type}" id="${id}" class="gpv-sync-input"
+                    ${value !== null ? `value="${escapeHtml(value)}"` : ''} placeholder="${placeholder}" ${disabled ? 'disabled' : ''} />
+                <p class="gpv-sync-help">${help}</p>
             </div>
         `;
+    }
+
+    function renderServerUrlField({ serverUrl, isEnabled, cryptoSupported }) {
+        return renderSyncInputField({
+            id: 'gpv-sync-server-url', label: 'Server URL', value: serverUrl, placeholder: SYNC_DEFAULTS.serverUrl,
+            help: `Default: ${SYNC_DEFAULTS.serverUrl} (or use your self-hosted instance)`,
+            disabled: !isEnabled || !cryptoSupported,
+        });
     }
 
     function renderUserIdField({ userId, isEnabled, cryptoSupported }) {
-        return `
-            <div class="gpv-sync-form-group">
-                <label for="gpv-sync-user-id">User ID / Email</label>
-                <input 
-                    type="text" 
-                    id="gpv-sync-user-id"
-                    class="gpv-sync-input"
-                    value="${escapeHtml(userId)}"
-                    placeholder="user@example.com"
-                    ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
-                />
-                <p class="gpv-sync-help">Use an email or short username.</p>
-            </div>
-        `;
+        return renderSyncInputField({
+            id: 'gpv-sync-user-id', label: 'User ID / Email', value: userId, placeholder: 'user@example.com',
+            help: 'Use an email or short username.',
+            disabled: !isEnabled || !cryptoSupported,
+        });
     }
 
     function renderPasswordField({ isEnabled, cryptoSupported }) {
-        return `
-            <div class="gpv-sync-form-group">
-                <label for="gpv-sync-password">Password</label>
-                <input 
-                    type="password" 
-                    id="gpv-sync-password"
-                    class="gpv-sync-input"
-                    placeholder="••••••••"
-                    ${!isEnabled || !cryptoSupported ? 'disabled' : ''}
-                />
-                <p class="gpv-sync-help">Minimum 8 characters. Your password never leaves your device.</p>
-            </div>
-        `;
+        return renderSyncInputField({
+            id: 'gpv-sync-password', label: 'Password', type: 'password', placeholder: '••••••••',
+            help: 'Minimum 8 characters. Your password never leaves your device.',
+            disabled: !isEnabled || !cryptoSupported,
+        });
     }
 
     function renderRememberKeySection({ isEnabled, cryptoSupported, rememberKey }) {
@@ -10822,6 +10814,8 @@ function showSyncSettings(options = {}) {
 // CHUNK 5: CONFLICT RESOLUTION UI
 // ============================================
 
+const CONFLICT_DIFF_EMPTY_HTML = '<div class="gpv-conflict-diff-empty">No differences detected.</div>';
+
 /**
  * Format timestamp for display
  */
@@ -10843,7 +10837,7 @@ function createConflictDialogHTML(conflict) {
     `;
     const sectionRows = (rows, label) => rows.length > 0
         ? `<table class="gpv-conflict-diff-table"><thead><tr><th>${label}</th><th>Local</th><th>Remote</th></tr></thead><tbody>${rows}</tbody></table>`
-        : '<div class="gpv-conflict-diff-empty">No differences detected.</div>';
+        : CONFLICT_DIFF_EMPTY_HTML;
 
     const endowusRows = diffSections.endowus.map(item => `
             ${buildDiffRow(
@@ -10866,7 +10860,7 @@ function createConflictDialogHTML(conflict) {
     const hasTargetRows = endowusRows.length > 0 || fsmInstrumentRows.length > 0 || ocbcTargetRows.length > 0;
     const targetRowsHtml = hasTargetRows
         ? `${endowusRows.length > 0 ? sectionRows(endowusRows, 'Goal') : ''}${fsmInstrumentRows.length > 0 ? sectionRows(fsmInstrumentRows, 'Instrument') : ''}${ocbcTargetRows.length > 0 ? sectionRows(ocbcTargetRows, 'Setting') : ''}`
-        : '<div class="gpv-conflict-diff-empty">No differences detected.</div>';
+        : CONFLICT_DIFF_EMPTY_HTML;
 
     return `
         <div class="gpv-conflict-dialog" data-step="1">
@@ -11191,8 +11185,12 @@ syncUi.update = function updateSyncUI() {
                 --gpv-color-text: #0f172a;
                 --gpv-color-muted: #475569;
                 --gpv-color-border: #dbe3ee;
+                --gpv-color-surface: #f8fafc;
+                --gpv-color-surface-alt: #f9fafb;
                 --gpv-color-primary: #2563eb;
                 --gpv-color-primary-strong: #1d4ed8;
+                --gpv-color-positive: #059669;
+                --gpv-color-warning: #b45309;
                 --gpv-color-success: #0d9488;
                 --gpv-color-danger: #dc2626;
             }
@@ -11357,7 +11355,7 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-input-flash--error {
-                --gpv-flash-color: #dc2626;
+                --gpv-flash-color: var(--gpv-color-danger);
             }
 
             .gpv-input-flash--warning {
@@ -11373,7 +11371,7 @@ syncUi.update = function updateSyncUI() {
                 justify-content: space-between;
                 align-items: center;
                 padding: 12px 16px;
-                border-bottom: 1px solid #dbe3ee;
+                border-bottom: 1px solid var(--gpv-color-border);
                 background: linear-gradient(180deg, #f8fbff 0%, #f2f7ff 100%);
                 border-radius: 16px 16px 0 0;
             }
@@ -11474,8 +11472,8 @@ syncUi.update = function updateSyncUI() {
             .gpv-controls,
             .gpv-control-bar {
                 padding: 8px 16px;
-                background: #f8fafc;
-                border-bottom: 1px solid #dbe3ee;
+                background: var(--gpv-color-surface);
+                border-bottom: 1px solid var(--gpv-color-border);
                 display: flex;
                 align-items: center;
                 gap: 10px;
@@ -11559,7 +11557,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-readiness,
             .gpv-fsm-overview-card {
                 background: #ffffff;
-                border: 1px solid #dbe3ee;
+                border: 1px solid var(--gpv-color-border);
                 border-radius: 12px;
                 box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
             }
@@ -11574,8 +11572,8 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-metric-card,
             .gpv-summary-card {
-                background: #f8fafc;
-                border: 1px solid #dbe3ee;
+                background: var(--gpv-color-surface);
+                border: 1px solid var(--gpv-color-border);
                 border-radius: 10px;
                 padding: 10px 12px;
                 font-size: 13px;
@@ -11595,7 +11593,7 @@ syncUi.update = function updateSyncUI() {
                 width: 100%;
                 overflow-x: auto;
                 -webkit-overflow-scrolling: touch;
-                border: 1px solid #dbe3ee;
+                border: 1px solid var(--gpv-color-border);
                 border-radius: 10px;
                 background: #ffffff;
                 margin-bottom: var(--gpv-space-4);
@@ -11896,7 +11894,7 @@ syncUi.update = function updateSyncUI() {
                 font-weight: 700;
                 color: #111827;
                 margin: 0 0 10px 0;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
             
             .gpv-stats {
@@ -11927,15 +11925,15 @@ syncUi.update = function updateSyncUI() {
                 font-size: 18px;
                 font-weight: 700;
                 color: #111827;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
             
             .gpv-stat-value.positive {
-                color: #059669;
+                color: var(--gpv-color-positive);
             }
             
             .gpv-stat-value.negative {
-                color: #dc2626;
+                color: var(--gpv-color-danger);
             }
 
             .gpv-summary-profit-value {
@@ -11944,19 +11942,19 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-summary-profit-value.positive,
             .gpv-fsm-overview-stat-value.positive {
-                color: #059669;
+                color: var(--gpv-color-positive);
             }
 
             .gpv-summary-profit-value.negative,
             .gpv-fsm-overview-stat-value.negative {
-                color: #dc2626;
+                color: var(--gpv-color-danger);
             }
             
             .gpv-goal-type-row {
                 display: flex;
                 gap: 16px;
                 padding: 10px 12px;
-                background: #f9fafb;
+                background: var(--gpv-color-surface-alt);
                 border-radius: 8px;
                 margin-bottom: 8px;
                 align-items: center;
@@ -11972,7 +11970,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-goal-type-stat {
                 font-size: 13px;
                 color: #4b5563;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
 
             .gpv-goal-type-stat .gpv-drift--green,
@@ -11981,7 +11979,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-column-drift.gpv-drift--green,
             .gpv-summary-card.gpv-drift--green,
             .gpv-table .gpv-drift--green {
-                color: #059669;
+                color: var(--gpv-color-positive);
                 font-weight: 700;
             }
 
@@ -11991,7 +11989,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-column-drift.gpv-drift--yellow,
             .gpv-summary-card.gpv-drift--yellow,
             .gpv-table .gpv-drift--yellow {
-                color: #b45309;
+                color: var(--gpv-color-warning);
                 font-weight: 700;
             }
 
@@ -12001,7 +11999,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-column-drift.gpv-drift--red,
             .gpv-summary-card.gpv-drift--red,
             .gpv-table .gpv-drift--red {
-                color: #dc2626;
+                color: var(--gpv-color-danger);
                 font-weight: 700;
             }
             
@@ -12022,7 +12020,7 @@ syncUi.update = function updateSyncUI() {
                 font-weight: 700;
                 color: #111827;
                 margin: 0;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
             
             .gpv-detail-stats {
@@ -12064,7 +12062,7 @@ syncUi.update = function updateSyncUI() {
                 font-weight: 700;
                 color: #1f2937;
                 margin: 0 0 8px 0;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
             
             .gpv-type-summary {
@@ -12073,7 +12071,7 @@ syncUi.update = function updateSyncUI() {
                 font-size: 14px;
                 color: #4b5563;
                 font-weight: 500;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
 
             .gpv-summary-row .gpv-summary-card-label {
@@ -12175,10 +12173,10 @@ syncUi.update = function updateSyncUI() {
                 width: 100%;
                 border-collapse: separate;
                 border-spacing: 0;
-                border: 1px solid #dbe3ee;
+                border: 1px solid var(--gpv-color-border);
                 border-radius: 8px;
                 overflow: hidden;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
             
             .gpv-table thead tr {
@@ -12210,7 +12208,7 @@ syncUi.update = function updateSyncUI() {
                 font-size: 14px;
                 color: #1f2937;
                 border-top: 1px solid #e2e8f0;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
             
             .gpv-table tbody tr {
@@ -12218,15 +12216,15 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-table tbody tr:hover {
-                background-color: #f8fafc;
+                background-color: var(--gpv-color-surface);
             }
 
             .gpv-table tbody tr.gpv-goal-row:hover + tr.gpv-goal-metrics-row {
-                background-color: #f8fafc;
+                background-color: var(--gpv-color-surface);
             }
 
             .gpv-table tbody tr.gpv-goal-metrics-row:hover {
-                background-color: #f8fafc;
+                background-color: var(--gpv-color-surface);
             }
 
             .gpv-mode-allocation .gpv-column-return,
@@ -12290,7 +12288,7 @@ syncUi.update = function updateSyncUI() {
                 font-weight: 600;
                 color: #111827;
                 font-size: 14px;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
 
             .gpv-fsm-manager-row label {
@@ -12319,12 +12317,12 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-table .positive {
-                color: #059669;
+                color: var(--gpv-color-positive);
                 font-weight: 700;
             }
             
             .gpv-table .negative {
-                color: #dc2626;
+                color: var(--gpv-color-danger);
                 font-weight: 700;
             }
             
@@ -12417,7 +12415,7 @@ syncUi.update = function updateSyncUI() {
                 color: #1f2937;
                 background: #ffffff;
                 transition: all 0.2s ease;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
             
             .gpv-target-input:focus {
@@ -12455,11 +12453,11 @@ syncUi.update = function updateSyncUI() {
             }
             
             .gpv-diff-cell.positive {
-                color: #059669;
+                color: var(--gpv-color-positive);
             }
             
             .gpv-diff-cell.negative {
-                color: #dc2626;
+                color: var(--gpv-color-danger);
             }
 
             /* Projected Investment Input Styles */
@@ -12483,7 +12481,7 @@ syncUi.update = function updateSyncUI() {
                 font-size: 13px;
                 font-weight: 600;
                 color: #0c4a6e;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
                 white-space: nowrap;
             }
 
@@ -12501,7 +12499,7 @@ syncUi.update = function updateSyncUI() {
                 color: #0c4a6e;
                 background: #ffffff;
                 transition: all 0.2s ease;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
 
             .gpv-projected-input:focus {
@@ -12540,7 +12538,7 @@ syncUi.update = function updateSyncUI() {
                 align-items: stretch;
                 padding: 12px;
                 border-radius: 10px;
-                background: #f8fafc;
+                background: var(--gpv-color-surface);
                 border: 1px solid #e5e7eb;
                 margin-bottom: 14px;
             }
@@ -12563,7 +12561,7 @@ syncUi.update = function updateSyncUI() {
                 font-size: 12px;
                 color: #64748b;
                 font-weight: 500;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
 
             .gpv-performance-refresh-btn {
@@ -12576,7 +12574,7 @@ syncUi.update = function updateSyncUI() {
                 border-radius: 999px;
                 cursor: pointer;
                 transition: all 0.2s ease;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
 
             .gpv-performance-refresh-btn:hover:not(:disabled) {
@@ -12598,7 +12596,7 @@ syncUi.update = function updateSyncUI() {
                 width: 100%;
                 text-align: center;
                 padding: 12px 0;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
 
             .gpv-performance-chart-wrapper {
@@ -12633,14 +12631,14 @@ syncUi.update = function updateSyncUI() {
             .gpv-performance-chart-label {
                 font-size: 9px;
                 fill: #64748b;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
 
             .gpv-performance-chart-title {
                 font-size: 9px;
                 fill: #475569;
                 font-weight: 600;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
 
             .gpv-performance-chart-point {
@@ -12650,7 +12648,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-performance-chart-empty {
                 font-size: 12px;
                 fill: #94a3b8;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                font-family: var(--gpv-font-family);
             }
 
             .gpv-performance-window-grid {
@@ -12683,11 +12681,11 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-performance-window-value.positive {
-                color: #059669;
+                color: var(--gpv-color-positive);
             }
 
             .gpv-performance-window-value.negative {
-                color: #dc2626;
+                color: var(--gpv-color-danger);
             }
 
             .gpv-performance-metrics-table {
@@ -12695,11 +12693,6 @@ syncUi.update = function updateSyncUI() {
                 max-width: 320px;
                 border-collapse: collapse;
                 font-size: 13px;
-            }
-
-            .gpv-performance-detail-row .gpv-performance-chart-wrapper {
-                flex: 1;
-                min-width: 240px;
             }
 
             .gpv-performance-metrics-table tr {
@@ -12771,7 +12764,7 @@ syncUi.update = function updateSyncUI() {
                 padding: 6px 8px;
                 border-radius: 6px;
                 background: #0f172a;
-                color: #f8fafc;
+                color: var(--gpv-color-surface);
                 font-size: 11px;
                 line-height: 1.4;
                 text-align: left;
@@ -13014,10 +13007,6 @@ syncUi.update = function updateSyncUI() {
                     color: var(--gpv-color-muted);
                 }
 
-                .gpv-sync-help.gpv-ocbc-target-summary {
-                    margin: 0;
-                }
-
                 .gpv-sync-help--lead {
                     margin: 0;
                     font-size: 13px;
@@ -13053,7 +13042,7 @@ syncUi.update = function updateSyncUI() {
                 .gpv-sync-advanced {
                     border: 1px solid #e5e7eb;
                     border-radius: 8px;
-                    background: #f9fafb;
+                    background: var(--gpv-color-surface-alt);
                     padding: 10px 12px;
                 }
 
@@ -13115,7 +13104,7 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-sync-btn-secondary {
-                    background: #f8fafc;
+                    background: var(--gpv-color-surface);
                     color: #1e40af;
                     border: 1px solid #bfdbfe;
                     border-radius: var(--gpv-radius-lg);
@@ -13235,7 +13224,7 @@ syncUi.update = function updateSyncUI() {
                 .gpv-conflict-diff {
                     margin-bottom: 15px;
                     padding: 14px;
-                    background: #f8fafc;
+                    background: var(--gpv-color-surface);
                     border-radius: 8px;
                     border: 1px solid #e5e7eb;
                 }
@@ -13431,7 +13420,7 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-fsm-overview-card {
                     background: #ffffff;
-                    border: 1px solid #dbe3ee;
+                    border: 1px solid var(--gpv-color-border);
                     border-radius: 12px;
                     padding: 16px;
                     cursor: pointer;
@@ -13494,7 +13483,7 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-fsm-overview-stat {
-                    background: #f8fafc;
+                    background: var(--gpv-color-surface);
                     border: 1px solid #e5e7eb;
                     border-radius: 8px;
                     padding: 8px 10px;
@@ -13521,7 +13510,7 @@ syncUi.update = function updateSyncUI() {
                 }
 
                 .gpv-fsm-overview-stat-value.gpv-drift--yellow {
-                    color: #b45309;
+                    color: var(--gpv-color-warning);
                 }
 
                 .gpv-fsm-overview-stat-value.gpv-drift--red {
@@ -13541,10 +13530,6 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-fsm-table-wrap .gpv-table td[data-col="profit"] {
                     font-weight: 700;
-                }
-
-                .gpv-fsm-table-wrap .gpv-table {
-                    min-width: 1120px;
                 }
 
                 .gpv-table-wrap .gpv-table,
@@ -14299,6 +14284,30 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         };
     }
 
+    function createPlatformOverlay({
+        platformId,
+        title,
+        centerNode,
+        extraButtons = [],
+        syncButtonOptions,
+        shellOptions = {}
+    }) {
+        const shell = createOverlayShell({
+            title,
+            allowOverlayClose: true,
+            centerNode,
+            ...shellOptions
+        });
+        const expandBtn = createOverlayExpandToggleButton(shell.container);
+        const syncBtn = createOverlaySyncButton(platformId, syncButtonOptions || {});
+        prependOverlayHeaderButtons(shell.header, [expandBtn, syncBtn, ...extraButtons]);
+        return {
+            ...shell,
+            expandBtn,
+            syncBtn
+        };
+    }
+
     function createOverlayExpandToggleButton(container, options = {}) {
         const expandBtn = createElement('button', 'gpv-expand-btn');
         expandBtn.type = 'button';
@@ -14899,15 +14908,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function renderFsmOverlay(fsmHoldings) {
-        const shell = createOverlayShell({
+        const shell = createPlatformOverlay({
+            platformId: 'fsm',
             title: 'Portfolio Viewer (FSM)',
-            allowOverlayClose: true
         });
-        const { overlay, container, cleanupCallbacks, header, contentDiv } = shell;
-
-        const expandBtn = createOverlayExpandToggleButton(container);
-        const syncBtn = createOverlaySyncButton('fsm');
-        prependOverlayHeaderButtons(header, [expandBtn, syncBtn]);
+        const { overlay, cleanupCallbacks, header, contentDiv } = shell;
 
         const config = loadFsmPortfolioConfig(fsmHoldings);
         let portfolios = config.portfolios;
@@ -15888,15 +15893,11 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     }
 
     function renderOcbcOverlay(ocbcHoldings, options = {}) {
-        const shell = createOverlayShell({
+        const shell = createPlatformOverlay({
+            platformId: 'ocbc',
             title: 'Portfolio Viewer (OCBC)',
-            allowOverlayClose: true
         });
-        const { container, contentDiv, header } = shell;
-
-        const expandBtn = createOverlayExpandToggleButton(container);
-        const syncBtn = createOverlaySyncButton('ocbc');
-        prependOverlayHeaderButtons(header, [expandBtn, syncBtn]);
+        const { container, contentDiv } = shell;
 
         const controls = createElement('div', 'gpv-controls gpv-control-bar');
         const viewSelectId = 'gpv-ocbc-view-select';
@@ -16628,28 +16629,23 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             }
         }
 
-        // Add sync settings button
-        const syncBtn = createOverlaySyncButton('endowus', {
-            onUnavailable: () => {
-                console.error('[Goal Portfolio Viewer] showSyncSettings is not a function!');
-                alert('Sync settings are not available. Please ensure the sync module is loaded.');
-            }
-        });
-
         const bucketManageBtn = createElement('button', 'gpv-sync-btn gpv-sync-btn-secondary gpv-bucket-manage-btn', '🗂️ Manage assignments');
         bucketManageBtn.type = 'button';
         bucketManageBtn.title = 'Manage assignments';
 
-        const shell = createOverlayShell({
+        const shell = createPlatformOverlay({
+            platformId: 'endowus',
             title: 'Portfolio Viewer',
             centerNode: syncIndicatorContainer,
-            allowOverlayClose: true
+            extraButtons: [bucketManageBtn],
+            syncButtonOptions: {
+                onUnavailable: () => {
+                    console.error('[Goal Portfolio Viewer] showSyncSettings is not a function!');
+                    alert('Sync settings are not available. Please ensure the sync module is loaded.');
+                }
+            }
         });
-        const { overlay, container, cleanupCallbacks, closeBtn, header, contentDiv } = shell;
-
-        const expandBtn = createOverlayExpandToggleButton(container);
-
-        prependOverlayHeaderButtons(header, [expandBtn, syncBtn, bucketManageBtn]);
+        const { overlay, container, cleanupCallbacks, closeBtn, contentDiv } = shell;
         const controls = createElement('div', 'gpv-controls gpv-control-bar');
 
         const modeToggle = createElement('div', 'gpv-mode-toggle');
