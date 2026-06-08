@@ -30,6 +30,9 @@ const EXCLUDED_STYLE_CLASSES = new Set([
     'gpv-sync-enabled',
     'gpv-sync-auto',
     'gpv-sync-interval',
+    'gpv-sync-password',
+    'gpv-sync-server-url',
+    'gpv-sync-user-id',
     'gpv-conflict-overlay',
     'gpv-sync-overlay-title'
 ]);
