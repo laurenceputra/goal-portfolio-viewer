@@ -478,10 +478,7 @@
     }
 
     function composeDisplayPair(primaryDisplay, secondaryDisplay, options = {}) {
-        const {
-            fallback = '-',
-            requireBoth = false
-        } = options;
+        const { fallback = '-', requireBoth = false } = options;
         const hasPrimary = primaryDisplay !== fallback;
         const hasSecondary = secondaryDisplay !== fallback;
         if (requireBoth) {
@@ -5597,6 +5594,13 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         }
     }
 
+    function markSyncSuccess(message) {
+        syncStatus = SYNC_STATUS.success;
+        lastError = null;
+        lastErrorMeta = null;
+        logDebug(message);
+    }
+
     /**
      * Perform sync operation
      */
@@ -5637,28 +5641,17 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             if (direction === 'upload') {
                 await uploadConfig(localConfig);
                 recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-
-                syncStatus = SYNC_STATUS.success;
-                lastError = null;
-                lastErrorMeta = null;
-                logDebug('[Goal Portfolio Viewer] Sync upload successful');
+                markSyncSuccess('[Goal Portfolio Viewer] Sync upload successful');
             } else if (direction === 'download') {
                 const serverData = await downloadConfig();
                 if (!serverData) {
                     recordSuccessfulSync();
-                    syncStatus = SYNC_STATUS.success;
-                    lastError = null;
-                    lastErrorMeta = null;
-                    logDebug('[Goal Portfolio Viewer] No server data to download');
+                    markSyncSuccess('[Goal Portfolio Viewer] No server data to download');
                 } else {
                     applyConfigData(serverData.config);
                     const serverHash = await hashConfigData(serverData.config);
                     recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-
-                    syncStatus = SYNC_STATUS.success;
-                    lastError = null;
-                    lastErrorMeta = null;
-                    logDebug('[Goal Portfolio Viewer] Sync download successful');
+                    markSyncSuccess('[Goal Portfolio Viewer] Sync download successful');
                 }
             } else {
                 const serverData = await downloadConfig();
@@ -5666,32 +5659,20 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 if (!serverData) {
                     await uploadConfig(localConfig);
                     recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-
-                    syncStatus = SYNC_STATUS.success;
-                    lastError = null;
-                    lastErrorMeta = null;
-                    logDebug('[Goal Portfolio Viewer] No server data, uploaded local config');
+                    markSyncSuccess('[Goal Portfolio Viewer] No server data, uploaded local config');
                 } else {
                     const serverHash = await hashConfigData(serverData.config);
 
                     if (!hasLastDataTimestamp) {
                         applyConfigData(serverData.config);
                         recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-
-                        syncStatus = SYNC_STATUS.success;
-                        lastError = null;
-                        lastErrorMeta = null;
-                        logDebug('[Goal Portfolio Viewer] Missing sync metadata, bootstrapped from server snapshot');
+                        markSyncSuccess('[Goal Portfolio Viewer] Missing sync metadata, bootstrapped from server snapshot');
                     } else if (localHash && serverHash && localHash === serverHash) {
                         recordSuccessfulSync({
                             dataTimestamp: Math.max(localConfig.timestamp, serverData.metadata.timestamp),
                             hash: localHash
                         });
-
-                        syncStatus = SYNC_STATUS.success;
-                        lastError = null;
-                        lastErrorMeta = null;
-                        logDebug('[Goal Portfolio Viewer] Local and server content identical, sync already up to date');
+                        markSyncSuccess('[Goal Portfolio Viewer] Local and server content identical, sync already up to date');
                     } else {
                         const conflict = await detectConflict(localConfig, serverData, localHash, serverHash);
 
@@ -5706,25 +5687,14 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                         if (localConfig.timestamp > serverData.metadata.timestamp) {
                             await uploadConfig(localConfig);
                             recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-
-                            syncStatus = SYNC_STATUS.success;
-                            lastError = null;
-                            lastErrorMeta = null;
-                            logDebug('[Goal Portfolio Viewer] Local config newer, uploaded to server');
+                            markSyncSuccess('[Goal Portfolio Viewer] Local config newer, uploaded to server');
                         } else if (localConfig.timestamp < serverData.metadata.timestamp) {
                             applyConfigData(serverData.config);
                             recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-
-                            syncStatus = SYNC_STATUS.success;
-                            lastError = null;
-                            lastErrorMeta = null;
-                            logDebug('[Goal Portfolio Viewer] Server config newer, applied locally');
+                            markSyncSuccess('[Goal Portfolio Viewer] Server config newer, applied locally');
                         } else {
                             recordSuccessfulSync();
-                            syncStatus = SYNC_STATUS.success;
-                            lastError = null;
-                            lastErrorMeta = null;
-                            logDebug('[Goal Portfolio Viewer] Sync already up to date');
+                            markSyncSuccess('[Goal Portfolio Viewer] Sync already up to date');
                         }
                     }
                 }
@@ -10442,15 +10412,7 @@ function withButtonState(button, busyText, action) {
             withButtonState(saveBtn, 'Saving...', async () => {
                 try {
                     clearSyncMessage();
-                    const {
-                        enabled,
-                        serverUrl,
-                        userId,
-                        password,
-                        rememberKey,
-                        autoSync,
-                        syncInterval
-                    } = getSyncFormState();
+                    const { enabled, serverUrl, userId, password, rememberKey, autoSync, syncInterval } = getSyncFormState();
                     const { hasSessionKey } = SyncManager.getStatus();
 
                     // Validation
@@ -10470,14 +10432,7 @@ function withButtonState(button, busyText, action) {
                     }
 
                     if (enabled) {
-                        await SyncManager.enable({
-                            serverUrl,
-                            userId,
-                            password: password || null,
-                            rememberKey,
-                            autoSync,
-                            syncInterval
-                        });
+                        await SyncManager.enable({ serverUrl, userId, password: password || null, rememberKey, autoSync, syncInterval });
                         const successMessage = 'Sync settings saved successfully!';
                         showSuccessMessage(successMessage);
                         rerenderSyncSettingsPanel({ message: successMessage, type: 'success', delay: 300 });
@@ -10502,15 +10457,7 @@ function withButtonState(button, busyText, action) {
             withButtonState(registerBtn, 'Signing up...', async () => {
                 try {
                     clearSyncMessage();
-                    const {
-                        enabled,
-                        serverUrl,
-                        userId,
-                        password,
-                        rememberKey,
-                        autoSync,
-                        syncInterval
-                    } = getSyncFormState();
+                    const { enabled, serverUrl, userId, password, rememberKey, autoSync, syncInterval } = getSyncFormState();
 
                     if (!enabled) {
                         throw new Error('Activate Sync before signing up');
@@ -10526,14 +10473,7 @@ function withButtonState(button, busyText, action) {
 
                     await SyncManager.register(serverUrl, userId, password);
                     await SyncManager.login(serverUrl, userId, password);
-                    await SyncManager.enable({
-                        serverUrl,
-                        userId,
-                        password,
-                        rememberKey,
-                        autoSync,
-                        syncInterval
-                    });
+                    await SyncManager.enable({ serverUrl, userId, password, rememberKey, autoSync, syncInterval });
                     const successMessage = '✅ Account created and sync enabled with encryption by default.';
                     showSuccessMessage(successMessage);
                     rerenderSyncSettingsPanel({ message: successMessage, type: 'success', delay: 1500 });
@@ -10552,15 +10492,7 @@ function withButtonState(button, busyText, action) {
             withButtonState(loginBtn, 'Logging in...', async () => {
                 try {
                     clearSyncMessage();
-                    const {
-                        enabled,
-                        serverUrl,
-                        userId,
-                        password,
-                        rememberKey,
-                        autoSync,
-                        syncInterval
-                    } = getSyncFormState();
+                    const { enabled, serverUrl, userId, password, rememberKey, autoSync, syncInterval } = getSyncFormState();
 
                     if (!enabled) {
                         throw new Error('Activate Sync before logging in');
@@ -10571,14 +10503,7 @@ function withButtonState(button, busyText, action) {
                     }
 
                     await SyncManager.login(serverUrl, userId, password);
-                    await SyncManager.enable({
-                        serverUrl,
-                        userId,
-                        password,
-                        rememberKey,
-                        autoSync,
-                        syncInterval
-                    });
+                    await SyncManager.enable({ serverUrl, userId, password, rememberKey, autoSync, syncInterval });
                     const successMessage = '✅ Login successful! Sync enabled with encryption by default.';
                     showSuccessMessage(successMessage);
 
