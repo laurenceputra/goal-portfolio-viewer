@@ -458,6 +458,101 @@ describe('API interception', () => {
         expect(global.GM_setValue).not.toHaveBeenCalledWith('endowus', expect.any(String));
     });
 
+    test('fetch interception matches exact Endowus paths with query, hash, and relative URLs', async () => {
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        const performanceData = [{ goalId: 'performance-goal' }];
+        const investibleData = [{ goalId: 'investible-goal' }];
+        const summaryData = [{ goalId: 'summary-goal' }];
+
+        baseFetchMock
+            .mockResolvedValueOnce(responseFactory(performanceData))
+            .mockResolvedValueOnce(responseFactory(investibleData))
+            .mockResolvedValueOnce(responseFactory(summaryData));
+
+        await window.fetch('https://app.sg.endowus.com/v1/goals/performance?source=portfolio#returns');
+        await window.fetch('/v2/goals/investible#balances');
+        await window.fetch('/v1/goals?source=portfolio');
+        await flushPromises();
+
+        const endowusCalls = global.GM_setValue.mock.calls.filter(([key]) => key === 'endowus');
+        const saved = JSON.parse(endowusCalls[endowusCalls.length - 1][1]);
+        expect(saved.datasets.performance).toEqual(performanceData);
+        expect(saved.datasets.investible).toEqual(investibleData);
+        expect(saved.datasets.summary).toEqual(summaryData);
+    });
+
+    test('fetch interception uses the document base for path-relative Endowus URLs', async () => {
+        window.history.replaceState({}, '', '/dashboard/');
+        const initialEndowus = JSON.stringify({
+            version: 4,
+            datasets: {
+                performance: [{ goalId: 'existing-performance' }],
+                investible: null,
+                summary: null
+            }
+        });
+        storage.set('endowus', initialEndowus);
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        const nearMissData = [{ goalId: 'near-miss-performance' }];
+        const performanceData = [{ goalId: 'performance-goal' }];
+        baseFetchMock
+            .mockResolvedValueOnce(responseFactory(nearMissData))
+            .mockResolvedValueOnce(responseFactory(performanceData));
+        global.GM_setValue.mockClear();
+
+        await window.fetch('v1/goals/performance');
+        await flushPromises();
+        expect(storage.get('endowus')).toBe(initialEndowus);
+
+        await window.fetch('/v1/goals/performance');
+        await flushPromises();
+
+        const endowusCalls = global.GM_setValue.mock.calls.filter(([key]) => key === 'endowus');
+        expect(endowusCalls).toHaveLength(1);
+        expect(JSON.parse(endowusCalls[0][1]).datasets.performance).toEqual(performanceData);
+    });
+
+    test('fetch interception ignores Endowus near-miss and proxy paths without overwriting stored data', async () => {
+        const initialEndowus = JSON.stringify({
+            version: 4,
+            datasets: {
+                performance: [{ goalId: 'existing-performance' }],
+                investible: [{ goalId: 'existing-investible' }],
+                summary: [{ goalId: 'existing-summary' }]
+            }
+        });
+        storage.set('endowus', initialEndowus);
+        const responseFactory = body => ({
+            clone: () => responseFactory(body),
+            json: () => Promise.resolve(body),
+            ok: true,
+            status: 200
+        });
+        baseFetchMock
+            .mockResolvedValueOnce(responseFactory([{ goalId: 'near-miss-performance' }]))
+            .mockResolvedValueOnce(responseFactory([{ goalId: 'near-miss-investible' }]))
+            .mockResolvedValueOnce(responseFactory([{ goalId: 'near-miss-summary' }]));
+        global.GM_setValue.mockClear();
+
+        await window.fetch('https://app.sg.endowus.com/proxy/v1/goals/performance');
+        await window.fetch('/v2/goals/investible/details');
+        await window.fetch('/v1/goals/details');
+        await flushPromises();
+
+        expect(storage.get('endowus')).toBe(initialEndowus);
+        expect(global.GM_setValue).not.toHaveBeenCalledWith('endowus', expect.any(String));
+    });
+
     test('malformed FSM payload is ignored and does not persist FSM store', async () => {
         const initialFsm = JSON.stringify({ version: 4, datasets: { holdings: [{ code: 'KEEP' }] } });
         storage.set('fsm', initialFsm);
