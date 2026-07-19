@@ -1,6 +1,6 @@
 {
   "name": "goal-portfolio-viewer",
-  "version": "2.15.0",
+  "version": "2.16.0",
   "description": "Goal Portfolio Viewer workspace",
   "private": true,
   "packageManager": "pnpm@9.12.3",
@@ -12,8 +12,12 @@
       "minimatch": "^10.2.3",
       "picomatch": "^2.3.2",
       "test-exclude": "^7.0.1",
-      "undici": "^7.24.0",
-      "ws": "^8.20.1"
+      "@babel/core": "^7.29.6",
+      "form-data": "^4.0.6",
+      "js-yaml@3": "^3.15.0",
+      "js-yaml@4": "^4.2.0",
+      "undici": "^7.28.0",
+      "ws": "^8.21.0"
     }
   },
   "scripts": {

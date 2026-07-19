@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.15.0
+// @version      2.16.0
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -50,7 +50,6 @@
         fsmHoldings: '/fsmone/rest/holding/client/protected/find-holdings-with-pnl',
         ocbcHoldings: '/digital/api/sg/ms-investment-accounts/v1/portfolio-holdings/inquiry'
     };
-    const SUMMARY_ENDPOINT_REGEX = /\/v1\/goals(?:[?#]|$)/;
 
     const STORAGE_KEYS = {
         endowus: 'endowus',
@@ -3132,6 +3131,17 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         };
     }
 
+    function excludeFixedTargets(targets, fixed) {
+        const source = targets && typeof targets === 'object' && !Array.isArray(targets) ? targets : {};
+        const fixedSource = fixed && typeof fixed === 'object' && !Array.isArray(fixed) ? fixed : {};
+        return Object.entries(source).reduce((acc, [id, value]) => {
+            if (fixedSource[id] !== true) {
+                acc[id] = value;
+            }
+            return acc;
+        }, {});
+    }
+
     function normalizeCanonicalAllocationModel(data) {
         const source = isPlainObject(data) ? data : {};
         const scopes = [];
@@ -3444,13 +3454,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const goalFixed = isPlainObject(source.goalFixed)
             ? source.goalFixed
             : (isPlainObject(allocation.goalFixed) ? allocation.goalFixed : allocationDerived.goalFixed);
-        const goalTargets = Object.entries(isPlainObject(goalTargetsSource) ? goalTargetsSource : {}).reduce((acc, [goalId, value]) => {
-            if (goalFixed[goalId] === true) {
-                return acc;
-            }
-            acc[goalId] = value;
-            return acc;
-        }, {});
+        const goalTargets = excludeFixedTargets(goalTargetsSource, goalFixed);
         const goalBuckets = isPlainObject(source.goalBuckets)
             ? source.goalBuckets
             : (isPlainObject(allocation.goalBuckets) ? allocation.goalBuckets : allocationDerived.goalBuckets);
@@ -3576,25 +3580,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 if (!Array.isArray(items)) {
                     return;
                 }
-                const filtered = items
-                    .map(item => {
-                        if (!item || typeof item !== 'object') {
-                            return null;
-                        }
-                        const id = utils.normalizeString(item.id, '');
-                        if (!id) {
-                            return null;
-                        }
-                        return {
-                            id,
-                            name: utils.normalizeString(item.name, 'Untitled sub-portfolio'),
-                            archived: item.archived === true,
-                            legacyProductType: utils.normalizeString(item.legacyProductType, ''),
-                            legacyBucketId: utils.normalizeString(item.legacyBucketId, '')
-                        };
-                    })
-                    .filter(Boolean)
-                    .map(item => ({ ...item }));
+                const filtered = items.map(normalizeOcbcSubPortfolioItem).filter(Boolean);
                 if (filtered.length) {
                     normalizedView[portfolioNo] = filtered;
                 }
@@ -3604,14 +3590,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             }
         });
         return normalized;
-    }
-
-    function normalizeOcbcSubPortfoliosForStore(data) {
-        return normalizeOcbcSubPortfolios(data);
-    }
-
-    function normalizeOcbcAssignmentByCodeForStore(data) {
-        return normalizeOcbcAssignmentByCode(data);
     }
 
     function normalizeOcbcAssignmentByCode(data) {
@@ -3633,10 +3611,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             }
         });
         return normalized;
-    }
-
-    function normalizeOcbcOrderByScopeForStore(data) {
-        return normalizeOcbcOrderByScope(data);
     }
 
     function normalizeOcbcOrderByScope(data) {
@@ -3664,6 +3638,23 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return normalized;
     }
 
+    function normalizeOcbcSubPortfolioItem(item) {
+        if (!item || typeof item !== 'object') {
+            return null;
+        }
+        const id = utils.normalizeString(item.id, '');
+        if (!id) {
+            return null;
+        }
+        return {
+            id,
+            name: utils.normalizeString(item.name, 'Untitled sub-portfolio'),
+            archived: item.archived === true,
+            legacyProductType: utils.normalizeString(item.legacyProductType, ''),
+            legacyBucketId: utils.normalizeString(item.legacyBucketId, '')
+        };
+    }
+
     function normalizeOcbcStore(data) {
         const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
         const datasets = isPlainObject(source.datasets) ? source.datasets : {};
@@ -3675,19 +3666,19 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             ? source.holdings
             : (datasets.holdings && typeof datasets.holdings === 'object' ? datasets.holdings : null);
         const subPortfolios = isPlainObject(source.subPortfolios)
-            ? normalizeOcbcSubPortfoliosForStore(source.subPortfolios)
+            ? normalizeOcbcSubPortfolios(source.subPortfolios)
             : (isPlainObject(allocation.subPortfolios)
-                ? normalizeOcbcSubPortfoliosForStore(allocation.subPortfolios)
+                ? normalizeOcbcSubPortfolios(allocation.subPortfolios)
                 : allocationDerived.subPortfolios);
         const assignmentByCode = isPlainObject(source.assignmentByCode)
-            ? normalizeOcbcAssignmentByCodeForStore(source.assignmentByCode)
+            ? normalizeOcbcAssignmentByCode(source.assignmentByCode)
             : (isPlainObject(allocation.assignmentByCode)
-                ? normalizeOcbcAssignmentByCodeForStore(allocation.assignmentByCode)
+                ? normalizeOcbcAssignmentByCode(allocation.assignmentByCode)
                 : allocationDerived.assignmentByCode);
         const orderByScope = isPlainObject(source.orderByScope)
-            ? normalizeOcbcOrderByScopeForStore(source.orderByScope)
+            ? normalizeOcbcOrderByScope(source.orderByScope)
             : (isPlainObject(allocation.orderByScope)
-                ? normalizeOcbcOrderByScopeForStore(allocation.orderByScope)
+                ? normalizeOcbcOrderByScope(allocation.orderByScope)
                 : allocationDerived.orderByScope);
         const targetsByScope = isPlainObject(source.targetsByScope)
             ? source.targetsByScope
@@ -4879,18 +4870,6 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         return deviceId;
     }
 
-    function normalizeOcbcSubPortfoliosConfig(data) {
-        return normalizeOcbcSubPortfolios(data);
-    }
-
-    function normalizeOcbcAssignmentByCodeConfig(data) {
-        return normalizeOcbcAssignmentByCode(data);
-    }
-
-    function normalizeOcbcOrderByScopeEntries(data) {
-        return normalizeOcbcOrderByScope(data);
-    }
-
     function normalizeSyncConfig(config) {
         if (!config || typeof config !== 'object') {
             return null;
@@ -4962,12 +4941,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const endowus = readEndowusStore();
         const fsm = readFsmStore();
         const ocbc = readOcbcStore();
-        const sanitizedEndowusTargets = Object.entries(endowus.goalTargets).reduce((acc, [goalId, value]) => {
-            if (endowus.goalFixed[goalId] !== true) {
-                acc[goalId] = value;
-            }
-            return acc;
-        }, {});
+        const sanitizedEndowusTargets = excludeFixedTargets(endowus.goalTargets, endowus.goalFixed);
         return {
             version: PLATFORM_STORE_VERSION,
             platforms: {
@@ -5037,12 +5011,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const endowusBuckets = endowusAllocation.goalBuckets && typeof endowusAllocation.goalBuckets === 'object' ? endowusAllocation.goalBuckets : {};
         const clearedGoalBuckets = endowusAllocation.clearedGoalBuckets && typeof endowusAllocation.clearedGoalBuckets === 'object' ? endowusAllocation.clearedGoalBuckets : {};
 
-        const sanitizedEndowusTargets = Object.entries(endowusTargets).reduce((acc, [goalId, value]) => {
-            if (endowusFixed[goalId] !== true) {
-                acc[goalId] = value;
-            }
-            return acc;
-        }, {});
+        const sanitizedEndowusTargets = excludeFixedTargets(endowusTargets, endowusFixed);
 
         const currentEndowusStore = readEndowusStore();
         const updatedEndowusStore = normalizeEndowusStore({
@@ -5078,12 +5047,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         const fsmPortfolios = normalizeFsmPortfolios(Array.isArray(fsmAllocation.portfolios) ? fsmAllocation.portfolios : []);
         const fsmAssignmentByCode = fsmAllocation.assignmentByCode && typeof fsmAllocation.assignmentByCode === 'object' ? fsmAllocation.assignmentByCode : {};
 
-        const sanitizedFsmTargets = Object.entries(fsmTargets).reduce((acc, [code, value]) => {
-            if (fsmFixed[code] !== true) {
-                acc[code] = value;
-            }
-            return acc;
-        }, {});
+        const sanitizedFsmTargets = excludeFixedTargets(fsmTargets, fsmFixed);
 
         const validPortfolioIds = new Set(fsmPortfolios.filter(item => item.archived !== true).map(item => item.id));
         const sanitizedAssignments = {};
@@ -5116,9 +5080,9 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         });
 
         const ocbcAllocation = normalized.platforms.ocbc?.allocation || {};
-        const ocbcSubPortfolios = normalizeOcbcSubPortfoliosConfig(ocbcAllocation.subPortfolios);
-        const ocbcAssignmentByCode = normalizeOcbcAssignmentByCodeConfig(ocbcAllocation.assignmentByCode);
-        const ocbcOrderByScope = normalizeOcbcOrderByScopeEntries(ocbcAllocation.orderByScope);
+        const ocbcSubPortfolios = normalizeOcbcSubPortfolios(ocbcAllocation.subPortfolios);
+        const ocbcAssignmentByCode = normalizeOcbcAssignmentByCode(ocbcAllocation.assignmentByCode);
+        const ocbcOrderByScope = normalizeOcbcOrderByScope(ocbcAllocation.orderByScope);
         const ocbcAllocationBuckets = ocbcAllocation.allocationBuckets && typeof ocbcAllocation.allocationBuckets === 'object' ? ocbcAllocation.allocationBuckets : {};
         const ocbcTargetsByScope = ocbcAllocation.targetsByScope && typeof ocbcAllocation.targetsByScope === 'object' ? ocbcAllocation.targetsByScope : {};
         const currentOcbcStore = readOcbcStore();
@@ -5597,6 +5561,28 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
         }
     }
 
+    function markSyncSuccess(message) {
+        syncStatus = SYNC_STATUS.success;
+        lastError = null;
+        lastErrorMeta = null;
+        if (message) {
+            logDebug(message);
+        }
+    }
+
+    function markSyncFailure(error) {
+        syncStatus = SYNC_STATUS.error;
+        lastError = error.message;
+        const guidance = getSyncErrorGuidance(error);
+        lastErrorMeta = {
+            category: guidance.category,
+            userMessage: guidance.userMessage,
+            primaryAction: guidance.primaryAction,
+            retryAfterSeconds: Number(error?.retryAfterSeconds) || null,
+            lastAttemptAt: Date.now()
+        };
+    }
+
     /**
      * Perform sync operation
      */
@@ -5637,28 +5623,17 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             if (direction === 'upload') {
                 await uploadConfig(localConfig);
                 recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-
-                syncStatus = SYNC_STATUS.success;
-                lastError = null;
-                lastErrorMeta = null;
-                logDebug('[Goal Portfolio Viewer] Sync upload successful');
+                markSyncSuccess('[Goal Portfolio Viewer] Sync upload successful');
             } else if (direction === 'download') {
                 const serverData = await downloadConfig();
                 if (!serverData) {
                     recordSuccessfulSync();
-                    syncStatus = SYNC_STATUS.success;
-                    lastError = null;
-                    lastErrorMeta = null;
-                    logDebug('[Goal Portfolio Viewer] No server data to download');
+                    markSyncSuccess('[Goal Portfolio Viewer] No server data to download');
                 } else {
                     applyConfigData(serverData.config);
                     const serverHash = await hashConfigData(serverData.config);
                     recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-
-                    syncStatus = SYNC_STATUS.success;
-                    lastError = null;
-                    lastErrorMeta = null;
-                    logDebug('[Goal Portfolio Viewer] Sync download successful');
+                    markSyncSuccess('[Goal Portfolio Viewer] Sync download successful');
                 }
             } else {
                 const serverData = await downloadConfig();
@@ -5666,32 +5641,20 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 if (!serverData) {
                     await uploadConfig(localConfig);
                     recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-
-                    syncStatus = SYNC_STATUS.success;
-                    lastError = null;
-                    lastErrorMeta = null;
-                    logDebug('[Goal Portfolio Viewer] No server data, uploaded local config');
+                    markSyncSuccess('[Goal Portfolio Viewer] No server data, uploaded local config');
                 } else {
                     const serverHash = await hashConfigData(serverData.config);
 
                     if (!hasLastDataTimestamp) {
                         applyConfigData(serverData.config);
                         recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-
-                        syncStatus = SYNC_STATUS.success;
-                        lastError = null;
-                        lastErrorMeta = null;
-                        logDebug('[Goal Portfolio Viewer] Missing sync metadata, bootstrapped from server snapshot');
+                        markSyncSuccess('[Goal Portfolio Viewer] Missing sync metadata, bootstrapped from server snapshot');
                     } else if (localHash && serverHash && localHash === serverHash) {
                         recordSuccessfulSync({
                             dataTimestamp: Math.max(localConfig.timestamp, serverData.metadata.timestamp),
                             hash: localHash
                         });
-
-                        syncStatus = SYNC_STATUS.success;
-                        lastError = null;
-                        lastErrorMeta = null;
-                        logDebug('[Goal Portfolio Viewer] Local and server content identical, sync already up to date');
+                        markSyncSuccess('[Goal Portfolio Viewer] Local and server content identical, sync already up to date');
                     } else {
                         const conflict = await detectConflict(localConfig, serverData, localHash, serverHash);
 
@@ -5706,25 +5669,14 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                         if (localConfig.timestamp > serverData.metadata.timestamp) {
                             await uploadConfig(localConfig);
                             recordSuccessfulSync({ dataTimestamp: localConfig.timestamp, hash: localHash });
-
-                            syncStatus = SYNC_STATUS.success;
-                            lastError = null;
-                            lastErrorMeta = null;
-                            logDebug('[Goal Portfolio Viewer] Local config newer, uploaded to server');
+                            markSyncSuccess('[Goal Portfolio Viewer] Local config newer, uploaded to server');
                         } else if (localConfig.timestamp < serverData.metadata.timestamp) {
                             applyConfigData(serverData.config);
                             recordSuccessfulSync({ dataTimestamp: serverData.metadata.timestamp, hash: serverHash });
-
-                            syncStatus = SYNC_STATUS.success;
-                            lastError = null;
-                            lastErrorMeta = null;
-                            logDebug('[Goal Portfolio Viewer] Server config newer, applied locally');
+                            markSyncSuccess('[Goal Portfolio Viewer] Server config newer, applied locally');
                         } else {
                             recordSuccessfulSync();
-                            syncStatus = SYNC_STATUS.success;
-                            lastError = null;
-                            lastErrorMeta = null;
-                            logDebug('[Goal Portfolio Viewer] Sync already up to date');
+                            markSyncSuccess('[Goal Portfolio Viewer] Sync already up to date');
                         }
                     }
                 }
@@ -5736,16 +5688,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             return { status: 'success' };
         } catch (error) {
             console.error('[Goal Portfolio Viewer] Sync failed:', error);
-            syncStatus = SYNC_STATUS.error;
-            lastError = error.message;
-            const guidance = getSyncErrorGuidance(error);
-            lastErrorMeta = {
-                category: guidance.category,
-                userMessage: guidance.userMessage,
-                primaryAction: guidance.primaryAction,
-                retryAfterSeconds: Number(error?.retryAfterSeconds) || null,
-                lastAttemptAt: Date.now()
-            };
+            markSyncFailure(error);
             if (typeof syncUi.update === 'function') {
                 syncUi.update();
             }
@@ -5800,9 +5743,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
                 throw new Error('Invalid resolution');
             }
 
-            syncStatus = SYNC_STATUS.success;
-            lastError = null;
-            lastErrorMeta = null;
+            markSyncSuccess();
             if (typeof syncUi.update === 'function') {
                 syncUi.update();
             }
@@ -5813,16 +5754,7 @@ function buildNeedsAttentionItemsForFsmOverview(overviewModel) {
             }
         } catch (error) {
             console.error('[Goal Portfolio Viewer] Conflict resolution failed:', error);
-            syncStatus = SYNC_STATUS.error;
-            lastError = error.message;
-            const guidance = getSyncErrorGuidance(error);
-            lastErrorMeta = {
-                category: guidance.category,
-                userMessage: guidance.userMessage,
-                primaryAction: guidance.primaryAction,
-                retryAfterSeconds: Number(error?.retryAfterSeconds) || null,
-                lastAttemptAt: Date.now()
-            };
+            markSyncFailure(error);
             if (typeof syncUi.update === 'function') {
                 syncUi.update();
             }
@@ -6762,6 +6694,37 @@ let GoalTargetStore;
         });
     }
 
+    function createEndowusEndpointDescriptor(endpointKey, matches) {
+        return {
+            endpointKey,
+            platformId: 'endowus',
+            matches,
+            validate: data => {
+                if (!Array.isArray(data)) {
+                    return { valid: false, reason: `Expected array payload for ${endpointKey}` };
+                }
+                const isValid = data.every(item => item && typeof item === 'object' && item.goalId);
+                return { valid: isValid, reason: isValid ? null : `Missing goalId in ${endpointKey} payload` };
+            },
+            handle: data => {
+                state.apiData[endpointKey] = data;
+                state.readiness.endowus[`${endpointKey}Loaded`] = true;
+                updateEndowusStore(current => ({ ...current, [endpointKey]: data }), `Error saving ${endpointKey} data`);
+                logDebug(`[Goal Portfolio Viewer] Intercepted ${endpointKey} data`);
+                notifyDataUpdates();
+            }
+        };
+    }
+
+    function isEndowusEndpoint(url, expectedPath) {
+        const origin = window.location.origin;
+        const baseUrl = typeof document !== 'undefined' && document.baseURI
+            ? document.baseURI
+            : window.location.href;
+        const parsed = parseRouteUrl(url, baseUrl);
+        return Boolean(parsed && parsed.target.origin === origin && parsed.pathname === expectedPath);
+    }
+
     const ENDPOINT_DESCRIPTORS = [
         {
             endpointKey: 'fsmHoldings',
@@ -6839,72 +6802,9 @@ let GoalTargetStore;
                 notifyDataUpdates();
             }
         },
-        {
-            endpointKey: 'performance',
-            platformId: 'endowus',
-            matches: (url) => url.includes(ENDPOINT_PATHS.performance),
-            validate: data => {
-                if (!Array.isArray(data)) {
-                    return { valid: false, reason: 'Expected array payload for performance' };
-                }
-                const isValid = data.every(item => item && typeof item === 'object' && item.goalId);
-                return { valid: isValid, reason: isValid ? null : 'Missing goalId in performance payload' };
-            },
-            handle: data => {
-                if (!Array.isArray(data)) {
-                    return;
-                }
-                state.apiData.performance = data;
-                state.readiness.endowus.performanceLoaded = true;
-                updateEndowusStore(current => ({ ...current, performance: data }), 'Error saving performance data');
-                logDebug('[Goal Portfolio Viewer] Intercepted performance data');
-                notifyDataUpdates();
-            }
-        },
-        {
-            endpointKey: 'investible',
-            platformId: 'endowus',
-            matches: (url) => url.includes(ENDPOINT_PATHS.investible),
-            validate: data => {
-                if (!Array.isArray(data)) {
-                    return { valid: false, reason: 'Expected array payload for investible' };
-                }
-                const isValid = data.every(item => item && typeof item === 'object' && item.goalId);
-                return { valid: isValid, reason: isValid ? null : 'Missing goalId in investible payload' };
-            },
-            handle: data => {
-                if (!Array.isArray(data)) {
-                    return;
-                }
-                state.apiData.investible = data;
-                state.readiness.endowus.investibleLoaded = true;
-                updateEndowusStore(current => ({ ...current, investible: data }), 'Error saving investible data');
-                logDebug('[Goal Portfolio Viewer] Intercepted investible data');
-                notifyDataUpdates();
-            }
-        },
-        {
-            endpointKey: 'summary',
-            platformId: 'endowus',
-            matches: (url) => url.match(SUMMARY_ENDPOINT_REGEX),
-            validate: data => {
-                if (!Array.isArray(data)) {
-                    return { valid: false, reason: 'Expected array payload for summary' };
-                }
-                const isValid = data.every(item => item && typeof item === 'object' && item.goalId);
-                return { valid: isValid, reason: isValid ? null : 'Missing goalId in summary payload' };
-            },
-            handle: data => {
-                if (!Array.isArray(data)) {
-                    return;
-                }
-                state.apiData.summary = data;
-                state.readiness.endowus.summaryLoaded = true;
-                updateEndowusStore(current => ({ ...current, summary: data }), 'Error saving summary data');
-                logDebug('[Goal Portfolio Viewer] Intercepted summary data');
-                notifyDataUpdates();
-            }
-        }
+        createEndowusEndpointDescriptor('performance', url => isEndowusEndpoint(url, ENDPOINT_PATHS.performance)),
+        createEndowusEndpointDescriptor('investible', url => isEndowusEndpoint(url, ENDPOINT_PATHS.investible)),
+        createEndowusEndpointDescriptor('summary', url => isEndowusEndpoint(url, ENDPOINT_PATHS.summary))
     ];
 
     const PLATFORM_ADAPTERS = [
@@ -15497,31 +15397,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         return null;
     }
 
-    function normalizeOcbcOrderByScopeForUi(data) {
-        const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
-        const normalized = {};
-        Object.entries(source).forEach(([scope, value]) => {
-            const normalizedScope = utils.normalizeString(scope, '');
-            if (!normalizedScope || !Array.isArray(value)) {
-                return;
-            }
-            const deduped = [];
-            const seen = new Set();
-            value.forEach(code => {
-                const normalizedCode = utils.normalizeString(code, '');
-                if (!normalizedCode || seen.has(normalizedCode)) {
-                    return;
-                }
-                seen.add(normalizedCode);
-                deduped.push(normalizedCode);
-            });
-            if (deduped.length) {
-                normalized[normalizedScope] = deduped;
-            }
-        });
-        return normalized;
-    }
-
     function buildOcbcOrderScopeCompatibilityKeys(activeView, portfolioNo, subPortfolioId) {
         const normalizedView = utils.normalizeString(activeView, 'assets');
         const normalizedPortfolioNo = utils.normalizeString(portfolioNo, '-');
@@ -15560,7 +15435,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         const bucketsByView = ocbcStore.allocationBuckets || {};
         const subPortfoliosByView = ocbcStore.subPortfolios || {};
         const assignmentByCode = ocbcStore.assignmentByCode || {};
-        const orderByScope = normalizeOcbcOrderByScopeForUi(ocbcStore.orderByScope || {});
+        const orderByScope = normalizeOcbcOrderByScope(ocbcStore.orderByScope || {});
         return { bucketsByView, subPortfoliosByView, assignmentByCode, orderByScope };
     }
 
@@ -15580,7 +15455,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
     function saveOcbcAllocationOrderConfig(orderByScope, options = {}) {
         updateOcbcStore(
-            current => ({ ...current, orderByScope: normalizeOcbcOrderByScopeForUi(orderByScope) }),
+            current => ({ ...current, orderByScope: normalizeOcbcOrderByScope(orderByScope) }),
             'Error saving OCBC allocation order'
         );
         if (options.suppressSync !== true && typeof SyncManager?.scheduleSyncOnChange === 'function') {
@@ -15594,23 +15469,6 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             encodeOcbcTargetScopeSegment(portfolioNo, '-'),
             encodeOcbcTargetScopeSegment(subPortfolioId, '')
         ].join(PROJECTED_KEY_SEPARATOR);
-    }
-
-    function normalizeOcbcSubPortfolioItem(item) {
-        if (!item || typeof item !== 'object') {
-            return null;
-        }
-        const id = utils.normalizeString(item.id, '');
-        if (!id) {
-            return null;
-        }
-        return {
-            id,
-            name: utils.normalizeString(item.name, 'Untitled sub-portfolio'),
-            archived: item.archived === true,
-            legacyProductType: utils.normalizeString(item.legacyProductType, ''),
-            legacyBucketId: utils.normalizeString(item.legacyBucketId, '')
-        };
     }
 
     function getActiveOcbcSubPortfolios(subPortfoliosByView, activeView, portfolioNo) {
@@ -17300,6 +17158,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             getTimeSeriesWindow,
             extractAmount,
             parseJsonSafely,
+            excludeFixedTargets,
             normalizeCanonicalAllocationModel,
             buildEndowusAllocationModelFromConfig,
             buildEndowusConfigFromAllocationModel,

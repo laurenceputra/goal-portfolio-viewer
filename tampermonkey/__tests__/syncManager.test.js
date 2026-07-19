@@ -159,6 +159,19 @@ describe('SyncManager', () => {
         }));
     }
 
+    test('excludeFixedTargets filters only strict fixed flags without mutating inputs', () => {
+        const { excludeFixedTargets } = loadModule();
+        const targets = { keep: 25, fixed: 50, loose: 75 };
+        const fixed = { fixed: true, loose: 1 };
+
+        expect(excludeFixedTargets(targets, fixed)).toEqual({ keep: 25, loose: 75 });
+        expect(excludeFixedTargets(null, fixed)).toEqual({});
+        expect(excludeFixedTargets(undefined, undefined)).toEqual({});
+        expect(excludeFixedTargets(targets, fixed)).not.toBe(targets);
+        expect(targets).toEqual({ keep: 25, fixed: 50, loose: 75 });
+        expect(fixed).toEqual({ fixed: true, loose: 1 });
+    });
+
     test('legacy flat sync keys migrate full sync schema into sync store and are removed', () => {
         storage.set('sync_enabled', true);
         storage.set('sync_server_url', 'https://sync.example.com');
