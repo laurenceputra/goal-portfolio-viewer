@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.15.0
+// @version      2.16.0
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -8914,9 +8914,11 @@ let GoalTargetStore;
             headers: ['Goal Name', 'Current value', '% of Goal Type', 'Fixed', '', 'Drift', 'Cumulative Return', 'Return %'],
             className: `gpv-table ${CLASS_NAMES.goalTable}`
         });
+        const tableWrapper = createElement('div', 'gpv-table-wrap');
+        tableWrapper.appendChild(table);
         const headerRow = table.querySelector('thead tr');
         if (!headerRow) {
-            typeSection.appendChild(table);
+            typeSection.appendChild(tableWrapper);
             return;
         }
         headerRow.children[GOAL_NAME_COLUMN_INDEX].className = 'gpv-goal-name-header';
@@ -9016,7 +9018,7 @@ let GoalTargetStore;
             tbody.appendChild(metricsRow);
         });
 
-        typeSection.appendChild(table);
+        typeSection.appendChild(tableWrapper);
     }
 
     function wireGoalTypeEvents({
@@ -13683,6 +13685,863 @@ syncUi.update = function updateSyncUI() {
                     }
                 }
 
+        `,
+        workspace: `
+            /* Portfolio workspace redesign: keep this surface intentionally scoped to the overlay. */
+            .gpv-overlay,
+            .gpv-trigger-btn,
+            .gpv-notification,
+            .gpv-sync-indicator {
+                --gpv-ink: #102337;
+                --gpv-ink-soft: #1c354b;
+                --gpv-canvas: #f5f2eb;
+                --gpv-surface: #fffdf9;
+                --gpv-surface-muted: #eef1ee;
+                --gpv-line: #d8d8d0;
+                --gpv-line-strong: #b9c2c2;
+                --gpv-indigo: #4356a8;
+                --gpv-indigo-dark: #304282;
+                --gpv-teal: #147d7a;
+                --gpv-teal-dark: #0c5c5b;
+                --gpv-coral: #b23b1f;
+                --gpv-amber: #a66b16;
+                --gpv-focus: #b45309;
+            }
+
+            .gpv-overlay {
+                color: var(--gpv-ink);
+                overflow: hidden;
+                padding: clamp(10px, 3vw, 28px);
+                background: rgba(8, 20, 34, 0.78);
+                backdrop-filter: blur(12px);
+            }
+
+            .gpv-overlay,
+            .gpv-overlay *,
+            .gpv-trigger-btn,
+            .gpv-notification,
+            .gpv-sync-indicator {
+                box-sizing: border-box;
+            }
+
+            .gpv-container {
+                width: min(1120px, calc(100vw - 20px));
+                max-width: calc(100vw - 20px);
+                max-height: calc(100vh - 20px);
+                min-width: 0;
+                overflow: hidden;
+                border: 1px solid rgba(255, 255, 255, 0.32);
+                border-radius: 18px;
+                background: var(--gpv-canvas);
+                box-shadow: 0 28px 80px rgba(3, 12, 24, 0.42);
+            }
+
+            .gpv-container--expanded {
+                width: min(1400px, calc(100vw - 20px));
+                max-width: calc(100vw - 20px);
+                max-height: calc(100vh - 20px);
+            }
+
+            .gpv-header {
+                min-height: 72px;
+                flex-wrap: wrap;
+                gap: 12px 18px;
+                padding: 16px 22px;
+                border: 0;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+                border-radius: 17px 17px 0 0;
+                background: linear-gradient(115deg, var(--gpv-ink) 0%, #1b3850 72%, #23585d 100%);
+                color: #f7faf7;
+            }
+
+            .gpv-header h1 {
+                flex: 1 1 220px;
+                min-width: 0;
+                color: #ffffff;
+                font-size: clamp(20px, 2.2vw, 26px);
+                font-weight: 750;
+                letter-spacing: -0.025em;
+                line-height: 1.15;
+            }
+
+            .gpv-header-buttons {
+                flex: 0 1 auto;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+                gap: 8px;
+            }
+
+            .gpv-sync-indicator-container {
+                flex: 0 1 auto;
+                min-width: 0;
+                padding: 0;
+                color: #dceceb;
+            }
+
+            .gpv-header-buttons .gpv-close-btn,
+            .gpv-header-buttons .gpv-expand-btn,
+            .gpv-header-buttons .gpv-sync-btn,
+            .gpv-header-buttons .gpv-bucket-manage-btn {
+                min-height: 40px;
+                border: 1px solid rgba(255, 255, 255, 0.24);
+                border-radius: 8px;
+                background: rgba(255, 255, 255, 0.1);
+                color: #f7faf7;
+                box-shadow: none;
+            }
+
+            .gpv-header-buttons .gpv-close-btn {
+                width: 40px;
+                height: 40px;
+                font-size: 22px;
+            }
+
+            .gpv-header-buttons button:hover:not(:disabled) {
+                border-color: rgba(255, 255, 255, 0.54);
+                background: rgba(255, 255, 255, 0.18);
+                color: #ffffff;
+                transform: none;
+            }
+
+            .gpv-content {
+                min-width: 0;
+                overflow-x: hidden;
+                padding: clamp(16px, 2.8vw, 28px);
+                background: var(--gpv-canvas);
+            }
+
+            .gpv-controls,
+            .gpv-control-bar {
+                min-width: 0;
+                margin: 0 0 18px;
+                padding: 12px 14px;
+                border: 1px solid var(--gpv-line);
+                border-radius: 10px;
+                background: rgba(255, 253, 249, 0.88);
+                box-shadow: 0 2px 8px rgba(16, 35, 55, 0.04);
+            }
+
+            .gpv-select-label,
+            .gpv-mode-label {
+                color: var(--gpv-ink-soft);
+                font-size: 12px;
+                font-weight: 800;
+                letter-spacing: 0.07em;
+                text-transform: uppercase;
+            }
+
+            .gpv-select,
+            .gpv-target-input,
+            .gpv-projected-input,
+            .gpv-sync-input {
+                min-height: 40px;
+                border: 1px solid var(--gpv-line-strong);
+                border-radius: 7px;
+                background: #ffffff;
+                color: var(--gpv-ink);
+            }
+
+            .gpv-select {
+                min-width: min(220px, 100%);
+                padding: 8px 12px;
+            }
+
+            .gpv-mode-btn,
+            .gpv-section-toggle,
+            .gpv-performance-refresh-btn {
+                min-height: 40px;
+                border: 1px solid #b6c3d4;
+                border-radius: 7px;
+                background: #f7f8f6;
+                color: var(--gpv-indigo-dark);
+                padding: 8px 12px;
+            }
+
+            .gpv-mode-btn.is-active {
+                border-color: var(--gpv-indigo-dark);
+                background: var(--gpv-indigo);
+                color: #ffffff;
+            }
+
+            .gpv-overlay button,
+            .gpv-overlay input,
+            .gpv-overlay select,
+            .gpv-overlay textarea,
+            .gpv-trigger-btn {
+                font-size: 14px;
+            }
+
+            .gpv-sync-btn,
+            .gpv-sync-btn-primary,
+            .gpv-sync-btn-secondary,
+            .gpv-sync-btn-danger {
+                min-height: 40px;
+                border-radius: 7px;
+                padding: 9px 14px;
+                font-weight: 750;
+            }
+
+            .gpv-sync-btn-primary {
+                border: 1px solid var(--gpv-indigo-dark);
+                background: var(--gpv-indigo);
+                color: #ffffff;
+                box-shadow: 0 4px 10px rgba(48, 66, 130, 0.2);
+            }
+
+            .gpv-sync-btn-primary:hover:not(:disabled) {
+                background: var(--gpv-indigo-dark);
+                transform: translateY(-1px);
+            }
+
+            .gpv-sync-btn-secondary {
+                border: 1px solid #b7c2d5;
+                background: #f8f9f7;
+                color: var(--gpv-indigo-dark);
+            }
+
+            .gpv-sync-btn-danger {
+                background: var(--gpv-coral);
+                color: #ffffff;
+            }
+
+            .gpv-summary-container {
+                gap: 18px;
+            }
+
+            .gpv-summary-container::before {
+                content: 'PORTFOLIO OVERVIEW';
+                display: block;
+                color: var(--gpv-teal-dark);
+                font-size: 11px;
+                font-weight: 850;
+                letter-spacing: 0.16em;
+            }
+
+            .gpv-bucket-card,
+            .gpv-fsm-overview-card,
+            .gpv-fsm-manager,
+            .gpv-bucket-manager,
+            .gpv-readiness,
+            .gpv-planning-panel,
+            .gpv-performance-container {
+                border: 1px solid var(--gpv-line);
+                border-radius: 12px;
+                background: var(--gpv-surface);
+                box-shadow: 0 4px 14px rgba(16, 35, 55, 0.055);
+            }
+
+            .gpv-bucket-card {
+                position: relative;
+                padding: 20px;
+                border-top: 4px solid var(--gpv-teal);
+                cursor: pointer;
+            }
+
+            .gpv-bucket-card:hover,
+            .gpv-fsm-overview-card:hover {
+                border-color: var(--gpv-teal);
+                box-shadow: 0 8px 20px rgba(20, 125, 122, 0.12);
+                transform: translateY(-1px);
+            }
+
+            .gpv-bucket-header {
+                gap: 8px 14px;
+                margin-bottom: 16px;
+            }
+
+            .gpv-bucket-title,
+            .gpv-fsm-overview-card-title {
+                color: var(--gpv-ink);
+                font-size: clamp(20px, 2vw, 25px);
+                font-weight: 780;
+                letter-spacing: -0.02em;
+            }
+
+            .gpv-stats,
+            .gpv-detail-stats,
+            .gpv-metric-grid,
+            .gpv-summary-row {
+                gap: 10px;
+            }
+
+            .gpv-stat-item,
+            .gpv-metric-card,
+            .gpv-summary-card,
+            .gpv-fsm-overview-stat {
+                min-width: 0;
+                padding: 12px 14px;
+                border: 1px solid #dfe2dc;
+                border-radius: 8px;
+                background: var(--gpv-surface-muted);
+            }
+
+            .gpv-stat-label,
+            .gpv-fsm-overview-stat-label,
+            .gpv-summary-card-label {
+                color: #53646b;
+                font-size: 11px;
+                font-weight: 850;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+            }
+
+            .gpv-stat-value,
+            .gpv-fsm-overview-stat-value {
+                margin-top: 3px;
+                color: var(--gpv-ink);
+                font-size: 20px;
+                font-weight: 800;
+                letter-spacing: -0.015em;
+            }
+
+            .gpv-summary-profit-value.positive,
+            .gpv-fsm-overview-stat-value.positive,
+            .gpv-table .positive,
+            .gpv-diff-cell.positive {
+                color: var(--gpv-teal-dark);
+            }
+
+            .gpv-summary-profit-value.negative,
+            .gpv-fsm-overview-stat-value.negative,
+            .gpv-table .negative,
+            .gpv-diff-cell.negative {
+                color: #a53f39;
+            }
+
+            .gpv-health-badge {
+                min-height: 28px;
+                padding: 5px 10px;
+                border: 1px solid currentColor;
+                border-radius: 6px;
+                font-size: 11px;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+            }
+
+            .gpv-health--healthy {
+                background: #e4f1eb;
+                color: #17634f;
+            }
+
+            .gpv-health--setup {
+                background: #fff1d9;
+                color: #875615;
+            }
+
+            .gpv-health--review {
+                background: #fbe5df;
+                color: #963e37;
+            }
+
+            .gpv-allocation-drift-hint,
+            .gpv-attention-strip,
+            .gpv-sync-warning,
+            .gpv-conflict-warning {
+                border-radius: 8px;
+                box-shadow: inset 4px 0 0 var(--gpv-coral);
+            }
+
+            .gpv-allocation-drift-hint {
+                border-color: #e5ba73;
+                background: #fff4df;
+                color: #704816;
+            }
+
+            .gpv-attention-strip,
+            .gpv-conflict-warning {
+                border-color: #e8b19f;
+                background: #fff0eb;
+            }
+
+            .gpv-attention-title {
+                color: #963e37;
+            }
+
+            .gpv-attention-button {
+                min-height: 40px;
+                border-color: #e5ae99;
+                border-radius: 7px;
+                background: #fff8f5;
+                color: #7d3833;
+            }
+
+            .gpv-attention-button:hover {
+                background: #fbe5df;
+            }
+
+            .gpv-planning-panel {
+                border-color: #a8d1cd;
+                border-left: 4px solid var(--gpv-teal);
+                background: #eaf4f1;
+                box-shadow: none;
+            }
+
+            .gpv-planning-title,
+            .gpv-planning-subtitle {
+                color: var(--gpv-teal-dark);
+            }
+
+            .gpv-planning-coverage,
+            .gpv-planning-copy,
+            .gpv-planning-empty,
+            .gpv-planning-list {
+                color: #29464b;
+            }
+
+            .gpv-detail-header {
+                gap: 10px;
+                padding: 0 0 16px;
+                border-bottom: 1px solid var(--gpv-line-strong);
+            }
+
+            .gpv-detail-title {
+                color: var(--gpv-ink);
+                font-size: clamp(22px, 2.4vw, 30px);
+                letter-spacing: -0.025em;
+            }
+
+            .gpv-type-section {
+                margin-bottom: 24px;
+                padding-top: 4px;
+            }
+
+            .gpv-type-header h3,
+            .gpv-bucket-manager-title,
+            .gpv-readiness-title {
+                color: var(--gpv-ink);
+                font-weight: 800;
+                letter-spacing: -0.015em;
+            }
+
+            .gpv-type-header h3 {
+                font-size: 18px;
+            }
+
+            .gpv-type-summary {
+                color: #53646b;
+            }
+
+            .gpv-table-wrap,
+            .gpv-fsm-table-wrap {
+                max-width: 100%;
+                overflow-x: auto;
+                overscroll-behavior-x: contain;
+                border: 1px solid var(--gpv-line-strong);
+                border-radius: 9px;
+                background: var(--gpv-surface);
+                box-shadow: 0 3px 10px rgba(16, 35, 55, 0.04);
+            }
+
+            .gpv-table {
+                background: var(--gpv-surface);
+            }
+
+            .gpv-table thead tr {
+                background: var(--gpv-ink);
+            }
+
+            .gpv-table th {
+                position: sticky;
+                top: 0;
+                z-index: 2;
+                padding: 12px 14px;
+                background: var(--gpv-ink);
+                color: #f4f7f5;
+                font-size: 11px;
+                letter-spacing: 0.08em;
+            }
+
+            .gpv-table td {
+                padding: 12px 14px;
+                border-top-color: #e2e4de;
+                color: #253c49;
+            }
+
+            .gpv-table tbody tr:nth-child(even) {
+                background: #fafbf8;
+            }
+
+            .gpv-table tbody tr:hover,
+            .gpv-table tbody tr.gpv-goal-row:hover + tr.gpv-goal-metrics-row,
+            .gpv-table tbody tr.gpv-goal-metrics-row:hover {
+                background: #edf5f2;
+            }
+
+            .gpv-table:focus-within {
+                box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.34);
+            }
+
+            .gpv-table .gpv-goal-name {
+                color: var(--gpv-ink);
+                font-weight: 750;
+            }
+
+            .gpv-target-input:focus,
+            .gpv-projected-input:focus,
+            .gpv-select:focus,
+            .gpv-sync-input:focus {
+                outline: 2px solid var(--gpv-focus);
+                outline-offset: 1px;
+                border-color: var(--gpv-focus);
+                box-shadow: none;
+            }
+
+            .gpv-target-input,
+            .gpv-projected-input {
+                padding: 8px 9px;
+            }
+
+            .gpv-fixed-toggle {
+                width: 44px;
+                height: 24px;
+            }
+
+            .gpv-toggle-slider:before {
+                height: 18px;
+                width: 18px;
+                left: 3px;
+                bottom: 3px;
+            }
+
+            .gpv-fixed-toggle-input:checked + .gpv-toggle-slider:before {
+                transform: translateX(20px);
+            }
+
+            .gpv-fixed-toggle-input:focus-visible + .gpv-toggle-slider {
+                outline: 2px solid var(--gpv-focus);
+                outline-offset: 3px;
+            }
+
+            .gpv-projected-input-container {
+                border: 1px dashed var(--gpv-teal);
+                border-radius: 8px;
+                background: #e8f4f2;
+            }
+
+            .gpv-projected-label {
+                color: var(--gpv-teal-dark);
+            }
+
+            .gpv-performance-container {
+                padding: 16px;
+                background: #edf2f0;
+                border-color: #c5d3cf;
+            }
+
+            .gpv-performance-window-tile,
+            .gpv-performance-metrics-table {
+                border-color: #d1dcd8;
+                background: var(--gpv-surface);
+            }
+
+            .gpv-performance-window-value,
+            .gpv-performance-metric-value {
+                color: var(--gpv-ink);
+            }
+
+            .gpv-fsm-manager,
+            .gpv-bucket-manager {
+                padding: 18px;
+            }
+
+            .gpv-fsm-toolbar,
+            .gpv-fsm-manager-row,
+            .gpv-fsm-portfolio-list-row,
+            .gpv-type-actions,
+            .gpv-balance-copy-controls,
+            .gpv-sync-actions,
+            .gpv-conflict-actions {
+                gap: 8px;
+            }
+
+            .gpv-fsm-overview-header {
+                margin-bottom: 2px;
+            }
+
+            .gpv-fsm-overview-card {
+                padding: 18px;
+            }
+
+            .gpv-fsm-overview-card-subtitle {
+                color: #53646b;
+            }
+
+            .gpv-fsm-overview-card-tag {
+                border: 1px solid #b8d8d2;
+                background: #e8f4f2;
+                color: var(--gpv-teal-dark);
+            }
+
+            .gpv-sync-modal,
+            .gpv-conflict-modal {
+                max-width: min(840px, calc(100vw - 20px));
+            }
+
+            .gpv-sync-settings,
+            .gpv-conflict-dialog {
+                padding: clamp(16px, 3vw, 26px);
+            }
+
+            .gpv-sync-header h3,
+            .gpv-conflict-dialog h3 {
+                color: var(--gpv-ink);
+                font-weight: 800;
+                letter-spacing: -0.015em;
+            }
+
+            .gpv-sync-status-bar,
+            .gpv-sync-advanced,
+            .gpv-conflict-diff {
+                border-color: var(--gpv-line);
+                border-radius: 8px;
+                background: var(--gpv-surface-muted);
+            }
+
+            .gpv-sync-warning {
+                background: #fff4df;
+                color: #704816;
+            }
+
+            .gpv-sync-status-success {
+                color: var(--gpv-teal-dark);
+            }
+
+            .gpv-sync-status-error,
+            .gpv-sync-error {
+                color: #963e37;
+            }
+
+            .gpv-sync-status-conflict {
+                color: #875615;
+            }
+
+            .gpv-conflict-comparison {
+                gap: 12px;
+            }
+
+            .gpv-conflict-option {
+                border: 1px solid var(--gpv-line-strong);
+                border-radius: 9px;
+                background: var(--gpv-surface);
+                padding: 16px;
+            }
+
+            .gpv-conflict-step {
+                min-height: 28px;
+                border: 1px solid var(--gpv-line);
+                background: #e6e9e4;
+            }
+
+            .gpv-conflict-step.is-active {
+                border-color: var(--gpv-indigo-dark);
+                background: var(--gpv-indigo);
+            }
+
+            .gpv-sync-indicator {
+                min-height: 44px;
+                border: 1px solid #b8d1ce;
+                border-radius: 8px;
+                background: #f4fbf8;
+                color: var(--gpv-teal-dark);
+                box-shadow: 0 8px 24px rgba(16, 35, 55, 0.18);
+            }
+
+            .gpv-notification {
+                border: 1px solid var(--gpv-line-strong);
+                border-radius: 8px;
+                color: var(--gpv-ink);
+            }
+
+            .gpv-notification-success {
+                border-left: 4px solid var(--gpv-teal);
+            }
+
+            .gpv-notification-error {
+                border-left: 4px solid var(--gpv-coral);
+            }
+
+            .gpv-notification-info {
+                border-left: 4px solid var(--gpv-indigo);
+            }
+
+            .gpv-overlay :where(button, input, select, textarea, a, summary, [tabindex]):focus-visible,
+            .gpv-trigger-btn:focus-visible,
+            .gpv-sync-indicator:focus-visible {
+                outline: 3px solid var(--gpv-focus);
+                outline-offset: 3px;
+            }
+
+            .gpv-header-buttons button:focus-visible,
+            .gpv-trigger-btn:focus-visible,
+            .gpv-sync-btn-primary:focus-visible,
+            .gpv-sync-btn-danger:focus-visible,
+            .gpv-mode-btn.is-active:focus-visible {
+                outline: 3px solid #ffffff;
+                outline-offset: 2px;
+                box-shadow: 0 0 0 5px var(--gpv-ink);
+            }
+
+            .gpv-overlay button:disabled,
+            .gpv-overlay input:disabled,
+            .gpv-overlay select:disabled {
+                cursor: not-allowed;
+                opacity: 0.58;
+            }
+
+            .gpv-trigger-btn {
+                min-height: 44px;
+                border: 1px solid #304282;
+                border-radius: 8px;
+                background: var(--gpv-ink);
+                box-shadow: 0 8px 22px rgba(16, 35, 55, 0.28);
+            }
+
+            .gpv-trigger-btn:hover {
+                background: var(--gpv-ink-soft);
+                box-shadow: 0 10px 26px rgba(16, 35, 55, 0.34);
+                transform: translateY(-1px);
+            }
+
+            @media (max-width: 719px) {
+                .gpv-overlay {
+                    align-items: flex-start;
+                    padding: 10px;
+                }
+
+                .gpv-container,
+                .gpv-container--expanded {
+                    width: 100%;
+                    max-width: 100%;
+                    max-height: calc(100vh - 20px);
+                    border-radius: 14px;
+                }
+
+                .gpv-header {
+                    padding: 14px;
+                    border-radius: 13px 13px 0 0;
+                }
+
+                .gpv-header h1 {
+                    flex-basis: 160px;
+                    font-size: 20px;
+                }
+
+                .gpv-header-buttons {
+                    flex: 1 1 100%;
+                    justify-content: flex-start;
+                }
+
+                .gpv-sync-indicator-container {
+                    flex: 1 1 100%;
+                    justify-content: flex-start;
+                    padding-top: 2px;
+                }
+
+                .gpv-content {
+                    padding: 14px;
+                }
+
+                .gpv-mode-toggle {
+                    margin-left: 0;
+                }
+
+                .gpv-detail-stats,
+                .gpv-performance-detail-row,
+                .gpv-conflict-comparison {
+                    flex-wrap: wrap;
+                }
+
+                .gpv-detail-stats > *,
+                .gpv-performance-chart-wrapper,
+                .gpv-performance-metrics-table {
+                    min-width: 0;
+                    width: 100%;
+                    max-width: none;
+                }
+
+                .gpv-metric-grid,
+                .gpv-summary-row,
+                .gpv-fsm-overview-grid {
+                    grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+                }
+
+                .gpv-sync-actions > *,
+                .gpv-conflict-actions > * {
+                    flex: 1 1 135px;
+                }
+
+                .gpv-table-wrap,
+                .gpv-fsm-table-wrap {
+                    max-width: 100%;
+                }
+
+                .gpv-table th,
+                .gpv-table td {
+                    padding: 10px 12px;
+                }
+
+                .gpv-conflict-comparison {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: stretch;
+                }
+
+                .gpv-conflict-divider {
+                    display: none;
+                }
+            }
+
+            @media (max-width: 375px) {
+                .gpv-header h1 {
+                    flex-basis: 100%;
+                }
+
+                .gpv-header-buttons > * {
+                    flex: 1 1 auto;
+                }
+
+                .gpv-header-buttons .gpv-close-btn {
+                    flex: 0 0 40px;
+                }
+
+                .gpv-select {
+                    width: 100%;
+                }
+
+                .gpv-bucket-card,
+                .gpv-fsm-manager,
+                .gpv-bucket-manager,
+                .gpv-sync-settings,
+                .gpv-conflict-dialog {
+                    padding: 14px;
+                }
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                .gpv-overlay,
+                .gpv-container,
+                .gpv-trigger-btn,
+                .gpv-overlay *,
+                .gpv-notification,
+                .gpv-sync-indicator {
+                    animation-duration: 0.01ms !important;
+                    animation-iteration-count: 1 !important;
+                    transition-duration: 0.01ms !important;
+                    scroll-behavior: auto !important;
+                }
+
+                .gpv-trigger-btn:hover,
+                .gpv-bucket-card:hover,
+                .gpv-fsm-overview-card:hover,
+                .gpv-header-buttons button:hover:not(:disabled) {
+                    transform: none;
+                }
+
+                .gpv-input-flash,
+                .gpv-sync-indicator.gpv-sync-status-syncing .gpv-sync-icon {
+                    animation: none !important;
+                }
+            }
         `
     };
 
