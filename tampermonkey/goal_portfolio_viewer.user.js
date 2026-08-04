@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Goal Portfolio Viewer
 // @namespace    https://github.com/laurenceputra/goal-portfolio-viewer
-// @version      2.15.0
+// @version      2.16.0
 // @description  View and organize your investment portfolio with a modern interface across Endowus, FSM, and OCBC holdings. Includes bucket analytics and optional cross-device sync for configuration.
 // @author       laurenceputra
 // @match        https://app.sg.endowus.com/*
@@ -8710,6 +8710,12 @@ let GoalTargetStore;
         });
     }
 
+    function createPlanningContent(panel) {
+        const content = createElement('div', 'gpv-planning-content');
+        panel.appendChild(content);
+        return content;
+    }
+
     function renderPlanningPanel(contentDiv, bucketViewModel, { beforeNode = null } = {}) {
         if (!contentDiv || !bucketViewModel) {
             return;
@@ -8723,10 +8729,12 @@ let GoalTargetStore;
             contentDiv.appendChild(panel);
         };
         panel.appendChild(createWorkspaceTitle({ title: 'Planning', level: 3, className: 'gpv-planning-title' }));
+        const planningContent = createPlanningContent(panel);
 
         const planning = buildBucketPlanningModel(bucketViewModel.goalTypes);
         if (!planning) {
-            panel.appendChild(createElement('p', 'gpv-planning-empty', 'Planning insights appear once targets and balances are available.'));
+            planningContent.appendChild(createElement('p', 'gpv-planning-empty', 'Planning insights appear once targets and balances are available.'));
+            renderAllocationDriftHint(planningContent, bucketViewModel);
             appendPanel();
             return;
         }
@@ -8734,10 +8742,11 @@ let GoalTargetStore;
         const coverageText = planning.coverageIssues.length > 0
             ? planning.coverageIssues.join(' | ')
             : null;
-        appendPlanningDetails(panel, planning, {
+        appendPlanningDetails(planningContent, planning, {
             coverageText,
             showScenarioPrompt: true
         });
+        renderAllocationDriftHint(planningContent, bucketViewModel);
 
         appendPanel();
     }
@@ -8914,9 +8923,11 @@ let GoalTargetStore;
             headers: ['Goal Name', 'Current value', '% of Goal Type', 'Fixed', '', 'Drift', 'Cumulative Return', 'Return %'],
             className: `gpv-table ${CLASS_NAMES.goalTable}`
         });
+        const tableWrapper = createElement('div', 'gpv-table-wrap');
+        tableWrapper.appendChild(table);
         const headerRow = table.querySelector('thead tr');
         if (!headerRow) {
-            typeSection.appendChild(table);
+            typeSection.appendChild(tableWrapper);
             return;
         }
         headerRow.children[GOAL_NAME_COLUMN_INDEX].className = 'gpv-goal-name-header';
@@ -9016,7 +9027,7 @@ let GoalTargetStore;
             tbody.appendChild(metricsRow);
         });
 
-        typeSection.appendChild(table);
+        typeSection.appendChild(tableWrapper);
     }
 
     function wireGoalTypeEvents({
@@ -9318,7 +9329,6 @@ let GoalTargetStore;
 
         contentDiv.appendChild(buildBucketHeader(bucketViewModel));
         renderPlanningPanel(contentDiv, bucketViewModel);
-        renderAllocationDriftHint(contentDiv, bucketViewModel);
 
         bucketViewModel.goalTypes.forEach(goalTypeModel => {
             const typeGrowth = goalTypeModel.growthDisplay;
@@ -13216,13 +13226,9 @@ syncUi.update = function updateSyncUI() {
                     border: 1px solid #ffc107;
                     border-radius: 4px;
                     padding: 12px;
-                    margin-bottom: 15px;
-                }
-
-                .gpv-conflict-warning p {
-                    margin: 0;
                     color: #856404;
                     font-size: 14px;
+                    margin: 0 0 15px;
                 }
 
                 .gpv-conflict-actions {
@@ -13683,6 +13689,962 @@ syncUi.update = function updateSyncUI() {
                     }
                 }
 
+        `,
+        workspace: `
+            /* Portfolio workspace redesign: keep this surface intentionally scoped to the overlay. */
+            .gpv-overlay,
+            .gpv-trigger-btn,
+            .gpv-notification,
+            .gpv-sync-indicator {
+                --gpv-ink: #17313d;
+                --gpv-ink-soft: #38535d;
+                --gpv-canvas: #f7f9f7;
+                --gpv-surface: #ffffff;
+                --gpv-surface-muted: #f1f5f3;
+                --gpv-line: #d6e1de;
+                --gpv-line-strong: #78918e;
+                --gpv-indigo: #4356a8;
+                --gpv-indigo-dark: #304282;
+                --gpv-teal: #147d7a;
+                --gpv-teal-dark: #0c5c5b;
+                --gpv-coral: #b23b1f;
+                --gpv-amber: #8a5b08;
+                --gpv-focus: #8a4b08;
+            }
+
+            .gpv-overlay {
+                color: var(--gpv-ink);
+                overflow: hidden;
+                padding: clamp(10px, 3vw, 28px);
+                background: rgba(23, 49, 61, 0.34);
+                backdrop-filter: blur(12px);
+            }
+
+            .gpv-overlay,
+            .gpv-overlay *,
+            .gpv-trigger-btn,
+            .gpv-notification,
+            .gpv-sync-indicator {
+                box-sizing: border-box;
+            }
+
+            .gpv-container {
+                width: min(1120px, calc(100vw - 20px));
+                max-width: calc(100vw - 20px);
+                max-height: calc(100vh - 20px);
+                min-width: 0;
+                overflow: hidden;
+                border: 1px solid rgba(174, 191, 187, 0.9);
+                border-radius: 18px;
+                background: var(--gpv-canvas);
+                box-shadow: 0 22px 60px rgba(23, 49, 61, 0.18);
+            }
+
+            .gpv-container--expanded {
+                width: min(1400px, calc(100vw - 20px));
+                max-width: calc(100vw - 20px);
+                max-height: calc(100vh - 20px);
+            }
+
+            .gpv-header {
+                min-height: 72px;
+                flex-wrap: wrap;
+                gap: 12px 18px;
+                padding: 16px 22px;
+                border: 0;
+                border-bottom: 1px solid var(--gpv-line);
+                border-radius: 17px 17px 0 0;
+                background: linear-gradient(115deg, #e8f3f1 0%, #edf0fa 100%);
+                color: var(--gpv-ink);
+            }
+
+            .gpv-header h1 {
+                flex: 1 1 220px;
+                min-width: 0;
+                color: var(--gpv-ink);
+                font-size: clamp(20px, 2.2vw, 26px);
+                font-weight: 750;
+                letter-spacing: -0.025em;
+                line-height: 1.15;
+            }
+
+            .gpv-header-buttons {
+                flex: 0 1 auto;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+                gap: 8px;
+            }
+
+            .gpv-sync-indicator-container {
+                flex: 0 1 auto;
+                min-width: 0;
+                padding: 0;
+                color: var(--gpv-ink-soft);
+            }
+
+            .gpv-header-buttons .gpv-close-btn,
+            .gpv-header-buttons .gpv-expand-btn,
+            .gpv-header-buttons .gpv-sync-btn,
+            .gpv-header-buttons .gpv-bucket-manage-btn {
+                min-height: 40px;
+                border: 1px solid var(--gpv-line-strong);
+                border-radius: 8px;
+                background: #ffffff;
+                color: var(--gpv-ink);
+                box-shadow: none;
+            }
+
+            .gpv-header-buttons .gpv-close-btn {
+                width: 40px;
+                height: 40px;
+                font-size: 22px;
+            }
+
+            .gpv-header-buttons button:hover:not(:disabled) {
+                border-color: var(--gpv-teal);
+                background: #edf7f4;
+                color: var(--gpv-ink);
+                transform: none;
+            }
+
+            .gpv-content {
+                min-width: 0;
+                overflow-x: hidden;
+                padding: clamp(16px, 2.8vw, 28px);
+                background: var(--gpv-canvas);
+            }
+
+            .gpv-content.gpv-mode-allocation,
+            .gpv-content.gpv-mode-performance {
+                padding-top: 12px;
+            }
+
+            .gpv-controls,
+            .gpv-control-bar {
+                min-width: 0;
+                margin: 0 0 10px;
+                padding: 12px 14px;
+                border: 1px solid var(--gpv-line);
+                border-radius: 10px;
+                background: rgba(255, 255, 255, 0.92);
+                box-shadow: 0 2px 8px rgba(23, 49, 61, 0.035);
+            }
+
+            .gpv-select-label,
+            .gpv-mode-label {
+                color: var(--gpv-ink-soft);
+                font-size: 12px;
+                font-weight: 800;
+                letter-spacing: 0.07em;
+                text-transform: uppercase;
+            }
+
+            .gpv-select,
+            .gpv-target-input,
+            .gpv-projected-input,
+            .gpv-sync-input {
+                min-height: 40px;
+                border: 1px solid var(--gpv-line-strong);
+                border-radius: 7px;
+                background: #ffffff;
+                color: var(--gpv-ink);
+            }
+
+            .gpv-select {
+                min-width: min(220px, 100%);
+                padding: 8px 12px;
+            }
+
+            .gpv-mode-btn,
+            .gpv-section-toggle,
+            .gpv-performance-refresh-btn {
+                min-height: 40px;
+                border: 1px solid var(--gpv-line-strong);
+                border-radius: 7px;
+                background: #ffffff;
+                color: var(--gpv-indigo-dark);
+                padding: 8px 12px;
+            }
+
+            .gpv-mode-btn.is-active {
+                border-color: var(--gpv-indigo-dark);
+                background: var(--gpv-indigo);
+                color: #ffffff;
+            }
+
+            .gpv-overlay button,
+            .gpv-overlay input,
+            .gpv-overlay select,
+            .gpv-overlay textarea,
+            .gpv-trigger-btn {
+                font-size: 14px;
+            }
+
+            .gpv-sync-btn,
+            .gpv-sync-btn-primary,
+            .gpv-sync-btn-secondary,
+            .gpv-sync-btn-danger {
+                min-height: 40px;
+                border-radius: 7px;
+                padding: 9px 14px;
+                font-weight: 750;
+            }
+
+            .gpv-sync-btn-primary {
+                border: 1px solid var(--gpv-indigo-dark);
+                background: var(--gpv-indigo);
+                color: #ffffff;
+                box-shadow: 0 4px 10px rgba(48, 66, 130, 0.2);
+            }
+
+            .gpv-sync-btn-primary:hover:not(:disabled) {
+                background: var(--gpv-indigo-dark);
+                transform: translateY(-1px);
+            }
+
+            .gpv-sync-btn-secondary {
+                border: 1px solid var(--gpv-line-strong);
+                background: #ffffff;
+                color: var(--gpv-indigo-dark);
+            }
+
+            .gpv-sync-btn-danger {
+                background: var(--gpv-coral);
+                color: #ffffff;
+            }
+
+            .gpv-summary-container {
+                gap: 18px;
+            }
+
+            .gpv-summary-container::before {
+                content: 'PORTFOLIO OVERVIEW';
+                display: block;
+                color: var(--gpv-teal-dark);
+                font-size: 11px;
+                font-weight: 850;
+                letter-spacing: 0.16em;
+            }
+
+            .gpv-bucket-card,
+            .gpv-fsm-overview-card,
+            .gpv-fsm-manager,
+            .gpv-bucket-manager,
+            .gpv-readiness,
+            .gpv-planning-panel,
+            .gpv-performance-container {
+                border: 1px solid var(--gpv-line);
+                border-radius: 12px;
+                background: var(--gpv-surface);
+                box-shadow: 0 3px 10px rgba(23, 49, 61, 0.045);
+            }
+
+            .gpv-bucket-card {
+                position: relative;
+                padding: 20px;
+                border-top: 4px solid var(--gpv-teal);
+                cursor: pointer;
+            }
+
+            .gpv-bucket-card:hover,
+            .gpv-fsm-overview-card:hover {
+                border-color: var(--gpv-teal);
+                box-shadow: 0 6px 16px rgba(20, 125, 122, 0.09);
+                transform: translateY(-1px);
+            }
+
+            .gpv-bucket-header {
+                gap: 8px 14px;
+                margin-bottom: 16px;
+            }
+
+            .gpv-bucket-title,
+            .gpv-fsm-overview-card-title {
+                color: var(--gpv-ink);
+                font-size: clamp(20px, 2vw, 25px);
+                font-weight: 780;
+                letter-spacing: -0.02em;
+            }
+
+            .gpv-stats,
+            .gpv-detail-stats,
+            .gpv-metric-grid,
+            .gpv-summary-row {
+                gap: 10px;
+            }
+
+            .gpv-stat-item,
+            .gpv-metric-card,
+            .gpv-summary-card,
+            .gpv-fsm-overview-stat {
+                min-width: 0;
+                padding: 12px 14px;
+                border: 1px solid var(--gpv-line);
+                border-radius: 8px;
+                background: var(--gpv-surface-muted);
+            }
+
+            .gpv-stat-label,
+            .gpv-fsm-overview-stat-label,
+            .gpv-summary-card-label {
+                color: var(--gpv-ink-soft);
+                font-size: 11px;
+                font-weight: 850;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+            }
+
+            .gpv-stat-value,
+            .gpv-fsm-overview-stat-value {
+                margin-top: 3px;
+                color: var(--gpv-ink);
+                font-size: 20px;
+                font-weight: 800;
+                letter-spacing: -0.015em;
+            }
+
+            .gpv-summary-profit-value.positive,
+            .gpv-fsm-overview-stat-value.positive,
+            .gpv-table .positive,
+            .gpv-diff-cell.positive {
+                color: var(--gpv-teal-dark);
+            }
+
+            .gpv-summary-profit-value.negative,
+            .gpv-fsm-overview-stat-value.negative,
+            .gpv-table .negative,
+            .gpv-diff-cell.negative {
+                color: var(--gpv-coral);
+            }
+
+            .gpv-health-badge {
+                min-height: 28px;
+                padding: 5px 10px;
+                border: 1px solid currentColor;
+                border-radius: 6px;
+                font-size: 11px;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+            }
+
+            .gpv-health--healthy {
+                background: #e6f3ef;
+                color: var(--gpv-teal-dark);
+            }
+
+            .gpv-health--setup {
+                background: #fff3d6;
+                color: var(--gpv-amber);
+            }
+
+            .gpv-health--review {
+                background: #ffebe5;
+                color: var(--gpv-coral);
+            }
+
+            .gpv-allocation-drift-hint,
+            .gpv-attention-strip,
+            .gpv-sync-warning,
+            .gpv-conflict-warning {
+                border-radius: 8px;
+                box-shadow: inset 4px 0 0 var(--gpv-coral);
+            }
+
+            .gpv-allocation-drift-hint {
+                border-color: #d9bd78;
+                background: #fff6df;
+                color: var(--gpv-amber);
+            }
+
+            .gpv-attention-strip,
+            .gpv-conflict-warning {
+                border-color: #e4b3a4;
+                background: #fff2ee;
+            }
+
+            .gpv-attention-title {
+                color: var(--gpv-coral);
+            }
+
+            .gpv-attention-button {
+                min-height: 40px;
+                border-color: #e4b3a4;
+                border-radius: 7px;
+                background: #fffaf8;
+                color: var(--gpv-coral);
+            }
+
+            .gpv-attention-button:hover {
+                background: #ffebe5;
+            }
+
+            .gpv-planning-panel {
+                border-color: #acd2cc;
+                border-left: 4px solid var(--gpv-teal);
+                background: #edf7f4;
+                box-shadow: none;
+                display: grid;
+                grid-template-columns: max-content minmax(0, 1fr);
+                align-items: start;
+                column-gap: 16px;
+                padding: 10px 14px;
+            }
+
+            .gpv-planning-title,
+            .gpv-planning-subtitle {
+                color: var(--gpv-teal-dark);
+            }
+
+            .gpv-planning-title {
+                margin: 2px 0 0;
+                white-space: nowrap;
+            }
+
+            .gpv-planning-content {
+                min-width: 0;
+                display: flex;
+                flex-wrap: wrap;
+                align-items: baseline;
+                gap: 4px 14px;
+            }
+
+            .gpv-planning-content .gpv-planning-coverage,
+            .gpv-planning-content .gpv-planning-copy,
+            .gpv-planning-content .gpv-planning-empty {
+                margin: 0;
+                line-height: 1.35;
+            }
+
+            .gpv-planning-content .gpv-planning-list {
+                flex: 1 1 100%;
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+                gap: 2px 14px;
+                margin: 0;
+            }
+
+            .gpv-planning-content .gpv-allocation-drift-hint {
+                flex: 0 1 auto;
+                margin: 2px 0 0;
+                padding: 5px 8px;
+                border-radius: 6px;
+                font-size: 12px;
+                line-height: 1.35;
+            }
+
+            .gpv-planning-coverage,
+            .gpv-planning-copy,
+            .gpv-planning-empty,
+            .gpv-planning-list {
+                color: var(--gpv-ink-soft);
+            }
+
+            .gpv-detail-header {
+                gap: 10px;
+                padding: 0 0 16px;
+                border-bottom: 1px solid var(--gpv-line-strong);
+            }
+
+            .gpv-detail-title {
+                color: var(--gpv-ink);
+                font-size: clamp(22px, 2.4vw, 30px);
+                letter-spacing: -0.025em;
+            }
+
+            .gpv-type-section {
+                margin-bottom: 24px;
+                padding-top: 4px;
+            }
+
+            .gpv-type-header h3,
+            .gpv-bucket-manager-title,
+            .gpv-readiness-title {
+                color: var(--gpv-ink);
+                font-weight: 800;
+                letter-spacing: -0.015em;
+            }
+
+            .gpv-type-header h3 {
+                font-size: 18px;
+            }
+
+            .gpv-type-summary {
+                color: var(--gpv-ink-soft);
+            }
+
+            .gpv-table-wrap,
+            .gpv-fsm-table-wrap {
+                max-width: 100%;
+                overflow-x: auto;
+                overscroll-behavior-x: contain;
+                border: 1px solid var(--gpv-line-strong);
+                border-radius: 9px;
+                background: var(--gpv-surface);
+                box-shadow: 0 2px 8px rgba(23, 49, 61, 0.035);
+            }
+
+            .gpv-table {
+                background: var(--gpv-surface);
+            }
+
+            .gpv-table thead tr {
+                background: #e8f1f2;
+            }
+
+            .gpv-table th {
+                position: sticky;
+                top: 0;
+                z-index: 2;
+                padding: 12px 14px;
+                background: #e8f1f2;
+                color: var(--gpv-ink);
+                font-size: 11px;
+                letter-spacing: 0.08em;
+            }
+
+            .gpv-table td {
+                padding: 12px 14px;
+                border-top-color: var(--gpv-line);
+                color: var(--gpv-ink-soft);
+            }
+
+            .gpv-table tbody tr:nth-child(even) {
+                background: #fbfdfc;
+            }
+
+            .gpv-table tbody tr:hover,
+            .gpv-table tbody tr.gpv-goal-row:hover + tr.gpv-goal-metrics-row,
+            .gpv-table tbody tr.gpv-goal-metrics-row:hover {
+                background: #f0f8f6;
+            }
+
+            .gpv-table:focus-within {
+                box-shadow: 0 0 0 3px rgba(138, 75, 8, 0.34);
+            }
+
+            .gpv-table .gpv-goal-name {
+                color: var(--gpv-ink);
+                font-weight: 750;
+            }
+
+            .gpv-target-input:focus,
+            .gpv-projected-input:focus,
+            .gpv-select:focus,
+            .gpv-sync-input:focus {
+                outline: 2px solid var(--gpv-focus);
+                outline-offset: 1px;
+                border-color: var(--gpv-focus);
+                box-shadow: none;
+            }
+
+            .gpv-target-input,
+            .gpv-projected-input {
+                padding: 8px 9px;
+            }
+
+            .gpv-fixed-toggle {
+                width: 44px;
+                height: 24px;
+            }
+
+            .gpv-toggle-slider:before {
+                height: 18px;
+                width: 18px;
+                left: 3px;
+                bottom: 3px;
+            }
+
+            .gpv-fixed-toggle-input:checked + .gpv-toggle-slider:before {
+                transform: translateX(20px);
+            }
+
+            .gpv-fixed-toggle-input:focus-visible + .gpv-toggle-slider {
+                outline: 2px solid var(--gpv-focus);
+                outline-offset: 3px;
+            }
+
+            .gpv-projected-input-container {
+                border: 1px dashed var(--gpv-teal);
+                border-radius: 8px;
+                background: #edf7f4;
+            }
+
+            .gpv-projected-label {
+                color: var(--gpv-teal-dark);
+            }
+
+            .gpv-performance-container {
+                padding: 16px;
+                background: #f1f5f3;
+                border-color: var(--gpv-line-strong);
+            }
+
+            .gpv-performance-window-tile,
+            .gpv-performance-metrics-table {
+                border-color: var(--gpv-line);
+                background: var(--gpv-surface);
+            }
+
+            .gpv-performance-window-value,
+            .gpv-performance-metric-value {
+                color: var(--gpv-ink);
+            }
+
+            .gpv-fsm-manager,
+            .gpv-bucket-manager {
+                padding: 18px;
+            }
+
+            .gpv-fsm-toolbar,
+            .gpv-fsm-manager-row,
+            .gpv-fsm-portfolio-list-row,
+            .gpv-type-actions,
+            .gpv-balance-copy-controls,
+            .gpv-sync-actions,
+            .gpv-conflict-actions {
+                gap: 8px;
+            }
+
+            .gpv-fsm-overview-header {
+                margin-bottom: 2px;
+            }
+
+            .gpv-fsm-overview-card {
+                padding: 18px;
+            }
+
+            .gpv-fsm-overview-card-subtitle {
+                color: var(--gpv-ink-soft);
+            }
+
+            .gpv-fsm-overview-card-tag {
+                border: 1px solid #acd2cc;
+                background: #edf7f4;
+                color: var(--gpv-teal-dark);
+            }
+
+            .gpv-sync-modal,
+            .gpv-conflict-modal {
+                max-width: min(840px, calc(100vw - 20px));
+            }
+
+            .gpv-sync-settings,
+            .gpv-conflict-dialog {
+                padding: clamp(16px, 3vw, 26px);
+            }
+
+            .gpv-sync-header h3,
+            .gpv-conflict-dialog h3 {
+                color: var(--gpv-ink);
+                font-weight: 800;
+                letter-spacing: -0.015em;
+            }
+
+            .gpv-sync-status-bar,
+            .gpv-sync-advanced,
+            .gpv-conflict-diff {
+                border-color: var(--gpv-line);
+                border-radius: 8px;
+                background: var(--gpv-surface-muted);
+            }
+
+            .gpv-sync-warning {
+                background: #fff6df;
+                color: var(--gpv-amber);
+            }
+
+            .gpv-conflict-warning {
+                color: var(--gpv-amber);
+            }
+
+            .gpv-sync-status-success {
+                color: var(--gpv-teal-dark);
+            }
+
+            .gpv-sync-status-error,
+            .gpv-sync-error {
+                color: var(--gpv-coral);
+            }
+
+            .gpv-sync-status-conflict {
+                color: var(--gpv-amber);
+            }
+
+            .gpv-conflict-comparison {
+                gap: 12px;
+            }
+
+            .gpv-conflict-option {
+                border: 1px solid var(--gpv-line-strong);
+                border-radius: 9px;
+                background: var(--gpv-surface);
+                padding: 16px;
+            }
+
+            .gpv-conflict-step {
+                min-height: 28px;
+                border: 1px solid var(--gpv-line);
+                background: #eef3f1;
+                color: var(--gpv-ink-soft);
+            }
+
+            .gpv-conflict-step.is-active {
+                border-color: var(--gpv-indigo-dark);
+                background: var(--gpv-indigo);
+            }
+
+            .gpv-sync-indicator {
+                min-height: 44px;
+                border: 1px solid #acd2cc;
+                border-radius: 8px;
+                background: #f4fbf8;
+                color: var(--gpv-teal-dark);
+                box-shadow: 0 6px 18px rgba(23, 49, 61, 0.12);
+            }
+
+            .gpv-notification {
+                border: 1px solid var(--gpv-line-strong);
+                border-radius: 8px;
+                color: var(--gpv-ink);
+            }
+
+            .gpv-notification-success {
+                border-left: 4px solid var(--gpv-teal);
+            }
+
+            .gpv-notification-error {
+                border-left: 4px solid var(--gpv-coral);
+            }
+
+            .gpv-notification-info {
+                border-left: 4px solid var(--gpv-indigo);
+            }
+
+            .gpv-overlay :where(button, input, select, textarea, a, summary, [tabindex]):focus-visible,
+            .gpv-trigger-btn:focus-visible,
+            .gpv-sync-indicator:focus-visible {
+                outline: 3px solid var(--gpv-focus);
+                outline-offset: 3px;
+            }
+
+            .gpv-header-buttons button:focus-visible,
+            .gpv-trigger-btn:focus-visible,
+            .gpv-sync-btn-primary:focus-visible,
+            .gpv-sync-btn-danger:focus-visible,
+            .gpv-mode-btn.is-active:focus-visible {
+                outline: 3px solid var(--gpv-focus);
+                outline-offset: 2px;
+                box-shadow: 0 0 0 5px #ffffff;
+            }
+
+            .gpv-overlay button:disabled,
+            .gpv-overlay input:disabled,
+            .gpv-overlay select:disabled {
+                cursor: not-allowed;
+                opacity: 0.58;
+            }
+
+            .gpv-trigger-btn {
+                min-height: 44px;
+                border: 1px solid #304282;
+                border-radius: 8px;
+                background: var(--gpv-ink);
+                box-shadow: 0 6px 18px rgba(23, 49, 61, 0.2);
+            }
+
+            .gpv-trigger-btn:hover {
+                background: var(--gpv-ink-soft);
+                box-shadow: 0 8px 22px rgba(23, 49, 61, 0.24);
+                transform: translateY(-1px);
+            }
+
+            @media (max-width: 719px) {
+                .gpv-overlay {
+                    align-items: flex-start;
+                    padding: 10px;
+                }
+
+                .gpv-container,
+                .gpv-container--expanded {
+                    width: 100%;
+                    max-width: 100%;
+                    max-height: calc(100vh - 20px);
+                    border-radius: 14px;
+                }
+
+                .gpv-header {
+                    padding: 14px;
+                    border-radius: 13px 13px 0 0;
+                }
+
+                .gpv-header h1 {
+                    flex-basis: 160px;
+                    font-size: 20px;
+                }
+
+                .gpv-header-buttons {
+                    flex: 1 1 100%;
+                    justify-content: flex-start;
+                }
+
+                .gpv-sync-indicator-container {
+                    flex: 1 1 100%;
+                    justify-content: flex-start;
+                    padding-top: 2px;
+                }
+
+                .gpv-content {
+                    padding: 14px;
+                }
+
+                .gpv-content.gpv-mode-allocation,
+                .gpv-content.gpv-mode-performance {
+                    padding-top: 10px;
+                }
+
+                .gpv-planning-panel {
+                    display: block;
+                    padding: 10px 12px;
+                }
+
+                .gpv-planning-title {
+                    margin-bottom: 6px;
+                    white-space: normal;
+                }
+
+                .gpv-planning-content {
+                    flex-direction: column;
+                    align-items: stretch;
+                    gap: 4px;
+                }
+
+                .gpv-planning-content .gpv-planning-list {
+                    width: 100%;
+                    grid-template-columns: 1fr;
+                }
+
+                .gpv-planning-content .gpv-allocation-drift-hint {
+                    align-self: stretch;
+                }
+
+                .gpv-projected-input-container {
+                    flex-wrap: wrap;
+                }
+
+                .gpv-projected-label {
+                    flex: 1 1 180px;
+                    min-width: 0;
+                    white-space: normal;
+                }
+
+                .gpv-projected-input {
+                    flex: 1 1 140px;
+                    min-width: 0;
+                    width: auto;
+                    max-width: 100%;
+                }
+
+                .gpv-mode-toggle {
+                    margin-left: 0;
+                }
+
+                .gpv-detail-stats,
+                .gpv-performance-detail-row,
+                .gpv-conflict-comparison {
+                    flex-wrap: wrap;
+                }
+
+                .gpv-detail-stats > *,
+                .gpv-performance-chart-wrapper,
+                .gpv-performance-metrics-table {
+                    min-width: 0;
+                    width: 100%;
+                    max-width: none;
+                }
+
+                .gpv-metric-grid,
+                .gpv-summary-row,
+                .gpv-fsm-overview-grid {
+                    grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+                }
+
+                .gpv-sync-actions > *,
+                .gpv-conflict-actions > * {
+                    flex: 1 1 135px;
+                }
+
+                .gpv-table-wrap,
+                .gpv-fsm-table-wrap {
+                    max-width: 100%;
+                }
+
+                .gpv-table th,
+                .gpv-table td {
+                    padding: 10px 12px;
+                }
+
+                .gpv-conflict-comparison {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: stretch;
+                }
+
+                .gpv-conflict-divider {
+                    display: none;
+                }
+            }
+
+            @media (max-width: 375px) {
+                .gpv-header h1 {
+                    flex-basis: 100%;
+                }
+
+                .gpv-header-buttons > * {
+                    flex: 1 1 auto;
+                }
+
+                .gpv-header-buttons .gpv-close-btn {
+                    flex: 0 0 40px;
+                }
+
+                .gpv-select {
+                    width: 100%;
+                }
+
+                .gpv-bucket-card,
+                .gpv-fsm-manager,
+                .gpv-bucket-manager,
+                .gpv-sync-settings,
+                .gpv-conflict-dialog {
+                    padding: 14px;
+                }
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                .gpv-overlay,
+                .gpv-container,
+                .gpv-trigger-btn,
+                .gpv-overlay *,
+                .gpv-notification,
+                .gpv-sync-indicator {
+                    animation-duration: 0.01ms !important;
+                    animation-iteration-count: 1 !important;
+                    transition-duration: 0.01ms !important;
+                    scroll-behavior: auto !important;
+                }
+
+                .gpv-trigger-btn:hover,
+                .gpv-bucket-card:hover,
+                .gpv-fsm-overview-card:hover,
+                .gpv-header-buttons button:hover:not(:disabled) {
+                    transform: none;
+                }
+
+                .gpv-input-flash,
+                .gpv-sync-indicator.gpv-sync-status-syncing .gpv-sync-icon {
+                    animation: none !important;
+                }
+            }
         `
     };
 
@@ -14656,7 +15618,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     function buildFsmPlanningPanel(planning, scopeLabel, options = {}) {
         const panel = createElement('div', 'gpv-planning-panel');
         panel.appendChild(createWorkspaceTitle({ title: 'Planning', level: 3, className: 'gpv-planning-title' }));
-        appendPlanningDetails(panel, planning || {}, {
+        const planningContent = createPlanningContent(panel);
+        appendPlanningDetails(planningContent, planning || {}, {
             scopeLabel,
             coverageText: planning?.targetCoverageLabel || null,
             showScenarioPrompt: options.showScenarioPrompt === true
@@ -14667,13 +15630,14 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     function buildFsmProjectionPanel({ selectedScopeLabel, projectedAmount, onInput }) {
         const panel = createElement('div', 'gpv-planning-panel');
         panel.appendChild(createWorkspaceTitle({ title: 'Projection', level: 3, className: 'gpv-planning-title' }));
+        const planningContent = createPlanningContent(panel);
         const inputControl = createProjectedInvestmentInput({
             amount: projectedAmount,
             inputLabel: `Add Projected Investment for ${selectedScopeLabel} (simulation only):`,
             onInput
         });
         inputControl.input.setAttribute('aria-label', `Projected investment amount for ${selectedScopeLabel}`);
-        panel.appendChild(inputControl.container);
+        planningContent.appendChild(inputControl.container);
         return panel;
     }
 
@@ -15942,12 +16906,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
             const planningPanel = createElement('section', 'gpv-planning-panel');
             planningPanel.appendChild(createWorkspaceTitle({ title: 'Planning', level: 2, className: 'gpv-planning-title' }));
-            planningPanel.appendChild(createElement(
+            const planningContent = createPlanningContent(planningPanel);
+            planningContent.appendChild(createElement(
                 'p',
                 'gpv-planning-copy',
                 'Assign instruments to sub-portfolios, set target percentages, and spot drift before rebalancing.'
             ));
-            planningPanel.appendChild(createElement('p', 'gpv-planning-copy', `Scope: ${activeView === 'liabilities' ? 'Liabilities' : 'Assets'}`));
+            planningContent.appendChild(createElement('p', 'gpv-planning-copy', `Scope: ${activeView === 'liabilities' ? 'Liabilities' : 'Assets'}`));
 
             const planningTotalValue = portfolioNos.reduce((sum, portfolioNo) => (
                 sum + toFiniteNumber(buildOcbcSummary(groupedByPortfolio[portfolioNo] || []).total, 0)
@@ -16049,7 +17014,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             driftItem.appendChild(document.createTextNode('Largest drift: '));
             appendTextSpan(driftItem, getDriftSeverityClass(planningLargestDriftPercent), planningDriftText);
             planningDetailList.appendChild(driftItem);
-            planningPanel.appendChild(planningDetailList);
+            planningContent.appendChild(planningDetailList);
 
             const planningStatusItems = [];
             if (planningUnassignedInstruments > 0) {
@@ -16063,8 +17028,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 planningStatusItems.push(`${planningMaterialDriftCount} sub-portfolio scope(s) show high drift`);
             }
             if (planningStatusItems.length > 0) {
-                planningPanel.appendChild(createWorkspaceTitle({ title: 'Needs attention', level: 3, className: 'gpv-planning-subtitle' }));
-                planningPanel.appendChild(createHealthReasonList(planningStatusItems));
+                planningContent.appendChild(createWorkspaceTitle({ title: 'Needs attention', level: 3, className: 'gpv-planning-subtitle' }));
+                planningContent.appendChild(createHealthReasonList(planningStatusItems));
             }
             contentDiv.appendChild(planningPanel);
 
@@ -17196,6 +18161,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         window.__gpvTestingHooks = {
             injectStyles,
             showOverlay,
+            renderPlanningPanel,
             getOverlayPlatformDescriptor,
             startUrlMonitoring,
             init,
@@ -17327,6 +18293,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             formatSyncFixed,
             injectStyles: testingHooks?.injectStyles,
             showOverlay: testingHooks?.showOverlay,
+            renderPlanningPanel: testingHooks?.renderPlanningPanel,
             startUrlMonitoring: testingHooks?.startUrlMonitoring,
             init: testingHooks?.init,
             isEndowusAuthContext: testingHooks?.isEndowusAuthContext,

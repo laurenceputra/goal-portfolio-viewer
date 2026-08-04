@@ -477,6 +477,24 @@ describe('view model builders', () => {
         expect(viewModel.showAllocationDriftHint).toBe(false);
     });
 
+    test('should keep the Endowus empty planning path explicit', () => {
+        const bucketMap = {
+            Empty: {
+                _meta: { endingBalanceTotal: 0 }
+            }
+        };
+        const viewModel = buildBucketDetailViewModel({
+            bucketName: 'Empty',
+            bucketMap,
+            projectedInvestmentsState: null,
+            goalTargetById: null,
+            goalFixedById: null
+        });
+
+        expect(viewModel.goalTypes).toEqual([]);
+        expect(buildBucketPlanningModel(viewModel.goalTypes)).toBeNull();
+    });
+
     test('should build bucket detail without projected investments or targets', () => {
         const bucketMap = createBucketMapFixture();
         const viewModel = buildBucketDetailViewModel({

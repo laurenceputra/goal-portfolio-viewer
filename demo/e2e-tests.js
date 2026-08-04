@@ -509,6 +509,13 @@ async function captureScreenshot(page, summary, outputDir, flowName) {
         null,
         { timeout: 5000 }
     ).catch(() => undefined);
+    await page.evaluate(() => {
+        const content = document.querySelector('#gpv-overlay .gpv-content');
+        if (content instanceof HTMLElement) {
+            content.scrollTop = 0;
+            content.scrollLeft = 0;
+        }
+    });
     await page.evaluate(() => new Promise(resolve => {
         const schedule = typeof requestAnimationFrame === 'function'
             ? requestAnimationFrame
