@@ -487,6 +487,18 @@ describe('FSM profit models', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         const projectionInput = getProjectionInput(overlay);
+        const projectionPanel = Array.from(overlay.querySelectorAll('.gpv-planning-panel')).find(panel => (
+            panel.querySelector('.gpv-planning-title')?.textContent.trim() === 'Projection'
+        ));
+        const planningPanel = Array.from(overlay.querySelectorAll('.gpv-planning-panel')).find(panel => (
+            panel.querySelector('.gpv-planning-title')?.textContent.trim() === 'Planning'
+        ));
+        expect(projectionPanel).toBeTruthy();
+        expect(planningPanel).toBeTruthy();
+        expect(projectionPanel.querySelector('.gpv-planning-content')?.contains(
+            projectionPanel.querySelector('.gpv-projected-input-container')
+        )).toBe(true);
+        expect(planningPanel.querySelector('.gpv-planning-content')).toBeTruthy();
         projectionInput.focus();
         projectionInput.value = '1000';
         projectionInput.dispatchEvent(new window.Event('input', { bubbles: true }));
@@ -497,6 +509,9 @@ describe('FSM profit models', () => {
         expect(overlay.textContent).toContain('Projected Investment: SGD\u00A01,000.00');
         expect(overlay.textContent).toContain('AAPL: SGD\u00A0500.00');
         expect(overlay.textContent).toContain('BOND: SGD\u00A0500.00');
+        expect(Array.from(overlay.querySelectorAll('.gpv-planning-panel')).every(panel => (
+            panel.querySelector('.gpv-planning-content')
+        ))).toBe(true);
 
         const backToPortfoliosBtn = Array.from(overlay.querySelectorAll('button')).find(btn => btn.textContent.includes('Back to portfolios'));
         backToPortfoliosBtn.click();

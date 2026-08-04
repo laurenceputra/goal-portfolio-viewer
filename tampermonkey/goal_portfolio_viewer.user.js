@@ -8710,6 +8710,12 @@ let GoalTargetStore;
         });
     }
 
+    function createPlanningContent(panel) {
+        const content = createElement('div', 'gpv-planning-content');
+        panel.appendChild(content);
+        return content;
+    }
+
     function renderPlanningPanel(contentDiv, bucketViewModel, { beforeNode = null } = {}) {
         if (!contentDiv || !bucketViewModel) {
             return;
@@ -8723,10 +8729,12 @@ let GoalTargetStore;
             contentDiv.appendChild(panel);
         };
         panel.appendChild(createWorkspaceTitle({ title: 'Planning', level: 3, className: 'gpv-planning-title' }));
+        const planningContent = createPlanningContent(panel);
 
         const planning = buildBucketPlanningModel(bucketViewModel.goalTypes);
         if (!planning) {
-            panel.appendChild(createElement('p', 'gpv-planning-empty', 'Planning insights appear once targets and balances are available.'));
+            planningContent.appendChild(createElement('p', 'gpv-planning-empty', 'Planning insights appear once targets and balances are available.'));
+            renderAllocationDriftHint(planningContent, bucketViewModel);
             appendPanel();
             return;
         }
@@ -8734,10 +8742,11 @@ let GoalTargetStore;
         const coverageText = planning.coverageIssues.length > 0
             ? planning.coverageIssues.join(' | ')
             : null;
-        appendPlanningDetails(panel, planning, {
+        appendPlanningDetails(planningContent, planning, {
             coverageText,
             showScenarioPrompt: true
         });
+        renderAllocationDriftHint(planningContent, bucketViewModel);
 
         appendPanel();
     }
@@ -9320,7 +9329,6 @@ let GoalTargetStore;
 
         contentDiv.appendChild(buildBucketHeader(bucketViewModel));
         renderPlanningPanel(contentDiv, bucketViewModel);
-        renderAllocationDriftHint(contentDiv, bucketViewModel);
 
         bucketViewModel.goalTypes.forEach(goalTypeModel => {
             const typeGrowth = goalTypeModel.growthDisplay;
@@ -13218,13 +13226,9 @@ syncUi.update = function updateSyncUI() {
                     border: 1px solid #ffc107;
                     border-radius: 4px;
                     padding: 12px;
-                    margin-bottom: 15px;
-                }
-
-                .gpv-conflict-warning p {
-                    margin: 0;
                     color: #856404;
                     font-size: 14px;
+                    margin: 0 0 15px;
                 }
 
                 .gpv-conflict-actions {
@@ -13692,27 +13696,27 @@ syncUi.update = function updateSyncUI() {
             .gpv-trigger-btn,
             .gpv-notification,
             .gpv-sync-indicator {
-                --gpv-ink: #102337;
-                --gpv-ink-soft: #1c354b;
-                --gpv-canvas: #f5f2eb;
-                --gpv-surface: #fffdf9;
-                --gpv-surface-muted: #eef1ee;
-                --gpv-line: #d8d8d0;
-                --gpv-line-strong: #b9c2c2;
+                --gpv-ink: #17313d;
+                --gpv-ink-soft: #38535d;
+                --gpv-canvas: #f7f9f7;
+                --gpv-surface: #ffffff;
+                --gpv-surface-muted: #f1f5f3;
+                --gpv-line: #d6e1de;
+                --gpv-line-strong: #78918e;
                 --gpv-indigo: #4356a8;
                 --gpv-indigo-dark: #304282;
                 --gpv-teal: #147d7a;
                 --gpv-teal-dark: #0c5c5b;
                 --gpv-coral: #b23b1f;
-                --gpv-amber: #a66b16;
-                --gpv-focus: #b45309;
+                --gpv-amber: #8a5b08;
+                --gpv-focus: #8a4b08;
             }
 
             .gpv-overlay {
                 color: var(--gpv-ink);
                 overflow: hidden;
                 padding: clamp(10px, 3vw, 28px);
-                background: rgba(8, 20, 34, 0.78);
+                background: rgba(23, 49, 61, 0.34);
                 backdrop-filter: blur(12px);
             }
 
@@ -13730,10 +13734,10 @@ syncUi.update = function updateSyncUI() {
                 max-height: calc(100vh - 20px);
                 min-width: 0;
                 overflow: hidden;
-                border: 1px solid rgba(255, 255, 255, 0.32);
+                border: 1px solid rgba(174, 191, 187, 0.9);
                 border-radius: 18px;
                 background: var(--gpv-canvas);
-                box-shadow: 0 28px 80px rgba(3, 12, 24, 0.42);
+                box-shadow: 0 22px 60px rgba(23, 49, 61, 0.18);
             }
 
             .gpv-container--expanded {
@@ -13748,16 +13752,16 @@ syncUi.update = function updateSyncUI() {
                 gap: 12px 18px;
                 padding: 16px 22px;
                 border: 0;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+                border-bottom: 1px solid var(--gpv-line);
                 border-radius: 17px 17px 0 0;
-                background: linear-gradient(115deg, var(--gpv-ink) 0%, #1b3850 72%, #23585d 100%);
-                color: #f7faf7;
+                background: linear-gradient(115deg, #e8f3f1 0%, #edf0fa 100%);
+                color: var(--gpv-ink);
             }
 
             .gpv-header h1 {
                 flex: 1 1 220px;
                 min-width: 0;
-                color: #ffffff;
+                color: var(--gpv-ink);
                 font-size: clamp(20px, 2.2vw, 26px);
                 font-weight: 750;
                 letter-spacing: -0.025em;
@@ -13775,7 +13779,7 @@ syncUi.update = function updateSyncUI() {
                 flex: 0 1 auto;
                 min-width: 0;
                 padding: 0;
-                color: #dceceb;
+                color: var(--gpv-ink-soft);
             }
 
             .gpv-header-buttons .gpv-close-btn,
@@ -13783,10 +13787,10 @@ syncUi.update = function updateSyncUI() {
             .gpv-header-buttons .gpv-sync-btn,
             .gpv-header-buttons .gpv-bucket-manage-btn {
                 min-height: 40px;
-                border: 1px solid rgba(255, 255, 255, 0.24);
+                border: 1px solid var(--gpv-line-strong);
                 border-radius: 8px;
-                background: rgba(255, 255, 255, 0.1);
-                color: #f7faf7;
+                background: #ffffff;
+                color: var(--gpv-ink);
                 box-shadow: none;
             }
 
@@ -13797,9 +13801,9 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-header-buttons button:hover:not(:disabled) {
-                border-color: rgba(255, 255, 255, 0.54);
-                background: rgba(255, 255, 255, 0.18);
-                color: #ffffff;
+                border-color: var(--gpv-teal);
+                background: #edf7f4;
+                color: var(--gpv-ink);
                 transform: none;
             }
 
@@ -13810,15 +13814,20 @@ syncUi.update = function updateSyncUI() {
                 background: var(--gpv-canvas);
             }
 
+            .gpv-content.gpv-mode-allocation,
+            .gpv-content.gpv-mode-performance {
+                padding-top: 12px;
+            }
+
             .gpv-controls,
             .gpv-control-bar {
                 min-width: 0;
-                margin: 0 0 18px;
+                margin: 0 0 10px;
                 padding: 12px 14px;
                 border: 1px solid var(--gpv-line);
                 border-radius: 10px;
-                background: rgba(255, 253, 249, 0.88);
-                box-shadow: 0 2px 8px rgba(16, 35, 55, 0.04);
+                background: rgba(255, 255, 255, 0.92);
+                box-shadow: 0 2px 8px rgba(23, 49, 61, 0.035);
             }
 
             .gpv-select-label,
@@ -13850,9 +13859,9 @@ syncUi.update = function updateSyncUI() {
             .gpv-section-toggle,
             .gpv-performance-refresh-btn {
                 min-height: 40px;
-                border: 1px solid #b6c3d4;
+                border: 1px solid var(--gpv-line-strong);
                 border-radius: 7px;
-                background: #f7f8f6;
+                background: #ffffff;
                 color: var(--gpv-indigo-dark);
                 padding: 8px 12px;
             }
@@ -13894,8 +13903,8 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-sync-btn-secondary {
-                border: 1px solid #b7c2d5;
-                background: #f8f9f7;
+                border: 1px solid var(--gpv-line-strong);
+                background: #ffffff;
                 color: var(--gpv-indigo-dark);
             }
 
@@ -13927,7 +13936,7 @@ syncUi.update = function updateSyncUI() {
                 border: 1px solid var(--gpv-line);
                 border-radius: 12px;
                 background: var(--gpv-surface);
-                box-shadow: 0 4px 14px rgba(16, 35, 55, 0.055);
+                box-shadow: 0 3px 10px rgba(23, 49, 61, 0.045);
             }
 
             .gpv-bucket-card {
@@ -13940,7 +13949,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-bucket-card:hover,
             .gpv-fsm-overview-card:hover {
                 border-color: var(--gpv-teal);
-                box-shadow: 0 8px 20px rgba(20, 125, 122, 0.12);
+                box-shadow: 0 6px 16px rgba(20, 125, 122, 0.09);
                 transform: translateY(-1px);
             }
 
@@ -13970,7 +13979,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-fsm-overview-stat {
                 min-width: 0;
                 padding: 12px 14px;
-                border: 1px solid #dfe2dc;
+                border: 1px solid var(--gpv-line);
                 border-radius: 8px;
                 background: var(--gpv-surface-muted);
             }
@@ -13978,7 +13987,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-stat-label,
             .gpv-fsm-overview-stat-label,
             .gpv-summary-card-label {
-                color: #53646b;
+                color: var(--gpv-ink-soft);
                 font-size: 11px;
                 font-weight: 850;
                 letter-spacing: 0.08em;
@@ -14005,7 +14014,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-fsm-overview-stat-value.negative,
             .gpv-table .negative,
             .gpv-diff-cell.negative {
-                color: #a53f39;
+                color: var(--gpv-coral);
             }
 
             .gpv-health-badge {
@@ -14019,18 +14028,18 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-health--healthy {
-                background: #e4f1eb;
-                color: #17634f;
+                background: #e6f3ef;
+                color: var(--gpv-teal-dark);
             }
 
             .gpv-health--setup {
-                background: #fff1d9;
-                color: #875615;
+                background: #fff3d6;
+                color: var(--gpv-amber);
             }
 
             .gpv-health--review {
-                background: #fbe5df;
-                color: #963e37;
+                background: #ffebe5;
+                color: var(--gpv-coral);
             }
 
             .gpv-allocation-drift-hint,
@@ -14042,38 +14051,43 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-allocation-drift-hint {
-                border-color: #e5ba73;
-                background: #fff4df;
-                color: #704816;
+                border-color: #d9bd78;
+                background: #fff6df;
+                color: var(--gpv-amber);
             }
 
             .gpv-attention-strip,
             .gpv-conflict-warning {
-                border-color: #e8b19f;
-                background: #fff0eb;
+                border-color: #e4b3a4;
+                background: #fff2ee;
             }
 
             .gpv-attention-title {
-                color: #963e37;
+                color: var(--gpv-coral);
             }
 
             .gpv-attention-button {
                 min-height: 40px;
-                border-color: #e5ae99;
+                border-color: #e4b3a4;
                 border-radius: 7px;
-                background: #fff8f5;
-                color: #7d3833;
+                background: #fffaf8;
+                color: var(--gpv-coral);
             }
 
             .gpv-attention-button:hover {
-                background: #fbe5df;
+                background: #ffebe5;
             }
 
             .gpv-planning-panel {
-                border-color: #a8d1cd;
+                border-color: #acd2cc;
                 border-left: 4px solid var(--gpv-teal);
-                background: #eaf4f1;
+                background: #edf7f4;
                 box-shadow: none;
+                display: grid;
+                grid-template-columns: max-content minmax(0, 1fr);
+                align-items: start;
+                column-gap: 16px;
+                padding: 10px 14px;
             }
 
             .gpv-planning-title,
@@ -14081,11 +14095,48 @@ syncUi.update = function updateSyncUI() {
                 color: var(--gpv-teal-dark);
             }
 
+            .gpv-planning-title {
+                margin: 2px 0 0;
+                white-space: nowrap;
+            }
+
+            .gpv-planning-content {
+                min-width: 0;
+                display: flex;
+                flex-wrap: wrap;
+                align-items: baseline;
+                gap: 4px 14px;
+            }
+
+            .gpv-planning-content .gpv-planning-coverage,
+            .gpv-planning-content .gpv-planning-copy,
+            .gpv-planning-content .gpv-planning-empty {
+                margin: 0;
+                line-height: 1.35;
+            }
+
+            .gpv-planning-content .gpv-planning-list {
+                flex: 1 1 100%;
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+                gap: 2px 14px;
+                margin: 0;
+            }
+
+            .gpv-planning-content .gpv-allocation-drift-hint {
+                flex: 0 1 auto;
+                margin: 2px 0 0;
+                padding: 5px 8px;
+                border-radius: 6px;
+                font-size: 12px;
+                line-height: 1.35;
+            }
+
             .gpv-planning-coverage,
             .gpv-planning-copy,
             .gpv-planning-empty,
             .gpv-planning-list {
-                color: #29464b;
+                color: var(--gpv-ink-soft);
             }
 
             .gpv-detail-header {
@@ -14118,7 +14169,7 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-type-summary {
-                color: #53646b;
+                color: var(--gpv-ink-soft);
             }
 
             .gpv-table-wrap,
@@ -14129,7 +14180,7 @@ syncUi.update = function updateSyncUI() {
                 border: 1px solid var(--gpv-line-strong);
                 border-radius: 9px;
                 background: var(--gpv-surface);
-                box-shadow: 0 3px 10px rgba(16, 35, 55, 0.04);
+                box-shadow: 0 2px 8px rgba(23, 49, 61, 0.035);
             }
 
             .gpv-table {
@@ -14137,7 +14188,7 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-table thead tr {
-                background: var(--gpv-ink);
+                background: #e8f1f2;
             }
 
             .gpv-table th {
@@ -14145,30 +14196,30 @@ syncUi.update = function updateSyncUI() {
                 top: 0;
                 z-index: 2;
                 padding: 12px 14px;
-                background: var(--gpv-ink);
-                color: #f4f7f5;
+                background: #e8f1f2;
+                color: var(--gpv-ink);
                 font-size: 11px;
                 letter-spacing: 0.08em;
             }
 
             .gpv-table td {
                 padding: 12px 14px;
-                border-top-color: #e2e4de;
-                color: #253c49;
+                border-top-color: var(--gpv-line);
+                color: var(--gpv-ink-soft);
             }
 
             .gpv-table tbody tr:nth-child(even) {
-                background: #fafbf8;
+                background: #fbfdfc;
             }
 
             .gpv-table tbody tr:hover,
             .gpv-table tbody tr.gpv-goal-row:hover + tr.gpv-goal-metrics-row,
             .gpv-table tbody tr.gpv-goal-metrics-row:hover {
-                background: #edf5f2;
+                background: #f0f8f6;
             }
 
             .gpv-table:focus-within {
-                box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.34);
+                box-shadow: 0 0 0 3px rgba(138, 75, 8, 0.34);
             }
 
             .gpv-table .gpv-goal-name {
@@ -14215,7 +14266,7 @@ syncUi.update = function updateSyncUI() {
             .gpv-projected-input-container {
                 border: 1px dashed var(--gpv-teal);
                 border-radius: 8px;
-                background: #e8f4f2;
+                background: #edf7f4;
             }
 
             .gpv-projected-label {
@@ -14224,13 +14275,13 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-performance-container {
                 padding: 16px;
-                background: #edf2f0;
-                border-color: #c5d3cf;
+                background: #f1f5f3;
+                border-color: var(--gpv-line-strong);
             }
 
             .gpv-performance-window-tile,
             .gpv-performance-metrics-table {
-                border-color: #d1dcd8;
+                border-color: var(--gpv-line);
                 background: var(--gpv-surface);
             }
 
@@ -14263,12 +14314,12 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-fsm-overview-card-subtitle {
-                color: #53646b;
+                color: var(--gpv-ink-soft);
             }
 
             .gpv-fsm-overview-card-tag {
-                border: 1px solid #b8d8d2;
-                background: #e8f4f2;
+                border: 1px solid #acd2cc;
+                background: #edf7f4;
                 color: var(--gpv-teal-dark);
             }
 
@@ -14298,8 +14349,12 @@ syncUi.update = function updateSyncUI() {
             }
 
             .gpv-sync-warning {
-                background: #fff4df;
-                color: #704816;
+                background: #fff6df;
+                color: var(--gpv-amber);
+            }
+
+            .gpv-conflict-warning {
+                color: var(--gpv-amber);
             }
 
             .gpv-sync-status-success {
@@ -14308,11 +14363,11 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-sync-status-error,
             .gpv-sync-error {
-                color: #963e37;
+                color: var(--gpv-coral);
             }
 
             .gpv-sync-status-conflict {
-                color: #875615;
+                color: var(--gpv-amber);
             }
 
             .gpv-conflict-comparison {
@@ -14329,7 +14384,8 @@ syncUi.update = function updateSyncUI() {
             .gpv-conflict-step {
                 min-height: 28px;
                 border: 1px solid var(--gpv-line);
-                background: #e6e9e4;
+                background: #eef3f1;
+                color: var(--gpv-ink-soft);
             }
 
             .gpv-conflict-step.is-active {
@@ -14339,11 +14395,11 @@ syncUi.update = function updateSyncUI() {
 
             .gpv-sync-indicator {
                 min-height: 44px;
-                border: 1px solid #b8d1ce;
+                border: 1px solid #acd2cc;
                 border-radius: 8px;
                 background: #f4fbf8;
                 color: var(--gpv-teal-dark);
-                box-shadow: 0 8px 24px rgba(16, 35, 55, 0.18);
+                box-shadow: 0 6px 18px rgba(23, 49, 61, 0.12);
             }
 
             .gpv-notification {
@@ -14376,9 +14432,9 @@ syncUi.update = function updateSyncUI() {
             .gpv-sync-btn-primary:focus-visible,
             .gpv-sync-btn-danger:focus-visible,
             .gpv-mode-btn.is-active:focus-visible {
-                outline: 3px solid #ffffff;
+                outline: 3px solid var(--gpv-focus);
                 outline-offset: 2px;
-                box-shadow: 0 0 0 5px var(--gpv-ink);
+                box-shadow: 0 0 0 5px #ffffff;
             }
 
             .gpv-overlay button:disabled,
@@ -14393,12 +14449,12 @@ syncUi.update = function updateSyncUI() {
                 border: 1px solid #304282;
                 border-radius: 8px;
                 background: var(--gpv-ink);
-                box-shadow: 0 8px 22px rgba(16, 35, 55, 0.28);
+                box-shadow: 0 6px 18px rgba(23, 49, 61, 0.2);
             }
 
             .gpv-trigger-btn:hover {
                 background: var(--gpv-ink-soft);
-                box-shadow: 0 10px 26px rgba(16, 35, 55, 0.34);
+                box-shadow: 0 8px 22px rgba(23, 49, 61, 0.24);
                 transform: translateY(-1px);
             }
 
@@ -14439,6 +14495,53 @@ syncUi.update = function updateSyncUI() {
 
                 .gpv-content {
                     padding: 14px;
+                }
+
+                .gpv-content.gpv-mode-allocation,
+                .gpv-content.gpv-mode-performance {
+                    padding-top: 10px;
+                }
+
+                .gpv-planning-panel {
+                    display: block;
+                    padding: 10px 12px;
+                }
+
+                .gpv-planning-title {
+                    margin-bottom: 6px;
+                    white-space: normal;
+                }
+
+                .gpv-planning-content {
+                    flex-direction: column;
+                    align-items: stretch;
+                    gap: 4px;
+                }
+
+                .gpv-planning-content .gpv-planning-list {
+                    width: 100%;
+                    grid-template-columns: 1fr;
+                }
+
+                .gpv-planning-content .gpv-allocation-drift-hint {
+                    align-self: stretch;
+                }
+
+                .gpv-projected-input-container {
+                    flex-wrap: wrap;
+                }
+
+                .gpv-projected-label {
+                    flex: 1 1 180px;
+                    min-width: 0;
+                    white-space: normal;
+                }
+
+                .gpv-projected-input {
+                    flex: 1 1 140px;
+                    min-width: 0;
+                    width: auto;
+                    max-width: 100%;
                 }
 
                 .gpv-mode-toggle {
@@ -15515,7 +15618,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     function buildFsmPlanningPanel(planning, scopeLabel, options = {}) {
         const panel = createElement('div', 'gpv-planning-panel');
         panel.appendChild(createWorkspaceTitle({ title: 'Planning', level: 3, className: 'gpv-planning-title' }));
-        appendPlanningDetails(panel, planning || {}, {
+        const planningContent = createPlanningContent(panel);
+        appendPlanningDetails(planningContent, planning || {}, {
             scopeLabel,
             coverageText: planning?.targetCoverageLabel || null,
             showScenarioPrompt: options.showScenarioPrompt === true
@@ -15526,13 +15630,14 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
     function buildFsmProjectionPanel({ selectedScopeLabel, projectedAmount, onInput }) {
         const panel = createElement('div', 'gpv-planning-panel');
         panel.appendChild(createWorkspaceTitle({ title: 'Projection', level: 3, className: 'gpv-planning-title' }));
+        const planningContent = createPlanningContent(panel);
         const inputControl = createProjectedInvestmentInput({
             amount: projectedAmount,
             inputLabel: `Add Projected Investment for ${selectedScopeLabel} (simulation only):`,
             onInput
         });
         inputControl.input.setAttribute('aria-label', `Projected investment amount for ${selectedScopeLabel}`);
-        panel.appendChild(inputControl.container);
+        planningContent.appendChild(inputControl.container);
         return panel;
     }
 
@@ -16801,12 +16906,13 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
 
             const planningPanel = createElement('section', 'gpv-planning-panel');
             planningPanel.appendChild(createWorkspaceTitle({ title: 'Planning', level: 2, className: 'gpv-planning-title' }));
-            planningPanel.appendChild(createElement(
+            const planningContent = createPlanningContent(planningPanel);
+            planningContent.appendChild(createElement(
                 'p',
                 'gpv-planning-copy',
                 'Assign instruments to sub-portfolios, set target percentages, and spot drift before rebalancing.'
             ));
-            planningPanel.appendChild(createElement('p', 'gpv-planning-copy', `Scope: ${activeView === 'liabilities' ? 'Liabilities' : 'Assets'}`));
+            planningContent.appendChild(createElement('p', 'gpv-planning-copy', `Scope: ${activeView === 'liabilities' ? 'Liabilities' : 'Assets'}`));
 
             const planningTotalValue = portfolioNos.reduce((sum, portfolioNo) => (
                 sum + toFiniteNumber(buildOcbcSummary(groupedByPortfolio[portfolioNo] || []).total, 0)
@@ -16908,7 +17014,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             driftItem.appendChild(document.createTextNode('Largest drift: '));
             appendTextSpan(driftItem, getDriftSeverityClass(planningLargestDriftPercent), planningDriftText);
             planningDetailList.appendChild(driftItem);
-            planningPanel.appendChild(planningDetailList);
+            planningContent.appendChild(planningDetailList);
 
             const planningStatusItems = [];
             if (planningUnassignedInstruments > 0) {
@@ -16922,8 +17028,8 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
                 planningStatusItems.push(`${planningMaterialDriftCount} sub-portfolio scope(s) show high drift`);
             }
             if (planningStatusItems.length > 0) {
-                planningPanel.appendChild(createWorkspaceTitle({ title: 'Needs attention', level: 3, className: 'gpv-planning-subtitle' }));
-                planningPanel.appendChild(createHealthReasonList(planningStatusItems));
+                planningContent.appendChild(createWorkspaceTitle({ title: 'Needs attention', level: 3, className: 'gpv-planning-subtitle' }));
+                planningContent.appendChild(createHealthReasonList(planningStatusItems));
             }
             contentDiv.appendChild(planningPanel);
 
@@ -18055,6 +18161,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
         window.__gpvTestingHooks = {
             injectStyles,
             showOverlay,
+            renderPlanningPanel,
             getOverlayPlatformDescriptor,
             startUrlMonitoring,
             init,
@@ -18186,6 +18293,7 @@ function createReadinessView({ title, description, items, tone = 'pending' }) {
             formatSyncFixed,
             injectStyles: testingHooks?.injectStyles,
             showOverlay: testingHooks?.showOverlay,
+            renderPlanningPanel: testingHooks?.renderPlanningPanel,
             startUrlMonitoring: testingHooks?.startUrlMonitoring,
             init: testingHooks?.init,
             isEndowusAuthContext: testingHooks?.isEndowusAuthContext,

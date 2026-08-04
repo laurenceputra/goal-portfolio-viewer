@@ -1696,6 +1696,36 @@ describe('initialization and URL monitoring', () => {
             expect(styleText).toContain('.gpv-sync-settings');
             expect(styleText).toContain('.gpv-trigger-btn');
             expect(styleText).toContain('line-height: var(--gpv-line-height)');
+            expect(styleText).toContain('.gpv-conflict-warning {');
+            expect(styleText).not.toContain('.gpv-conflict-warning p');
+
+            const mobileWorkspaceStart = styleText.indexOf('@media (max-width: 719px)');
+            expect(mobileWorkspaceStart).toBeGreaterThanOrEqual(0);
+            const openingBrace = styleText.indexOf('{', mobileWorkspaceStart);
+            expect(openingBrace).toBeGreaterThan(mobileWorkspaceStart);
+            let braceDepth = 0;
+            let mobileWorkspaceEnd = -1;
+            for (let index = openingBrace; index < styleText.length; index += 1) {
+                if (styleText[index] === '{') braceDepth += 1;
+                if (styleText[index] === '}') {
+                    braceDepth -= 1;
+                    if (braceDepth === 0) {
+                        mobileWorkspaceEnd = index + 1;
+                        break;
+                    }
+                }
+            }
+            expect(mobileWorkspaceEnd).toBeGreaterThan(mobileWorkspaceStart);
+            const mobileWorkspaceCss = styleText.slice(mobileWorkspaceStart, mobileWorkspaceEnd);
+            const assertMobileDeclaration = (selector, declaration) => {
+                const selectorPattern = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                expect(mobileWorkspaceCss).toMatch(
+                    new RegExp(`${selectorPattern}\\s*\\{[^}]*${declaration}`)
+                );
+            };
+            assertMobileDeclaration('.gpv-projected-input-container', 'flex-wrap:\\s*wrap');
+            assertMobileDeclaration('.gpv-projected-label', 'white-space:\\s*normal');
+            assertMobileDeclaration('.gpv-projected-input', 'max-width:\\s*100%');
 
             const trigger = document.querySelector('.gpv-trigger-btn');
             expect(trigger).toBeTruthy();
@@ -2187,6 +2217,12 @@ describe('initialization and URL monitoring', () => {
         expect(overlay.textContent).not.toContain('Portfolio P-2');
         expect(overlay.textContent).toContain('Planning');
         expect(overlay.textContent).toContain('Assign instruments to sub-portfolios, set target percentages, and spot drift before rebalancing.');
+        const planningPanel = overlay.querySelector('.gpv-planning-panel');
+        const planningContent = planningPanel?.querySelector('.gpv-planning-content');
+        expect(planningPanel).toBeTruthy();
+        expect(planningContent).toBeTruthy();
+        expect(planningContent.contains(planningPanel.querySelector('.gpv-planning-copy'))).toBe(true);
+        expect(planningContent.contains(planningPanel.querySelector('.gpv-planning-list'))).toBe(true);
         expect(overlay.textContent).toContain('Sub-portfolio allocation within Portfolio P-1');
         expect(overlay.textContent).toContain('Asset 1');
         expect(overlay.textContent).toContain('Bond 1');
@@ -5745,6 +5781,20 @@ describe('initialization and URL monitoring', () => {
         let detailHeader = overlay.querySelector('.gpv-detail-header');
         let planningPanel = overlay.querySelector('.gpv-planning-panel');
         expect(detailHeader?.nextElementSibling).toBe(planningPanel);
+        const assertPlanningContent = panel => {
+            const planningContent = panel.querySelector('.gpv-planning-content');
+            const populatedPlanningNodes = panel.querySelectorAll(
+                '.gpv-planning-copy, .gpv-planning-list, .gpv-allocation-drift-hint'
+            );
+            expect(planningContent).toBeTruthy();
+            expect(populatedPlanningNodes.length).toBeGreaterThan(0);
+            populatedPlanningNodes.forEach(node => {
+                expect(planningContent?.contains(node)).toBe(true);
+            });
+        };
+        assertPlanningContent(planningPanel);
+        expect(planningPanel.querySelector('.gpv-allocation-drift-hint')).toBeTruthy();
+        expect(overlay.querySelectorAll('.gpv-allocation-drift-hint')).toHaveLength(1);
 
         const targetInput = overlay.querySelector('input.gpv-target-input[data-goal-id="t3"]');
         targetInput.value = '10';
@@ -5756,6 +5806,35 @@ describe('initialization and URL monitoring', () => {
         detailHeader = overlay.querySelector('.gpv-detail-header');
         planningPanel = overlay.querySelector('.gpv-planning-panel');
         expect(detailHeader?.nextElementSibling).toBe(planningPanel);
+        assertPlanningContent(planningPanel);
+        expect(overlay.querySelectorAll('.gpv-allocation-drift-hint')).toHaveLength(0);
+    });
+
+    test('Endowus empty planning state keeps the empty message inside planning content', () => {
+        const exportsModule = require('../goal_portfolio_viewer.user.js');
+        const bucketViewModel = exportsModule.buildBucketDetailViewModel({
+            bucketName: 'Empty',
+            bucketMap: {
+                Empty: {
+                    _meta: { endingBalanceTotal: 0 }
+                }
+            },
+            projectedInvestmentsState: null,
+            goalTargetById: null,
+            goalFixedById: null
+        });
+        const contentDiv = document.createElement('div');
+
+        expect(bucketViewModel?.goalTypes).toEqual([]);
+        exportsModule.renderPlanningPanel(contentDiv, bucketViewModel);
+
+        const planningPanel = contentDiv.querySelector('.gpv-planning-panel');
+        const planningContent = planningPanel?.querySelector('.gpv-planning-content');
+        const emptyState = planningPanel?.querySelector('.gpv-planning-empty');
+        expect(planningPanel).toBeTruthy();
+        expect(planningContent).toBeTruthy();
+        expect(emptyState).toBeTruthy();
+        expect(planningContent.contains(emptyState)).toBe(true);
     });
 
     test('Endowus projected investment refresh is debounced while typing', () => {
@@ -5810,6 +5889,9 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         const projectionInput = overlay.querySelector('input.gpv-projected-input');
+        const projectionPanel = overlay.querySelector('.gpv-projection-panel');
+        expect(projectionPanel).toBeTruthy();
+        expect(projectionPanel.contains(projectionPanel.querySelector('.gpv-projected-input-container'))).toBe(true);
         projectionInput.value = '1';
         projectionInput.dispatchEvent(new window.Event('input', { bubbles: true }));
         jest.advanceTimersByTime(200);
@@ -5827,6 +5909,19 @@ describe('initialization and URL monitoring', () => {
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).not.toContain('Projected Investment: SGD\u00A01.00');
         expect(overlay.textContent).toContain('Projected Investment: SGD\u00A01,000.00');
+        const planningPanel = overlay.querySelector('.gpv-planning-panel');
+        const planningContent = planningPanel?.querySelector('.gpv-planning-content');
+        const populatedPlanningNodes = planningPanel?.querySelectorAll(
+            '.gpv-planning-copy, .gpv-planning-list, .gpv-allocation-drift-hint'
+        );
+        expect(planningContent).toBeTruthy();
+        expect(populatedPlanningNodes.length).toBeGreaterThan(0);
+        populatedPlanningNodes.forEach(node => {
+            expect(planningContent.contains(node)).toBe(true);
+        });
+        expect(overlay.querySelector('.gpv-projection-panel')?.contains(
+            overlay.querySelector('.gpv-projected-input-container')
+        )).toBe(true);
     });
 
     test('FSM row allocation and drift use selected scope totals', () => {
@@ -5990,6 +6085,11 @@ describe('initialization and URL monitoring', () => {
 
         overlay = document.querySelector('#gpv-overlay');
         expect(overlay.textContent).toContain('Planning');
+        const planningPanel = overlay.querySelector('.gpv-planning-panel');
+        const planningContent = planningPanel?.querySelector('.gpv-planning-content');
+        expect(planningPanel).toBeTruthy();
+        expect(planningContent).toBeTruthy();
+        expect(planningContent.contains(planningPanel.querySelector('.gpv-planning-copy'))).toBe(true);
 
         const filterInput = overlay.querySelector('input.gpv-fsm-filter-input');
         filterInput.value = 'BO';
